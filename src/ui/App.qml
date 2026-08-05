@@ -1121,10 +1121,13 @@ Rectangle {
                                 return;
                             }
                             const fname = vidInfo.item.filename.toLowerCase();
-                            // plugin-only-export-gate: .r3d/.nev are render-blocked whenever no
-                            // sibling same-name .mov exists (REDline conversion is gone); a
-                            // sibling .mov keeps the legacy redirect-and-render path.
-                            if (fname.endsWith('.braw') || render_queue.is_plugin_only_video(window.videoArea.loadedFileUrl.toString()) || fname.endsWith('.dng')) {
+                            // plugin-only-export-gate: single source of truth for "ffmpeg cannot
+                            // encode this". Do NOT inline extension literals in this branch --
+                            // the queue path and this path drifted apart once already (.braw/.dng
+                            // were blocked here but sailed through the queue into ffmpeg). The
+                            // helper covers .braw/.dng unconditionally and .r3d/.nev unless a
+                            // sibling same-name .mov keeps the legacy redirect-and-render path.
+                            if (render_queue.is_plugin_only_video(window.videoArea.loadedFileUrl.toString())) {
                                 messageBox(Modal.Info, qsTr("This format is not available for rendering.\nThe recommended workflow is to export project file and use one of [video editor plugins] (%1).").replace(/\[(.*?)\]/, '<a href="https://gyroflow.xyz/download#plugins"><font color="' + styleTextColor + '">$1</font></a>').arg("DaVinci Resolve, Adobe Premiere/Ae, Final Cut Pro"), [
                                     { text: qsTr("Ok"), accent: true }
                                 ]);
@@ -2087,6 +2090,12 @@ Rectangle {
     }
     function runSimpleBatchSync(): void {
         if (!lensDataGatePasses()) return;
+        // queue-stuck-state-recovery: the batch-sync entry point returns without
+        // a word when nothing is dispatchable. This is the single choke point for
+        // all three callers (the syncDirty branch, the re-export confirmation and
+        // the post-match continuation), so the explanation belongs here rather
+        // than at each of them.
+        if (render_queue.dispatch_blocker_reason("sync")) { window.explainDispatchBlocked("sync"); return; }
         const anamorphicCount = render_queue.get_anamorphic_applied_count();
         if (anamorphicCount > 0) {
             messageBox(Modal.Question, qsTranslate("RenderQueue", "%1 video(s) will use Anamorphic lens").arg(anamorphicCount), [
@@ -2141,12 +2150,48 @@ Rectangle {
             { text: qsTr("No"), accent: true },
         ]);
     }
+    // queue-stuck-state-recovery: say why a dispatch has nothing to do.
+    //
+    // Call this only where the flow would otherwise return with no visible
+    // result. An enabled button that does nothing and says nothing reads as
+    // broken — that is exactly the report this whole mechanism came from.
+    //
+    // Rust picks the single most actionable cause; several can hold at once.
+    function explainDispatchBlocked(intent: string): void {
+        const reason = render_queue.dispatch_blocker_reason(intent);
+        if (!reason) return;
+        let text;
+        switch (reason) {
+            case "plugin_only":
+                text = qsTr("These videos cannot be exported directly. Use \"%1\" instead.")
+                         .arg(qsTr("Stabilize (or use with plugins)"));
+                break;
+            case "no_gyro":
+                text = qsTr("None of the videos in the queue have gyro data.");
+                break;
+            case "calibration":
+                text = qsTr("The queue only contains calibration videos, which are not processed on their own.");
+                break;
+            case "user_stopped":
+                text = qsTr("The videos in the queue were stopped. Use the restart button on a row to run it again.");
+                break;
+            default:
+                text = qsTr("There are no videos in the queue that can be processed.");
+                break;
+        }
+        window.messageBox(Modal.Info, text, [ { text: qsTr("Ok"), accent: true } ]);
+    }
     // [simple-mode] Shared plugin-stabilize flow (match + sync, writes .gyroflow
     // projects). Extracted verbatim from simpleAutoSyncBtn.onClicked so the bottom
     // bar button, the deep-match success dialog and the same-day deep-search
     // soft-intercept dialog all run the exact same decision tree.
     function runPluginStabilizeFlow(): void {
         const queueMode = videoArea.queue && videoArea.queue.shown && render_queue.queue.rowCount() > 0;
+        // queue-stuck-state-recovery: lift terminal states this dispatch could get
+        // past, BEFORE anything below reads the queue. Keeping it first is what
+        // lets every gate downstream see an ordinary queue instead of needing a
+        // special case for "skipped but should still count".
+        if (queueMode) render_queue.revive_stuck_jobs("sync");
         const hasGyroFiles = videoArea.queue ? videoArea.queue.hasGyroFiles : false;
         // No usable gyro/motion data at all: prompt to load gyro instead of a
         // silent no-op. Gyro files present but still parsing fall through to the
@@ -2162,7 +2207,7 @@ Rectangle {
         if (!queueMode || !hasGyroFiles) {
             if (queueMode) {
                 // Queue jobs with embedded gyro (no separate files): direct batch sync.
-                if (!render_queue.batch_motion_ready()) return;
+                if (!render_queue.batch_motion_ready()) { window.explainDispatchBlocked("sync"); return; }
                 window.runSimpleBatchSync();
             } else if (window.sync) {
                 window.sync.runAutosync();
@@ -2191,6 +2236,10 @@ Rectangle {
     // single-video path.
     function runStabilizedBatchExport(): bool {
         const queueMode = videoArea.queue && videoArea.queue.shown && render_queue.queue.rowCount() > 0;
+        // queue-stuck-state-recovery, "export" intent: unlike the stabilize flow
+        // this deliberately leaves plugin-only skips in place (an encode can never
+        // consume those sources), so the blocker below explains them instead.
+        if (queueMode) render_queue.revive_stuck_jobs("export");
         const hasGyroFiles = videoArea.queue ? videoArea.queue.hasGyroFiles : false;
         // No usable gyro/motion data at all: prompt to load gyro instead of a
         // silent no-op. Gyro files present but still parsing fall through to the
@@ -2213,10 +2262,13 @@ Rectangle {
         }
         if (!render_queue.batch_motion_ready()) {
             // No renderable job: if every renderable job is already a
-            // finished video export, offer a re-export instead of a
-            // silent no-op; otherwise stay a genuine no-op.
+            // finished video export, offer a re-export. Otherwise say why
+            // nothing can run — this branch used to return in silence, which
+            // reads as a dead button.
             if (render_queue.has_finished_video_exports())
                 window.confirmReExport("video");
+            else
+                window.explainDispatchBlocked("export");
             return true;
         }
         // Batch render auto-syncs not-yet-synced jobs (D4), so no explicit sync first.

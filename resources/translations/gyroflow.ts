@@ -186,6 +186,31 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="2151"/>
+        <source>These videos cannot be exported directly. Use &quot;%1&quot; instead.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2154"/>
+        <source>None of the videos in the queue have gyro data.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2157"/>
+        <source>The queue only contains calibration videos, which are not processed on their own.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2160"/>
+        <source>The videos in the queue were stopped. Use the restart button on a row to run it again.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2163"/>
+        <source>There are no videos in the queue that can be processed.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1873"/>
         <source>Replay tutorial</source>
         <translation type="unfinished"></translation>
@@ -3096,6 +3121,11 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
 <context>
     <name>RenderQueue</name>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="96"/>
+        <source>%1 video(s) cannot be exported directly. Use &quot;%2&quot; instead.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="358"/>
         <source>Edit</source>
         <translation type="unfinished"></translation>
@@ -3186,16 +3216,6 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="615"/>
         <source>Later</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="96"/>
-        <source>%1 video(s) (R3D / N-RAW) cannot be exported directly and were skipped.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="97"/>
-        <source>Press &quot;%1&quot; instead, then finish these clips in your video editor with the Gyroflow plugin.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

@@ -186,6 +186,31 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="2151"/>
+        <source>These videos cannot be exported directly. Use &quot;%1&quot; instead.</source>
+        <translation>Estos videos no se pueden exportar directamente. Usa &quot;%1&quot; en su lugar.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2154"/>
+        <source>None of the videos in the queue have gyro data.</source>
+        <translation>Ninguno de los videos de la cola tiene datos de giroscopio.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2157"/>
+        <source>The queue only contains calibration videos, which are not processed on their own.</source>
+        <translation>La cola solo contiene videos de calibración, que no se procesan por sí solos.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2160"/>
+        <source>The videos in the queue were stopped. Use the restart button on a row to run it again.</source>
+        <translation>Los videos de la cola se detuvieron. Usa el botón de reinicio de una fila para volver a ejecutarla.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2163"/>
+        <source>There are no videos in the queue that can be processed.</source>
+        <translation>No hay videos en la cola que se puedan procesar.</translation>
+    </message>
+    <message>
         <source>Adjust smoothness, horizon lock and how much the frame is cropped.</source>
         <translation type="vanished">Ajusta el suavizado, el bloqueo de horizonte y cuánto se recorta la imagen.</translation>
     </message>
@@ -3294,6 +3319,11 @@ Abra &lt;b&gt;Terminal&lt;/b&gt; e ingrese el siguiente comando:</translation>
 <context>
     <name>RenderQueue</name>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="96"/>
+        <source>%1 video(s) cannot be exported directly. Use &quot;%2&quot; instead.</source>
+        <translation>%1 video(s) no se pueden exportar directamente. Usa &quot;%2&quot; en su lugar.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="358"/>
         <source>Edit</source>
         <translation type="unfinished"></translation>
@@ -3465,16 +3495,6 @@ Para los vídeos sin emparejar, puedes hacerlo manualmente: clic derecho en el v
         <location filename="../../src/ui/RenderQueue.qml" line="615"/>
         <source>Later</source>
         <translation>Más tarde</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="96"/>
-        <source>%1 video(s) (R3D / N-RAW) cannot be exported directly and were skipped.</source>
-        <translation>%1 video(s) (R3D / N-RAW) no se pueden exportar directamente y se omitieron.</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="97"/>
-        <source>Press &quot;%1&quot; instead, then finish these clips in your video editor with the Gyroflow plugin.</source>
-        <translation>Pulsa &quot;%1&quot; en su lugar y termina estos clips en tu editor de video con el plugin de Gyroflow.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2639"/>

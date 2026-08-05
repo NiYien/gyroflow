@@ -187,6 +187,31 @@ Not: Bu yalnızca görsel bir işarettir, render işlemini etkilemez.</translati
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="2151"/>
+        <source>These videos cannot be exported directly. Use &quot;%1&quot; instead.</source>
+        <translation>Bu videolar doğrudan dışa aktarılamaz. Bunun yerine &quot;%1&quot; kullanın.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2154"/>
+        <source>None of the videos in the queue have gyro data.</source>
+        <translation>Kuyruktaki videoların hiçbirinde jiroskop verisi yok.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2157"/>
+        <source>The queue only contains calibration videos, which are not processed on their own.</source>
+        <translation>Kuyrukta yalnızca kalibrasyon videoları var; bunlar tek başına işlenmez.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2160"/>
+        <source>The videos in the queue were stopped. Use the restart button on a row to run it again.</source>
+        <translation>Kuyruktaki videolar durduruldu. Yeniden çalıştırmak için satırdaki yeniden başlat düğmesini kullanın.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2163"/>
+        <source>There are no videos in the queue that can be processed.</source>
+        <translation>Kuyrukta işlenebilecek video yok.</translation>
+    </message>
+    <message>
         <source>Adjust smoothness, horizon lock and how much the frame is cropped.</source>
         <translation type="vanished">Yumuşaklığı, ufuk kilidini ve karenin ne kadar kırpıldığını ayarlayın.</translation>
     </message>
@@ -3291,6 +3316,11 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
 <context>
     <name>RenderQueue</name>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="96"/>
+        <source>%1 video(s) cannot be exported directly. Use &quot;%2&quot; instead.</source>
+        <translation>%1 video doğrudan dışa aktarılamaz. Bunun yerine &quot;%2&quot; kullanın.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="358"/>
         <source>Edit</source>
         <translation type="unfinished"></translation>
@@ -3462,16 +3492,6 @@ Eşleşmeyen videoları manuel olarak eşleştirebilirsiniz: videoya sağ tıkla
         <location filename="../../src/ui/RenderQueue.qml" line="615"/>
         <source>Later</source>
         <translation>Daha sonra</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="96"/>
-        <source>%1 video(s) (R3D / N-RAW) cannot be exported directly and were skipped.</source>
-        <translation>%1 video (R3D / N-RAW) doğrudan dışa aktarılamaz ve atlandı.</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="97"/>
-        <source>Press &quot;%1&quot; instead, then finish these clips in your video editor with the Gyroflow plugin.</source>
-        <translation>Bunun yerine &quot;%1&quot; düğmesine basın ve bu klipleri video editörünüzde Gyroflow eklentisiyle tamamlayın.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2639"/>

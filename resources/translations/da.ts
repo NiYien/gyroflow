@@ -187,6 +187,31 @@ Bemærk, at dette kun er en visuel indikator og påvirker ikke resultatet.</tran
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="2151"/>
+        <source>These videos cannot be exported directly. Use &quot;%1&quot; instead.</source>
+        <translation>Disse videoer kan ikke eksporteres direkte. Brug &quot;%1&quot; i stedet.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2154"/>
+        <source>None of the videos in the queue have gyro data.</source>
+        <translation>Ingen af videoerne i køen har gyrodata.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2157"/>
+        <source>The queue only contains calibration videos, which are not processed on their own.</source>
+        <translation>Køen indeholder kun kalibreringsvideoer, som ikke behandles alene.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2160"/>
+        <source>The videos in the queue were stopped. Use the restart button on a row to run it again.</source>
+        <translation>Videoerne i køen blev stoppet. Brug genstartsknappen på en række for at køre den igen.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2163"/>
+        <source>There are no videos in the queue that can be processed.</source>
+        <translation>Der er ingen videoer i køen, der kan behandles.</translation>
+    </message>
+    <message>
         <source>Adjust smoothness, horizon lock and how much the frame is cropped.</source>
         <translation type="vanished">Justér udjævning, horisontlås og hvor meget billedet beskæres.</translation>
     </message>
@@ -3296,6 +3321,11 @@ På grund af sandkassebegrænsninger skal du oprette det selv.
 <context>
     <name>RenderQueue</name>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="96"/>
+        <source>%1 video(s) cannot be exported directly. Use &quot;%2&quot; instead.</source>
+        <translation>%1 video(er) kan ikke eksporteres direkte. Brug &quot;%2&quot; i stedet.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="358"/>
         <source>Edit</source>
         <translation type="unfinished"></translation>
@@ -3467,16 +3497,6 @@ Du kan parre manuelt: højreklik på videoen → **&quot;Par med gyro&quot;** og
         <location filename="../../src/ui/RenderQueue.qml" line="615"/>
         <source>Later</source>
         <translation>Senere</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="96"/>
-        <source>%1 video(s) (R3D / N-RAW) cannot be exported directly and were skipped.</source>
-        <translation>%1 video(er) (R3D / N-RAW) kan ikke eksporteres direkte og blev sprunget over.</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="97"/>
-        <source>Press &quot;%1&quot; instead, then finish these clips in your video editor with the Gyroflow plugin.</source>
-        <translation>Tryk i stedet på &quot;%1&quot;, og færdiggør disse klip i din videoeditor med Gyroflow-plugin&apos;et.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2639"/>

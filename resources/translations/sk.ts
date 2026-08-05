@@ -187,6 +187,31 @@ Je to len vizuálny indikátor - neovplyvňuje výsledný render.</translation>
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="2151"/>
+        <source>These videos cannot be exported directly. Use &quot;%1&quot; instead.</source>
+        <translation>Tieto videá nie je možné exportovať priamo. Použite namiesto toho &quot;%1&quot;.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2154"/>
+        <source>None of the videos in the queue have gyro data.</source>
+        <translation>Žiadne z videí vo fronte nemá údaje gyroskopu.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2157"/>
+        <source>The queue only contains calibration videos, which are not processed on their own.</source>
+        <translation>Fronta obsahuje iba kalibračné videá, ktoré sa samostatne nespracúvajú.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2160"/>
+        <source>The videos in the queue were stopped. Use the restart button on a row to run it again.</source>
+        <translation>Videá vo fronte boli zastavené. Použite tlačidlo reštartu v riadku na jeho opätovné spustenie.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2163"/>
+        <source>There are no videos in the queue that can be processed.</source>
+        <translation>Vo fronte nie sú žiadne videá, ktoré je možné spracovať.</translation>
+    </message>
+    <message>
         <source>Adjust smoothness, horizon lock and how much the frame is cropped.</source>
         <translation type="vanished">Upravte vyhladenie, zamknutý horizont a mieru orezania obrazu.</translation>
     </message>
@@ -3296,6 +3321,11 @@ Otvorte &lt;b&gt;Terminál&lt;/b&gt; a zadajte nasledujúci príkaz:</translatio
 <context>
     <name>RenderQueue</name>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="96"/>
+        <source>%1 video(s) cannot be exported directly. Use &quot;%2&quot; instead.</source>
+        <translation>Priamy export %1 videí nie je možný. Použite namiesto toho &quot;%2&quot;.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="358"/>
         <source>Edit</source>
         <translation type="unfinished"></translation>
@@ -3467,16 +3497,6 @@ Nespárované video môžete spárovať ručne: pravým tlačidlom na video → 
         <location filename="../../src/ui/RenderQueue.qml" line="615"/>
         <source>Later</source>
         <translation>Neskôr</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="96"/>
-        <source>%1 video(s) (R3D / N-RAW) cannot be exported directly and were skipped.</source>
-        <translation>%1 video(á) (R3D / N-RAW) nemožno exportovať priamo a boli preskočené.</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="97"/>
-        <source>Press &quot;%1&quot; instead, then finish these clips in your video editor with the Gyroflow plugin.</source>
-        <translation>Namiesto toho stlačte &quot;%1&quot; a dokončite tieto klipy vo videoeditore pomocou pluginu Gyroflow.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2639"/>

@@ -1266,6 +1266,27 @@ fn builtin_gyro_skips_autosync(md: &FileMetadata) -> bool {
     builtin_gyro_sync_policy(md) == BuiltinGyroSyncPolicy::Skip
 }
 
+/// Whether a queue job carries no motion data the sync stage could use.
+///
+/// Single source of truth for two call sites that MUST agree:
+/// - `start_batch_autosync`'s admission pass, which marks such jobs
+///   `Skipped(no_gyro)` before collecting work
+/// - `revive_stuck_jobs`, which re-evaluates this same verdict to decide whether
+///   an existing `no_gyro` skip may be lifted
+///
+/// If the two drifted apart, a job could be revived by one and immediately
+/// re-skipped by the other — an invisible flap that also lets the silent
+/// "nothing to dispatch" return reappear from the admission side.
+///
+/// A job whose `stab` has been released reports `false` (not "no gyro"): the
+/// admission pass has always treated a missing manager as "not my call".
+fn job_lacks_sync_motion(job: &Job) -> bool {
+    job.stab.as_ref().is_some_and(|stab| {
+        let gyro = stab.gyro.read();
+        !gyro.file_metadata.read().keep_video_gyro && !gyro.has_motion()
+    })
+}
+
 /// The single "does this clip need an auto-sync pass now?" decision.
 ///
 /// Shared by `do_autosync` (which performs the pass) and
@@ -1767,6 +1788,10 @@ pub struct RenderQueue {
     has_gyro_files: qt_method!(fn(&self) -> bool),
     batch_motion_ready: qt_method!(fn(&self) -> bool),
     has_crm_proxy_jobs: qt_method!(fn(&self) -> bool),
+    // queue-stuck-state-recovery: the two Simple-mode buttons call these at the
+    // very top of their decision trees. `intent` is "sync" or "export".
+    revive_stuck_jobs: qt_method!(fn(&mut self, intent: String) -> i32),
+    dispatch_blocker_reason: qt_method!(fn(&self, intent: String) -> QString),
     // plugin-only-export-gate: sources ffmpeg cannot decode (.r3d/.nev, no
     // sibling .mov). Video encodes skip such jobs with one aggregated notice.
     is_plugin_only_video: qt_method!(fn(&self, url: String) -> bool),
@@ -2371,21 +2396,31 @@ impl RenderQueue {
             job_ids
         };
         if job_ids.is_empty() {
+            // queue-stuck-state-recovery: leave a greppable fingerprint. A queue
+            // whose rows have all reached a terminal state used to dead-end here
+            // with no log and no UI feedback; the caller now explains itself via
+            // `dispatch_blocker_reason`, and this line says what it was looking at.
+            let mut counts = std::collections::BTreeMap::<String, usize>::new();
+            if let Ok(queue) = self.queue.try_borrow() {
+                for item in queue.iter() {
+                    let key = match item.status {
+                        JobStatus::Skipped => format!("skipped({})", item.skip_reason),
+                        ref other => format!("{other:?}").to_lowercase(),
+                    };
+                    *counts.entry(key).or_default() += 1;
+                }
+            }
+            ::log::info!(
+                target: "app",
+                "[queue-render-skip] batch autosync: no eligible job — queue state {counts:?}"
+            );
             return;
         }
 
         let no_gyro_job_ids = job_ids
             .iter()
             .copied()
-            .filter(|job_id| {
-                self.jobs
-                    .get(job_id)
-                    .and_then(|job| job.stab.as_ref())
-                    .is_some_and(|stab| {
-                        let gyro = stab.gyro.read();
-                        !gyro.file_metadata.read().keep_video_gyro && !gyro.has_motion()
-                    })
-            })
+            .filter(|job_id| self.jobs.get(job_id).is_some_and(job_lacks_sync_motion))
             .collect::<Vec<_>>();
         for &job_id in &no_gyro_job_ids {
             update_model!(self, job_id, itm {
@@ -4971,6 +5006,178 @@ impl RenderQueue {
             itm.status = JobStatus::Queued;
         });
     }
+    /// An `Error` row that is really a pending user question (overwrite? convert
+    /// format?) rather than a failure. Such a row still shows live buttons, so
+    /// recovery must leave it alone — reviving it would silently discard the
+    /// question the user has not answered yet.
+    fn error_string_is_pending_question(error_string: &str) -> bool {
+        error_string.starts_with("convert_format:") || error_string.starts_with("file_exists:")
+    }
+
+    /// queue-stuck-state-recovery: lift the terminal states that this dispatch
+    /// could actually get past, leaving every other row untouched.
+    ///
+    /// This is deliberately NOT a blanket reset. Each stuck row is re-judged
+    /// with the very predicate that put it there; the skip stands if that
+    /// predicate still holds. A blanket reset would requeue finished exports
+    /// (re-rendering video the user already produced) and would override skips
+    /// that encode either the material's own limits or an explicit user choice.
+    ///
+    /// `intent` is `"sync"` (Stabilize) or `"export"` (Export stabilized video)
+    /// and matters because a skip can be scoped to the operation rather than to
+    /// the job: a plugin-only source cannot be video-encoded no matter how often
+    /// it is retried, yet it syncs and writes a project perfectly well.
+    ///
+    /// Returns how many rows were revived. Callers pair this with
+    /// [`Self::dispatch_blocker_reason`] so a dispatch that still has nothing to
+    /// do explains itself instead of returning silently.
+    pub fn revive_stuck_jobs(&mut self, intent: String) -> i32 {
+        let export_intent = intent == "export";
+
+        let candidates: Vec<(u32, &'static str)> = {
+            let Ok(queue) = self.queue.try_borrow() else {
+                return 0;
+            };
+            queue
+                .iter()
+                .filter_map(|item| {
+                    let job = self.jobs.get(&item.job_id)?;
+                    // A plugin-only source is never revived for a video encode:
+                    // `start()`'s sweep would skip it again on the spot, so the
+                    // only effect would be a status flap. The user is told what
+                    // to do instead via `dispatch_blocker_reason`.
+                    if export_intent && job.plugin_only {
+                        return None;
+                    }
+                    match item.status {
+                        JobStatus::Error => {
+                            if Self::error_string_is_pending_question(
+                                &item.error_string.to_string(),
+                            ) {
+                                return None;
+                            }
+                            // No machine-readable reason to re-judge (the text is
+                            // free-form), so pressing the button is taken at face
+                            // value: the user came back to retry.
+                            Some((item.job_id, "error"))
+                        }
+                        JobStatus::Skipped => match item.skip_reason.to_string().as_str() {
+                            "plugin_only" => Some((item.job_id, "plugin_only")),
+                            // Re-judge with the admission predicate. Still no
+                            // motion data -> the skip is still true, leave it.
+                            "no_gyro" => {
+                                (!job_lacks_sync_motion(job)).then_some((item.job_id, "no_gyro"))
+                            }
+                            // "calibration" is a classification, not a problem;
+                            // "user_stopped" is an explicit instruction and has
+                            // its own per-row restart control.
+                            _ => None,
+                        },
+                        _ => None,
+                    }
+                })
+                .collect()
+        };
+
+        if candidates.is_empty() {
+            return 0;
+        }
+
+        for &(job_id, _) in &candidates {
+            self.reset_job(job_id);
+        }
+
+        let count = |reason: &str| candidates.iter().filter(|(_, r)| *r == reason).count();
+        ::log::info!(
+            target: "app",
+            "[queue-render-skip] revived {} stuck job(s) for {intent} dispatch: plugin_only={} no_gyro={} error={}",
+            candidates.len(),
+            count("plugin_only"),
+            count("no_gyro"),
+            count("error")
+        );
+
+        candidates.len() as i32
+    }
+
+    /// queue-stuck-state-recovery: why this dispatch has nothing to do, or an
+    /// empty string when it does.
+    ///
+    /// Call this only where the flow would otherwise return without any visible
+    /// result. Several reasons can hold at once, so it reports the single one
+    /// that best tells the user what to do next.
+    ///
+    /// The two "a finished job yields not-blocked" rules are load-bearing but
+    /// intent-specific, and must not be merged:
+    ///
+    /// - For an export, a mixed queue whose ordinary clips already rendered must
+    ///   still reach the "already exported, re-export?" prompt instead of having
+    ///   it displaced by a plugin-only notice.
+    /// - For a sync, only a finished *project* export counts as work:
+    ///   `start_batch_autosync` requeues exactly those. A finished *video*
+    ///   export it will not touch, so claiming "not blocked" for one would put
+    ///   the silence right back.
+    fn dispatch_blocker_reason(&self, intent: String) -> QString {
+        let Ok(queue) = self.queue.try_borrow() else {
+            return QString::from("");
+        };
+        if queue.iter().next().is_none() {
+            return QString::from("");
+        }
+        let sync_intent = intent == "sync";
+
+        // 1. Something is dispatchable.
+        if queue
+            .iter()
+            .any(|i| i.status == JobStatus::Queued && i.total_frames > 0)
+        {
+            return QString::from("");
+        }
+        // 2. Finished jobs the caller can still act on.
+        let finished_is_actionable = |i: &RenderQueueItem| {
+            i.status == JobStatus::Finished
+                && (!sync_intent
+                    || self
+                        .jobs
+                        .get(&i.job_id)
+                        .is_some_and(|j| j.last_finished_export_project == Some(2)))
+        };
+        if queue.iter().any(finished_is_actionable) {
+            return QString::from("");
+        }
+
+        let skipped_for = |reason: &str| {
+            queue
+                .iter()
+                .any(|i| i.status == JobStatus::Skipped && i.skip_reason.to_string() == reason)
+        };
+
+        // 3. Plugin-only sources cannot be video-encoded at all.
+        if intent == "export"
+            && queue
+                .iter()
+                .any(|i| self.jobs.get(&i.job_id).is_some_and(|j| j.plugin_only))
+        {
+            return QString::from("plugin_only");
+        }
+        // 4. Missing motion data.
+        if skipped_for("no_gyro") {
+            return QString::from("no_gyro");
+        }
+        // 5. Nothing but calibration pairs.
+        if queue
+            .iter()
+            .all(|i| i.status == JobStatus::Skipped && i.skip_reason.to_string() == "calibration")
+        {
+            return QString::from("calibration");
+        }
+        // 6. The user stopped the work themselves.
+        if skipped_for("user_stopped") {
+            return QString::from("user_stopped");
+        }
+        QString::from("none")
+    }
+
     pub fn prepare_finished_jobs_for_video_export(&mut self) {
         let finished_job_ids = {
             let q = self.queue.borrow();
@@ -4985,7 +5192,16 @@ impl RenderQueue {
             .filter(|job_id| {
                 self.jobs
                     .get(job_id)
-                    .map(|job| job.last_finished_export_project == Some(2))
+                    .map(|job| {
+                        // plugin-only sources are about to be skipped by `start()`,
+                        // so the video render this prepares for never happens. Doing
+                        // the prep anyway is purely destructive: it strips
+                        // do_autosync and resets the finished state that the job's
+                        // sync pass just produced, leaving a row that has neither
+                        // baked offsets nor permission to compute new ones. The next
+                        // stabilize then re-syncs from scratch and lands yellow.
+                        job.last_finished_export_project == Some(2) && !job.plugin_only
+                    })
                     .unwrap_or(false)
             })
             .collect::<Vec<_>>();
@@ -5012,11 +5228,25 @@ impl RenderQueue {
     // Used by the Simple-mode video export button to distinguish "already
     // video-exported, offer re-export" from an unrelated no-op (export == 2,
     // or a non-renderable job): the dialog must only appear for the former.
-    // plugin-only-export-gate: `.r3d` (Nikon NR3D) / `.nev` (N-RAW) cannot be
-    // decoded by ffmpeg. Without a sibling same-name `.mov` (the legacy
-    // converted-file redirect), such sources are stabilize/plugin-workflow
-    // only: video encodes skip them, project exports and sync run normally.
-    fn plugin_only_extension(filename: &str) -> bool {
+    // plugin-only-export-gate: formats ffmpeg cannot decode for a video encode.
+    // Such sources are stabilize/plugin-workflow only: video encodes skip them,
+    // project exports and sync run normally.
+    //
+    // The set is split into two tiers because only one of them has a fallback:
+    //
+    // `.braw` / `.dng` are unconditional. There is no redirect path for them at
+    // render time, so a sibling `.mov` must NOT exempt them -- doing so would
+    // let the job pass this gate, reach the renderer, find no redirect, and feed
+    // the original file to ffmpeg anyway.
+    fn plugin_only_extension_always(filename: &str) -> bool {
+        let lower = filename.to_ascii_lowercase();
+        lower.ends_with(".braw") || lower.ends_with(".dng")
+    }
+    // `.r3d` (Nikon NR3D) / `.nev` (N-RAW) are exempt when a same-name `.mov`
+    // sits next to them (the legacy converted-file redirect). This tier MUST
+    // stay in lockstep with the render-time redirect branch, which is hardcoded
+    // to these two extensions.
+    fn plugin_only_extension_unless_sibling_mov(filename: &str) -> bool {
         let lower = filename.to_ascii_lowercase();
         lower.ends_with(".r3d") || lower.ends_with(".nev")
     }
@@ -5027,9 +5257,15 @@ impl RenderQueue {
             false,
         )
     }
+    // Evaluation order is load-bearing: the unconditional tier short-circuits
+    // first so `.braw` / `.dng` never reach `filesystem::exists`. This runs on
+    // the UI thread via `add_internal`, so widening the set must not widen the
+    // disk IO it performs.
     pub fn is_plugin_only_source(url: &str) -> bool {
-        Self::plugin_only_extension(&filesystem::get_filename(url))
-            && !filesystem::exists(&Self::sibling_mov_url(url))
+        let filename = filesystem::get_filename(url);
+        Self::plugin_only_extension_always(&filename)
+            || (Self::plugin_only_extension_unless_sibling_mov(&filename)
+                && !filesystem::exists(&Self::sibling_mov_url(url)))
     }
     // QML entry for the single-video render path (main canvas).
     fn is_plugin_only_video(&self, url: String) -> bool {
@@ -17387,17 +17623,32 @@ mod tests {
     // ---- plugin-only-export-gate ----
 
     #[test]
-    fn plugin_only_extension_matches_r3d_and_nev_case_insensitive() {
-        assert!(RenderQueue::plugin_only_extension("AAA_2399.R3D"));
-        assert!(RenderQueue::plugin_only_extension("aaa_2399.r3d"));
-        assert!(RenderQueue::plugin_only_extension("clip.NEV"));
-        assert!(RenderQueue::plugin_only_extension("clip.nev"));
-        // Ordinary and other raw formats pass through untouched.
-        assert!(!RenderQueue::plugin_only_extension("clip.mp4"));
-        assert!(!RenderQueue::plugin_only_extension("clip.mov"));
-        assert!(!RenderQueue::plugin_only_extension("clip.braw"));
-        assert!(!RenderQueue::plugin_only_extension("clip.crm"));
-        assert!(!RenderQueue::plugin_only_extension("r3d"));
+    fn plugin_only_extension_tiers_are_case_insensitive() {
+        // Sibling-mov-exempt tier.
+        assert!(RenderQueue::plugin_only_extension_unless_sibling_mov("AAA_2399.R3D"));
+        assert!(RenderQueue::plugin_only_extension_unless_sibling_mov("aaa_2399.r3d"));
+        assert!(RenderQueue::plugin_only_extension_unless_sibling_mov("clip.NEV"));
+        assert!(RenderQueue::plugin_only_extension_unless_sibling_mov("clip.nev"));
+        assert!(!RenderQueue::plugin_only_extension_unless_sibling_mov("clip.braw"));
+        assert!(!RenderQueue::plugin_only_extension_unless_sibling_mov("clip.dng"));
+
+        // Unconditional tier.
+        assert!(RenderQueue::plugin_only_extension_always("Cam.braw"));
+        assert!(RenderQueue::plugin_only_extension_always("CAM.BRAW"));
+        assert!(RenderQueue::plugin_only_extension_always("raw.dng"));
+        assert!(RenderQueue::plugin_only_extension_always("RAW.DNG"));
+        // A collapsed image sequence keeps the extension on the pattern name.
+        assert!(RenderQueue::plugin_only_extension_always("A001_%06d.dng"));
+        assert!(!RenderQueue::plugin_only_extension_always("clip.r3d"));
+
+        // Ordinary and other raw formats pass through untouched in both tiers.
+        for name in ["clip.mp4", "clip.mov", "clip.mxf", "clip.crm", "r3d", "braw"] {
+            assert!(!RenderQueue::plugin_only_extension_always(name), "{name}");
+            assert!(
+                !RenderQueue::plugin_only_extension_unless_sibling_mov(name),
+                "{name}"
+            );
+        }
     }
 
     #[test]
@@ -17425,6 +17676,81 @@ mod tests {
         )));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn is_plugin_only_source_ignores_sibling_mov_for_braw_and_dng() {
+        let dir = std::env::temp_dir().join(format!(
+            "gf_plugin_only_always_test_{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        for stem in ["Cam.braw", "raw.dng"] {
+            let src = dir.join(stem);
+            std::fs::write(&src, b"x").unwrap();
+            let url = filesystem::path_to_url(src.to_str().unwrap());
+
+            // Without a sibling .mov.
+            assert!(RenderQueue::is_plugin_only_source(&url), "{stem}");
+
+            // With a sibling .mov the verdict must be identical: these formats
+            // have no render-time redirect, so the exemption must not apply.
+            // Byte-identical results here also prove the unconditional tier
+            // short-circuits before any filesystem lookup.
+            let mov = dir.join(std::path::Path::new(stem).with_extension("mov"));
+            std::fs::write(&mov, b"x").unwrap();
+            assert!(RenderQueue::is_plugin_only_source(&url), "{stem} with .mov");
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn single_video_render_gate_does_not_inline_extension_literals() {
+        let app_qml = include_str!("../ui/App.qml");
+
+        // Scope the scan to the stretch between the render() entry and the
+        // "not available for rendering" notice -- that is the plugin-only gate.
+        // Anything after it (e.g. the legacy REDline notice) is out of scope and
+        // still carries its own extension check.
+        let start = app_qml
+            .find("function render(): void {")
+            .expect("App.qml must define renderBtn.render()");
+        let end = start
+            + app_qml[start..]
+                .find("This format is not available for rendering")
+                .expect("render() must keep the plugin-only notice");
+        // Strip whole-line comments: the rationale comment above the gate names
+        // the extensions on purpose, and only executable text is in scope here.
+        let gate: String = app_qml[start..end]
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            gate.contains("render_queue.is_plugin_only_video("),
+            "the single-video gate must delegate to is_plugin_only_video"
+        );
+        for literal in [".braw", ".dng", ".r3d", ".nev"] {
+            assert!(
+                !gate.contains(literal),
+                "the single-video gate must not inline the {literal} literal -- the queue path \
+                 and this path drifted apart once already; both must read one helper"
+            );
+        }
+    }
+
+    #[test]
+    fn is_plugin_only_source_matches_dng_image_sequence_pattern() {
+        // A collapsed DNG sequence is addressed by its `%0Nd` pattern; the
+        // pattern filename still carries the extension, so the unconditional
+        // tier matches it without touching the filesystem.
+        let dir = std::env::temp_dir().join(format!("gf_plugin_only_seq_{}", std::process::id()));
+        let pattern = dir.join("A001_%06d.dng");
+        let url = filesystem::path_to_url(pattern.to_str().unwrap());
+        assert!(RenderQueue::is_plugin_only_source(&url));
     }
 
     fn queue_with_lens_display_job(
@@ -20816,6 +21142,40 @@ mod tests {
     }
 
     #[test]
+    fn prepare_finished_jobs_for_video_export_leaves_plugin_only_jobs_unchanged() {
+        // A plugin-only source is skipped by start() a moment later, so the video
+        // render this prepares for never happens. Preparing it anyway strips
+        // do_autosync and resets the finished state its sync pass just produced,
+        // leaving a row with neither baked offsets nor permission to recompute
+        // them -- the next stabilize then lands yellow. Observed live 2026-08-05.
+        let mut queue = queue_with_autosync_project(JobStatus::Finished, true, Some(2));
+        queue.jobs.get_mut(&1).unwrap().plugin_only = true;
+
+        queue.prepare_finished_jobs_for_video_export();
+
+        assert_eq!(
+            queue.queue.borrow()[0].get_status(),
+            &JobStatus::Finished,
+            "a plugin-only job must keep its finished project export"
+        );
+        let job = queue.jobs.get(&1).unwrap();
+        assert_eq!(
+            job.last_finished_export_project,
+            Some(2),
+            "resetting it would discard the completed sync pass"
+        );
+        // The fixture releases `stab` for a Finished job, so the surviving
+        // autosync intent lives in the persisted copies.
+        assert!(has_top_level_do_autosync(&job.additional_data));
+        assert!(has_top_level_do_autosync(
+            job.project_data.as_ref().unwrap()
+        ));
+        assert!(has_calibration_do_autosync(
+            job.project_data.as_ref().unwrap()
+        ));
+    }
+
+    #[test]
     fn prepare_finished_jobs_for_video_export_leaves_error_and_skipped_jobs_unchanged() {
         for status in [JobStatus::Error, JobStatus::Skipped] {
             let mut queue = queue_with_autosync_project(status.clone(), true, Some(2));
@@ -21158,6 +21518,324 @@ mod tests {
         });
 
         assert_eq!(model.estimate_remaining_ms(0, 0, 1), None);
+    }
+
+    // ---- queue-stuck-state-recovery ----
+
+    /// One row spec: (job_id, status, skip_reason, error_string, plugin_only).
+    type RecoveryRow<'a> = (u32, JobStatus, &'a str, &'a str, bool);
+
+    fn recovery_queue(rows: &[RecoveryRow]) -> RenderQueue {
+        let mut queue = RenderQueue::default();
+        for (idx, (job_id, status, skip_reason, error_string, plugin_only)) in
+            rows.iter().enumerate()
+        {
+            queue.queue.borrow_mut().push(RenderQueueItem {
+                job_id: *job_id,
+                total_frames: 100,
+                status: status.clone(),
+                skip_reason: QString::from(*skip_reason),
+                error_string: QString::from(*error_string),
+                ..Default::default()
+            });
+            queue.jobs.insert(
+                *job_id,
+                Job {
+                    queue_index: idx,
+                    render_options: RenderOptions::default(),
+                    base_render_output_size: None,
+                    original_output_size: (0, 0),
+                    auto_rotate: false,
+                    additional_data: String::new(),
+                    cancel_flag: Default::default(),
+                    render_epoch: Default::default(),
+                    project_data: None,
+                    last_finished_export_project: None,
+                    last_written_offsets: None,
+                    stab: Some(Arc::new(StabilizationManager::default())),
+                    base_lens_metadata: None,
+                    lens_group_config_override: None,
+                    lens_index_override: None,
+                    focal_length_override: None,
+                    lens_group_index: None,
+                    video_created_at: None,
+                    plugin_only: *plugin_only,
+                    original_video_rotation: 0.0,
+                },
+            );
+        }
+        queue
+    }
+
+    fn row_status(queue: &RenderQueue, job_id: u32) -> (JobStatus, String) {
+        let q = queue.queue.borrow();
+        let item = q.iter().find(|i| i.job_id == job_id).expect("row exists");
+        (item.status.clone(), item.skip_reason.to_string())
+    }
+
+    #[test]
+    fn revive_lifts_plugin_only_skip_for_sync_but_not_for_export() {
+        let rows: &[RecoveryRow] = &[(1, JobStatus::Skipped, "plugin_only", "", true)];
+
+        let mut queue = recovery_queue(rows);
+        assert_eq!(queue.revive_stuck_jobs("export".into()), 0);
+        assert_eq!(
+            row_status(&queue, 1),
+            (JobStatus::Skipped, "plugin_only".to_string()),
+            "an export can never encode this source, so reviving it would only flap the status"
+        );
+
+        let mut queue = recovery_queue(rows);
+        assert_eq!(queue.revive_stuck_jobs("sync".into()), 1);
+        assert_eq!(row_status(&queue, 1), (JobStatus::Queued, String::new()));
+    }
+
+    #[test]
+    fn revive_re_judges_no_gyro_skips() {
+        // Still no motion data -> the skip is still true, leave it in place.
+        let mut queue = recovery_queue(&[(1, JobStatus::Skipped, "no_gyro", "", false)]);
+        assert_eq!(queue.revive_stuck_jobs("sync".into()), 0);
+        assert_eq!(
+            row_status(&queue, 1),
+            (JobStatus::Skipped, "no_gyro".to_string())
+        );
+
+        // Motion data arrived since the skip -> the reason no longer holds.
+        let mut queue = recovery_queue(&[(1, JobStatus::Skipped, "no_gyro", "", false)]);
+        add_motion_to_job(&mut queue, 1, false);
+        assert_eq!(queue.revive_stuck_jobs("sync".into()), 1);
+        assert_eq!(row_status(&queue, 1), (JobStatus::Queued, String::new()));
+    }
+
+    #[test]
+    fn revive_retries_errors_but_not_pending_questions() {
+        for intent in ["sync", "export"] {
+            let mut queue =
+                recovery_queue(&[(1, JobStatus::Error, "", "encoder not supported", false)]);
+            assert_eq!(queue.revive_stuck_jobs(intent.into()), 1, "{intent}");
+            assert_eq!(row_status(&queue, 1).0, JobStatus::Queued, "{intent}");
+            assert_eq!(
+                queue.queue.borrow()[0].error_string.to_string(),
+                String::new(),
+                "{intent}"
+            );
+        }
+
+        // An unanswered question still owns its row's buttons.
+        for err in ["file_exists:{}", "convert_format:{}"] {
+            for intent in ["sync", "export"] {
+                let mut queue = recovery_queue(&[(1, JobStatus::Error, "", err, false)]);
+                assert_eq!(queue.revive_stuck_jobs(intent.into()), 0, "{err} / {intent}");
+                assert_eq!(row_status(&queue, 1).0, JobStatus::Error, "{err} / {intent}");
+            }
+        }
+    }
+
+    #[test]
+    fn revive_leaves_calibration_and_user_stopped_alone() {
+        let rows: &[RecoveryRow] = &[
+            (1, JobStatus::Skipped, "calibration", "", false),
+            (2, JobStatus::Skipped, "user_stopped", "", false),
+        ];
+        for intent in ["sync", "export"] {
+            let mut queue = recovery_queue(rows);
+            assert_eq!(queue.revive_stuck_jobs(intent.into()), 0, "{intent}");
+            assert_eq!(
+                row_status(&queue, 1),
+                (JobStatus::Skipped, "calibration".to_string())
+            );
+            assert_eq!(
+                row_status(&queue, 2),
+                (JobStatus::Skipped, "user_stopped".to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn revive_never_touches_healthy_rows() {
+        let mut queue = recovery_queue(&[
+            (1, JobStatus::Queued, "", "", false),
+            (2, JobStatus::Rendering, "", "", false),
+            (3, JobStatus::Finished, "", "", false),
+        ]);
+        queue.jobs.get_mut(&3).unwrap().last_finished_export_project = Some(4);
+
+        assert_eq!(queue.revive_stuck_jobs("export".into()), 0);
+        assert_eq!(row_status(&queue, 1).0, JobStatus::Queued);
+        assert_eq!(row_status(&queue, 2).0, JobStatus::Rendering);
+        assert_eq!(
+            row_status(&queue, 3).0,
+            JobStatus::Finished,
+            "a finished video export must not be requeued for a re-render"
+        );
+        assert_eq!(
+            queue.jobs.get(&3).unwrap().last_finished_export_project,
+            Some(4)
+        );
+    }
+
+    #[test]
+    fn revive_of_plugin_only_error_is_blocked_for_export() {
+        // The plugin-only guard wins over the Error rule: reviving here would
+        // just hand the row back to `start()`'s sweep.
+        let mut queue = recovery_queue(&[(1, JobStatus::Error, "", "boom", true)]);
+        assert_eq!(queue.revive_stuck_jobs("export".into()), 0);
+        assert_eq!(row_status(&queue, 1).0, JobStatus::Error);
+
+        let mut queue = recovery_queue(&[(1, JobStatus::Error, "", "boom", true)]);
+        assert_eq!(queue.revive_stuck_jobs("sync".into()), 1);
+    }
+
+    #[test]
+    fn revive_preserves_matching_and_sync_results() {
+        // Red line: recovery clears status only. Clearing pairings is a separate
+        // action (`reset_all_video_pairings`) that this path must never reach.
+        let mut queue = recovery_queue(&[
+            (1, JobStatus::Skipped, "plugin_only", "", true),
+            (2, JobStatus::Error, "", "boom", false),
+        ]);
+        let day = chrono::NaiveDate::from_ymd_opt(2026, 8, 5).unwrap();
+        queue.learned_clock_shift_ms = Some(4242);
+        queue.learned_clock_shift_day = Some(day);
+        queue.manual_pairs.push(core::gyro_match::ManualCalibrationPair {
+            job_id: 1,
+            video_index: 0,
+            gyro_index: 7,
+        });
+        queue.deep_match_results.insert(
+            1,
+            DeepMatchResult {
+                gyro_index: 3,
+                offset_ms: -1234.0,
+            },
+        );
+        queue.match_results = Some(core::gyro_match::BatchMatchResult {
+            results: Vec::new(),
+            global_offset_ms: Some(99),
+            error: None,
+        });
+
+        assert_eq!(queue.revive_stuck_jobs("sync".into()), 2);
+
+        assert_eq!(queue.learned_clock_shift_ms, Some(4242));
+        assert_eq!(queue.learned_clock_shift_day, Some(day));
+        assert_eq!(queue.manual_pairs.len(), 1);
+        assert_eq!(queue.manual_pairs[0].gyro_index, 7);
+        assert_eq!(
+            queue.deep_match_results.get(&1).map(|r| r.gyro_index),
+            Some(3)
+        );
+        assert_eq!(
+            queue.match_results.as_ref().and_then(|r| r.global_offset_ms),
+            Some(99)
+        );
+    }
+
+    #[test]
+    fn dispatch_blocker_reason_reports_the_actionable_cause() {
+        // 1. Something dispatchable -> not blocked.
+        let queue = recovery_queue(&[
+            (1, JobStatus::Queued, "", "", false),
+            (2, JobStatus::Skipped, "no_gyro", "", false),
+        ]);
+        assert_eq!(queue.dispatch_blocker_reason("sync".into()).to_string(), "");
+
+        // 2. A finished job hands the decision back to the re-export branch.
+        let queue = recovery_queue(&[
+            (1, JobStatus::Finished, "", "", false),
+            (2, JobStatus::Skipped, "plugin_only", "", true),
+        ]);
+        assert_eq!(
+            queue.dispatch_blocker_reason("export".into()).to_string(),
+            "",
+            "the 'already exported, re-export?' prompt must not be displaced"
+        );
+
+        // 2b. For a sync the same queue IS blocked unless the finished job is a
+        // project export -- those are the only ones start_batch_autosync requeues.
+        let mut queue = recovery_queue(&[
+            (1, JobStatus::Finished, "", "", false),
+            (2, JobStatus::Skipped, "no_gyro", "", false),
+        ]);
+        queue.jobs.get_mut(&1).unwrap().last_finished_export_project = Some(4);
+        assert_eq!(
+            queue.dispatch_blocker_reason("sync".into()).to_string(),
+            "no_gyro",
+            "a finished video export is not work the sync pass can pick up"
+        );
+        queue.jobs.get_mut(&1).unwrap().last_finished_export_project = Some(2);
+        assert_eq!(
+            queue.dispatch_blocker_reason("sync".into()).to_string(),
+            "",
+            "a finished project export is requeued by start_batch_autosync"
+        );
+
+        // 3. Plugin-only, export intent.
+        let queue = recovery_queue(&[(1, JobStatus::Skipped, "plugin_only", "", true)]);
+        assert_eq!(
+            queue.dispatch_blocker_reason("export".into()).to_string(),
+            "plugin_only"
+        );
+        // The same queue is not blocked for a sync -- recovery already requeued it.
+        let mut queue = recovery_queue(&[(1, JobStatus::Skipped, "plugin_only", "", true)]);
+        queue.revive_stuck_jobs("sync".into());
+        assert_eq!(queue.dispatch_blocker_reason("sync".into()).to_string(), "");
+
+        // 4/5/6.
+        let queue = recovery_queue(&[(1, JobStatus::Skipped, "no_gyro", "", false)]);
+        assert_eq!(
+            queue.dispatch_blocker_reason("sync".into()).to_string(),
+            "no_gyro"
+        );
+        let queue = recovery_queue(&[(1, JobStatus::Skipped, "calibration", "", false)]);
+        assert_eq!(
+            queue.dispatch_blocker_reason("sync".into()).to_string(),
+            "calibration"
+        );
+        let queue = recovery_queue(&[(1, JobStatus::Skipped, "user_stopped", "", false)]);
+        assert_eq!(
+            queue.dispatch_blocker_reason("sync".into()).to_string(),
+            "user_stopped"
+        );
+
+        // 7. Fallback, and an empty queue never speaks up.
+        let queue = recovery_queue(&[(1, JobStatus::Error, "", "file_exists:{}", false)]);
+        assert_eq!(
+            queue.dispatch_blocker_reason("sync".into()).to_string(),
+            "none"
+        );
+        let queue = recovery_queue(&[]);
+        assert_eq!(queue.dispatch_blocker_reason("sync".into()).to_string(), "");
+    }
+
+    #[test]
+    fn job_lacks_sync_motion_is_the_shared_no_gyro_verdict() {
+        // Empty gyro, keep_video_gyro = false -> genuinely no motion.
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        assert!(job_lacks_sync_motion(queue.jobs.get(&1).unwrap()));
+
+        // raw_imu present -> has motion.
+        add_motion_to_job(&mut queue, 1, false);
+        assert!(!job_lacks_sync_motion(queue.jobs.get(&1).unwrap()));
+
+        // quaternions present -> has motion.
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        add_motion_to_job(&mut queue, 1, true);
+        assert!(!job_lacks_sync_motion(queue.jobs.get(&1).unwrap()));
+
+        // keep_video_gyro trusts the built-in gyro even with nothing loaded yet.
+        let queue = queue_with_eta_job(JobStatus::Queued);
+        {
+            let job = queue.jobs.get(&1).unwrap();
+            let stab = job.stab.as_ref().unwrap();
+            stab.gyro.read().file_metadata.write().keep_video_gyro = true;
+        }
+        assert!(!job_lacks_sync_motion(queue.jobs.get(&1).unwrap()));
+
+        // A released StabilizationManager is "not my call", not "no gyro".
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        queue.jobs.get_mut(&1).unwrap().stab = None;
+        assert!(!job_lacks_sync_motion(queue.jobs.get(&1).unwrap()));
     }
 
     #[test]
@@ -24564,6 +25242,109 @@ mod tests {
                 .count(),
             2,
             "the bottom-bar enable/visibility bindings must keep the visible-panel term"
+        );
+    }
+
+    // [queue-stuck-state-recovery] Invariant: recovery runs at the very top of
+    // both Simple-mode flows, with the intent that matches the button, and
+    // nowhere else. Position is load-bearing — every gate further down reads the
+    // queue and would need a "skipped but should still count" special case if
+    // recovery ran later. The intents must not be swapped either: "sync" lifts
+    // plugin-only skips, "export" deliberately leaves them.
+    #[test]
+    fn stuck_state_recovery_runs_first_in_both_simple_mode_flows() {
+        let qml = include_str!("../ui/App.qml");
+
+        for (func, intent) in [
+            ("function runPluginStabilizeFlow(): void {", "sync"),
+            ("function runStabilizedBatchExport(): bool {", "export"),
+        ] {
+            let start = qml.find(func).unwrap_or_else(|| panic!("{func} exists"));
+            // Bound the slice to this function: window-level functions sit at a
+            // 4-space indent, so the next one marks the end.
+            let after = &qml[start + func.len()..];
+            let end = after.find("\n    function ").unwrap_or(after.len());
+            let body = &after[..end];
+
+            let call = format!("render_queue.revive_stuck_jobs(\"{intent}\")");
+            let call_idx = body
+                .find(&call)
+                .unwrap_or_else(|| panic!("{func} must call {call}"));
+
+            // Nothing that consults the queue's contents may run before recovery.
+            // Tokens absent from this particular flow are simply not applicable.
+            for later in [
+                "hasGyroFiles",
+                "batch_motion_ready()",
+                "matchDirty",
+                "syncDirty",
+            ] {
+                if let Some(later_idx) = body.find(later) {
+                    assert!(
+                        call_idx < later_idx,
+                        "{func} must call revive_stuck_jobs before reading {later}"
+                    );
+                }
+            }
+        }
+
+        assert_eq!(
+            qml.matches("render_queue.revive_stuck_jobs(").count(),
+            2,
+            "recovery is scoped to the two Simple-mode buttons: no other entry \
+             point (right-click Render now / Reset status / dialogs) may trigger it"
+        );
+    }
+
+    // [queue-stuck-state-recovery] Invariant: every branch that can end a
+    // dispatch without starting work and without opening a dialog must explain
+    // itself. These two used to `return` in silence, which reads as a dead button.
+    #[test]
+    fn silent_dispatch_returns_are_explained() {
+        let qml = include_str!("../ui/App.qml");
+
+        assert!(
+            qml.contains("function explainDispatchBlocked(intent: string): void {")
+                && qml.contains("render_queue.dispatch_blocker_reason(intent)"),
+            "App.qml must expose the shared blocked-dispatch explainer"
+        );
+        assert!(
+            qml.contains(
+                "if (!render_queue.batch_motion_ready()) { window.explainDispatchBlocked(\"sync\"); return; }"
+            ),
+            "the embedded-gyro stabilize branch must explain itself instead of returning silently"
+        );
+        assert!(
+            qml.contains("window.explainDispatchBlocked(\"export\");"),
+            "the export branch with no renderable job and no finished export must explain itself"
+        );
+        // The batch-sync entry point is the single choke point for its three
+        // callers (syncDirty branch, re-export confirmation, post-match
+        // continuation); guarding it there beats guarding each of them.
+        let sync_fn = qml
+            .find("function runSimpleBatchSync(): void {")
+            .expect("runSimpleBatchSync exists");
+        let sync_body = &qml[sync_fn..];
+        let guard = sync_body
+            .find("window.explainDispatchBlocked(\"sync\");")
+            .expect("runSimpleBatchSync must explain a dispatch it cannot start");
+        let dispatch = sync_body
+            .find("render_queue.start_batch_autosync()")
+            .expect("runSimpleBatchSync must dispatch");
+        assert!(
+            guard < dispatch,
+            "the explanation must come before the dispatch, not after it"
+        );
+        // The re-export prompt must still win over the explainer.
+        let export_idx = qml
+            .find("if (render_queue.has_finished_video_exports())")
+            .expect("the re-export branch must survive");
+        let tail = &qml[export_idx..];
+        let confirm_idx = tail.find("window.confirmReExport(\"video\");").unwrap();
+        let explain_idx = tail.find("window.explainDispatchBlocked(\"export\");").unwrap();
+        assert!(
+            confirm_idx < explain_idx,
+            "'already exported, re-export?' must take precedence over the blocked-dispatch notice"
         );
     }
 

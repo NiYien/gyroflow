@@ -93,8 +93,8 @@ Item {
         // start instead of a cascade of per-job ffmpeg codec errors.
         function onPlugin_only_skipped(count: int): void {
             window.messageBox(Modal.Info,
-                qsTr("%1 video(s) (R3D / N-RAW) cannot be exported directly and were skipped.").arg(count)
-                + "\n" + qsTr("Press \"%1\" instead, then finish these clips in your video editor with the Gyroflow plugin.").arg(qsTr("Stabilize (or use with plugins)")),
+                qsTr("%1 video(s) cannot be exported directly. Use \"%2\" instead.")
+                    .arg(count).arg(qsTr("Stabilize (or use with plugins)")),
                 [{ text: qsTr("Ok"), accent: true }]);
         }
     }

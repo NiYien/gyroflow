@@ -187,6 +187,31 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="2151"/>
+        <source>These videos cannot be exported directly. Use &quot;%1&quot; instead.</source>
+        <translation>Αυτά τα βίντεο δεν μπορούν να εξαχθούν απευθείας. Χρησιμοποιήστε &quot;%1&quot;.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2154"/>
+        <source>None of the videos in the queue have gyro data.</source>
+        <translation>Κανένα από τα βίντεο στην ουρά δεν έχει δεδομένα γυροσκοπίου.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2157"/>
+        <source>The queue only contains calibration videos, which are not processed on their own.</source>
+        <translation>Η ουρά περιέχει μόνο βίντεο βαθμονόμησης, τα οποία δεν επεξεργάζονται από μόνα τους.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2160"/>
+        <source>The videos in the queue were stopped. Use the restart button on a row to run it again.</source>
+        <translation>Τα βίντεο στην ουρά σταμάτησαν. Χρησιμοποιήστε το κουμπί επανεκκίνησης σε μια σειρά για να εκτελεστεί ξανά.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2163"/>
+        <source>There are no videos in the queue that can be processed.</source>
+        <translation>Δεν υπάρχουν βίντεο στην ουρά που μπορούν να επεξεργαστούν.</translation>
+    </message>
+    <message>
         <source>Adjust smoothness, horizon lock and how much the frame is cropped.</source>
         <translation type="vanished">Ρυθμίστε την ομαλότητα, το κλείδωμα ορίζοντα και πόσο περικόπτεται το κάδρο.</translation>
     </message>
@@ -3296,6 +3321,11 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
 <context>
     <name>RenderQueue</name>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="96"/>
+        <source>%1 video(s) cannot be exported directly. Use &quot;%2&quot; instead.</source>
+        <translation>%1 βίντεο δεν μπορούν να εξαχθούν απευθείας. Χρησιμοποιήστε &quot;%2&quot;.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="358"/>
         <source>Edit</source>
         <translation type="unfinished"></translation>
@@ -3467,16 +3497,6 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
         <location filename="../../src/ui/RenderQueue.qml" line="615"/>
         <source>Later</source>
         <translation>Αργότερα</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="96"/>
-        <source>%1 video(s) (R3D / N-RAW) cannot be exported directly and were skipped.</source>
-        <translation>%1 βίντεο (R3D / N-RAW) δεν μπορούν να εξαχθούν απευθείας και παραλείφθηκαν.</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="97"/>
-        <source>Press &quot;%1&quot; instead, then finish these clips in your video editor with the Gyroflow plugin.</source>
-        <translation>Πατήστε &quot;%1&quot; αντί αυτού και ολοκληρώστε αυτά τα κλιπ στον επεξεργαστή βίντεο με το πρόσθετο Gyroflow.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2639"/>

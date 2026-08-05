@@ -187,6 +187,31 @@ Notez que ce n&apos;est qu&apos;un indicateur visuel, il n&apos;affecte pas le r
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="2151"/>
+        <source>These videos cannot be exported directly. Use &quot;%1&quot; instead.</source>
+        <translation>Ces vidéos ne peuvent pas être exportées directement. Utilisez &quot;%1&quot; à la place.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2154"/>
+        <source>None of the videos in the queue have gyro data.</source>
+        <translation>Aucune des vidéos de la file d&apos;attente n&apos;a de données gyroscopiques.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2157"/>
+        <source>The queue only contains calibration videos, which are not processed on their own.</source>
+        <translation>La file d&apos;attente ne contient que des vidéos d&apos;étalonnage, qui ne sont pas traitées seules.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2160"/>
+        <source>The videos in the queue were stopped. Use the restart button on a row to run it again.</source>
+        <translation>Les vidéos de la file d&apos;attente ont été arrêtées. Utilisez le bouton de redémarrage d&apos;une ligne pour la relancer.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2163"/>
+        <source>There are no videos in the queue that can be processed.</source>
+        <translation>Il n&apos;y a aucune vidéo dans la file d&apos;attente qui puisse être traitée.</translation>
+    </message>
+    <message>
         <source>Adjust smoothness, horizon lock and how much the frame is cropped.</source>
         <translation type="vanished">Ajustez le lissage, le verrouillage de l&apos;horizon et l&apos;intensité du recadrage de l&apos;image.</translation>
     </message>
@@ -3295,6 +3320,11 @@ Ouvrez &lt;b&gt;Terminal&lt;/b&gt; et entrez la commande suivante&#xa0;:</transl
 <context>
     <name>RenderQueue</name>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="96"/>
+        <source>%1 video(s) cannot be exported directly. Use &quot;%2&quot; instead.</source>
+        <translation>%1 vidéo(s) ne peuvent pas être exportées directement. Utilisez &quot;%2&quot; à la place.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="358"/>
         <source>Edit</source>
         <translation type="unfinished"></translation>
@@ -3466,16 +3496,6 @@ Pour toute vidéo non appariée, vous pouvez l&apos;apparier manuellement : clic
         <location filename="../../src/ui/RenderQueue.qml" line="615"/>
         <source>Later</source>
         <translation>Plus tard</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="96"/>
-        <source>%1 video(s) (R3D / N-RAW) cannot be exported directly and were skipped.</source>
-        <translation>%1 vidéo(s) (R3D / N-RAW) ne peuvent pas être exportées directement et ont été ignorées.</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="97"/>
-        <source>Press &quot;%1&quot; instead, then finish these clips in your video editor with the Gyroflow plugin.</source>
-        <translation>Appuyez plutôt sur &quot;%1&quot;, puis finalisez ces clips dans votre éditeur vidéo avec le plugin Gyroflow.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2639"/>
