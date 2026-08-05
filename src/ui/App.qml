@@ -60,15 +60,32 @@ Rectangle {
     // single-URI Connections.onUrl_opened for parity) with the picked URL list.
     // Cleared after invocation. null -> default route (main viewer batch).
     property var pendingPickerCallback: null;
-    function openMainFileDialog(): void {
-        // Wraps fileDialog.open2() so Android picks route the multi-URL batch
-        // back into videoArea.loadMultipleFiles (matching desktop "Open" UX).
+    // Last URL an Android picker returned, handed back as EXTRA_INITIAL_URI so the
+    // next picker opens where the user left off. Session-only by design: it is not
+    // a QSettings alias, so it needs no settings-whitelist entry.
+    property string lastPickerUrl: "";
+    // Opens the platform picker. On Android this bypasses Qt's FileDialog so the
+    // intent can be aimed at DocumentsUI explicitly - some ROMs (HyperOS) reroute
+    // the implicit ACTION_OPEN_DOCUMENT to their own picker, which declares
+    // screenOrientation="behind", inherits this app's forced landscape and lays
+    // out at roughly three rows per screen. Falls back to the supplied QML dialog
+    // whenever there is no native path (every desktop platform, or a launch
+    // failure on Android); the fallback delivers through the same urls_opened
+    // bridge, so the callback stays valid either way.
+    // mode: 0 = files, 1 = folder tree.
+    function openPicker(mode: int, allowMultiple: bool, callback: var, fallbackDialog: var): void {
         if (Qt.platform.os === "android") {
-            window.pendingPickerCallback = function(urls) {
-                videoArea.loadMultipleFiles(urls, false);
-            };
+            window.pendingPickerCallback = callback;
+            if (filesystem.open_native_picker(mode, allowMultiple, window.lastPickerUrl)) return;
         }
-        fileDialog.open2();
+        if (fallbackDialog.open2) fallbackDialog.open2(); else fallbackDialog.open();
+    }
+    function openMainFileDialog(): void {
+        // Routes the picked batch into videoArea.loadMultipleFiles, matching the
+        // desktop "Open" UX.
+        window.openPicker(0, true, function(urls) {
+            videoArea.loadMultipleFiles(urls, false);
+        }, fileDialog);
     }
     // Index 1 in smoothingAlgorithms corresponds to DefaultAlgo (see src/core/smoothing/mod.rs).
     readonly property int defaultSmoothingIndex: 1;
@@ -732,6 +749,8 @@ Rectangle {
             window.pendingPickerCallback = null;
             const urlList = urls.map(u => Qt.url(u));
             if (urlList.length === 0) return;
+            // Remember where this pick came from so the next picker starts there.
+            window.lastPickerUrl = urls[0];
             if (cb) { cb(urlList); return; }
             // No active picker callback (unexpected timing, e.g. the callback
             // was cleared by a spurious dialog reject). SAF folder tree URIs
@@ -752,6 +771,12 @@ Rectangle {
                 // multi-select UX.
                 videoArea.loadMultipleFiles(fileUrls, false);
             }
+        }
+        function onPicker_cancelled(): void {
+            // Natively launched pickers have no QML dialog, so this replaces the
+            // onRejected handler that would otherwise clear the callback. Leaving
+            // it set would let the next VIEW/SEND intent be routed through it.
+            window.pendingPickerCallback = null;
         }
     }
     function onItemLoaded(): void {

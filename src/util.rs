@@ -201,6 +201,23 @@ pub extern "system" fn Java_com_niyien_gyroflow_MainActivity_urlsReceived(
         #endif
     });
 }
+#[cfg(target_os = "android")]
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_niyien_gyroflow_MainActivity_pickerCancelled(
+    _vm: *mut c_void,
+    _: *mut c_void,
+) {
+    // A picker we launched ourselves closed without a selection. Only Qt-owned
+    // dialogs emit onRejected, so QML needs this to drop its pending callback.
+    cpp!(unsafe [] {
+        #ifdef Q_OS_ANDROID
+            if (globalUrlCatcherPtr) {
+                QMetaObject::invokeMethod(globalUrlCatcherPtr, "catch_picker_cancelled", Qt::QueuedConnection);
+            }
+        #endif
+    });
+}
 pub fn set_url_catcher(ctlptr: *mut c_void) {
     cpp!(unsafe [ctlptr as "QObject *"] {
         globalUrlCatcherPtr = ctlptr;
@@ -609,6 +626,49 @@ pub fn install_crash_handler() -> std::io::Result<()> {
         });
     }
     Ok(())
+}
+
+// Launches the SAF picker through MainActivity.openPicker instead of Qt's
+// FileDialog, so the intent can be aimed at DocumentsUI explicitly (see the Java
+// side for why). Results keep arriving through the existing urlsReceived bridge,
+// so nothing downstream changes. mode: 0 = files, 1 = folder tree.
+#[cfg(target_os = "android")]
+pub fn android_open_picker(mode: i32, allow_multiple: bool, initial_uri: &str) -> Result<(), String> {
+    use jni::objects::{JClass, JObject, JString, JValue};
+    let jvm = unsafe { jni::JavaVM::from_raw(ndk_context::android_context().vm().cast()) };
+    let status = jvm
+        .attach_current_thread(|env| {
+            let activity = unsafe {
+                JObject::from_raw(env, ndk_context::android_context().context().cast())
+            };
+            let activity_class = env.get_object_class(&activity)?;
+            let class_loader = activity_class.get_class_loader(env)?;
+            let class_name = env.new_string("com.niyien.gyroflow.MainActivity")?;
+            let class = JClass::for_name_with_loader(env, class_name, true, class_loader)?;
+            let jinitial = env.new_string(initial_uri)?;
+            let result = env
+                .call_static_method(
+                    class,
+                    jni::jni_str!("openPicker"),
+                    jni::jni_sig!("(IZLjava/lang/String;)Ljava/lang/String;"),
+                    &[
+                        JValue::Int(mode),
+                        JValue::Bool(allow_multiple),
+                        JValue::Object(jinitial.as_ref()),
+                    ],
+                )?
+                .l()?;
+            Ok::<String, jni::errors::Error>(env.as_cast::<JString>(&result)?.to_string())
+        })
+        .map_err(|err| format!("openPicker JNI call failed: {err}"))?;
+    if status == "ok" {
+        Ok(())
+    } else {
+        Err(match status.strip_prefix("error:") {
+            Some(detail) => detail.to_owned(),
+            None => format!("unexpected openPicker status: {status}"),
+        })
+    }
 }
 
 // In-app update handoff: forward the downloaded APK to MainActivity.installApk,

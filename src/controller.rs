@@ -6050,6 +6050,8 @@ pub struct Filesystem {
     display_folder_filename: qt_method!(fn(&self, folder: QUrl, filename: QString) -> QString),
     catch_url_open: qt_method!(fn(&self, url: QUrl)),
     catch_urls_open: qt_method!(fn(&self, urls: QStringList)),
+    open_native_picker: qt_method!(fn(&self, mode: i32, allow_multiple: bool, initial_url: QString) -> bool),
+    catch_picker_cancelled: qt_method!(fn(&self)),
     remove_file: qt_method!(fn(&self, url: QUrl)),
     folder_access_granted: qt_method!(fn(&self, url: QUrl)),
     move_to_trash: qt_method!(fn(&self, url: QUrl)),
@@ -6058,6 +6060,7 @@ pub struct Filesystem {
     get_next_file_url: qt_method!(fn(&self, current_url: QUrl, index: i32) -> QUrl),
     url_opened: qt_signal!(url: QUrl),
     urls_opened: qt_signal!(urls: QStringList),
+    picker_cancelled: qt_signal!(),
 }
 impl Filesystem {
     fn exists_in_folder(&self, folder: QUrl, filename: QString) -> bool {
@@ -6130,6 +6133,32 @@ impl Filesystem {
         // Emits urls_opened so QML can route the whole list (e.g. to the render
         // queue batch loader) instead of collapsing to a single file.
         self.urls_opened(urls);
+    }
+    fn catch_picker_cancelled(&self) {
+        // A natively launched picker closed with no selection; QML must drop its
+        // pending callback (no Qt dialog exists to emit onRejected for it).
+        self.picker_cancelled();
+    }
+    // Opens the platform file picker directly instead of going through Qt's
+    // FileDialog. Returns false when there is no native path (every non-Android
+    // platform, or a failure on Android), in which case the caller must fall back
+    // to the QML FileDialog. mode: 0 = files, 1 = folder tree.
+    fn open_native_picker(&self, mode: i32, allow_multiple: bool, initial_url: QString) -> bool {
+        #[cfg(target_os = "android")]
+        {
+            match util::android_open_picker(mode, allow_multiple, &initial_url.to_string()) {
+                Ok(()) => true,
+                Err(e) => {
+                    ::log::warn!(target: "app", "native picker unavailable, falling back to Qt dialog: {e}");
+                    false
+                }
+            }
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            let _ = (mode, allow_multiple, initial_url);
+            false
+        }
     }
     fn remove_file(&self, url: QUrl) {
         let _ = filesystem::remove_file(&util::qurl_to_encoded(url));

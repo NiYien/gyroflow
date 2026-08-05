@@ -409,6 +409,42 @@ pub fn is_dir(url: &str) -> bool {
 pub fn is_bare_content_tree_url(url: &str) -> bool {
     url.starts_with("content://") && url.contains("/tree/") && !url.contains("/document/")
 }
+// Restores the fully percent-encoded form a SAF URI must be in before it reaches
+// ContentResolver.
+//
+// SAF matches URI permission grants by exact `Uri.toString()` equality, so a
+// content:// URL has to arrive in byte-identical form to what the picker handed
+// out. QML's `url` type decodes on the way through: a picked path comes back with
+// spaces and non-ASCII characters raw while %3A / %2F stay encoded. That mixed
+// form no longer matches the grant, the resulting SecurityException is swallowed
+// by the JNI wrapper, and the only visible symptom is an empty filename and a
+// "video could not be read" error. The pre-existing space handling covered the
+// ASCII half of this; non-ASCII paths (any CJK folder name) hit the same wall.
+//
+// Idempotent: an already-encoded URL contains no spaces and is pure ASCII, so it
+// is returned untouched. Non-content URLs keep the historical space-only
+// behaviour so local file paths are unaffected.
+pub fn reencode_url_for_android(url: &str) -> std::borrow::Cow<'_, str> {
+    let encode_non_ascii = url.starts_with("content://");
+    if !url.contains(' ') && !(encode_non_ascii && !url.is_ascii()) {
+        return std::borrow::Cow::Borrowed(url);
+    }
+    let mut out = String::with_capacity(url.len() + 8);
+    for ch in url.chars() {
+        if ch == ' ' {
+            out.push_str("%20");
+        } else if ch.is_ascii() || !encode_non_ascii {
+            out.push(ch);
+        } else {
+            let mut buf = [0u8; 4];
+            for b in ch.encode_utf8(&mut buf).as_bytes() {
+                // Uppercase hex to match what Android's Uri encoder emits.
+                out.push_str(&format!("%{b:02X}"));
+            }
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
 pub fn exists_in_folder(folder_url: &str, filename: &str) -> bool {
     fn inner(folder_url: &str, filename: &str) -> bool {
         if folder_url.is_empty() || filename.is_empty() {
@@ -812,7 +848,53 @@ pub fn folder_access_granted(folder_url: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{filename_from_url_string, get_filename, is_bare_content_tree_url};
+    use super::{
+        filename_from_url_string, get_filename, is_bare_content_tree_url,
+        reencode_url_for_android,
+    };
+
+    // The picker hands out a fully encoded URI; QML's `url` type decodes the
+    // non-ASCII half on the way through while leaving %3A / %2F alone. SAF
+    // compares permission grants by exact string, so the decoded form must be
+    // restored before it reaches ContentResolver.
+    #[test]
+    fn android_url_reencodes_non_ascii_in_content_urls() {
+        let decoded = "content://com.android.externalstorage.documents/document/primary%3A工作%2FTest_Video%2FDSC_1402.MP4";
+        let encoded = "content://com.android.externalstorage.documents/document/primary%3A%E5%B7%A5%E4%BD%9C%2FTest_Video%2FDSC_1402.MP4";
+        assert_eq!(reencode_url_for_android(decoded), encoded);
+    }
+
+    #[test]
+    fn android_url_reencode_is_idempotent() {
+        let encoded = "content://com.android.externalstorage.documents/document/primary%3A%E5%B7%A5%E4%BD%9C%2Fclip.mp4";
+        assert_eq!(reencode_url_for_android(encoded), encoded);
+        // Already-encoded input must not allocate a new string.
+        assert!(matches!(
+            reencode_url_for_android(encoded),
+            std::borrow::Cow::Borrowed(_)
+        ));
+    }
+
+    #[test]
+    fn android_url_reencodes_spaces_everywhere() {
+        // Pre-existing behaviour, kept for every scheme.
+        assert_eq!(
+            reencode_url_for_android("content://authority/document/my clip.mp4"),
+            "content://authority/document/my%20clip.mp4"
+        );
+        assert_eq!(
+            reencode_url_for_android("file:///storage/my clip.mp4"),
+            "file:///storage/my%20clip.mp4"
+        );
+    }
+
+    #[test]
+    fn android_url_leaves_non_content_non_ascii_alone() {
+        // Local file paths never went through a SAF grant, so re-encoding them
+        // would be a behaviour change with no upside.
+        let f = "file:///storage/emulated/0/工作/clip.mp4";
+        assert_eq!(reencode_url_for_android(f), f);
+    }
 
     #[test]
     fn bare_tree_url_detected() {

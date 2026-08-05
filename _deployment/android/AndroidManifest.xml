@@ -16,6 +16,18 @@
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
+    <!-- Package visibility (Android 11+): MainActivity.resolveDocumentsUi() probes
+         these packages so the file picker can be aimed at the AOSP/GMS DocumentsUI
+         explicitly. Some ROMs (HyperOS) reroute an implicit ACTION_OPEN_DOCUMENT to
+         their own picker, which declares screenOrientation="behind" and therefore
+         inherits this app's forced landscape - a layout it does not support. Without
+         these <queries> entries PackageManager.resolveActivity() returns null and we
+         silently fall back to that implicit path. -->
+    <queries>
+        <package android:name="com.google.android.documentsui" />
+        <package android:name="com.android.documentsui" />
+    </queries>
+
     <supports-screens
         android:anyDensity="true"
         android:largeScreens="true"

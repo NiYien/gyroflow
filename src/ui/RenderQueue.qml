@@ -890,12 +890,9 @@ Item {
             icon.height: 13 * dpiScale;
             onClicked: {
                 // Route picked URIs into the render queue batch loader on Android.
-                if (Qt.platform.os === "android") {
-                    window.pendingPickerCallback = function(urls) {
-                        dt.loadFiles(urls);
-                    };
-                }
-                mobileAddFilesDialog.open2();
+                window.openPicker(0, true, function(urls) {
+                    dt.loadFiles(urls);
+                }, mobileAddFilesDialog);
             }
         }
         Button {
@@ -910,41 +907,38 @@ Item {
             icon.width: 13 * dpiScale;
             icon.height: 13 * dpiScale;
             onClicked: {
-                if (Qt.platform.os === "android") {
-                    window.pendingPickerCallback = function(urls) {
-                        // FolderDialog SAF returns a tree URI (e.g.
-                        // content://.../tree/primary%3ADCIM). Register the
-                        // access grant, then hand it to the queue's
-                        // loadFiles pipeline below - is_dir/folder scanning
-                        // handle content:// trees natively.
-                        console.log("[AddFolder] picker returned urls.length=" + (urls ? urls.length : "null"));
-                        if (!urls || !urls.length) return;
-                        const folderUrl = urls[0];
-                        console.log("[AddFolder] folderUrl=" + folderUrl);
-                        try {
-                            filesystem.folder_access_granted(folderUrl);
-                            Qt.callLater(filesystem.save_allowed_folders);
-                            console.log("[AddFolder] folder_access_granted ok");
-                        } catch (e) {
-                            console.log("[AddFolder] folder_access_granted FAILED:", e);
-                            return;
-                        }
-                        // Hand the folder url straight to the queue's loadFiles
-                        // handler — the single path that scans gyro files,
-                        // collapses image sequences (consecutive frames -> one
-                        // %0Nd job), resolves their frame rate, and enqueues
-                        // videos + crm proxies. Expanding the folder inline here
-                        // broke once list_video_files_in_folder began returning
-                        // structured objects instead of plain url strings.
-                        try {
-                            dt.loadFiles([folderUrl]);
-                            console.log("[AddFolder] dt.loadFiles dispatched folder " + folderUrl);
-                        } catch (e) {
-                            console.log("[AddFolder] dt.loadFiles FAILED:", e);
-                        }
-                    };
-                }
-                mobileAddFolderDialog.open();
+                window.openPicker(1, false, function(urls) {
+                    // The folder picker returns a tree URI (e.g.
+                    // content://.../tree/primary%3ADCIM). Register the
+                    // access grant, then hand it to the queue's
+                    // loadFiles pipeline below - is_dir/folder scanning
+                    // handle content:// trees natively.
+                    console.log("[AddFolder] picker returned urls.length=" + (urls ? urls.length : "null"));
+                    if (!urls || !urls.length) return;
+                    const folderUrl = urls[0];
+                    console.log("[AddFolder] folderUrl=" + folderUrl);
+                    try {
+                        filesystem.folder_access_granted(folderUrl);
+                        Qt.callLater(filesystem.save_allowed_folders);
+                        console.log("[AddFolder] folder_access_granted ok");
+                    } catch (e) {
+                        console.log("[AddFolder] folder_access_granted FAILED:", e);
+                        return;
+                    }
+                    // Hand the folder url straight to the queue's loadFiles
+                    // handler — the single path that scans gyro files,
+                    // collapses image sequences (consecutive frames -> one
+                    // %0Nd job), resolves their frame rate, and enqueues
+                    // videos + crm proxies. Expanding the folder inline here
+                    // broke once list_video_files_in_folder began returning
+                    // structured objects instead of plain url strings.
+                    try {
+                        dt.loadFiles([folderUrl]);
+                        console.log("[AddFolder] dt.loadFiles dispatched folder " + folderUrl);
+                    } catch (e) {
+                        console.log("[AddFolder] dt.loadFiles FAILED:", e);
+                    }
+                }, mobileAddFolderDialog);
             }
         }
     }

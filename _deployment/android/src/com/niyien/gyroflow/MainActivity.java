@@ -3,6 +3,7 @@ package com.niyien.gyroflow;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.ClipData;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -50,6 +51,22 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
     private static final String FILE_PICKER_TAG = "GyroflowNiYienPicker";
     private static final long PICKER_DEDUPE_WINDOW_MS = 1500;
 
+    // We launch the SAF picker ourselves instead of letting Qt's FileDialog send
+    // the intent, because the intent has to be aimed at a specific component (see
+    // resolveDocumentsUi below) and Qt exposes no way to do that. Results still
+    // arrive through onActivityResult, which already handles every request code.
+    public static final int PICKER_MODE_FILES = 0;
+    public static final int PICKER_MODE_FOLDER = 1;
+    private static final int PICKER_REQUEST_FILES = 0x6710;
+    private static final int PICKER_REQUEST_FOLDER = 0x6711;
+    // Candidate DocumentsUI packages, GMS build first (that is what ships on the
+    // Xiaomi/HyperOS devices we target), AOSP second. Both are declared in the
+    // manifest's <queries> block or resolveActivity() would be filtered to null.
+    private static final String[] DOCUMENTS_UI_PACKAGES = {
+        "com.google.android.documentsui",
+        "com.android.documentsui",
+    };
+
     private static final String WINDOW_TAG = "GyroflowNiYienWindow";
     // Devices narrower than this (smallest width, dp) are treated as phones
     // and locked to sensor landscape; wider devices (tablets) rotate freely.
@@ -82,6 +99,7 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
 
     public static native void urlReceived(String url);
     public static native void urlsReceived(String joinedUrls);
+    public static native void pickerCancelled();
     public static native void nativeOnUsbAttached(int vid, int pid);
     public static native void nativeOnUsbDetached();
     public static native void nativeOnUsbPermission(boolean granted);
@@ -254,7 +272,19 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
         // fileexplorer scenario), we still surface the picked URIs.
         super.onActivityResult(requestCode, resultCode, data);
 
+        // Pickers we launched ourselves (openPicker) have no QML dialog behind
+        // them, so nothing emits onRejected to clear the pending picker callback.
+        // Report the empty outcome explicitly or a later VIEW/SEND intent would be
+        // routed through that stale callback.
+        boolean ownPicker = requestCode == PICKER_REQUEST_FILES
+                         || requestCode == PICKER_REQUEST_FOLDER;
+
         if (resultCode != RESULT_OK || data == null) {
+            if (ownPicker) {
+                Log.i(FILE_PICKER_TAG, "picker dismissed requestCode=" + requestCode
+                        + " resultCode=" + resultCode);
+                pickerCancelled();
+            }
             return;
         }
 
@@ -265,6 +295,7 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
                     + " requestCode=" + requestCode
                     + " action=" + data.getAction()
                     + " type=" + data.getType());
+            if (ownPicker) pickerCancelled();
             return;
         }
 
@@ -330,6 +361,115 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
         if (activity != null) {
             activity.closeUsbDevice();
         }
+    }
+
+    // ---- File picker: launch SAF ourselves so we can pick the picker ----
+
+    // Called from Rust (util.rs android_open_picker via JNI) on the Qt thread.
+    // Returns "ok" or "error:<detail>"; the caller falls back to Qt's own
+    // FileDialog on anything but "ok".
+    public static String openPicker(int mode, boolean allowMultiple, String initialUri) {
+        MainActivity activity = instance;
+        if (activity == null) {
+            return "error:Android activity is not ready";
+        }
+        final java.util.concurrent.atomic.AtomicReference<String> failure =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        final java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
+        activity.runOnUiThread(() -> {
+            try {
+                activity.launchPicker(mode, allowMultiple, initialUri);
+            } catch (Throwable t) {
+                Log.e(FILE_PICKER_TAG, "launchPicker failed", t);
+                failure.set(t.toString());
+            } finally {
+                done.countDown();
+            }
+        });
+        try {
+            if (!done.await(3, java.util.concurrent.TimeUnit.SECONDS)) {
+                return "error:UI-thread dispatch timed out";
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return "error:interrupted while dispatching picker intent";
+        }
+        String error = failure.get();
+        return error != null ? "error:" + error : "ok";
+    }
+
+    private void launchPicker(int mode, boolean allowMultiple, String initialUri) {
+        boolean folder = mode == PICKER_MODE_FOLDER;
+        Intent intent = new Intent(folder
+                ? Intent.ACTION_OPEN_DOCUMENT_TREE
+                : Intent.ACTION_OPEN_DOCUMENT);
+        if (!folder) {
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            // Deliberately "*/*": the formats we accept (.bin, .braw, .r3d, .crm,
+            // .gyroflow) have no registered MIME type, so a narrower filter would
+            // hide them.
+            intent.setType("*/*");
+            if (allowMultiple) {
+                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+            }
+        }
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        if (initialUri != null && !initialUri.isEmpty()
+                && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // Best-effort: lands the picker on the folder used last time. Ignored
+            // by pickers that do not honour it, never fatal.
+            try {
+                intent.putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI,
+                        Uri.parse(initialUri));
+            } catch (Throwable t) {
+                Log.w(FILE_PICKER_TAG, "ignoring unusable initial uri: " + initialUri, t);
+            }
+        }
+
+        int requestCode = folder ? PICKER_REQUEST_FOLDER : PICKER_REQUEST_FILES;
+        ComponentName target = resolveDocumentsUi(intent);
+        if (target != null) {
+            intent.setComponent(target);
+            Log.i(FILE_PICKER_TAG, "picker mode=" + mode + " multiple=" + allowMultiple
+                    + " target=" + target.flattenToShortString()
+                    + " initialUri=" + (initialUri == null || initialUri.isEmpty() ? "-" : initialUri));
+            try {
+                startActivityForResult(intent, requestCode);
+                return;
+            } catch (Throwable t) {
+                // The component resolved but refused to start; drop back to the
+                // implicit intent rather than leaving the user with no picker.
+                Log.w(FILE_PICKER_TAG, "explicit picker launch failed, retrying implicitly", t);
+                intent.setComponent(null);
+            }
+        } else {
+            Log.i(FILE_PICKER_TAG, "picker mode=" + mode + " no DocumentsUI found, implicit intent");
+        }
+        startActivityForResult(intent, requestCode);
+    }
+
+    // Resolves the intent against the known DocumentsUI packages. Returning a
+    // concrete ComponentName is what lets us bypass ROM-level rerouting of the
+    // implicit action - HyperOS hooks that in ActivityStarter, so it does not show
+    // up in the package manager's resolver table, but an explicit component gets
+    // through. null means "no DocumentsUI here", and the caller stays implicit.
+    private ComponentName resolveDocumentsUi(Intent intent) {
+        android.content.pm.PackageManager pm = getPackageManager();
+        for (String pkg : DOCUMENTS_UI_PACKAGES) {
+            try {
+                Intent probe = new Intent(intent);
+                probe.setPackage(pkg);
+                android.content.pm.ResolveInfo info = pm.resolveActivity(probe, 0);
+                if (info != null && info.activityInfo != null
+                        && info.activityInfo.name != null
+                        && info.activityInfo.exported) {
+                    return new ComponentName(info.activityInfo.packageName, info.activityInfo.name);
+                }
+            } catch (Throwable t) {
+                Log.w(FILE_PICKER_TAG, "resolveDocumentsUi failed for " + pkg, t);
+            }
+        }
+        return null;
     }
 
     // ---- In-app update: hand the downloaded APK to the system installer ----

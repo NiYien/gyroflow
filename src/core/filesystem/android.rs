@@ -274,13 +274,11 @@ pub fn is_dir_url(url: &str) -> bool {
 struct Uri;
 impl Uri {
     pub fn parse<'a>(env: &mut jni::Env<'a>, url: &str) -> Result<JObject<'a>> {
-        let url = if url.contains(' ') {
-            url.replace(' ', "%20")
-        } else {
-            url.to_owned()
-        };
+        // Must be the fully encoded form or SAF's permission-grant lookup misses;
+        // see reencode_url_for_android for why the URL can arrive decoded.
+        let url = super::reencode_url_for_android(url);
 
-        let url = env.new_string(&url)?;
+        let url = env.new_string(url.as_ref())?;
         Ok(env
             .call_static_method(
                 jni_str!("android/net/Uri"),
