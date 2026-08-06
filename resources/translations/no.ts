@@ -1072,6 +1072,11 @@ Prøv en annen utdatakodek (H.265/HEVC dekker flere tilfeller enn H.264/AVC), se
         <translation>mangler brennvidde</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2057"/>
+        <source>missing sensor data for this camera model</source>
+        <translation>mangler sensordata for denne kameramodellen</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1954"/>
         <source>missing anamorphic parameters</source>
         <translation>mangler anamorfe parametere</translation>

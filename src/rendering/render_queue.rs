@@ -14424,6 +14424,13 @@ impl RenderQueue {
                 .as_ref()
                 .map(|s| s.lens.read().fisheye_params.camera_matrix.is_empty())
                 .unwrap_or(true);
+            // Pixels-per-mm scale for this camera. Without it a focal length in
+            // millimetres cannot become a camera matrix, so the gate reports
+            // "sensor" rather than sending the user off to type a focal length.
+            let sensor_scale_present = metadata
+                .as_ref()
+                .and_then(|md| md.unit_pixel_focal_length)
+                .is_some();
             let reasons = niyien_lens_presets::lens_group_missing_reasons(
                 config,
                 video_focal_present,
@@ -14431,6 +14438,7 @@ impl RenderQueue {
                 // as a valid focal source — such jobs must not be gated.
                 job.focal_length_override.is_some(),
                 camera_matrix_bare,
+                sensor_scale_present,
             );
             if reasons.is_empty() {
                 continue;
@@ -20391,6 +20399,7 @@ mod tests {
     fn lens_groups_missing_data_states() {
         let mut queue = queue_with_eta_job(JobStatus::Queued);
         add_motion_to_job(&mut queue, 1, false);
+        set_sensor_scale(&queue, 1, 168.0);
         // The manager seeds lens_group_config from persisted settings; reset
         // to a clean slate so this test is deterministic on any machine.
         *queue.stabilizer.lens_group_config.write() =
@@ -20467,6 +20476,7 @@ mod tests {
     fn lens_groups_missing_data_exempts_focal_override() {
         let mut queue = queue_with_eta_job(JobStatus::Queued);
         add_motion_to_job(&mut queue, 1, false);
+        set_sensor_scale(&queue, 1, 168.0);
         *queue.stabilizer.lens_group_config.write() =
             niyien_lens_presets::default_lens_group_configs();
         queue.jobs.get_mut(&1).unwrap().lens_index_override = Some(2);
@@ -20478,6 +20488,39 @@ mod tests {
 
         // The job-level focal override clears it.
         queue.jobs.get_mut(&1).unwrap().focal_length_override = Some(35.0);
+        assert!(queue.lens_groups_missing_data_impl(true)["jobs"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+    }
+
+    // A camera with no pixels-per-mm scale cannot turn any focal length into a
+    // camera matrix, so the gate must say so instead of pointing at the focal
+    // length setting. Typically a camera model missing from camera_db.
+    #[test]
+    fn lens_groups_missing_data_reports_sensor_without_scale() {
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        add_motion_to_job(&mut queue, 1, false);
+        // Deliberately no set_sensor_scale here.
+        *queue.stabilizer.lens_group_config.write() =
+            niyien_lens_presets::default_lens_group_configs();
+        queue.jobs.get_mut(&1).unwrap().lens_index_override = Some(2);
+
+        let hits = queue.lens_groups_missing_data_impl(true)["jobs"].clone();
+        assert_eq!(hits.as_array().unwrap().len(), 1);
+        assert_eq!(hits[0]["reasons"], serde_json::json!(["sensor"]));
+
+        // Filling in a focal length must NOT clear it: the scale is what is
+        // missing, and no focal length can substitute for it.
+        queue.stabilizer.lens_group_config.write()[2].focal_length_mm = Some(50.0);
+        assert_eq!(
+            queue.lens_groups_missing_data_impl(true)["jobs"][0]["reasons"],
+            serde_json::json!(["sensor"])
+        );
+
+        // Once the camera does have a scale, the filled-in focal length is
+        // enough and the gate goes quiet.
+        set_sensor_scale(&queue, 1, 168.0);
         assert!(queue.lens_groups_missing_data_impl(true)["jobs"]
             .as_array()
             .unwrap()
@@ -20961,6 +21004,25 @@ mod tests {
         assert_eq!(batch_status(&queue, 3)["color"], "green");
         assert_eq!(batch_status(&queue, 4)["color"], "green");
         assert_eq!(queue.batch_sync_prompt_kind.to_string(), "none");
+    }
+
+    // Give a synthetic job a pixels-per-mm scale.
+    //
+    // The lens-data gate's "focal" reason presupposes the camera has such a
+    // scale: without one, `build_lens_profile` bails before it ever reads a
+    // focal length, so the gate reports "sensor" instead and naming the focal
+    // length would send the user after a setting that cannot help. Tests that
+    // want to exercise the focal path have to declare the scale their scenario
+    // assumes.
+    fn set_sensor_scale(queue: &RenderQueue, job_id: u32, unit_pixel_focal_length: f64) {
+        let stab = queue
+            .jobs
+            .get(&job_id)
+            .and_then(|job| job.stab.as_ref())
+            .cloned()
+            .expect("test job has stab");
+        let gyro = stab.gyro.read();
+        gyro.file_metadata.write().unit_pixel_focal_length = Some(unit_pixel_focal_length);
     }
 
     fn add_motion_to_job(queue: &mut RenderQueue, job_id: u32, use_quats: bool) {

@@ -1071,6 +1071,11 @@ Kokeile toista lähtökoodekkia (H.265/HEVC tukee useampia tapauksia kuin H.264/
         <translation>polttoväli puuttuu</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2057"/>
+        <source>missing sensor data for this camera model</source>
+        <translation>tämän kameramallin kennotiedot puuttuvat</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1954"/>
         <source>missing anamorphic parameters</source>
         <translation>anamorfiset parametrit puuttuvat</translation>

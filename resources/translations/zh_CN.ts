@@ -1072,6 +1072,11 @@ Try a different output codec (H.265/HEVC handles more cases than H.264/AVC), low
         <translation>缺焦距</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2057"/>
+        <source>missing sensor data for this camera model</source>
+        <translation>缺该相机型号的传感器数据</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1954"/>
         <source>missing anamorphic parameters</source>
         <translation>缺变宽参数</translation>

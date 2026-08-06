@@ -1072,6 +1072,11 @@ Zkuste jiný výstupní kodek (H.265/HEVC zvládne více případů než H.264/A
         <translation>chybí ohnisková vzdálenost</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2057"/>
+        <source>missing sensor data for this camera model</source>
+        <translation>chybí data snímače pro tento model fotoaparátu</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1954"/>
         <source>missing anamorphic parameters</source>
         <translation>chybí anamorfní parametry</translation>

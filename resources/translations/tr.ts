@@ -1068,6 +1068,11 @@ Farklı bir çıkış kodeki deneyin (H.265/HEVC, H.264/AVC&apos;den daha fazla 
         <translation>odak uzaklığı eksik</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2057"/>
+        <source>missing sensor data for this camera model</source>
+        <translation>bu kamera modeli için sensör verisi eksik</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1954"/>
         <source>missing anamorphic parameters</source>
         <translation>anamorfik parametreler eksik</translation>

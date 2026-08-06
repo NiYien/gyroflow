@@ -2050,6 +2050,11 @@ Rectangle {
         for (const k of Object.keys(groups).map(Number).sort((a, b) => a - b)) {
             let reasonWords = [];
             if (groups[k]["focal"])      reasonWords.push(qsTr("missing focal length"));
+            // "sensor" replaces "focal" rather than joining it: with no
+            // pixels-per-mm scale for the camera, typing a focal length here
+            // changes nothing, so naming the focal length would send the user
+            // after an action that cannot work.
+            if (groups[k]["sensor"])     reasonWords.push(qsTr("missing sensor data for this camera model"));
             if (groups[k]["anamorphic"]) reasonWords.push(qsTr("missing anamorphic parameters"));
             lines.push("L" + (k + 1) + ": " + reasonWords.join(", "));
         }

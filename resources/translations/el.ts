@@ -1072,6 +1072,11 @@ Try a different output codec (H.265/HEVC handles more cases than H.264/AVC), low
         <translation>λείπει η εστιακή απόσταση</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2057"/>
+        <source>missing sensor data for this camera model</source>
+        <translation>λείπουν δεδομένα αισθητήρα για αυτό το μοντέλο κάμερας</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1954"/>
         <source>missing anamorphic parameters</source>
         <translation>λείπουν οι αναμορφικές παράμετροι</translation>

@@ -396,6 +396,11 @@ fn lens_group_build_decision(
 ///   - "anamorphic": anamorphic is enabled but resolve_anamorphic_config cannot
 ///     satisfy it (empty/unknown preset and no valid manual squeeze ratio), so the
 ///     desqueeze would be silently skipped.
+///   - "sensor": no pixels-per-mm scale for this camera, so `build_lens_profile`
+///     bails out before it ever looks at a focal length. Reported instead of
+///     "focal" because in that state typing a focal length changes nothing, and
+///     telling the user to go set one sends them after an action that cannot
+///     work. Typically a camera model missing from camera_db.
 ///   - "focal": no usable focal length anywhere (group manual focal, video
 ///     telemetry focal and the job-level focal override all missing). Only
 ///     reported when the lens-group profile is actually load-bearing: with
@@ -408,16 +413,25 @@ pub fn lens_group_missing_reasons(
     video_focal_present: bool,
     job_focal_override_present: bool,
     camera_matrix_bare: bool,
+    sensor_scale_present: bool,
 ) -> Vec<&'static str> {
     let mut reasons = Vec::new();
     if config.anamorphic_enabled && resolve_anamorphic_config(Some(config)).is_none() {
         reasons.push("anamorphic");
     }
+    // `build_lens_profile` accepts a scale from the metadata or, failing that,
+    // derives one from a fallback profile's camera matrix. That second source
+    // needs a non-empty matrix, so "metadata has no scale" plus "matrix is bare"
+    // is exactly "neither source is available" -- which is why the fallback
+    // profile itself does not have to be threaded in here.
+    let scale_unavailable = !sensor_scale_present && camera_matrix_bare;
     let manual_focal_present = sanitize_manual_focal_length_mm(config.focal_length_mm).is_some();
-    if !manual_focal_present && !video_focal_present && !job_focal_override_present
-        && (config.anamorphic_enabled || camera_matrix_bare)
-    {
-        reasons.push("focal");
+    if config.anamorphic_enabled || camera_matrix_bare {
+        if scale_unavailable {
+            reasons.push("sensor");
+        } else if !manual_focal_present && !video_focal_present && !job_focal_override_present {
+            reasons.push("focal");
+        }
     }
     reasons
 }
@@ -737,6 +751,23 @@ pub fn build_lens_profile(
         None
     };
     let Some(upfl) = metadata_upfl.or(derived_upfl) else {
+        // No pixels-per-mm scale available from either source, so a focal length
+        // in millimetres cannot become a camera matrix and the caller falls back
+        // to the default one. Without this line the symptom is "I typed a focal
+        // length into the lens group and nothing happened": the value is read,
+        // accepted, and then dropped here in silence. Typically a camera model
+        // missing from camera_db.
+        let (brand, model) = metadata
+            .camera_identifier
+            .as_ref()
+            .map(|c| (c.brand.as_str(), c.model.as_str()))
+            .unwrap_or(("?", "?"));
+        log::warn!(
+            target: "lens",
+            "lens-group: no unit_pixel_focal_length and no derivable fallback, \
+             focal {focal_length_mm}mm cannot build a camera matrix \
+             (camera={brand} {model}) - camera model likely missing from camera_db"
+        );
         return None;
     };
     if metadata_upfl.is_none() {
@@ -1316,7 +1347,7 @@ mod tests {
     fn missing_reasons_mode_a_bare_group_bare_matrix() {
         // Mode A: no focal anywhere, no anamorphic intent, bare camera matrix.
         let config = LensGroupConfig::default();
-        assert_eq!(lens_group_missing_reasons(&config, false, false, true), vec!["focal"]);
+        assert_eq!(lens_group_missing_reasons(&config, false, false, true, true), vec!["focal"]);
     }
 
     #[test]
@@ -1328,7 +1359,7 @@ mod tests {
             focal_length_mm: Some(50.0),
             ..Default::default()
         };
-        assert_eq!(lens_group_missing_reasons(&config, false, false, false), vec!["anamorphic"]);
+        assert_eq!(lens_group_missing_reasons(&config, false, false, false, true), vec!["anamorphic"]);
     }
 
     #[test]
@@ -1340,7 +1371,7 @@ mod tests {
             squeeze_ratio: Some(1.5),
             ..Default::default()
         };
-        assert_eq!(lens_group_missing_reasons(&config, false, false, false), vec!["focal"]);
+        assert_eq!(lens_group_missing_reasons(&config, false, false, false, true), vec!["focal"]);
     }
 
     #[test]
@@ -1350,7 +1381,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            lens_group_missing_reasons(&config, false, false, true),
+            lens_group_missing_reasons(&config, false, false, true, true),
             vec!["anamorphic", "focal"]
         );
     }
@@ -1358,7 +1389,7 @@ mod tests {
     #[test]
     fn missing_reasons_exempt_video_telemetry_focal() {
         let config = LensGroupConfig::default();
-        assert!(lens_group_missing_reasons(&config, true, false, true).is_empty());
+        assert!(lens_group_missing_reasons(&config, true, false, true, true).is_empty());
     }
 
     #[test]
@@ -1366,7 +1397,7 @@ mod tests {
         // Existing profile provides valid geometry and there is no anamorphic
         // intent that a failed build would drop.
         let config = LensGroupConfig::default();
-        assert!(lens_group_missing_reasons(&config, false, false, false).is_empty());
+        assert!(lens_group_missing_reasons(&config, false, false, false, true).is_empty());
     }
 
     #[test]
@@ -1377,7 +1408,7 @@ mod tests {
             squeeze_ratio: Some(1.5),
             ..Default::default()
         };
-        assert!(lens_group_missing_reasons(&config, false, false, true).is_empty());
+        assert!(lens_group_missing_reasons(&config, false, false, true, true).is_empty());
     }
 
     #[test]
@@ -1388,7 +1419,7 @@ mod tests {
             preset_id: Some(BUILTIN_1_50X_TEST_PRESET_ID.to_string()),
             ..Default::default()
         };
-        assert!(lens_group_missing_reasons(&config, false, false, true).is_empty());
+        assert!(lens_group_missing_reasons(&config, false, false, true, true).is_empty());
     }
 
     #[test]
@@ -1402,7 +1433,7 @@ mod tests {
             squeeze_ratio: Some(1.33),
             ..Default::default()
         };
-        assert!(lens_group_missing_reasons(&config, false, false, false).is_empty());
+        assert!(lens_group_missing_reasons(&config, false, false, false, true).is_empty());
 
         // Without the fallback ratio the intent is unsatisfiable.
         let config = LensGroupConfig {
@@ -1411,7 +1442,66 @@ mod tests {
             preset_id: Some("no_such_preset".to_string()),
             ..Default::default()
         };
-        assert_eq!(lens_group_missing_reasons(&config, false, false, false), vec!["anamorphic"]);
+        assert_eq!(lens_group_missing_reasons(&config, false, false, false, true), vec!["anamorphic"]);
+    }
+
+    #[test]
+    fn missing_reasons_sensor_scale_absent_replaces_focal() {
+        // No pixels-per-mm scale: build_lens_profile bails before it reads any
+        // focal length, so "focal" would point the user at a setting that
+        // cannot help. Report "sensor" and only "sensor".
+        let config = LensGroupConfig::default();
+        assert_eq!(
+            lens_group_missing_reasons(&config, false, false, true, false),
+            vec!["sensor"]
+        );
+    }
+
+    #[test]
+    fn missing_reasons_sensor_scale_absent_replaces_focal_even_with_a_manual_focal() {
+        // The user already typed a focal length; it still cannot build a matrix.
+        let config = LensGroupConfig {
+            focal_length_mm: Some(50.0),
+            ..Default::default()
+        };
+        assert_eq!(
+            lens_group_missing_reasons(&config, false, false, true, false),
+            vec!["sensor"]
+        );
+    }
+
+    #[test]
+    fn missing_reasons_sensor_scale_absent_but_matrix_not_bare_is_exempt() {
+        // A non-bare camera matrix is exactly what build_lens_profile derives
+        // its fallback scale from, so the scale is not actually unavailable.
+        let config = LensGroupConfig {
+            focal_length_mm: Some(50.0),
+            ..Default::default()
+        };
+        assert!(lens_group_missing_reasons(&config, false, false, false, false).is_empty());
+    }
+
+    #[test]
+    fn missing_reasons_sensor_and_anamorphic_coexist() {
+        let config = LensGroupConfig {
+            anamorphic_enabled: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            lens_group_missing_reasons(&config, false, false, true, false),
+            vec!["anamorphic", "sensor"]
+        );
+    }
+
+    #[test]
+    fn missing_reasons_scale_present_keeps_reporting_focal() {
+        // Guards the pre-existing behaviour: with a usable scale the gate must
+        // still name the focal length, not the sensor.
+        let config = LensGroupConfig::default();
+        assert_eq!(
+            lens_group_missing_reasons(&config, false, false, true, true),
+            vec!["focal"]
+        );
     }
 
     #[test]
@@ -1751,7 +1841,7 @@ mod tests {
         // A job-level focal override counts as a valid focal source for the
         // batch missing-data gate.
         let config = LensGroupConfig::default();
-        assert!(lens_group_missing_reasons(&config, false, true, true).is_empty());
+        assert!(lens_group_missing_reasons(&config, false, true, true, true).is_empty());
         // Anamorphic-intent variant: focal side satisfied by the override, only
         // the anamorphic reason remains.
         let config = LensGroupConfig {
@@ -1759,7 +1849,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            lens_group_missing_reasons(&config, false, true, true),
+            lens_group_missing_reasons(&config, false, true, true, true),
             vec!["anamorphic"]
         );
     }

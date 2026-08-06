@@ -1072,6 +1072,11 @@ Spróbuj innego kodeka wyjściowego (H.265/HEVC obsługuje więcej przypadków n
         <translation>brak ogniskowej</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2057"/>
+        <source>missing sensor data for this camera model</source>
+        <translation>brak danych matrycy dla tego modelu aparatu</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1954"/>
         <source>missing anamorphic parameters</source>
         <translation>brak parametrów anamorficznych</translation>

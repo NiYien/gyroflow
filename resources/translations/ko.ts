@@ -1071,6 +1071,11 @@ Try a different output codec (H.265/HEVC handles more cases than H.264/AVC), low
         <translation>초점 거리 누락</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2057"/>
+        <source>missing sensor data for this camera model</source>
+        <translation>이 카메라 모델의 센서 데이터 누락</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1954"/>
         <source>missing anamorphic parameters</source>
         <translation>아나모픽 파라미터 누락</translation>

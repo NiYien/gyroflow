@@ -1072,6 +1072,11 @@ Try a different output codec (H.265/HEVC handles more cases than H.264/AVC), low
         <translation>не указано фокусное расстояние</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2057"/>
+        <source>missing sensor data for this camera model</source>
+        <translation>нет данных сенсора для этой модели камеры</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1954"/>
         <source>missing anamorphic parameters</source>
         <translation>не указаны параметры анаморфота</translation>

@@ -1070,6 +1070,11 @@ Coba codec keluaran lain (H.265/HEVC menangani lebih banyak kasus daripada H.264
         <translation>panjang fokus belum diisi</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2057"/>
+        <source>missing sensor data for this camera model</source>
+        <translation>data sensor untuk model kamera ini belum ada</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1954"/>
         <source>missing anamorphic parameters</source>
         <translation>parameter anamorfik belum diisi</translation>

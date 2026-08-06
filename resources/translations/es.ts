@@ -1070,6 +1070,11 @@ Prueba otro códec de salida (H.265/HEVC admite más casos que H.264/AVC), reduc
         <translation>falta la distancia focal</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2057"/>
+        <source>missing sensor data for this camera model</source>
+        <translation>faltan los datos del sensor de este modelo de cámara</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1954"/>
         <source>missing anamorphic parameters</source>
         <translation>faltan los parámetros anamórficos</translation>

@@ -1070,6 +1070,11 @@ Prova un altro codec di output (H.265/HEVC copre più casi di H.264/AVC), riduci
         <translation>lunghezza focale mancante</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2057"/>
+        <source>missing sensor data for this camera model</source>
+        <translation>dati del sensore mancanti per questo modello di fotocamera</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1954"/>
         <source>missing anamorphic parameters</source>
         <translation>parametri anamorfici mancanti</translation>

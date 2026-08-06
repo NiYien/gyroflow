@@ -909,6 +909,11 @@ Do you agree with the [GPL license] and want to download the additional codec?</
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2057"/>
+        <source>missing sensor data for this camera model</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1954"/>
         <source>missing anamorphic parameters</source>
         <translation type="unfinished"></translation>
