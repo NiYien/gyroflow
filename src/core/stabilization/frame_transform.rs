@@ -2,6 +2,7 @@
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
 
 use super::{ComputeParams, KernelParams};
+use crate::gyro_source::FileMetadata;
 use crate::keyframes::KeyframeType;
 use crate::util::{MapClosest, map_coord};
 use nalgebra::Matrix3;
@@ -18,8 +19,80 @@ pub struct FrameTransform {
 }
 
 impl FrameTransform {
-    fn get_frame_readout_time(params: &ComputeParams, can_invert: bool) -> f64 {
+    /// `detected_source` is the camera type optionally followed by ` <model>`, so a
+    /// Sony clip reads either "Sony" or "Sony <model>". Both forms are matched
+    /// explicitly so an unrelated brand whose name merely starts with the same
+    /// letters cannot slip through.
+    fn detected_source_is_sony(detected_source: Option<&str>) -> bool {
+        detected_source.is_some_and(|s| s == "Sony" || s.starts_with("Sony "))
+    }
+
+    /// Scales a whole-sensor readout time down to the rows this clip actually
+    /// captured, i.e. `captured rows / sensor rows`.
+    ///
+    /// Sony reports `Imager::FrameReadoutTime` for the full sensor height, but a
+    /// cropped readout mode only scans part of it, so rolling shutter correction
+    /// must be scaled or it over-corrects by the inverse of the crop ratio. Two
+    /// independent proofs that the tag is whole-sensor: the per-row time stays
+    /// constant across modes on one body (5.0067 us on a ZV-E10M2 in both the
+    /// full-height and the 2/3-height mode, even though the tag value differs), and
+    /// `gyro_source::sony::stab_calc_splines` already divides the very same tag by
+    /// the full sensor height to build its IBIS/OIS spline domain.
+    ///
+    /// NIYIEN DEVIATION FROM UPSTREAM - keep the `is_sony` guard across upstream
+    /// merges. Upstream scales unconditionally because upstream can only ever obtain
+    /// a readout time from in-camera telemetry. This fork additionally injects
+    /// readout times from camera_db, whose values are measured per shooting mode and
+    /// therefore already describe the captured rows; scaling those would subtract
+    /// the crop a second time. Nikon ZR is the concrete case: telemetry-parser hands
+    /// it both size fields, yet its readout time comes from camera_db. Dropping this
+    /// guard raises no compile error and produces no merge conflict, so re-check
+    /// this function whenever upstream is merged.
+    fn readout_crop_scale(
+        is_sony: bool,
+        capture_area_height: Option<f32>,
+        sensor_height_px: Option<u32>,
+    ) -> f64 {
+        if !is_sony {
+            return 1.0;
+        }
+        match (capture_area_height, sensor_height_px) {
+            // Rejecting zero and NaN is defensive only: valid telemetry never hits
+            // it, but a bad value would otherwise turn the readout time into
+            // inf/NaN and destroy every row transform of the frame.
+            (Some(capture), Some(sensor)) if sensor > 0 && capture > 0.0 => {
+                capture as f64 / sensor as f64
+            }
+            _ => 1.0,
+        }
+    }
+
+    fn get_frame_readout_time(
+        params: &ComputeParams,
+        can_invert: bool,
+        timestamp_ms: f64,
+        file_metadata: &FileMetadata,
+    ) -> f64 {
         let mut frame_readout_time = params.frame_readout_time.abs();
+
+        // The Sony check gates the lookup itself, not just the arithmetic: a
+        // non-Sony source never reads lens_params, which makes "unchanged for every
+        // other source" a property of the control flow rather than of the numbers
+        // happening to come out as 1.0.
+        let is_sony = Self::detected_source_is_sony(file_metadata.detected_source.as_deref());
+        let closest = if is_sony {
+            file_metadata
+                .lens_params
+                .get_closest(&((timestamp_ms * 1000.0).round() as i64), 100000) // closest within 100ms
+        } else {
+            None
+        };
+        let scale = Self::readout_crop_scale(
+            is_sony,
+            closest.and_then(|v| v.capture_area_size).map(|x| x.1),
+            closest.and_then(|v| v.sensor_size_px).map(|x| x.1),
+        );
+
         if can_invert
             && params.framebuffer_inverted
             && !params.frame_readout_direction.is_horizontal()
@@ -29,7 +102,7 @@ impl FrameTransform {
         if params.frame_readout_direction.is_inverted() {
             frame_readout_time *= -1.0;
         }
-        frame_readout_time
+        frame_readout_time * scale
     }
     fn get_new_k(params: &ComputeParams, camera_matrix: &Matrix3<f64>, fov: f64) -> Matrix3<f64> {
         let horizontal_ratio = if params.lens.input_horizontal_stretch > 0.01 {
@@ -274,7 +347,7 @@ impl FrameTransform {
 
         // ----------- Rolling shutter correction -----------
         let frame_readout_time =
-            Self::get_frame_readout_time(&params, true);
+            Self::get_frame_readout_time(params, true, timestamp_ms, &file_metadata);
 
         let row_readout_time = frame_readout_time
             / if params.frame_readout_direction.is_horizontal() {
@@ -528,7 +601,7 @@ impl FrameTransform {
 
         // ----------- Rolling shutter correction -----------
         let frame_readout_time =
-            Self::get_frame_readout_time(params, false);
+            Self::get_frame_readout_time(params, false, timestamp_ms, &file_metadata);
 
         let row_readout_time = frame_readout_time
             / if params.frame_readout_direction.is_horizontal() {
@@ -642,5 +715,120 @@ impl FrameTransform {
             shifts,
             mesh_correction,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FrameTransform;
+
+    // Measured on a Sony ZV-E10M2: 4K60 reads 2104.1875 of the sensor's 3156 rows.
+    const CROPPED_CAPTURE_H: f32 = 2104.1875;
+    const SENSOR_H: u32 = 3156;
+    // Same body, full-height mode.
+    const FULL_CAPTURE_H: f32 = 3155.8125;
+
+    #[test]
+    fn readout_crop_scale_uses_captured_rows_for_sony() {
+        let scale = FrameTransform::readout_crop_scale(true, Some(CROPPED_CAPTURE_H), Some(SENSOR_H));
+        assert!(
+            (scale - 0.666_727).abs() < 1e-6,
+            "expected the 2/3-height crop ratio, got {scale}"
+        );
+        // 15.801 ms whole-sensor readout becomes 10.535 ms over the captured rows.
+        assert!((15.801 * scale - 10.535).abs() < 0.001);
+    }
+
+    #[test]
+    fn readout_crop_scale_is_near_identity_for_full_height_sony() {
+        let scale = FrameTransform::readout_crop_scale(true, Some(FULL_CAPTURE_H), Some(SENSOR_H));
+        // Deliberately not exactly 1.0: the capture area is a hair short of the full
+        // sensor, so full-height Sony clips shift by ~0.006%. Documented as accepted.
+        assert!((scale - 1.0).abs() < 2e-4, "unexpected drift: {scale}");
+    }
+
+    #[test]
+    fn readout_crop_scale_is_identity_for_non_sony() {
+        // Nikon ZR shape: telemetry-parser supplies both size fields, but its readout
+        // time comes from camera_db and is already per shooting mode, so it must not
+        // be scaled again.
+        assert_eq!(
+            FrameTransform::readout_crop_scale(false, Some(2232.0), Some(3348)),
+            1.0
+        );
+    }
+
+    #[test]
+    fn readout_crop_scale_falls_back_when_a_size_field_is_missing() {
+        assert_eq!(
+            FrameTransform::readout_crop_scale(true, Some(CROPPED_CAPTURE_H), None),
+            1.0
+        );
+        assert_eq!(
+            FrameTransform::readout_crop_scale(true, None, Some(SENSOR_H)),
+            1.0
+        );
+    }
+
+    #[test]
+    fn readout_crop_scale_falls_back_when_no_lens_params_entry_is_in_range() {
+        // `get_closest` returning None outside the 100 ms window reaches the scale
+        // helper as a pair of None, which must degrade to no scaling.
+        assert_eq!(FrameTransform::readout_crop_scale(true, None, None), 1.0);
+    }
+
+    #[test]
+    fn readout_crop_scale_rejects_degenerate_values() {
+        assert_eq!(
+            FrameTransform::readout_crop_scale(true, Some(CROPPED_CAPTURE_H), Some(0)),
+            1.0
+        );
+        assert_eq!(
+            FrameTransform::readout_crop_scale(true, Some(0.0), Some(SENSOR_H)),
+            1.0
+        );
+        assert_eq!(
+            FrameTransform::readout_crop_scale(true, Some(f32::NAN), Some(SENSOR_H)),
+            1.0
+        );
+    }
+
+    #[test]
+    fn detected_source_is_sony_matches_bare_and_model_forms() {
+        assert!(FrameTransform::detected_source_is_sony(Some("Sony")));
+        assert!(FrameTransform::detected_source_is_sony(Some(
+            "Sony ZV-E10M2"
+        )));
+        assert!(FrameTransform::detected_source_is_sony(Some("Sony ILCE-6400")));
+
+        assert!(!FrameTransform::detected_source_is_sony(None));
+        assert!(!FrameTransform::detected_source_is_sony(Some("Nikon ZR")));
+        assert!(!FrameTransform::detected_source_is_sony(Some(
+            "Blackmagic Design Pocket Cinema Camera 6K"
+        )));
+        assert!(!FrameTransform::detected_source_is_sony(Some(
+            "Canon EOS R5 Mark II"
+        )));
+        // A brand that merely starts with the same letters must not slip through.
+        assert!(!FrameTransform::detected_source_is_sony(Some("Sonyx Cam")));
+    }
+
+    #[test]
+    fn sony_guard_wraps_the_lens_params_lookup() {
+        // Structural guard for the "no change for other sources" promise: the
+        // lens_params lookup must sit inside the `is_sony` branch. Flattening it
+        // would still yield 1.0 for other brands today, but the guarantee would
+        // degrade from a control-flow property into an arithmetic coincidence that
+        // any future change to readout_crop_scale could silently break.
+        let src = include_str!("frame_transform.rs");
+        let compact: String = src.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            compact.contains("letclosest=ifis_sony{file_metadata.lens_params.get_closest("),
+            "the lens_params lookup must stay gated behind `if is_sony`"
+        );
+        assert!(
+            compact.contains("if!is_sony{return1.0;}"),
+            "readout_crop_scale must short-circuit for non-Sony sources"
+        );
     }
 }
