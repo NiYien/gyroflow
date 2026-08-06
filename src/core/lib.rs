@@ -1280,6 +1280,7 @@ impl StabilizationManager {
             }
             if fm.keep_video_gyro && !options.bypass_builtin_gyro_arbitration {
                 let is_canon = fm.detected_source.as_deref().map_or(false, |s| s.starts_with("Canon"));
+                let is_bmd = fm.detected_source.as_deref().map_or(false, |s| s.starts_with("Blackmagic"));
                 if fm.is_komodo {
                     log::info!(
                         "[red_arbitration] main video is RED Komodo, ignoring external IMU file: {url}"
@@ -1287,6 +1288,10 @@ impl StabilizationManager {
                 } else if is_canon {
                     log::info!(
                         "[canon_arbitration] main video is Canon with built-in gyro, ignoring external IMU file: {url}"
+                    );
+                } else if is_bmd {
+                    log::info!(
+                        "[bmd_arbitration] main video is Blackmagic with built-in gyro, ignoring external IMU file: {url}"
                     );
                 } else {
                     log::info!(

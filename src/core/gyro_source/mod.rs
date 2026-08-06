@@ -1482,11 +1482,22 @@ impl GyroSource {
         // before the metadata is cached. Stored on FileMetadata (not derived
         // lazily) because thin() strips raw_imu/quaternions downstream, which
         // would make a later has_motion() check read false. Covers RED Komodo
-        // (is_komodo) and any Sony body that embedded gyro/quaternion samples.
+        // (is_komodo), any Sony / Canon body that embedded gyro/quaternion
+        // samples, and a Blackmagic body recording .braw.
+        //
+        // The container check stays here rather than inside the predicate so the
+        // predicate remains a pure function: it reads the already-known parse
+        // path, adds no filesystem access.
+        let is_braw_container = path
+            .as_ref()
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("braw"));
         md.keep_video_gyro = file_metadata::compute_keep_video_gyro(
             is_komodo,
             &input.camera_type(),
             !md.raw_imu.is_empty() || !md.quaternions.is_empty(),
+            is_braw_container,
         );
 
         // [lens_diag] Part A2 diagnostic — print everything that feeds

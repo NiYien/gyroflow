@@ -8470,6 +8470,13 @@ impl RenderQueue {
                     );
                 } else if is_komodo {
                     ::log::info!("[red_arbitration] Komodo main video, skipping auto-sync: {url}");
+                } else if detected_source
+                    .as_deref()
+                    .is_some_and(|s| s.starts_with("Blackmagic"))
+                {
+                    ::log::info!(
+                        "[bmd_arbitration] Blackmagic built-in gyro, skipping auto-sync: {url}"
+                    );
                 } else {
                     ::log::info!("[sony_arbitration] Sony built-in gyro, skipping auto-sync: {url}");
                 }
@@ -11881,11 +11888,12 @@ impl RenderQueue {
                 // focal length, lens profile) but skip the IMU/quaternion +
                 // camera_id overwrites — those would replace the trusted state with
                 // matched external data. Auto-sync is gated separately in
-                // do_autosync. `main_is_komodo` / `main_is_canon` only label the log line.
-                let (main_keep_video_gyro, main_is_komodo, main_is_canon) = {
+                // do_autosync. `main_is_komodo` / `main_is_canon` / `main_is_bmd`
+                // only label the log line.
+                let (main_keep_video_gyro, main_is_komodo, main_is_canon, main_is_bmd) = {
                     let gyro = item.stab.gyro.read();
                     let fm = gyro.file_metadata.read();
-                    (fm.keep_video_gyro, fm.is_komodo, fm.detected_source.as_deref().map_or(false, |s| s.starts_with("Canon")))
+                    (fm.keep_video_gyro, fm.is_komodo, fm.detected_source.as_deref().map_or(false, |s| s.starts_with("Canon")), fm.detected_source.as_deref().map_or(false, |s| s.starts_with("Blackmagic")))
                 };
                 let t_item = std::time::Instant::now();
                 let requested_range = normalize_time_range_ms(item.gyro_start_ms.zip(item.gyro_end_ms));
@@ -12070,6 +12078,11 @@ impl RenderQueue {
                             } else if main_is_canon {
                                 ::log::info!(
                                     "[canon_arbitration] job[{}] Canon: kept video gyro + camera_id, merged .bin lens metadata",
+                                    idx
+                                );
+                            } else if main_is_bmd {
+                                ::log::info!(
+                                    "[bmd_arbitration] job[{}] Blackmagic: kept video gyro + camera_id, merged .bin lens metadata",
                                     idx
                                 );
                             } else {

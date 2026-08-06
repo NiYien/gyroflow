@@ -175,12 +175,36 @@ impl<'de> serde::Deserialize<'de> for ReadOnlyFileMetadata {
 ///   a per-frame CNDM gyro burst frame-aligned to the video, like Sony, so it is
 ///   treated the same. A non-Komodo RED with samples is intentionally NOT trusted
 ///   here (its internal IMU is cleared separately).
+/// - Blackmagic bodies recording `.braw`: trusted when motion is present. The IMU
+///   samples are timestamped from the metadata track's own sample timestamps —
+///   the same container timebase as the video track, minus half the frame readout
+///   — so they are frame-aligned by construction and need no optical-flow sync.
+///
+/// The Blackmagic arm carries two extra conditions, neither of which is optional:
+///
+/// - **Brand is matched by prefix, not equality.** telemetry-parser's
+///   `camera_type()` returns `"Blackmagic RAW"` when the model could not be
+///   identified, which `== "Blackmagic"` would miss. The same comparison is what
+///   excludes a Video Assist recording, whose `camera_type()` returns the *source*
+///   camera's manufacturer (e.g. `"Panasonic"`) instead.
+/// - **The container must be `.braw`.** A Video Assist recording is also a `.braw`
+///   container, so the container alone cannot separate the two; and the brand
+///   alone would pull in Blackmagic ProRes `.mov` and CinemaDNG, which are
+///   deliberately out of scope (they keep the external-IMU override path).
+///
+/// No body is special-cased, including `Micro Studio Camera 4K G2` — the one
+/// Blackmagic model telemetry-parser flags as `has_accurate_timestamps == false`.
+/// Once this predicate is true the sync policy short-circuits before that flag is
+/// ever read, so it survives only for display and project export.
 pub(crate) fn compute_keep_video_gyro(
     is_komodo: bool,
     camera_type: &str,
     has_gyro_samples: bool,
+    is_braw_container: bool,
 ) -> bool {
-    is_komodo || ((camera_type == "Sony" || camera_type == "Canon") && has_gyro_samples)
+    is_komodo
+        || ((camera_type == "Sony" || camera_type == "Canon") && has_gyro_samples)
+        || (camera_type.starts_with("Blackmagic") && has_gyro_samples && is_braw_container)
 }
 
 #[cfg(test)]
@@ -190,39 +214,96 @@ mod tests {
 
     #[test]
     fn keep_video_gyro_sony_with_samples_is_true() {
-        assert!(compute_keep_video_gyro(false, "Sony", true));
+        assert!(compute_keep_video_gyro(false, "Sony", true, false));
     }
 
     #[test]
     fn keep_video_gyro_sony_without_samples_is_false() {
-        assert!(!compute_keep_video_gyro(false, "Sony", false));
+        assert!(!compute_keep_video_gyro(false, "Sony", false, false));
     }
 
     #[test]
     fn keep_video_gyro_komodo_is_true() {
         // RED Komodo is trusted regardless of the Sony clause / sample presence.
-        assert!(compute_keep_video_gyro(true, "RED", false));
+        assert!(compute_keep_video_gyro(true, "RED", false, false));
     }
 
     #[test]
     fn keep_video_gyro_canon_with_samples_is_true() {
         // Canon bodies with embedded per-frame gyro (R5 II / R6 II / R1 …) are
         // trusted, same as Sony.
-        assert!(compute_keep_video_gyro(false, "Canon", true));
+        assert!(compute_keep_video_gyro(false, "Canon", true, false));
     }
 
     #[test]
     fn keep_video_gyro_canon_without_samples_is_false() {
         // A Canon clip with no embedded motion keeps the external-IMU override path.
-        assert!(!compute_keep_video_gyro(false, "Canon", false));
+        assert!(!compute_keep_video_gyro(false, "Canon", false, false));
+    }
+
+    #[test]
+    fn keep_video_gyro_container_flag_does_not_affect_other_arms() {
+        // The container argument exists only for the Blackmagic arm. Komodo / Sony /
+        // Canon must reach the same verdict either way, so a future caller that gets
+        // the container detection wrong cannot silently flip them.
+        for is_braw in [false, true] {
+            assert!(compute_keep_video_gyro(true, "RED", false, is_braw));
+            assert!(compute_keep_video_gyro(false, "Sony", true, is_braw));
+            assert!(compute_keep_video_gyro(false, "Canon", true, is_braw));
+            assert!(!compute_keep_video_gyro(false, "Sony", false, is_braw));
+            assert!(!compute_keep_video_gyro(false, "Canon", false, is_braw));
+        }
+    }
+
+    #[test]
+    fn keep_video_gyro_blackmagic_braw_with_samples_is_true() {
+        // A Blackmagic body recording .braw (BMCC 6K, BMPCC, URSA, Pyxis …) writes
+        // its IMU into the metadata track on the container timebase, so it is
+        // frame-aligned by construction.
+        assert!(compute_keep_video_gyro(false, "Blackmagic", true, true));
+    }
+
+    #[test]
+    fn keep_video_gyro_blackmagic_raw_prefix_is_true() {
+        // telemetry-parser returns "Blackmagic RAW" when the model could not be
+        // identified. The brand test must be a prefix match, not equality, or these
+        // clips silently fall back to the external-IMU path.
+        assert!(compute_keep_video_gyro(false, "Blackmagic RAW", true, true));
+    }
+
+    #[test]
+    fn keep_video_gyro_blackmagic_without_samples_is_false() {
+        // Older Blackmagic bodies have no IMU at all; they keep the external-IMU
+        // override path.
+        assert!(!compute_keep_video_gyro(false, "Blackmagic", false, true));
+    }
+
+    #[test]
+    fn keep_video_gyro_blackmagic_non_braw_container_is_false() {
+        // Scope boundary: Blackmagic ProRes .mov and CinemaDNG carry the same
+        // mogy/moac samples but are deliberately left on the external-IMU path.
+        assert!(!compute_keep_video_gyro(false, "Blackmagic", true, false));
+        assert!(!compute_keep_video_gyro(false, "Blackmagic RAW", true, false));
+    }
+
+    #[test]
+    fn keep_video_gyro_video_assist_source_brand_is_false() {
+        // A Video Assist recording is also a .braw container, but camera_type() is
+        // the *source* camera's manufacturer. Only the brand test separates it, so
+        // this locks in why the container flag alone is not sufficient.
+        assert!(!compute_keep_video_gyro(false, "Panasonic", true, true));
+        assert!(!compute_keep_video_gyro(false, "Fujifilm", true, true));
     }
 
     #[test]
     fn keep_video_gyro_other_cameras_are_false() {
         // Non-Komodo RED (even with samples) and unrelated bodies are not trusted
-        // by the generic clause (RED's own IMU is cleared separately).
-        assert!(!compute_keep_video_gyro(false, "RED", true));
-        assert!(!compute_keep_video_gyro(false, "Nikon", true));
+        // by the generic clause (RED's own IMU is cleared separately). The container
+        // flag must not let any of them through either.
+        assert!(!compute_keep_video_gyro(false, "RED", true, false));
+        assert!(!compute_keep_video_gyro(false, "RED", true, true));
+        assert!(!compute_keep_video_gyro(false, "Nikon", true, false));
+        assert!(!compute_keep_video_gyro(false, "Nikon", true, true));
     }
 
     #[test]
