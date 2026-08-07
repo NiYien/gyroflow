@@ -128,6 +128,7 @@ jobs:
         if: ${{ matrix.targets.type == 'windows' }}
         run: |
           just install-deps
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::install-deps failed with exit code $LASTEXITCODE"; exit $LASTEXITCODE }
           just deploy
 
       - name: Build gyroflow(niyien) (Android)
@@ -145,6 +146,7 @@ jobs:
             $Env:KEY_STORE_PASS = ""
           }
           just android install-deps
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::android install-deps failed with exit code $LASTEXITCODE"; exit $LASTEXITCODE }
           just android deploy
 
       # Release flow (tag push) — V7 + archive:false: raw bytes attached directly to GitHub release.

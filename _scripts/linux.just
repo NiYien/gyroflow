@@ -57,7 +57,10 @@ install-deps:
 
     pushd {{ExtDir}}
 
-    if [ ! -d "{{ExtDir}}/{{QtVersion}}" ]; then
+    # Probe the tool we actually invoke, not just the directory: an interrupted aqt
+    # run leaves the version directory behind, and the build then fails much later.
+    # {{QtPath}} is the same path the QMAKE variable is derived from.
+    if [ ! -f "{{QtPath}}/qmake" ]; then
         echo "Setting up python venv in {{ExtDir}}/venv"
         python3 -m venv "{{ExtDir}}/venv"
         source "{{ExtDir}}/venv/bin/activate"
@@ -69,6 +72,11 @@ install-deps:
         python3 -m aqt install-qt {{QtLinuxArch}} desktop {{QtVersion}}
 
         # For VMware: sudo apt install libpocl2
+
+        if [ ! -f "{{QtPath}}/qmake" ]; then
+            echo "Qt {{QtVersion}} was installed but is incomplete: expected {{QtPath}}/qmake" >&2
+            exit 1
+        fi
     fi
 
     if [ "$IN_DOCKER" == "1" ]; then
@@ -114,7 +122,12 @@ install-deps:
         fi
     fi
 
-    if [ ! -d "{{FFmpeg}}" ]; then
+    # Probing the files we actually consume, not just the directory: an interrupted
+    # extraction leaves the top-level directory behind, which a bare -d check
+    # accepts, and the build then fails much later with a missing header. Note the
+    # arch subdirectory - unlike the android and windows packages, this one splits
+    # lib/ per architecture.
+    if [ ! -f "{{FFmpeg}}/include/libavutil/avutil.h" ] || [ ! -f "{{FFmpeg}}/lib/{{FFmpegLinuxArch}}/libavutil.a" ]; then
         echo "Downloading ffmpeg"
 
         # Download and extract ffmpeg
@@ -122,6 +135,11 @@ install-deps:
         7z x -aoa ffmpeg.tar.xz
         tar -xf ffmpeg.tar
         rm ffmpeg.tar ffmpeg.tar.xz
+
+        if [ ! -f "{{FFmpeg}}/include/libavutil/avutil.h" ] || [ ! -f "{{FFmpeg}}/lib/{{FFmpegLinuxArch}}/libavutil.a" ]; then
+            echo "{{FFmpeg}} was extracted but is incomplete: expected {{FFmpeg}}/include/libavutil/avutil.h and {{FFmpeg}}/lib/{{FFmpegLinuxArch}}/libavutil.a" >&2
+            exit 1
+        fi
     fi
 
     popd

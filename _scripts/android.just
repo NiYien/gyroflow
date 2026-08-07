@@ -23,45 +23,79 @@ install-deps:
     } elseif (Get-Command "python3.exe" -ErrorAction SilentlyContinue) {
         $Python = "python3";
     } else {
-        if (-not (Test-Path -Path "{{ExtDir}}/WPy64-310100b3")) {
+        # Probe the interpreter we actually run, not just the directory: an
+        # interrupted extraction leaves the directory behind and the resolve-path
+        # below would then fail with a far less obvious error.
+        $WinPython = "{{ExtDir}}/WPy64-310100b3/python-3.10.10.amd64/python.exe"
+        if (-not (Test-Path -Path $WinPython)) {
             echo "Downloading WinPython"
             wget https://github.com/winpython/winpython/releases/download/6.1.20230227/Winpython64-3.10.10.0dotb3.exe -outfile "winpython.exe"
             7z x -y winpython.exe
             del winpython.exe
+            if (-not (Test-Path -Path $WinPython)) { throw "WinPython was extracted but $WinPython is missing" }
         }
-        $Python = resolve-path "{{ExtDir}}\WPy64-310100b3\python-3.10.10.amd64\python.exe"
+        $Python = resolve-path $WinPython
     }
 
     cargo install --git https://github.com/rust-mobile/cargo-apk.git cargo-apk
     rustup target add aarch64-linux-android
 
     # ――――――――――――――――――――――――――――――――――――――――― Qt ――――――――――――――――――――――――――――――――――――――――――
-    if (-not (Test-Path -Path "{{QtVersion}}/android_arm64_v8a")) {
+    # Probe the tools we actually invoke, not just the directory: an interrupted
+    # aqt run leaves the directory behind, and the build then fails much later.
+    # Both packages are checked - deploy needs the android qmake as well as the
+    # desktop mingw qmlimportscanner/rcc.
+    $QtAndroidQmake = "{{QtVersion}}/android_arm64_v8a/bin/qmake.bat"
+    $QtHostScanner  = "{{QtVersion}}/mingw_64/bin/qmlimportscanner.exe"
+    if (-not ((Test-Path -Path $QtAndroidQmake) -and (Test-Path -Path $QtHostScanner))) {
         echo "Downloading Qt {{QtVersion}} for Android"
         & $Python -m pip install -U pip aqtinstall===3.2.0
         & $Python -m aqt install-qt windows desktop {{QtVersion}} win64_mingw
         & $Python -m aqt install-qt windows android {{QtVersion}} android_arm64_v8a
+        if (-not ((Test-Path -Path $QtAndroidQmake) -and (Test-Path -Path $QtHostScanner))) {
+            throw "Qt {{QtVersion}} was installed but is incomplete: expected $QtAndroidQmake and $QtHostScanner"
+        }
     }
     # ――――――――――――――――――――――――――――――――――――――――― Qt ――――――――――――――――――――――――――――――――――――――――――
 
     # ――――――――――――――――――――――――――――――――――――――― FFmpeg ――――――――――――――――――――――――――――――――――――――――
     $FFmpeg = "ffmpeg-8.1-android-gpl-lite"
-    if (-not (Test-Path -Path "$FFmpeg")) {
+    # Probing the files we actually consume, not just the directory: an extraction
+    # that dies half way leaves the top-level directory behind, and a bare
+    # directory check would then skip the download and fail much later with a
+    # missing header.
+    $FFmpegHeader = "$FFmpeg/include/libavutil/avutil.h"
+    $FFmpegLib    = "$FFmpeg/lib/libavutil.so"
+    if (-not ((Test-Path -Path $FFmpegHeader) -and (Test-Path -Path $FFmpegLib))) {
         echo "Downloading $FFmpeg"
-        wget "https://master.dl.sourceforge.net/project/avbuild/android/$FFmpeg.tar.xz?viasf=1" -outfile "ffmpeg.tar.xz"
+        # Must be curl.exe, never `wget`/`curl`: in Windows PowerShell both are
+        # aliases for Invoke-WebRequest, whose default Mozilla/5.0 user agent makes
+        # SourceForge answer with its HTML "download will start shortly" page under
+        # HTTP 200 instead of the archive. macos.just and linux.just already curl.
+        curl.exe -fsSL --retry 3 --retry-delay 5 -o ffmpeg.tar.xz "https://master.dl.sourceforge.net/project/avbuild/android/$FFmpeg.tar.xz?viasf=1"
+        if ($LASTEXITCODE -ne 0) { throw "Failed to download $FFmpeg (curl exit code $LASTEXITCODE)" }
         7z x -aoa ffmpeg.tar.xz
+        if ($LASTEXITCODE -ne 0) { throw "Failed to extract ffmpeg.tar.xz - the downloaded file is not an xz archive" }
         del ffmpeg.tar.xz
         7z x -aoa ffmpeg.tar
+        if ($LASTEXITCODE -ne 0) { throw "Failed to extract ffmpeg.tar" }
         del ffmpeg.tar
+        if (-not ((Test-Path -Path $FFmpegHeader) -and (Test-Path -Path $FFmpegLib))) {
+            throw "$FFmpeg extracted but is incomplete: expected $FFmpegHeader and $FFmpegLib"
+        }
     }
     # ――――――――――――――――――――――――――――――――――――――― FFmpeg ――――――――――――――――――――――――――――――――――――――――
 
     # ――――――――――――――――――――――――――――――――――――――― OpenCV ――――――――――――――――――――――――――――――――――――――――
-    if (-not (Test-Path -Path "OpenCV-android-sdk/")) {
+    # Probe a library we actually link, not just the directory: an interrupted
+    # extraction leaves the directory behind and the link step then fails.
+    $OpenCVLib = "OpenCV-android-sdk/sdk/native/staticlibs/arm64-v8a/libopencv_core.a"
+    if (-not (Test-Path -Path $OpenCVLib)) {
         echo "Downloading OpenCV for Android"
         wget "https://github.com/opencv/opencv/releases/download/4.11.0/opencv-4.11.0-android-sdk.zip" -outfile "opencv.zip"
         7z x -aoa opencv.zip
         del opencv.zip
+        if (-not (Test-Path -Path $OpenCVLib)) { throw "OpenCV was extracted but $OpenCVLib is missing" }
     }
     # ――――――――――――――――――――――――――――――――――――――― OpenCV ――――――――――――――――――――――――――――――――――――――――
 

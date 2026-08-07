@@ -76,34 +76,60 @@ install-deps:
     } elseif (Get-Command "python.exe" -ErrorAction SilentlyContinue) {
         $Python = "python";
     } else {
-        if (-not (Test-Path -Path "{{ExtDir}}/WPy64-310100b3")) {
+        # Probe the interpreter we actually run, not just the directory: an
+        # interrupted extraction leaves the directory behind and the resolve-path
+        # below would then fail with a far less obvious error.
+        $WinPython = "{{ExtDir}}/WPy64-310100b3/python-3.10.10.amd64/python.exe"
+        if (-not (Test-Path -Path $WinPython)) {
             echo "Downloading WinPython"
             wget https://github.com/winpython/winpython/releases/download/6.1.20230227/Winpython64-3.10.10.0dotb3.exe -outfile "winpython.exe"
             7z x -y winpython.exe
             del winpython.exe
+            if (-not (Test-Path -Path $WinPython)) { throw "WinPython was extracted but $WinPython is missing" }
         }
-        $Python = resolve-path "{{ExtDir}}\WPy64-310100b3\python-3.10.10.amd64\python.exe"
+        $Python = resolve-path $WinPython
     }
 
     # ---- Qt ----
-    if (-not (Test-Path -Path "{{QtVersion}}/{{QtArch}}")) {
+    # Probe the tool we actually invoke, not just the directory: an interrupted aqt
+    # run leaves the directory behind, and the build then fails much later. Note
+    # it is qmake.exe here - the android package ships qmake.bat instead.
+    $QtQmake     = "{{QtVersion}}/{{QtArch}}/bin/qmake.exe"
+    $QtHostQmake = "{{QtVersion}}/msvc2019_64/bin/qmake.exe"
+    if (-not (Test-Path -Path $QtQmake)) {
         echo "Downloading Qt {{QtVersion}}"
         & $Python -m pip install -U pip aqtinstall===3.2.0
-        if (-not (Test-Path -Path "{{QtVersion}}/msvc2019_64")) {
+        if (-not (Test-Path -Path $QtHostQmake)) {
             & $Python -m aqt install-qt windows desktop {{QtVersion}} win64_msvc2019_64 -m qtshadertools
         }
         if ("{{QtArch}}" -eq "msvc2019_arm64") {
             & $Python -m aqt install-qt windows desktop {{QtVersion}} win64_{{QtArch}}
         }
+        if (-not (Test-Path -Path $QtQmake)) { throw "Qt {{QtVersion}} was installed but is incomplete: expected $QtQmake" }
     }
     # ---- Qt ----
 
     # ---- FFmpeg ----
-    if (-not (Test-Path -Path "{{FFmpeg}}")) {
+    # Probing the files we actually consume, not just the directory: an extraction
+    # that dies half way leaves the top-level directory behind, and a bare
+    # directory check would then skip the download and fail much later with a
+    # missing header.
+    $FFmpegHeader = "{{FFmpeg}}/include/libavutil/avutil.h"
+    $FFmpegLib    = "{{FFmpeg}}/lib/avutil.lib"
+    if (-not ((Test-Path -Path $FFmpegHeader) -and (Test-Path -Path $FFmpegLib))) {
         echo "Downloading {{FFmpeg}}"
-        wget "https://master.dl.sourceforge.net/project/avbuild/windows-desktop/{{FFmpeg}}.7z?viasf=1" -outfile "{{FFmpeg}}.7z"
+        # Must be curl.exe, never `wget`/`curl`: in Windows PowerShell both are
+        # aliases for Invoke-WebRequest, whose default Mozilla/5.0 user agent makes
+        # SourceForge answer with its HTML "download will start shortly" page under
+        # HTTP 200 instead of the archive. macos.just and linux.just already curl.
+        curl.exe -fsSL --retry 3 --retry-delay 5 -o "{{FFmpeg}}.7z" "https://master.dl.sourceforge.net/project/avbuild/windows-desktop/{{FFmpeg}}.7z?viasf=1"
+        if ($LASTEXITCODE -ne 0) { throw "Failed to download {{FFmpeg}} (curl exit code $LASTEXITCODE)" }
         7z x -y {{FFmpeg}}.7z
+        if ($LASTEXITCODE -ne 0) { throw "Failed to extract {{FFmpeg}}.7z - the downloaded file is not a 7z archive" }
         del {{FFmpeg}}.7z
+        if (-not ((Test-Path -Path $FFmpegHeader) -and (Test-Path -Path $FFmpegLib))) {
+            throw "{{FFmpeg}} extracted but is incomplete: expected $FFmpegHeader and $FFmpegLib"
+        }
     }
     # ---- FFmpeg ----
 

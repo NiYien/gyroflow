@@ -45,7 +45,10 @@ install-deps:
     git clone --depth 1 https://github.com/Microsoft/vcpkg.git || true
     ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
-    if [ ! -d "{{ExtDir}}/{{QtVersion}}" ]; then
+    # Probe the tool we actually invoke, not just the directory: an interrupted aqt
+    # run leaves the version directory behind, and the build then fails much later.
+    # {{QtPath}} is the same path the QMAKE variable is derived from.
+    if [ ! -f "{{QtPath}}/qmake" ]; then
         echo "Setting up python venv in {{ExtDir}}/venv"
         python3 -m venv "{{ExtDir}}/venv"
         source "{{ExtDir}}/venv/bin/activate"
@@ -53,6 +56,11 @@ install-deps:
         echo "Installing Qt"
         python3 -m pip install -U pip aqtinstall
         python3 -m aqt install-qt mac desktop {{QtVersion}}
+
+        if [ ! -f "{{QtPath}}/qmake" ]; then
+            echo "Qt {{QtVersion}} was installed but is incomplete: expected {{QtPath}}/qmake" >&2
+            exit 1
+        fi
     fi
 
     if [ ! -f "{{OpenCVPath}}/lib/libopencv_core4.a" ]; then
@@ -64,7 +72,20 @@ install-deps:
         rm -rf ./vcpkg/downloads
     fi
 
-    if [ ! -d "{{FFmpeg}}" ]; then
+    # Probing the files we actually consume, not just the directory: the section
+    # below creates the arch dirs up front and only fills include/ at the very
+    # end, so an interrupted run leaves behind directories that a bare -d check
+    # accepts, and the build then fails much later with a missing header. Both
+    # arch dirs are checked because `just deploy universal` links against both.
+    ffmpeg_installed() {
+        for arch_dir in ffmpeg-x86_64 ffmpeg-arm64; do
+            [ -f "$arch_dir/include/libavutil/avutil.h" ] || return 1
+            [ -f "$arch_dir/lib/libavutil.a" ] || return 1
+        done
+        return 0
+    }
+
+    if ! ffmpeg_installed; then
         echo "Downloading ffmpeg"
 
         # Download and extract ffmpeg
@@ -72,8 +93,8 @@ install-deps:
         7z x -aoa ffmpeg.tar.xz
         tar -xf ffmpeg.tar
         rm ffmpeg.tar ffmpeg.tar.xz
-        mkdir -p ffmpeg-x86_64/lib
-        mkdir -p ffmpeg-arm64/lib
+        mkdir -p ffmpeg-x86_64/lib ffmpeg-x86_64/include
+        mkdir -p ffmpeg-arm64/lib ffmpeg-arm64/include
         cd ffmpeg-8.1-macOS-gpl-lite
         lipo lib/libavcodec.a    -thin x86_64 -output ../ffmpeg-x86_64/lib/libavcodec.a
         lipo lib/libavformat.a   -thin x86_64 -output ../ffmpeg-x86_64/lib/libavformat.a
@@ -94,8 +115,17 @@ install-deps:
         lipo lib/libswscale.a    -thin arm64 -output ../ffmpeg-arm64/lib/libswscale.a
         lipo lib/libx264.a       -thin arm64 -output ../ffmpeg-arm64/lib/libx264.a
         lipo lib/libx265.a       -thin arm64 -output ../ffmpeg-arm64/lib/libx265.a
-        cp -R include ../ffmpeg-x86_64/include
-        cp -R include ../ffmpeg-arm64/include
+        # Copy the contents, not the directory itself: `cp -R include dst` nests
+        # into dst/include when dst already exists, which would leave a partially
+        # copied include/ from an interrupted run unrepairable on a re-run.
+        cp -R include/. ../ffmpeg-x86_64/include/
+        cp -R include/. ../ffmpeg-arm64/include/
+        cd ..
+
+        if ! ffmpeg_installed; then
+            echo "ffmpeg was installed but is incomplete: expected include/libavutil/avutil.h and lib/libavutil.a in both ffmpeg-x86_64 and ffmpeg-arm64" >&2
+            exit 1
+        fi
     fi
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
