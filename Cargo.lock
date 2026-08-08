@@ -8404,7 +8404,7 @@ dependencies = [
 [[package]]
 name = "telemetry-parser"
 version = "0.3.0"
-source = "git+https://github.com/NiYien/telemetry-parser.git?branch=niyien#cd4b70cbb177ba9117745557cf606715960979b5"
+source = "git+https://github.com/NiYien/telemetry-parser.git?branch=niyien#88cdf1d0da3084d0dd0653bde1c142c3b0ebb7a2"
 dependencies = [
  "argh",
  "byteorder",
