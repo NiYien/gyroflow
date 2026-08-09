@@ -2643,15 +2643,15 @@ Item {
                         font.bold: true;
                     }
                     // [queue-render-skip] Show skip reason.
+                    // in-camera-stabilization-gate: the stabilization branch is shown even
+                    // when the row also carries a matched gyro file. The clip is skipped
+                    // either way, so hiding the reason would leave a row that looks ready
+                    // but never processes.
                     BasicText {
                         visible: dlg.isSkipped;
                         text: dlg.skipReason === "no_gyro" ? qsTr("Skipped - no gyro data")
                             : dlg.skipReason === "calibration" ? qsTr("Skipped - calibration pair")
                             : dlg.skipReason === "plugin_only" ? qsTr("Plugin only - video export skipped")
-                            \ in-camera-stabilization-gate: shown regardless of whether the
-                            // row also has a matched gyro file — the clip is skipped either
-                            // way, so hiding the reason would leave the user with a row that
-                            // looks ready but never processes.
                             : dlg.skipReason === "image_stabilization" ? qsTr("Skipped - in-camera stabilization is on")
                             : "";
                         color: root.skippedStatusColor;
