@@ -803,6 +803,199 @@ pub fn posterior_peaks(
     kept
 }
 
+// ---------------------------------------------------------------------------
+// Drift-fit rescue side path (change deep-match-drift-fit-rescue)
+// ---------------------------------------------------------------------------
+
+/// Admission and re-decision parameters for the drift-fit review. Pure inputs
+/// so the logic is unit-testable; env resolution lives in the getters below.
+#[derive(Debug, Clone, Copy)]
+pub struct DriftFitParams {
+    /// Confident-window flatness ceiling (cost_min / curve p25); windows above
+    /// it are hard-excluded from the fit (no weighting).
+    pub ratio_max: f64,
+    /// Minimum confident windows required to attempt the fit (>= 3: two points
+    /// define any line, leaving the residual gate vacuous).
+    pub min_windows: usize,
+    /// Physical slope bound in ms of offset drift per minute of video.
+    pub k_max_ms_per_min: f64,
+    /// Per-window residual bound to the fitted line.
+    pub resid_max_ms: f64,
+}
+
+/// Outcome of the drift-fit review over one chunk's `WeakValley` verdict.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DriftFitOutcome {
+    /// The confident windows form a physically plausible drift line and the
+    /// un-drifted re-decision passed the REGULAR acceptance gates.
+    /// `offset_ms` is the aligned joint's argmax (≈ δ at the confident-window
+    /// centroid time) — consumed through the existing Accepted write-back.
+    Rescued { offset_ms: f64, k_ms_per_min: f64, resid_max_ms: f64 },
+    /// Review declined; the original verdict must drive orchestration.
+    /// reason ∈ few_confident | slope_out_of_range | residual | conf_gate.
+    Skipped { reason: &'static str },
+}
+
+/// Within-window flatness ratio `cost_min / p25(curve costs)` — the same
+/// valley-vs-plateau judgement the legacy gate and the verification pass use,
+/// computed from the recorded curve itself. None = unusable curve (excluded).
+fn window_flatness_ratio(c: &DeepMatchWindowCurve) -> Option<f64> {
+    let mut costs: Vec<f64> = c.curve.iter().map(|p| p.1).filter(|v| v.is_finite()).collect();
+    if costs.is_empty() {
+        return None;
+    }
+    costs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let p25 = costs[costs.len() / 4];
+    if !p25.is_finite() || p25 <= 0.0 || !c.cost_min.is_finite() {
+        return None;
+    }
+    Some(c.cost_min / p25)
+}
+
+/// Theil-Sen robust line fit over `(t_ms, offset_ms)` points: median of all
+/// pairwise slopes, then median intercept. A single outlier cannot steer the
+/// median — least squares must NOT be substituted here. Returns (slope, intercept)
+/// with slope in ms-of-offset per ms-of-time; None for <2 usable points.
+pub fn theil_sen_fit(points: &[(f64, f64)]) -> Option<(f64, f64)> {
+    if points.len() < 2 {
+        return None;
+    }
+    let mut slopes: Vec<f64> = Vec::with_capacity(points.len() * (points.len() - 1) / 2);
+    for i in 0..points.len() {
+        for j in (i + 1)..points.len() {
+            let dt = points[j].0 - points[i].0;
+            if dt.abs() > 1e-9 {
+                let s = (points[j].1 - points[i].1) / dt;
+                if s.is_finite() {
+                    slopes.push(s);
+                }
+            }
+        }
+    }
+    if slopes.is_empty() {
+        return None;
+    }
+    let k = median_of(&mut slopes);
+    let mut intercepts: Vec<f64> = points.iter().map(|(t, d)| d - k * t).collect();
+    let b = median_of(&mut intercepts);
+    Some((k, b))
+}
+
+fn median_of(v: &mut [f64]) -> f64 {
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    if v.len() % 2 == 0 {
+        (v[v.len() / 2 - 1] + v[v.len() / 2]) / 2.0
+    } else {
+        v[v.len() / 2]
+    }
+}
+
+/// Drift-fit review for a `WeakValley` chunk (design D1-D6). Addresses the
+/// structural conf collapse on long clips: the drift dilation spreads the
+/// joint peak over ~T(D) while `conf_posterior` integrates a fixed ±12.5ms
+/// mass window, capping conf at roughly 25/T(D) regardless of match truth.
+///
+/// Screens confident windows (hard exclusion), Theil-Sen-fits δ(t)=δ₀+k·t,
+/// gates on physical slope + per-window residuals, shifts EVERY window curve
+/// by `−k·(t_i − t_ref)` and re-decides through the UNMODIFIED
+/// `decide_posterior` with `drift_rate=0` (dilation degrades to the floor) and
+/// the caller's REGULAR gates — no new acceptance standard. Only an `Accepted`
+/// re-verdict rescues; anything else leaves the original verdict in force.
+/// Chunk-local by construction: callers must only pass the current chunk's
+/// curves (the same discipline that forbids cross-chunk cost comparison).
+pub fn drift_fit_rescue(
+    curves: &[DeepMatchWindowCurve],
+    clip_duration_ms: f64,
+    conf_min: f64,
+    ci95_base_ms: f64,
+    drift_floor_ms: f64,
+    p: &DriftFitParams,
+    stage: &str,
+) -> DriftFitOutcome {
+    let confident: Vec<&DeepMatchWindowCurve> = curves
+        .iter()
+        .filter(|c| window_flatness_ratio(c).map_or(false, |r| r <= p.ratio_max))
+        .collect();
+    if confident.len() < p.min_windows.max(3) {
+        ::log::info!(
+            target: "sync",
+            "[deep-match] drift-fit skipped: reason=few_confident (stage={} confident={}/{} need>={})",
+            stage, confident.len(), curves.len(), p.min_windows.max(3)
+        );
+        return DriftFitOutcome::Skipped { reason: "few_confident" };
+    }
+    let pts: Vec<(f64, f64)> = confident.iter().map(|c| (c.t_center_ms, c.argmin_ms)).collect();
+    let Some((k, b)) = theil_sen_fit(&pts) else {
+        ::log::info!(
+            target: "sync",
+            "[deep-match] drift-fit skipped: reason=few_confident (stage={} degenerate fit over {} windows)",
+            stage, confident.len()
+        );
+        return DriftFitOutcome::Skipped { reason: "few_confident" };
+    };
+    let k_ms_per_min = k * 60_000.0;
+    if !k_ms_per_min.is_finite() || k_ms_per_min.abs() > p.k_max_ms_per_min {
+        ::log::info!(
+            target: "sync",
+            "[deep-match] drift-fit skipped: reason=slope_out_of_range (stage={} k={:.2}ms/min max={:.2})",
+            stage, k_ms_per_min, p.k_max_ms_per_min
+        );
+        return DriftFitOutcome::Skipped { reason: "slope_out_of_range" };
+    }
+    let resid_max = pts
+        .iter()
+        .map(|(t, d)| (d - (b + k * t)).abs())
+        .fold(0.0f64, f64::max);
+    if !resid_max.is_finite() || resid_max > p.resid_max_ms {
+        ::log::info!(
+            target: "sync",
+            "[deep-match] drift-fit skipped: reason=residual (stage={} resid_max={:.1}ms max={:.1})",
+            stage, resid_max, p.resid_max_ms
+        );
+        return DriftFitOutcome::Skipped { reason: "residual" };
+    }
+    let t_ref = pts.iter().map(|(t, _)| t).sum::<f64>() / pts.len() as f64;
+    ::log::info!(
+        target: "sync",
+        "[deep-match] drift-fit: stage={} windows={}/{} k={:.2}ms/min resid_max={:.1}ms t_ref={:.0}ms",
+        stage, confident.len(), curves.len(), k_ms_per_min, resid_max, t_ref
+    );
+    // Shift EVERY window (vague windows carry near-flat logL — harmless) so the
+    // re-decision sees the same input set as the main path, just un-drifted.
+    let shifted: Vec<DeepMatchWindowCurve> = curves
+        .iter()
+        .map(|c| {
+            let dx = -k * (c.t_center_ms - t_ref);
+            let mut s = c.clone();
+            s.argmin_ms += dx;
+            for pt in s.curve.iter_mut() {
+                pt.0 += dx;
+            }
+            s
+        })
+        .collect();
+    // drift_rate=0: dilation degrades to the floor; gates stay the caller's
+    // regular constants (decide_posterior itself is deliberately unmodified).
+    match decide_posterior(&shifted, clip_duration_ms, conf_min, ci95_base_ms, 0.0, drift_floor_ms) {
+        DeepMatchVerdict::Accepted { offset_ms } => {
+            ::log::info!(
+                target: "sync",
+                "[deep-match] drift-fit rescued: offset={:.1}ms k={:.2}ms/min (stage={})",
+                offset_ms, k_ms_per_min, stage
+            );
+            DriftFitOutcome::Rescued { offset_ms, k_ms_per_min, resid_max_ms: resid_max }
+        }
+        v => {
+            ::log::info!(
+                target: "sync",
+                "[deep-match] drift-fit skipped: reason=conf_gate (stage={} re-verdict={:?})",
+                stage, v
+            );
+            DriftFitOutcome::Skipped { reason: "conf_gate" }
+        }
+    }
+}
+
 /// Linear interpolation of a sorted `(x, y)` curve at `x`, clamped at the ends.
 fn interp_curve_at(curve: &[(f64, f64)], x: f64) -> f64 {
     match curve.binary_search_by(|p| p.0.partial_cmp(&x).unwrap_or(std::cmp::Ordering::Equal)) {
@@ -1380,6 +1573,72 @@ pub fn verify_ratio() -> f64 {
 /// above the OF-side motion gate.
 pub fn verify_gyro_hot_min_dps() -> f64 {
     env_f64("GYROFLOW_DEEP_MATCH_VERIFY_GYRO_HOT_MIN_DPS", 5.0)
+}
+
+/// Master switch for the drift-fit rescue side path (change
+/// deep-match-drift-fit-rescue). `GYROFLOW_DEEP_MATCH_DRIFT_FIT=0|off|false|no`
+/// disables it byte-for-byte (WeakValley flows straight into the pre-change
+/// verify/terminal matrix); any other value (or unset) enables. OnceLock-cached;
+/// first resolve logs to `target="lifecycle"`.
+pub fn drift_fit_enabled() -> bool {
+    static RESOLVED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        let raw = std::env::var("GYROFLOW_DEEP_MATCH_DRIFT_FIT").ok();
+        let (v, source) = match raw.as_deref().map(str::trim) {
+            None | Some("") => (true, "default"),
+            Some(s) => match s.to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => (true, "env"),
+                "0" | "false" | "no" | "off" => (false, "env"),
+                _ => {
+                    log::warn!(
+                        target: "lifecycle",
+                        "GYROFLOW_DEEP_MATCH_DRIFT_FIT={} invalid, falling back to default (on)",
+                        s
+                    );
+                    (true, "default")
+                }
+            },
+        };
+        log::info!(target: "lifecycle", "deep_match_drift_fit resolved={} source={}", v, source);
+        v
+    })
+}
+
+/// Confident-window flatness ceiling for the drift-fit review (same
+/// valley-vs-plateau semantics as `verify_ratio`; calibrated range: true hits
+/// 0.448-0.637, noise-flat curves 0.875+).
+pub fn drift_fit_ratio() -> f64 {
+    env_f64("GYROFLOW_DEEP_MATCH_DRIFT_FIT_RATIO", 0.6)
+}
+
+/// Minimum confident windows for the drift-fit review (clamp >=3: two points
+/// define any line, leaving the residual gate vacuous).
+pub fn drift_fit_min_windows() -> usize {
+    (env_f64("GYROFLOW_DEEP_MATCH_DRIFT_FIT_MIN_WINDOWS", 3.0) as usize).max(3)
+}
+
+/// Physical slope bound (ms of offset drift per minute of video) for the
+/// drift-fit admission gate. 2x headroom over the tolerance-path
+/// DRIFT_RATE_MS_PER_MIN (2.0); observed real drifts: 1.3 ms/min (feedback
+/// 20260808-ec1d2494), ~1.0 ms/min (C072).
+pub fn drift_fit_k_max_ms_per_min() -> f64 {
+    env_f64_nonneg("GYROFLOW_DEEP_MATCH_DRIFT_FIT_K_MAX_MS_PER_MIN", 4.0)
+}
+
+/// Per-window residual bound to the fitted drift line (ms) — well below T(D),
+/// wide enough for the 5ms grid quantization plus per-window valley noise.
+pub fn drift_fit_resid_ms() -> f64 {
+    env_f64_nonneg("GYROFLOW_DEEP_MATCH_DRIFT_FIT_RESID_MS", 25.0)
+}
+
+/// Bundled drift-fit parameters for the orchestration call site.
+pub fn drift_fit_params() -> DriftFitParams {
+    DriftFitParams {
+        ratio_max: drift_fit_ratio(),
+        min_windows: drift_fit_min_windows(),
+        k_max_ms_per_min: drift_fit_k_max_ms_per_min(),
+        resid_max_ms: drift_fit_resid_ms(),
+    }
 }
 
 /// Master switch for the forward re-scoring cascade (change
@@ -1991,6 +2250,342 @@ mod tests {
         }
     }
 
+    /// The 110-minute feedback shape (20260808-ec1d2494), in relative offsets:
+    /// three sharp valleys on a ~1.3 ms/min drift line across a ~66min window
+    /// span (real argmins -499800.5/-499763.4/-499742.7 at 22/44/66min).
+    fn feedback_110min_curves() -> (Vec<DeepMatchWindowCurve>, f64) {
+        let curves = vec![
+            wc(0, 1_317_766.0, -100.5, 59.0),
+            wc(1, 2_635_533.0, -63.4, 59.0),
+            wc(2, 3_953_299.0, -42.7, 59.0),
+        ];
+        (curves, 6_588_832.0) // clip duration of DSC_7770.MOV
+    }
+
+    #[test]
+    fn decide_posterior_long_clip_linear_drift_conf_collapses_to_weakvalley() {
+        // Main-path behaviour anchor (NOT fixed by the rescue change — the
+        // rescue is a side path): T(D)=219.6ms dilation smears the joint over
+        // a ~160ms plateau, conf ≈ 25/plateau stays far below the regular 0.5
+        // gate even though all three windows sit on one physical drift line.
+        // ci95 stays inside its +T(D)-compensated gate -> WeakValley, exactly
+        // as observed live (conf=0.095, width=160ms, gate=254.6ms).
+        let (curves, clip_ms) = feedback_110min_curves();
+        match decide_posterior(&curves, clip_ms, 0.5, 35.0, 2.0, 10.0) {
+            DeepMatchVerdict::WeakValley { worst_ratio } => {
+                // worst_ratio = 1 - conf: conf must be collapsed (< 0.3), not
+                // marginally under the gate — this anchors the failure mode.
+                assert!(worst_ratio > 0.7, "conf collapse expected, got 1-conf={worst_ratio}");
+            }
+            v => panic!("expected structural WeakValley on the drift-line long clip, got {v:?}"),
+        }
+    }
+
+    #[test]
+    fn drift_fit_rescues_the_110min_feedback_shape() {
+        let (curves, clip_ms) = feedback_110min_curves();
+        let p = DriftFitParams { ratio_max: 0.6, min_windows: 3, k_max_ms_per_min: 4.0, resid_max_ms: 25.0 };
+        match drift_fit_rescue(&curves, clip_ms, 0.5, 35.0, 10.0, &p, "test") {
+            DriftFitOutcome::Rescued { offset_ms, k_ms_per_min, resid_max_ms } => {
+                // Theil-Sen median slope over the three pairs = 1.32 ms/min.
+                assert!((k_ms_per_min - 1.32).abs() < 0.15, "k={k_ms_per_min}");
+                assert!(resid_max_ms <= 25.0);
+                // Aligned argmax ≈ δ at t_ref (centroid ≈ middle window):
+                // end windows land exactly on -71.6, middle stays -63.4.
+                assert!((-75.0..=-60.0).contains(&offset_ms), "offset={offset_ms}");
+            }
+            v => panic!("expected Rescued on the drift-line long clip, got {v:?}"),
+        }
+    }
+
+    #[test]
+    fn drift_fit_rejects_noise_argmins_on_slope() {
+        // Random argmins spanning ~450ms over the same window spread fit a
+        // line far above any physical clock-drift rate -> no admission.
+        let curves = vec![
+            wc(0, 1_317_766.0, -300.0, 59.0),
+            wc(1, 2_635_533.0, 150.0, 59.0),
+            wc(2, 3_953_299.0, 90.0, 59.0),
+        ];
+        let p = DriftFitParams { ratio_max: 0.6, min_windows: 3, k_max_ms_per_min: 4.0, resid_max_ms: 25.0 };
+        assert_eq!(
+            drift_fit_rescue(&curves, 6_588_832.0, 0.5, 35.0, 10.0, &p, "test"),
+            DriftFitOutcome::Skipped { reason: "slope_out_of_range" }
+        );
+    }
+
+    #[test]
+    fn drift_fit_rejects_nonlinear_argmins_on_residual() {
+        // Median pairwise slope stays inside the physical bound but one window
+        // sits ~38ms off the fitted line -> residual gate refuses admission.
+        let curves = vec![
+            wc(0, 1_317_766.0, -100.5, 59.0),
+            wc(1, 2_635_533.0, -63.4, 59.0),
+            wc(2, 3_953_299.0, 50.0, 59.0),
+        ];
+        let p = DriftFitParams { ratio_max: 0.6, min_windows: 3, k_max_ms_per_min: 4.0, resid_max_ms: 25.0 };
+        assert_eq!(
+            drift_fit_rescue(&curves, 6_588_832.0, 0.5, 35.0, 10.0, &p, "test"),
+            DriftFitOutcome::Skipped { reason: "residual" }
+        );
+    }
+
+    #[test]
+    fn drift_fit_requires_three_confident_windows() {
+        // Two sharp windows + one flat curve (flatness ratio ~1 > 0.6): the
+        // flat window is hard-excluded, leaving 2 < 3 -> no fit attempted.
+        let curves = vec![
+            wc(0, 1_317_766.0, -100.5, 59.0),
+            wc(1, 2_635_533.0, -63.4, 59.0),
+            flat_wc(2, 3_953_299.0),
+        ];
+        let p = DriftFitParams { ratio_max: 0.6, min_windows: 3, k_max_ms_per_min: 4.0, resid_max_ms: 25.0 };
+        assert_eq!(
+            drift_fit_rescue(&curves, 6_588_832.0, 0.5, 35.0, 10.0, &p, "test"),
+            DriftFitOutcome::Skipped { reason: "few_confident" }
+        );
+    }
+
+    #[test]
+    fn drift_fit_conf_gate_holds_when_evidence_is_thin() {
+        // Perfect line but n_eff=1: per-window logL amplitude is tiny, the
+        // aligned joint stays near-flat, and the UNMODIFIED regular conf gate
+        // refuses — admission does not imply acceptance.
+        let curves = vec![
+            wc(0, 1_317_766.0, -100.5, 1.0),
+            wc(1, 2_635_533.0, -63.4, 1.0),
+            wc(2, 3_953_299.0, -42.7, 1.0),
+        ];
+        let p = DriftFitParams { ratio_max: 0.6, min_windows: 3, k_max_ms_per_min: 4.0, resid_max_ms: 25.0 };
+        assert_eq!(
+            drift_fit_rescue(&curves, 6_588_832.0, 0.5, 35.0, 10.0, &p, "test"),
+            DriftFitOutcome::Skipped { reason: "conf_gate" }
+        );
+    }
+
+    #[test]
+    fn drift_fit_short_span_is_near_identity() {
+        // Confident windows agreeing within the grid step over a short span:
+        // k ≈ 0, shifts ≈ 0 -> the re-decision equals the plain no-drift
+        // decision and rescues at the common offset.
+        let curves = vec![
+            wc(0, 10_000.0, -100.0, 75.0),
+            wc(1, 40_000.0, -100.0, 75.0),
+            wc(2, 70_000.0, -100.0, 75.0),
+        ];
+        let p = DriftFitParams { ratio_max: 0.6, min_windows: 3, k_max_ms_per_min: 4.0, resid_max_ms: 25.0 };
+        match drift_fit_rescue(&curves, 120_000.0, 0.5, 35.0, 10.0, &p, "test") {
+            DriftFitOutcome::Rescued { offset_ms, k_ms_per_min, .. } => {
+                assert!((offset_ms + 100.0).abs() <= 10.0, "offset={offset_ms}");
+                assert!(k_ms_per_min.abs() < 1e-6, "k={k_ms_per_min}");
+            }
+            v => panic!("expected near-identity Rescued, got {v:?}"),
+        }
+    }
+
+    #[test]
+    fn theil_sen_median_slope_resists_one_outlier() {
+        // Four collinear points (slope 2.0) plus one wild outlier: the median
+        // pairwise slope stays at the true value — least squares would not.
+        let pts = [(0.0, 0.0), (10.0, 20.0), (20.0, 40.0), (30.0, 60.0), (40.0, 500.0)];
+        let (k, b) = theil_sen_fit(&pts).unwrap();
+        assert!((k - 2.0).abs() < 0.5, "k={k}");
+        assert!(b.abs() < 10.0, "b={b}");
+        // Degenerate inputs refuse instead of fabricating a line.
+        assert!(theil_sen_fit(&[(0.0, 1.0)]).is_none());
+        assert!(theil_sen_fit(&[(5.0, 1.0), (5.0, 2.0)]).is_none());
+    }
+
+    // ---- Adversarial accuracy-preservation suite (deep-match-drift-fit-rescue) ----
+    // Each test constructs a shape that could plausibly trick the rescue into
+    // accepting a wrong offset, and asserts BOTH defence layers where relevant:
+    // the main-path verdict (which controls whether the rescue triggers at
+    // all — only WeakValley does) and the rescue's own admission gates.
+
+    const DFP: DriftFitParams =
+        DriftFitParams { ratio_max: 0.6, min_windows: 3, k_max_ms_per_min: 4.0, resid_max_ms: 25.0 };
+
+    // Wide-domain variant of wc(): all windows share one scan domain (as in a
+    // real chunk scan — the combine grid is the domain INTERSECTION, so
+    // per-window domains must match for peaks to stay in play).
+    fn wc_wide(idx: usize, t_center: f64, peak: f64) -> DeepMatchWindowCurve {
+        let curve: Vec<(f64, f64)> = (0..=200)
+            .map(|k| {
+                let off = -4500.0 + k as f64 * 25.0;
+                let d = (off - peak) / 13.0;
+                (off, 1.0 + (1.0 - (-0.5 * d * d).exp()))
+            })
+            .collect();
+        DeepMatchWindowCurve { range_idx: idx, t_center_ms: t_center, argmin_ms: peak, cost_min: 1.0, n_eff: 59.0, curve }
+    }
+
+    #[test]
+    fn drift_fit_echo_family_windows_locking_different_echoes_cannot_assemble() {
+        // Echo false peaks sit SECONDS from the truth (P1004620: 6.4s). For a
+        // line through different echoes across 22min-spaced windows, the slope
+        // would need ~91ms/min — 20x over the physical bound. Layer 1: peaks
+        // separated far beyond T(D) never merge, the joint stays multimodal and
+        // the main path calls it Inconsistent — the rescue is not even
+        // triggered (orchestration only feeds WeakValley). Layer 2: called
+        // directly, the slope gate refuses.
+        let curves = vec![
+            wc_wide(0, 1_317_766.0, -100.0),
+            wc_wide(1, 2_635_533.0, -2100.0),
+            wc_wide(2, 3_953_299.0, -4100.0),
+        ];
+        match decide_posterior(&curves, 6_588_832.0, 0.5, 35.0, 2.0, 10.0) {
+            DeepMatchVerdict::Inconsistent { .. } => {}
+            v => panic!("second-scale peak separation must stay Inconsistent, got {v:?}"),
+        }
+        assert_eq!(
+            drift_fit_rescue(&curves, 6_588_832.0, 0.5, 35.0, 10.0, &DFP, "test"),
+            DriftFitOutcome::Skipped { reason: "slope_out_of_range" }
+        );
+    }
+
+    #[test]
+    fn drift_fit_two_true_one_sharp_false_window_cannot_assemble() {
+        // Two windows on the true drift line plus one SHARP false valley that
+        // passes the confidence ratio: with 3 points the median pairwise slope
+        // is dragged by the false pairs (5.7 ms/min) — the physical slope gate
+        // refuses. The failure mode is "no rescue" (original verdict stands),
+        // never "wrong rescue".
+        let curves = vec![
+            wc(0, 1_317_766.0, -100.5, 59.0),
+            wc(1, 2_635_533.0, -63.4, 59.0),
+            wc(2, 3_953_299.0, 150.0, 59.0),
+        ];
+        assert_eq!(
+            drift_fit_rescue(&curves, 6_588_832.0, 0.5, 35.0, 10.0, &DFP, "test"),
+            DriftFitOutcome::Skipped { reason: "slope_out_of_range" }
+        );
+    }
+
+    #[test]
+    fn drift_fit_slope_gate_is_load_bearing_for_chain_bridged_fast_drift() {
+        // A 6 ms/min drift keeps ADJACENT peaks within T(D) (132ms < 219.6ms),
+        // so the dilated plateaus chain-bridge into one merged top and the
+        // main path decides WeakValley — the rescue IS reached. Chain
+        // bridging means the reachable slope goes up to ~T(D)/window-spacing
+        // (~10 ms/min on this layout), well past the tolerance rate: the
+        // physical slope gate (K_MAX=4) is the load-bearing defence here, not
+        // the WeakValley precondition.
+        let curves = vec![
+            wc(0, 1_317_766.0, -100.0, 59.0),
+            wc(1, 2_635_533.0, -232.0, 59.0),
+            wc(2, 3_953_299.0, -364.0, 59.0),
+        ];
+        match decide_posterior(&curves, 6_588_832.0, 0.5, 35.0, 2.0, 10.0) {
+            DeepMatchVerdict::WeakValley { .. } => {}
+            v => panic!("chain-bridged 6ms/min drift should reach WeakValley, got {v:?}"),
+        }
+        assert_eq!(
+            drift_fit_rescue(&curves, 6_588_832.0, 0.5, 35.0, 10.0, &DFP, "test"),
+            DriftFitOutcome::Skipped { reason: "slope_out_of_range" }
+        );
+    }
+
+    #[test]
+    fn drift_fit_zero_slope_consensus_matches_short_clip_semantics() {
+        // Three windows agreeing on ONE offset (zero-slope line) on a long
+        // clip: the main path's conf collapse rejects it (WeakValley), the
+        // rescue accepts it. This is NOT a new acceptance surface — the SAME
+        // evidence shape on a short clip is accepted by the unmodified main
+        // path today. The rescue restores long-clip behaviour to the
+        // short-clip equivalence class, which is the accuracy contract.
+        let mk = |clip: f64, t_scale: f64| {
+            (
+                vec![
+                    wc(0, 100_000.0 * t_scale, -100.0, 59.0),
+                    wc(1, 200_000.0 * t_scale, -100.0, 59.0),
+                    wc(2, 300_000.0 * t_scale, -100.0, 59.0),
+                ],
+                clip,
+            )
+        };
+        // Short clip: main path accepts directly.
+        let (short_curves, short_clip) = mk(400_000.0, 1.0);
+        match decide_posterior(&short_curves, short_clip, 0.5, 35.0, 2.0, 10.0) {
+            DeepMatchVerdict::Accepted { offset_ms } => assert!((offset_ms + 100.0).abs() <= 10.0),
+            v => panic!("short clip consensus must accept on the main path, got {v:?}"),
+        }
+        // Long clip: main path collapses -> WeakValley; rescue restores the
+        // short-clip verdict at the same offset.
+        let (long_curves, long_clip) = mk(6_588_832.0, 13.0);
+        match decide_posterior(&long_curves, long_clip, 0.5, 35.0, 2.0, 10.0) {
+            DeepMatchVerdict::WeakValley { .. } => {}
+            v => panic!("long clip consensus should conf-collapse on the main path, got {v:?}"),
+        }
+        match drift_fit_rescue(&long_curves, long_clip, 0.5, 35.0, 10.0, &DFP, "test") {
+            DriftFitOutcome::Rescued { offset_ms, k_ms_per_min, .. } => {
+                assert!((offset_ms + 100.0).abs() <= 10.0, "offset={offset_ms}");
+                assert!(k_ms_per_min.abs() < 0.5, "k={k_ms_per_min}");
+            }
+            v => panic!("long-clip consensus must be rescued to the short-clip verdict, got {v:?}"),
+        }
+    }
+
+    #[test]
+    fn drift_fit_monte_carlo_random_valleys_rescue_increment_bounded() {
+        // Accuracy-preservation bound on the rescue INCREMENT: three sharp
+        // valleys at RANDOM offsets (uniform ±500ms) on the 110min layout,
+        // run through the orchestration chain (main-path verdict first, only
+        // WeakValley reaches the rescue). The measured quantity is how often
+        // the rescue FLIPS a main-path rejection — that increment, not the
+        // main path's own behaviour, is what this change adds.
+        //
+        // (Probing this suite surfaced a PRE-EXISTING main-path exposure,
+        // unrelated to and unchanged by this change: two random peaks ~T(D)
+        // apart can fuse via dilation edges + Gaussian tails into a high-conf
+        // phantom between them and get accepted — e.g. argmins
+        // 470.6/-183.3/234.7 -> Accepted@365, conf 0.96. The anchor test above
+        // pins main-path behaviour byte-for-byte; that exposure is tracked
+        // separately, not fixed here.)
+        let mut seed: u64 = 0x5DEE_CE66_D001_C0DE;
+        let mut next_unit = move || {
+            // Deterministic LCG (no external RNG, no wall clock).
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((seed >> 33) as f64) / ((1u64 << 31) as f64) // [0, 1)
+        };
+        let n = 400;
+        let mut main_accepted = 0usize;
+        let mut weakvalley = 0usize;
+        let mut rescued = 0usize;
+        for _ in 0..n {
+            let a0 = (next_unit() - 0.5) * 1000.0;
+            let a1 = (next_unit() - 0.5) * 1000.0;
+            let a2 = (next_unit() - 0.5) * 1000.0;
+            let curves = vec![
+                wc(0, 1_317_766.0, a0, 59.0),
+                wc(1, 2_635_533.0, a1, 59.0),
+                wc(2, 3_953_299.0, a2, 59.0),
+            ];
+            match decide_posterior(&curves, 6_588_832.0, 0.5, 35.0, 2.0, 10.0) {
+                DeepMatchVerdict::Accepted { .. } => main_accepted += 1,
+                DeepMatchVerdict::WeakValley { .. } => {
+                    weakvalley += 1;
+                    if let DriftFitOutcome::Rescued { resid_max_ms, k_ms_per_min, .. } =
+                        drift_fit_rescue(&curves, 6_588_832.0, 0.5, 35.0, 10.0, &DFP, "test")
+                    {
+                        rescued += 1;
+                        // Invariant: a rescue is only ever a physically
+                        // admissible consensus (line within the slope bound,
+                        // residuals inside the gate) re-accepted by the
+                        // REGULAR gates — never an unconstrained acceptance.
+                        assert!(resid_max_ms <= 25.0 && k_ms_per_min.abs() <= 4.0);
+                    }
+                }
+                _ => {}
+            }
+        }
+        eprintln!("MC STATS: main_accepted={main_accepted} weakvalley={weakvalley} rescued={rescued} / n={n}");
+        assert!(
+            rescued * 20 <= n,
+            "rescue must flip at most 5% of random-noise runs \
+             (rescued {rescued}/{n}, weakvalley {weakvalley}, main_accepted {main_accepted})"
+        );
+    }
+
     fn flat_wc(idx: usize, t_center: f64) -> DeepMatchWindowCurve {
         // Near-flat cost curve (no real valley): cost barely above cost_min
         // across the whole domain -> logL ~= 0 everywhere -> uniform posterior ->
@@ -2424,3 +3019,4 @@ mod tests {
         assert_eq!(scan_k_target(), 0);
     }
 }
+

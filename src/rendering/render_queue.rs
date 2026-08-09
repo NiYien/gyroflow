@@ -13678,6 +13678,35 @@ impl RenderQueue {
                 current_probe + 1, probe_count,
                 current_chunk + 1, chunk_count, job_id, offsets_ms.len(), offsets_ms, verdict
             );
+            // Drift-fit rescue, trigger 1 of 2 (deep-match-drift-fit-rescue):
+            // a WeakValley whose confident windows sit on one physical drift
+            // line gets an un-drifted re-decision through the REGULAR gates —
+            // pure computation, no probe. One-way (WeakValley -> Accepted
+            // only); every other verdict flows on byte-for-byte. The
+            // auto-probe keeps its pre-existing decision profile, same as the
+            // verification pass below.
+            if matches!(verdict, deep_match::DeepMatchVerdict::WeakValley { .. })
+                && deep_match::drift_fit_enabled()
+                && deep_match::posterior_enabled()
+                && !curves.is_empty()
+                && !self.is_auto_probe_run(job_id)
+            {
+                let clip_ms = stab.as_ref().map(|s| s.params.read().duration_ms).unwrap_or(0.0);
+                if let deep_match::DriftFitOutcome::Rescued { offset_ms, .. } = deep_match::drift_fit_rescue(
+                    &curves,
+                    clip_ms,
+                    deep_match::post_conf_min(),
+                    deep_match::post_ci95_base_ms(),
+                    deep_match::drift_floor_ms(),
+                    &deep_match::drift_fit_params(),
+                    "pre_verify",
+                ) {
+                    // Rescued chunks skip the verification probe entirely —
+                    // the existing Accepted write-back and short-circuit apply.
+                    self.terminate_deep_match(job_id, stab, deep_match::DeepMatchVerdict::Accepted { offset_ms });
+                    return;
+                }
+            }
             // Posterior-peak verification (deep-match-peak-verification):
             // before the orchestration consumes an advance verdict, give the
             // chunk one hypothesis-driven verification pass. A launched pass
@@ -14042,6 +14071,29 @@ impl RenderQueue {
                     self.launch_deep_match_verify_probe(job_id, stab_arc, delta, &windows, idx, total, t_d);
                     return;
                 }
+            }
+        }
+        // Drift-fit rescue, trigger 2 of 2 (deep-match-drift-fit-rescue):
+        // verification failed and contributed NEW curves — re-fit over the
+        // merged (base + verification) set before consuming the original
+        // verdict. Same one-way gates as the pre-verify trigger; the feedback
+        // case is exactly this shape (6 hotspot+chunk windows on one line,
+        // merged conf still collapsed by the T(D) dilation).
+        if matches!(vs.original_verdict, deep_match::DeepMatchVerdict::WeakValley { .. })
+            && deep_match::drift_fit_enabled()
+            && !verify_curves.is_empty()
+        {
+            if let deep_match::DriftFitOutcome::Rescued { offset_ms, .. } = deep_match::drift_fit_rescue(
+                &merged,
+                clip_ms,
+                deep_match::post_conf_min(),
+                deep_match::post_ci95_base_ms(),
+                deep_match::drift_floor_ms(),
+                &deep_match::drift_fit_params(),
+                "post_verify",
+            ) {
+                self.terminate_deep_match(job_id, stab, deep_match::DeepMatchVerdict::Accepted { offset_ms });
+                return;
             }
         }
         self.consume_deep_match_verdict(job_id, stab, vs.original_verdict.clone());
@@ -20778,6 +20830,110 @@ mod tests {
             queue.deep_match_pending.is_empty(),
             "acceptance must short-circuit the remaining chunks"
         );
+    }
+
+    // Sharp synthetic cost curve (sigma ~13ms over [-600,600] @25ms) for the
+    // posterior dispatch path — mirrors the core-side test helper.
+    fn drift_curve(
+        idx: usize,
+        t_center_ms: f64,
+        peak_ms: f64,
+    ) -> gyroflow_core::synchronization::deep_match::DeepMatchWindowCurve {
+        let curve: Vec<(f64, f64)> = (0..=48)
+            .map(|k| {
+                let off = -600.0 + k as f64 * 25.0;
+                let d = (off - peak_ms) / 13.0;
+                (off, 1.0 + (1.0 - (-0.5 * d * d).exp()))
+            })
+            .collect();
+        gyroflow_core::synchronization::deep_match::DeepMatchWindowCurve {
+            range_idx: idx,
+            t_center_ms,
+            argmin_ms: peak_ms,
+            cost_min: 1.0,
+            n_eff: 59.0,
+            curve,
+        }
+    }
+
+    #[test]
+    fn deep_match_drift_fit_rescues_weakvalley_curves_and_short_circuits() {
+        use gyroflow_core::synchronization::deep_match;
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = setup_deep_match_job(&mut queue, false);
+        simulate_deep_match_probe_chunks(
+            &mut queue,
+            &stab,
+            vec![(0.0, 7_200_000.0), (7_000_000.0, 14_200_000.0)],
+            0,
+        );
+        // 110min clip -> T(D)=219.6ms: the dilated joint's conf collapses
+        // (feedback 20260808-ec1d2494) and the main path decides WeakValley.
+        stab.params.write().duration_ms = 6_588_832.0;
+
+        deep_match::arm(3);
+        deep_match::record_curve(drift_curve(0, 1_317_766.0, -100.5));
+        deep_match::record_curve(drift_curve(1, 2_635_533.0, -63.4));
+        deep_match::record_curve(drift_curve(2, 3_953_299.0, -42.7));
+        queue.record_batch_sync_result(
+            1,
+            vec![
+                sync_candidate(1, 1000.0, -100.5, 0.9),
+                sync_candidate(1, 2000.0, -63.4, 0.9),
+                sync_candidate(1, 3000.0, -42.7, 0.9),
+            ],
+            vec![],
+        );
+
+        // The drift-fit review (trigger 1, pre-verify) must rescue the
+        // WeakValley on chunk 1/2 and terminate as Accepted — no verification
+        // probe, no advance to the second chunk.
+        assert!(
+            queue.deep_match_results.contains_key(&1),
+            "drift-line WeakValley must be rescued to Accepted"
+        );
+        assert!(
+            queue.deep_match_pending.is_empty(),
+            "rescue must short-circuit the remaining chunks"
+        );
+    }
+
+    #[test]
+    fn deep_match_drift_fit_skip_leaves_weakvalley_flow_unchanged() {
+        use gyroflow_core::synchronization::deep_match;
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = setup_deep_match_job(&mut queue, false);
+        simulate_deep_match_probe_chunks(
+            &mut queue,
+            &stab,
+            vec![(0.0, 7_200_000.0), (7_000_000.0, 14_200_000.0)],
+            0,
+        );
+        stab.params.write().duration_ms = 6_588_832.0;
+
+        // Peaks all within T(D) (joint merges -> WeakValley, not Inconsistent)
+        // but NOT collinear: the middle window sits ~175ms off the fitted
+        // line -> admission fails on the residual gate -> the original
+        // WeakValley must drive the unchanged advance logic (chunk 2 loads).
+        deep_match::arm(3);
+        deep_match::record_curve(drift_curve(0, 1_317_766.0, -100.0));
+        deep_match::record_curve(drift_curve(1, 2_635_533.0, 80.0));
+        deep_match::record_curve(drift_curve(2, 3_953_299.0, -90.0));
+        queue.record_batch_sync_result(
+            1,
+            vec![
+                sync_candidate(1, 1000.0, -100.0, 0.9),
+                sync_candidate(1, 2000.0, 80.0, 0.9),
+                sync_candidate(1, 3000.0, -90.0, 0.9),
+            ],
+            vec![],
+        );
+
+        let state = queue.deep_match_pending.get(&1).expect("run must stay pending");
+        assert_eq!(state.current_chunk, 1, "skip must leave the advance flow unchanged");
+        assert!(queue.deep_match_results.is_empty(), "no rescue for non-collinear argmins");
     }
 
     #[test]
