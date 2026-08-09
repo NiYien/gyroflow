@@ -4037,6 +4037,11 @@ Hvis det ikke finnes brukbare tidssynkroniseringsdata i det hele tatt, høyrekli
         <translation>Hoppet over - ingen gyrodata</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2655"/>
+        <source>Skipped - in-camera stabilization is on</source>
+        <translation>Hoppet over - kamerastabilisering er på</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2638"/>
         <source>Skipped - calibration pair</source>
         <translation>Hoppet over - kalibreringspar</translation>

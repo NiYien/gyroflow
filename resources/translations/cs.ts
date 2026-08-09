@@ -4037,6 +4037,11 @@ Pokud nejsou k dispozici vůbec žádná použitelná data časové synchronizac
         <translation>Přeskočeno – žádná data gyroskopu</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2655"/>
+        <source>Skipped - in-camera stabilization is on</source>
+        <translation>Přeskočeno - stabilizace ve fotoaparátu je zapnutá</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2638"/>
         <source>Skipped - calibration pair</source>
         <translation>Přeskočeno - kalibrační pár</translation>

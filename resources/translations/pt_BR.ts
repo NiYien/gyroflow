@@ -4036,6 +4036,11 @@ Se não houver nenhum dado de sincronização de tempo utilizável, clique com o
         <translation>Ignorado - sem dados de giroscópio</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2655"/>
+        <source>Skipped - in-camera stabilization is on</source>
+        <translation>Ignorado - a estabilização da câmera está ativada</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2638"/>
         <source>Skipped - calibration pair</source>
         <translation>Ignorado - par de calibração</translation>

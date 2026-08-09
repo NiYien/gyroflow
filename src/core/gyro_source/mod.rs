@@ -1350,6 +1350,9 @@ impl GyroSource {
         let sample_rate = Self::get_sample_rate(&md);
         let mut original_sample_rate = sample_rate;
         let mut is_temp = sony::ISTemp::default();
+        // Sticky across all samples: one sentinel anywhere in the clip means the
+        // mounted lens never reports its OSS compensation.
+        let mut ois_sentinel = false;
         let mut mesh_cache = BTreeMap::new();
         if let Some(ref samples) = input.samples {
             for info in samples {
@@ -1371,15 +1374,8 @@ impl GyroSource {
                         .get(&GroupId::LensOSS)
                         .and_then(|x| x.get_t(TagId::Data) as Option<&Vec<TimeVector3<i32>>>)
                     {
-                        if ois.len() == 1
-                            && *ois.first().unwrap()
-                                == (TimeVector3 {
-                                    t: -1,
-                                    x: -1,
-                                    y: -1,
-                                    z: -1,
-                                })
-                        {
+                        if sony::is_unsupported_lens_sentinel(ois) {
+                            ois_sentinel = true;
                             if let serde_json::Value::Object(o) = &mut md.additional_data {
                                 o.insert("unsupported_lens".into(), true.into());
                             }
@@ -1479,6 +1475,52 @@ impl GyroSource {
                         sample_rate,
                     );
                 }
+            }
+        }
+
+        // In-camera stabilization verdict. Computed here, at the end of parsing,
+        // and stored as a scalar in additional_data rather than being derived
+        // downstream: FileMetadata::thin() clears camera_stab_data, and the
+        // render queue's per-job metadata snapshot goes through thin(), so a
+        // consumer reading the splines later would see an empty clip.
+        //
+        // Only Sony records compensation streams, so every other brand passes
+        // zeroed counts — the predicate short-circuits on `is_sony` and never
+        // touches camera_stab_data for them.
+        {
+            let is_sony = input.camera_type() == "Sony";
+            let stabilizer_on = md
+                .additional_data
+                .get("image_stabilizer")
+                .and_then(|v| v.as_bool());
+            let verdict = file_metadata::classify_in_camera_stabilization(
+                stabilizer_on,
+                is_sony,
+                is_temp.ibis_x.len(),
+                is_temp.ois_x.len(),
+                ois_sentinel,
+            );
+            if verdict.blocks_processing() {
+                log::info!(
+                    target: "gyro",
+                    "[stabilization_gate] blocked: verdict={} camera_type={} stabilizer_on={:?} ibis_points={} ois_points={} ois_sentinel={}",
+                    verdict.as_str(),
+                    input.camera_type(),
+                    stabilizer_on,
+                    is_temp.ibis_x.len(),
+                    is_temp.ois_x.len(),
+                    ois_sentinel
+                );
+            }
+            if let serde_json::Value::Object(o) = &mut md.additional_data {
+                o.insert(
+                    "stabilization_verdict".into(),
+                    verdict.as_str().into(),
+                );
+                o.insert(
+                    "stabilization_blocks_processing".into(),
+                    verdict.blocks_processing().into(),
+                );
             }
         }
 

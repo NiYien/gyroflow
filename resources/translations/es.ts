@@ -4035,6 +4035,11 @@ Si no hay ningún dato de sincronización de tiempo utilizable, haz clic derecho
         <translation>Omitido: no hay datos del giroscopio</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2655"/>
+        <source>Skipped - in-camera stabilization is on</source>
+        <translation>Omitido - la estabilización de la cámara está activada</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2638"/>
         <source>Skipped - calibration pair</source>
         <translation>Omitido: par de calibración</translation>

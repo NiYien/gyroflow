@@ -396,6 +396,27 @@ impl ISTemp {
     }
 }
 
+/// Sony writes this sentinel into the lens OSS stream when the mounted lens has
+/// optical stabilization engaged but reports no compensation metadata for it.
+///
+/// It must be recognised *before* any emptiness test on the collected OSS
+/// samples: `stab_collect` pushes every element it sees into `ISTemp::ois_x`,
+/// so the sentinel's `-1` makes the OSS spline look non-empty and would
+/// otherwise be mistaken for real compensation data.
+///
+/// Single source of truth for the pattern — both the `unsupported_lens` flag
+/// and the in-camera stabilization verdict read it through this predicate.
+pub fn is_unsupported_lens_sentinel(ois: &[TimeVector3<i32>]) -> bool {
+    ois.len() == 1
+        && ois[0]
+            == (TimeVector3 {
+                t: -1,
+                x: -1,
+                y: -1,
+                z: -1,
+            })
+}
+
 pub fn stab_collect(
     is: &mut ISTemp,
     tag_map: &GroupedTagMap,

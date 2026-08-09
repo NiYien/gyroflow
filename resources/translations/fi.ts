@@ -4036,6 +4036,11 @@ Jos käyttökelpoista aikasynkronointidataa ei ole lainkaan, napsauta videota hi
         <translation>Ohitettu – ei gyrotietoja</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2655"/>
+        <source>Skipped - in-camera stabilization is on</source>
+        <translation>Ohitettu - kameran vakautus on päällä</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2638"/>
         <source>Skipped - calibration pair</source>
         <translation>Ohitettu - kalibrointipari</translation>

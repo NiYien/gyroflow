@@ -4037,6 +4037,11 @@ Jeśli w ogóle nie ma użytecznych danych synchronizacji czasu, kliknij film pr
         <translation>Pominięte – brak danych żyroskopowych</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2655"/>
+        <source>Skipped - in-camera stabilization is on</source>
+        <translation>Pominięto - stabilizacja w aparacie jest włączona</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2638"/>
         <source>Skipped - calibration pair</source>
         <translation>Pominięte - para kalibracyjna</translation>

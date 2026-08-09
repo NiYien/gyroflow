@@ -4037,6 +4037,11 @@ Hvis der slet ikke er brugbare tidssynkroniseringsdata, så højreklik på video
         <translation>Sprang over - ingen gyrodata</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2655"/>
+        <source>Skipped - in-camera stabilization is on</source>
+        <translation>Sprunget over - kamerastabilisering er slået til</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2638"/>
         <source>Skipped - calibration pair</source>
         <translation>Springet over - kalibreringspar</translation>

@@ -4031,6 +4031,11 @@ Hiç kullanılabilir zaman senkronizasyonu verisi yoksa, videoya sağ tıklayın
         <translation>Atlandı - jiroskop verisi yok</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2655"/>
+        <source>Skipped - in-camera stabilization is on</source>
+        <translation>Atlandı - kamera içi sabitleme açık</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2638"/>
         <source>Skipped - calibration pair</source>
         <translation>Atlandı - kalibrasyon eşi</translation>

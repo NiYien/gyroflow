@@ -4035,6 +4035,11 @@ Se non hai ningún dato de sincronización de tempo utilizable, fai clic dereito
         <translation>Omitido: non hai datos do xiroscopio</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2655"/>
+        <source>Skipped - in-camera stabilization is on</source>
+        <translation>Omitido - a estabilización da cámara está activada</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2638"/>
         <source>Skipped - calibration pair</source>
         <translation>Omitido: par de calibración</translation>

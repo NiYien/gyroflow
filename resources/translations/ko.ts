@@ -4036,6 +4036,11 @@ If there is no usable time-sync data at all, right-click the video → **&quot;D
         <translation>건너뜀 - 자이로 데이터 없음</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2655"/>
+        <source>Skipped - in-camera stabilization is on</source>
+        <translation>건너뜀 - 카메라 손떨림 보정이 켜져 있음</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2638"/>
         <source>Skipped - calibration pair</source>
         <translation>건너뜀 - 캘리브레이션 페어</translation>

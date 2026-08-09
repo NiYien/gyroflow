@@ -4037,6 +4037,11 @@ Ak nie sú k dispozícii vôbec žiadne použiteľné údaje časovej synchroniz
         <translation>Preskočené — žiadne gyro dáta</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2655"/>
+        <source>Skipped - in-camera stabilization is on</source>
+        <translation>Preskočené - stabilizácia vo fotoaparáte je zapnutá</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2638"/>
         <source>Skipped - calibration pair</source>
         <translation>Preskočené — kalibračný pár</translation>

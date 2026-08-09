@@ -4037,6 +4037,11 @@ If there is no usable time-sync data at all, right-click the video → **&quot;D
         <translation>Пропущено — нет данных гироскопа</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2655"/>
+        <source>Skipped - in-camera stabilization is on</source>
+        <translation>Пропущено - стабилизация камеры включена</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2638"/>
         <source>Skipped - calibration pair</source>
         <translation>Пропущено — пара калибровки</translation>

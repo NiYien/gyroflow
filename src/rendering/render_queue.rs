@@ -4243,6 +4243,18 @@ impl RenderQueue {
         });
         normalize_render_options_for_bit_depth(&mut render_options, source_pix_fmt, job_id);
 
+        // in-camera-stabilization-gate: read the parse-time verdict. Absent key
+        // (older parse path, or a source whose brand never emits the tag) reads
+        // false, so the gate can only ever add skips, never remove them.
+        let stabilization_blocked = {
+            let gyro = stab.gyro.read();
+            let md = gyro.file_metadata.read();
+            md.additional_data
+                .get("stabilization_blocks_processing")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        };
+
         if editing {
             update_model!(self, job_id, itm {
                 itm.output_folder = QString::from(render_options.output_folder.as_str());
@@ -4259,7 +4271,16 @@ impl RenderQueue {
                 itm.end_timestamp = 0;
                 itm.error_string = QString::default();
                 itm.sync_status = QString::default();
-                itm.status = JobStatus::Queued;
+                // in-camera-stabilization-gate: re-editing a job does not change
+                // the clip's stabilizer state, so a blocked job must not be
+                // silently returned to Queued here. Only this reason is written;
+                // other skip reasons keep their existing (pre-change) handling.
+                if stabilization_blocked {
+                    itm.status = JobStatus::Skipped;
+                    itm.skip_reason = QString::from("image_stabilization");
+                } else {
+                    itm.status = JobStatus::Queued;
+                }
                 itm.frame_times.clear();
             });
         } else {
@@ -4285,10 +4306,22 @@ impl RenderQueue {
                 end_timestamp: 0,
                 processing_progress: 0.0,
                 error_string: QString::default(),
-                skip_reason: QString::default(),
+                // in-camera-stabilization-gate: marked at enqueue rather than in
+                // start()'s pre-scan (as plugin_only is), because the reason is a
+                // fixed property of the clip — it can never stop holding, so
+                // there is nothing to defer to dispatch time.
+                skip_reason: if stabilization_blocked {
+                    QString::from("image_stabilization")
+                } else {
+                    QString::default()
+                },
                 sync_status: QString::default(),
                 frame_times: Default::default(),
-                status: JobStatus::Queued,
+                status: if stabilization_blocked {
+                    JobStatus::Skipped
+                } else {
+                    JobStatus::Queued
+                },
             });
         }
         drop(params);
@@ -5070,7 +5103,10 @@ impl RenderQueue {
                             }
                             // "calibration" is a classification, not a problem;
                             // "user_stopped" is an explicit instruction and has
-                            // its own per-row restart control.
+                            // its own per-row restart control;
+                            // "image_stabilization" is a fixed property of the
+                            // clip — re-judging it always returns the same
+                            // answer, so reviving it would only flap the status.
                             _ => None,
                         },
                         _ => None,
@@ -5160,18 +5196,26 @@ impl RenderQueue {
         {
             return QString::from("plugin_only");
         }
-        // 4. Missing motion data.
+        // 4. In-camera stabilization was left on. Deliberately ahead of
+        //    `no_gyro`: a clip skipped for stabilization commonly also fails to
+        //    match a gyro file, so reporting the missing motion data first would
+        //    hand the user a secondary symptom and send them looking for a gyro
+        //    file that would not have helped.
+        if skipped_for("image_stabilization") {
+            return QString::from("image_stabilization");
+        }
+        // 5. Missing motion data.
         if skipped_for("no_gyro") {
             return QString::from("no_gyro");
         }
-        // 5. Nothing but calibration pairs.
+        // 6. Nothing but calibration pairs.
         if queue
             .iter()
             .all(|i| i.status == JobStatus::Skipped && i.skip_reason.to_string() == "calibration")
         {
             return QString::from("calibration");
         }
-        // 6. The user stopped the work themselves.
+        // 7. The user stopped the work themselves.
         if skipped_for("user_stopped") {
             return QString::from("user_stopped");
         }
@@ -21960,6 +22004,43 @@ mod tests {
             queue.match_results.as_ref().and_then(|r| r.global_offset_ms),
             Some(99)
         );
+    }
+
+    #[test]
+    fn image_stabilization_skips_are_never_revived() {
+        // The reason is a fixed property of the clip, so re-judging it always
+        // returns the same answer. Both intents must leave it alone.
+        for intent in ["sync", "export"] {
+            let mut queue =
+                recovery_queue(&[(1, JobStatus::Skipped, "image_stabilization", "", false)]);
+            let revived = queue.revive_stuck_jobs(intent.into());
+            assert_eq!(revived, 0, "intent={intent}");
+            let q = queue.queue.borrow();
+            assert_eq!(q[0].status, JobStatus::Skipped, "intent={intent}");
+            assert_eq!(
+                q[0].skip_reason.to_string(),
+                "image_stabilization",
+                "intent={intent}"
+            );
+        }
+    }
+
+    #[test]
+    fn image_stabilization_outranks_no_gyro_as_the_reported_cause() {
+        // A clip skipped for stabilization commonly also fails to match a gyro
+        // file. Reporting `no_gyro` first would send the user looking for a gyro
+        // file that cannot fix the problem.
+        for intent in ["sync", "export"] {
+            let queue = recovery_queue(&[
+                (1, JobStatus::Skipped, "image_stabilization", "", false),
+                (2, JobStatus::Skipped, "no_gyro", "", false),
+            ]);
+            assert_eq!(
+                queue.dispatch_blocker_reason(intent.into()).to_string(),
+                "image_stabilization",
+                "intent={intent}"
+            );
+        }
     }
 
     #[test]

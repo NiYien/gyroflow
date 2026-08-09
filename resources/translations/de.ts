@@ -4036,6 +4036,11 @@ Wenn überhaupt keine verwertbaren Zeitsynchronisationsdaten vorhanden sind: Rec
         <translation>Übersprungen – keine Kreiseldaten</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2655"/>
+        <source>Skipped - in-camera stabilization is on</source>
+        <translation>Übersprungen - kamerainterne Stabilisierung ist aktiv</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2638"/>
         <source>Skipped - calibration pair</source>
         <translation>Übersprungen – Kalibrierungspaar</translation>

@@ -207,10 +207,165 @@ pub(crate) fn compute_keep_video_gyro(
         || (camera_type.starts_with("Blackmagic") && has_gyro_samples && is_braw_container)
 }
 
+/// Whether in-camera stabilization prevents Gyroflow from producing a correct
+/// result for a clip. See `classify_in_camera_stabilization`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StabilizationVerdict {
+    /// The stabilizer flag is absent or reports off — nothing to arbitrate.
+    NotStabilized,
+    /// Stabilizer on, and the clip carries compensation data Gyroflow subtracts
+    /// before applying its own correction.
+    CompensationAvailable,
+    /// Stabilizer on, but the mounted lens reports no OSS metadata, so the
+    /// optical part of the correction can never be subtracted.
+    UnsupportedLens,
+    /// Stabilizer on with no compensation data at all.
+    NoCompensation,
+}
+
+impl StabilizationVerdict {
+    /// True when the clip cannot be stabilized correctly and must be skipped.
+    pub fn blocks_processing(self) -> bool {
+        matches!(self, Self::UnsupportedLens | Self::NoCompensation)
+    }
+
+    /// Stable identifier used for the queue skip reason and user-facing copy.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NotStabilized => "not_stabilized",
+            Self::CompensationAvailable => "compensation_available",
+            Self::UnsupportedLens => "unsupported_lens",
+            Self::NoCompensation => "no_compensation",
+        }
+    }
+}
+
+/// Decide whether in-camera stabilization (body IBIS, lens OSS, electronic)
+/// blocks processing for a clip. Pure predicate so it stays unit-testable
+/// without a telemetry-parser `Input`.
+///
+/// `stabilizer_on` comes from `TagId::ImageStabilizer`, whose decoders read
+/// `raw == 0` as "on". `ibis_points` / `ois_points` are the sample counts
+/// collected by `sony::stab_collect`, and `ois_sentinel` is
+/// `sony::is_unsupported_lens_sentinel` over the raw OSS stream.
+///
+/// Three constraints shape the order of the checks:
+///
+/// - The stabilizer flag is consulted first and short-circuits. The
+///   overwhelming majority of clips report off, and they must reach the same
+///   behaviour as before this gate existed without any compensation lookup.
+/// - Only Sony records compensation streams. Every other brand exposes just the
+///   on/off flag, so "on" is equivalent to "cannot process" — those callers
+///   pass zeroed counts and never read `camera_stab_data`.
+/// - The OSS sentinel is tested *before* the point counts. `stab_collect`
+///   pushes the sentinel's `-1` into `ISTemp::ois_x`, so a sentinel-only clip
+///   has `ois_points == 1` and would otherwise read as real compensation. A
+///   sentinel blocks regardless of IBIS: the lens is optically moving the image
+///   and that part is unrecoverable even when body IBIS is fully described.
+pub(crate) fn classify_in_camera_stabilization(
+    stabilizer_on: Option<bool>,
+    is_sony: bool,
+    ibis_points: usize,
+    ois_points: usize,
+    ois_sentinel: bool,
+) -> StabilizationVerdict {
+    if stabilizer_on != Some(true) {
+        return StabilizationVerdict::NotStabilized;
+    }
+    if !is_sony {
+        return StabilizationVerdict::NoCompensation;
+    }
+    if ois_sentinel {
+        return StabilizationVerdict::UnsupportedLens;
+    }
+    if ibis_points > 0 || ois_points > 0 {
+        return StabilizationVerdict::CompensationAvailable;
+    }
+    StabilizationVerdict::NoCompensation
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use super::super::Quat64;
+
+    #[test]
+    fn stabilization_off_short_circuits_before_any_compensation_lookup() {
+        // The overwhelming majority of clips land here. Non-zero compensation
+        // counts are passed deliberately: reaching NotStabilized proves the
+        // flag is consulted first and nothing downstream is read.
+        assert_eq!(
+            classify_in_camera_stabilization(Some(false), true, 720, 720, true),
+            StabilizationVerdict::NotStabilized
+        );
+        assert!(!StabilizationVerdict::NotStabilized.blocks_processing());
+    }
+
+    #[test]
+    fn stabilization_flag_absent_is_not_stabilized() {
+        // GoPro / Blackmagic never emit TagId::ImageStabilizer.
+        assert_eq!(
+            classify_in_camera_stabilization(None, false, 0, 0, false),
+            StabilizationVerdict::NotStabilized
+        );
+    }
+
+    #[test]
+    fn non_sony_with_stabilizer_on_always_blocks() {
+        // Nikon / Fujifilm / Panasonic expose only the on/off flag — there is
+        // no compensation stream to subtract, so "on" means "cannot process".
+        // Compensation counts are non-zero to prove the Sony gate rejects them
+        // before the counts are ever consulted.
+        let verdict = classify_in_camera_stabilization(Some(true), false, 720, 720, false);
+        assert_eq!(verdict, StabilizationVerdict::NoCompensation);
+        assert!(verdict.blocks_processing());
+    }
+
+    #[test]
+    fn sony_with_ibis_compensation_is_allowed() {
+        // Tier 2: body IBIS described, lens OSS absent (A7S3 baseline).
+        let verdict = classify_in_camera_stabilization(Some(true), true, 720, 0, false);
+        assert_eq!(verdict, StabilizationVerdict::CompensationAvailable);
+        assert!(!verdict.blocks_processing());
+    }
+
+    #[test]
+    fn sony_with_both_compensation_streams_is_allowed() {
+        // Tier 3: both streams described.
+        assert_eq!(
+            classify_in_camera_stabilization(Some(true), true, 720, 720, false),
+            StabilizationVerdict::CompensationAvailable
+        );
+    }
+
+    #[test]
+    fn sony_without_any_compensation_blocks() {
+        // Tier 1: stabilizer engaged but nothing recorded (A6400 baseline).
+        let verdict = classify_in_camera_stabilization(Some(true), true, 0, 0, false);
+        assert_eq!(verdict, StabilizationVerdict::NoCompensation);
+        assert!(verdict.blocks_processing());
+    }
+
+    #[test]
+    fn oss_sentinel_blocks_even_though_it_inflates_the_ois_count() {
+        // stab_collect pushes the sentinel's -1 into ois_x, so a sentinel-only
+        // clip arrives here with ois_points == 1. Testing the emptiness of the
+        // OSS stream instead of the sentinel would let exactly the clip that
+        // most needs blocking through.
+        let verdict = classify_in_camera_stabilization(Some(true), true, 0, 1, true);
+        assert_eq!(verdict, StabilizationVerdict::UnsupportedLens);
+        assert!(verdict.blocks_processing());
+    }
+
+    #[test]
+    fn oss_sentinel_blocks_regardless_of_ibis_data() {
+        // The lens is optically moving the image and never reports by how much.
+        // A fully described body IBIS stream does not make that recoverable.
+        assert_eq!(
+            classify_in_camera_stabilization(Some(true), true, 720, 1, true),
+            StabilizationVerdict::UnsupportedLens
+        );
+    }
 
     #[test]
     fn keep_video_gyro_sony_with_samples_is_true() {

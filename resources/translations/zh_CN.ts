@@ -4037,6 +4037,11 @@ If there is no usable time-sync data at all, right-click the video → **&quot;D
         <translation>已跳过 - 无陀螺仪数据</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2655"/>
+        <source>Skipped - in-camera stabilization is on</source>
+        <translation>已跳过 - 机内防抖已开启</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2638"/>
         <source>Skipped - calibration pair</source>
         <translation>已跳过 - 校准配对</translation>

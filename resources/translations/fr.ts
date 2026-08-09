@@ -4036,6 +4036,11 @@ S&apos;il n&apos;y a aucune donnée de synchronisation temporelle utilisable, cl
         <translation>Ignoré - pas de données gyroscopiques</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2655"/>
+        <source>Skipped - in-camera stabilization is on</source>
+        <translation>Ignoré - la stabilisation de l'appareil est activée</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2638"/>
         <source>Skipped - calibration pair</source>
         <translation>Ignoré - paire d&apos;étalonnage</translation>

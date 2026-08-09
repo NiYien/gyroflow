@@ -4038,6 +4038,11 @@ If there is no usable time-sync data at all, right-click the video → **&quot;D
         <translation>スキップ - ジャイロ データなし</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2655"/>
+        <source>Skipped - in-camera stabilization is on</source>
+        <translation>スキップ - カメラの手ブレ補正がオンです</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2638"/>
         <source>Skipped - calibration pair</source>
         <translation>スキップ - キャリブレーションペア</translation>

@@ -4033,6 +4033,11 @@ Jika sama sekali tidak ada data sinkronisasi waktu yang dapat digunakan, klik ka
         <translation>Dilewati - tidak ada data gyro</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2655"/>
+        <source>Skipped - in-camera stabilization is on</source>
+        <translation>Dilewati - stabilisasi dalam kamera aktif</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2638"/>
         <source>Skipped - calibration pair</source>
         <translation>Dilewati - pasangan kalibrasi</translation>

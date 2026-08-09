@@ -4034,6 +4034,11 @@ Se non sono disponibili dati di sincronizzazione temporale utilizzabili, fai cli
         <translation>Saltato: nessun dato giroscopico</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2655"/>
+        <source>Skipped - in-camera stabilization is on</source>
+        <translation>Saltato - la stabilizzazione della fotocamera è attiva</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2638"/>
         <source>Skipped - calibration pair</source>
         <translation>Saltato: coppia di calibrazione</translation>
