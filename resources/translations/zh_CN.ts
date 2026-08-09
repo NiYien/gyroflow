@@ -197,6 +197,11 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation>队列中的视频都没有陀螺仪数据。</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2175"/>
+        <source>In-camera stabilization was on when these videos were recorded, so they cannot be stabilized. Turn off stabilization in the camera and on the lens, then record again.</source>
+        <translation>这些视频拍摄时开启了机内防抖，无法进行稳定处理。请关闭相机和镜头上的防抖后重新拍摄。</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2157"/>
         <source>The queue only contains calibration videos, which are not processed on their own.</source>
         <translation>队列中只有标定视频，标定视频不会单独处理。</translation>

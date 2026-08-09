@@ -2171,6 +2171,9 @@ Rectangle {
                 text = qsTr("These videos cannot be exported directly. Use \"%1\" instead.")
                          .arg(qsTr("Stabilize (or use with plugins)"));
                 break;
+            case "image_stabilization":
+                text = qsTr("In-camera stabilization was on when these videos were recorded, so they cannot be stabilized. Turn off stabilization in the camera and on the lens, then record again.");
+                break;
             case "no_gyro":
                 text = qsTr("None of the videos in the queue have gyro data.");
                 break;

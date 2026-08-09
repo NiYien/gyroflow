@@ -197,6 +197,11 @@ Notez que ce n&apos;est qu&apos;un indicateur visuel, il n&apos;affecte pas le r
         <translation>Aucune des vidéos de la file d&apos;attente n&apos;a de données gyroscopiques.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2175"/>
+        <source>In-camera stabilization was on when these videos were recorded, so they cannot be stabilized. Turn off stabilization in the camera and on the lens, then record again.</source>
+        <translation>La stabilisation de l'appareil était activée lors de l'enregistrement de ces vidéos, elles ne peuvent donc pas être stabilisées. Désactivez la stabilisation sur l'appareil et sur l'objectif, puis enregistrez à nouveau.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2157"/>
         <source>The queue only contains calibration videos, which are not processed on their own.</source>
         <translation>La file d&apos;attente ne contient que des vidéos d&apos;étalonnage, qui ne sont pas traitées seules.</translation>

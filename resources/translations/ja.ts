@@ -197,6 +197,11 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation>キュー内のどの動画にもジャイロデータがありません。</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2175"/>
+        <source>In-camera stabilization was on when these videos were recorded, so they cannot be stabilized. Turn off stabilization in the camera and on the lens, then record again.</source>
+        <translation>これらの動画はカメラの手ブレ補正がオンの状態で撮影されているため、スタビライズできません。カメラとレンズの手ブレ補正をオフにして撮り直してください。</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2157"/>
         <source>The queue only contains calibration videos, which are not processed on their own.</source>
         <translation>キューにはキャリブレーション動画しかありません。これらは単独では処理されません。</translation>

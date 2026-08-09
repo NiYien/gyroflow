@@ -197,6 +197,11 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation>Κανένα από τα βίντεο στην ουρά δεν έχει δεδομένα γυροσκοπίου.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2175"/>
+        <source>In-camera stabilization was on when these videos were recorded, so they cannot be stabilized. Turn off stabilization in the camera and on the lens, then record again.</source>
+        <translation>Η σταθεροποίηση της κάμερας ήταν ενεργή κατά την εγγραφή αυτών των βίντεο, οπότε δεν μπορούν να σταθεροποιηθούν. Απενεργοποιήστε τη σταθεροποίηση στην κάμερα και στον φακό και εγγράψτε ξανά.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2157"/>
         <source>The queue only contains calibration videos, which are not processed on their own.</source>
         <translation>Η ουρά περιέχει μόνο βίντεο βαθμονόμησης, τα οποία δεν επεξεργάζονται από μόνα τους.</translation>

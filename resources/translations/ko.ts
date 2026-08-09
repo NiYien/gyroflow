@@ -196,6 +196,11 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation>대기열의 영상 중 자이로 데이터가 있는 것이 없습니다.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2175"/>
+        <source>In-camera stabilization was on when these videos were recorded, so they cannot be stabilized. Turn off stabilization in the camera and on the lens, then record again.</source>
+        <translation>이 영상들은 카메라 손떨림 보정이 켜진 상태로 촬영되어 보정할 수 없습니다. 카메라와 렌즈의 손떨림 보정을 끄고 다시 촬영하세요.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2157"/>
         <source>The queue only contains calibration videos, which are not processed on their own.</source>
         <translation>대기열에 보정용 영상만 있습니다. 이 영상은 단독으로 처리되지 않습니다.</translation>

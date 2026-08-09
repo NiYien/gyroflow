@@ -196,6 +196,11 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation>Keines der Videos in der Warteschlange hat Gyro-Daten.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2175"/>
+        <source>In-camera stabilization was on when these videos were recorded, so they cannot be stabilized. Turn off stabilization in the camera and on the lens, then record again.</source>
+        <translation>Beim Aufnehmen dieser Videos war die kamerainterne Stabilisierung aktiv, daher können sie nicht stabilisiert werden. Schalten Sie die Stabilisierung an Kamera und Objektiv aus und nehmen Sie erneut auf.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2157"/>
         <source>The queue only contains calibration videos, which are not processed on their own.</source>
         <translation>Die Warteschlange enthält nur Kalibrierungsvideos, die nicht eigenständig verarbeitet werden.</translation>

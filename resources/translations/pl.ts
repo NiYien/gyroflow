@@ -197,6 +197,11 @@ Ten obszar jest tylko wizualizacją i nie wpływa na końcowy render.</translati
         <translation>Żaden z filmów w kolejce nie ma danych żyroskopu.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2175"/>
+        <source>In-camera stabilization was on when these videos were recorded, so they cannot be stabilized. Turn off stabilization in the camera and on the lens, then record again.</source>
+        <translation>Podczas nagrywania tych filmów stabilizacja w aparacie była włączona, więc nie można ich ustabilizować. Wyłącz stabilizację w aparacie i w obiektywie, a następnie nagraj ponownie.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2157"/>
         <source>The queue only contains calibration videos, which are not processed on their own.</source>
         <translation>Kolejka zawiera tylko filmy kalibracyjne, które nie są przetwarzane samodzielnie.</translation>

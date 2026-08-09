@@ -197,6 +197,11 @@ Je to len vizuálny indikátor - neovplyvňuje výsledný render.</translation>
         <translation>Žiadne z videí vo fronte nemá údaje gyroskopu.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2175"/>
+        <source>In-camera stabilization was on when these videos were recorded, so they cannot be stabilized. Turn off stabilization in the camera and on the lens, then record again.</source>
+        <translation>Pri nahrávaní týchto videí bola zapnutá stabilizácia vo fotoaparáte, preto ich nemožno stabilizovať. Vypnite stabilizáciu vo fotoaparáte aj na objektíve a nahrajte ich znova.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2157"/>
         <source>The queue only contains calibration videos, which are not processed on their own.</source>
         <translation>Fronta obsahuje iba kalibračné videá, ktoré sa samostatne nespracúvajú.</translation>

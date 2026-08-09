@@ -196,6 +196,11 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation>Ninguno de los videos de la cola tiene datos de giroscopio.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2175"/>
+        <source>In-camera stabilization was on when these videos were recorded, so they cannot be stabilized. Turn off stabilization in the camera and on the lens, then record again.</source>
+        <translation>La estabilización de la cámara estaba activada al grabar estos vídeos, por lo que no se pueden estabilizar. Desactiva la estabilización en la cámara y en el objetivo, y vuelve a grabar.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2157"/>
         <source>The queue only contains calibration videos, which are not processed on their own.</source>
         <translation>La cola solo contiene videos de calibración, que no se procesan por sí solos.</translation>

@@ -197,6 +197,11 @@ Bemærk, at dette kun er en visuel indikator og påvirker ikke resultatet.</tran
         <translation>Ingen af videoerne i køen har gyrodata.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2175"/>
+        <source>In-camera stabilization was on when these videos were recorded, so they cannot be stabilized. Turn off stabilization in the camera and on the lens, then record again.</source>
+        <translation>Kamerastabiliseringen var slået til, da disse videoer blev optaget, så de kan ikke stabiliseres. Slå stabilisering fra på kameraet og objektivet, og optag igen.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2157"/>
         <source>The queue only contains calibration videos, which are not processed on their own.</source>
         <translation>Køen indeholder kun kalibreringsvideoer, som ikke behandles alene.</translation>

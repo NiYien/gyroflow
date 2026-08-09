@@ -197,6 +197,11 @@ Not: Bu yalnızca görsel bir işarettir, render işlemini etkilemez.</translati
         <translation>Kuyruktaki videoların hiçbirinde jiroskop verisi yok.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2175"/>
+        <source>In-camera stabilization was on when these videos were recorded, so they cannot be stabilized. Turn off stabilization in the camera and on the lens, then record again.</source>
+        <translation>Bu videolar kamera içi sabitleme açıkken kaydedildiği için sabitlenemez. Kameradaki ve lensteki sabitlemeyi kapatıp yeniden kaydedin.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2157"/>
         <source>The queue only contains calibration videos, which are not processed on their own.</source>
         <translation>Kuyrukta yalnızca kalibrasyon videoları var; bunlar tek başına işlenmez.</translation>

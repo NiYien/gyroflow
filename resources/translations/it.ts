@@ -197,6 +197,11 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation>Nessuno dei video in coda ha dati giroscopici.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2175"/>
+        <source>In-camera stabilization was on when these videos were recorded, so they cannot be stabilized. Turn off stabilization in the camera and on the lens, then record again.</source>
+        <translation>La stabilizzazione della fotocamera era attiva durante la registrazione di questi video, quindi non possono essere stabilizzati. Disattiva la stabilizzazione sulla fotocamera e sull'obiettivo, poi registra di nuovo.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2157"/>
         <source>The queue only contains calibration videos, which are not processed on their own.</source>
         <translation>La coda contiene solo video di calibrazione, che non vengono elaborati da soli.</translation>

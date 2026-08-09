@@ -197,6 +197,11 @@ Obdélník je pouze vizuální pomůcka, která NEMÁ vliv na vykreslování.</t
         <translation>Žádné z videí ve frontě nemá data gyroskopu.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2175"/>
+        <source>In-camera stabilization was on when these videos were recorded, so they cannot be stabilized. Turn off stabilization in the camera and on the lens, then record again.</source>
+        <translation>Při natáčení těchto videí byla zapnutá stabilizace ve fotoaparátu, proto je nelze stabilizovat. Vypněte stabilizaci ve fotoaparátu i na objektivu a natočte je znovu.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2157"/>
         <source>The queue only contains calibration videos, which are not processed on their own.</source>
         <translation>Fronta obsahuje pouze kalibrační videa, která se samostatně nezpracovávají.</translation>

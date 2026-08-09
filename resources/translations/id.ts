@@ -198,6 +198,11 @@ Sebagai catatan, ini hanya indikator visual, tidak akan berpengaruh pada renderi
         <translation>Tidak ada video dalam antrean yang memiliki data giroskop.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2175"/>
+        <source>In-camera stabilization was on when these videos were recorded, so they cannot be stabilized. Turn off stabilization in the camera and on the lens, then record again.</source>
+        <translation>Stabilisasi dalam kamera aktif saat video ini direkam, sehingga tidak dapat distabilkan. Matikan stabilisasi pada kamera dan lensa, lalu rekam ulang.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2157"/>
         <source>The queue only contains calibration videos, which are not processed on their own.</source>
         <translation>Antrean hanya berisi video kalibrasi, yang tidak diproses sendiri.</translation>
