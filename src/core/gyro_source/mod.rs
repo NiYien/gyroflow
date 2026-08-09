@@ -725,6 +725,10 @@ impl GyroSource {
             camera_db_path,
             header_only: options.header_only,
             time_range_ms: options.time_range_ms,
+            // Image sequences (CinemaDNG) carry no fps in the frame itself; the
+            // fps-segmented camera_db tables (readout) need the sequence fps we
+            // already know. Lookup-only on the parser side, no FrameRate tag.
+            video_fps: (fps > 0.0).then_some(fps),
             ..Default::default()
         };
         let t_input = std::time::Instant::now();
