@@ -13606,6 +13606,10 @@ impl RenderQueue {
         // forward-armed chunk scans (never by verification probes or the
         // auto-probe).
         let forward = deep_match::take_forward();
+        // How far this chunk's window loop got. MUST be read before take()
+        // (which resets the counters) — reading it after yields zeroes and
+        // silently misclassifies every empty chunk as ProbeNotRun again.
+        let (windows_scanned, windows_gated) = deep_match::window_counts();
         let stats = deep_match::take();
         let Some((current_chunk, chunk_count, current_probe, probe_count)) = self
             .deep_match_pending
@@ -13659,6 +13663,8 @@ impl RenderQueue {
                 let decide_posterior = || {
                     deep_match::decide_posterior(
                         &curves,
+                        windows_scanned,
+                        windows_gated,
                         clip_ms,
                         deep_match::post_conf_min(),
                         deep_match::post_ci95_base_ms(),
@@ -13710,6 +13716,8 @@ impl RenderQueue {
                 deep_match::evaluate(
                     &offsets_ms,
                     &stats,
+                    windows_scanned,
+                    windows_gated,
                     deep_match::spread_max_ms(),
                     deep_match::cost_ratio_max(),
                     deep_match::tight_spread_ms(),
@@ -13718,9 +13726,13 @@ impl RenderQueue {
             };
             ::log::info!(
                 target: "sync",
-                "[deep-match] probe {}/{} chunk {}/{} finish: job={} windows={} offsets={:?} verdict={:?}",
+                // scanned/gated classify the three structurally different ways
+                // a chunk can end empty (bounds-rejected / motion-gated / the
+                // window loop produced nothing) from this single line.
+                "[deep-match] probe {}/{} chunk {}/{} finish: job={} windows={} scanned={} gated={} offsets={:?} verdict={:?}",
                 current_probe + 1, probe_count,
-                current_chunk + 1, chunk_count, job_id, offsets_ms.len(), offsets_ms, verdict
+                current_chunk + 1, chunk_count, job_id, offsets_ms.len(),
+                windows_scanned, windows_gated, offsets_ms, verdict
             );
             // Drift-fit rescue, trigger 1 of 2 (deep-match-drift-fit-rescue):
             // a WeakValley whose confident windows sit on one physical drift
@@ -14072,8 +14084,12 @@ impl RenderQueue {
         }
         let mut merged = vs.base_curves.clone();
         merged.extend(verify_curves.iter().cloned());
+        // Re-decision over base + verification curves — non-empty by
+        // construction, so the empty-chunk classification is unreachable.
         let merged_verdict = deep_match::decide_posterior(
             &merged,
+            merged.len(),
+            0,
             clip_ms,
             deep_match::verify_conf_min(),
             deep_match::post_ci95_base_ms(),
@@ -20077,6 +20093,80 @@ mod tests {
         assert!(queue.deep_match_pending.is_empty(), "plan must terminate, not advance");
         assert!(queue.deep_match_results.is_empty());
         assert_eq!(queue.learned_clock_shift_ms, None);
+    }
+
+    // deep-match-boundary-reject-classification: a chunk can end with an empty
+    // collector in three structurally different ways. These three tests pin
+    // each to its own orchestration outcome. They also guard the drain-order
+    // rule in finish_deep_match: if window_counts() were read AFTER take(), it
+    // would return zeroes and the first two tests would fall back to the
+    // ProbeNotRun sentinel — something the pure-function unit tests cannot see.
+
+    #[test]
+    fn deep_match_bounds_rejected_chunk_advances_instead_of_killing_the_plan() {
+        use gyroflow_core::synchronization::deep_match;
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = setup_deep_match_job(&mut queue, false);
+        simulate_deep_match_probe(&mut queue, &stab);
+        make_pool_plan(&mut queue);
+
+        // Both windows completed their cost scan; both argmins were rejected
+        // by essential's bounds check, so nothing reached the collector. That
+        // is chunk-dependent evidence — the plan must advance, not terminate.
+        deep_match::arm(2);
+        deep_match::record_window_scanned();
+        deep_match::record_window_scanned();
+        queue.record_batch_sync_result(1, vec![], vec![]);
+
+        let state = queue
+            .deep_match_pending
+            .get(&1)
+            .expect("bounds-rejected chunk must keep the pool run alive");
+        assert_eq!(state.current_probe, 1, "must advance to the next ProbeTask");
+        assert_eq!(state.gyro_index, 1);
+        assert!(queue.deep_match_results.is_empty());
+        queue.deep_match_pending.remove(&1);
+    }
+
+    #[test]
+    fn deep_match_fully_gated_chunk_terminates_as_low_motion() {
+        use gyroflow_core::synchronization::deep_match;
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = setup_deep_match_job(&mut queue, false);
+        simulate_deep_match_probe(&mut queue, &stab);
+        make_pool_plan(&mut queue);
+
+        // Every window fell below the motion gate: the chunk says nothing
+        // about the gyro data, so this is a video-side verdict that kills the
+        // whole plan (same as the pre-existing TooFewWindows behavior).
+        deep_match::arm(2);
+        deep_match::record_window_gated();
+        deep_match::record_window_gated();
+        queue.record_batch_sync_result(1, vec![], vec![]);
+
+        assert!(queue.deep_match_pending.is_empty(), "plan must terminate, not advance");
+        assert!(queue.deep_match_results.is_empty());
+        assert_eq!(queue.learned_clock_shift_ms, None);
+    }
+
+    #[test]
+    fn deep_match_window_loop_that_produced_nothing_still_terminates_as_sentinel() {
+        use gyroflow_core::synchronization::deep_match;
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = setup_deep_match_job(&mut queue, false);
+        simulate_deep_match_probe(&mut queue, &stab);
+        make_pool_plan(&mut queue);
+
+        // Neither scanned nor gated: the assembly/arbitration sentinel this
+        // verdict exists for. It must keep terminating the whole plan.
+        deep_match::arm(2);
+        queue.record_batch_sync_result(1, vec![], vec![]);
+
+        assert!(queue.deep_match_pending.is_empty(), "sentinel must terminate the plan");
+        assert!(queue.deep_match_results.is_empty());
     }
 
     #[test]

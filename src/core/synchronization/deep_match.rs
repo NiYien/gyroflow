@@ -44,6 +44,13 @@ static CURVE_COLLECTOR: Mutex<Option<Vec<DeepMatchWindowCurve>>> = Mutex::new(No
 static SCAN_K: Mutex<usize> = Mutex::new(0);
 static FORWARD_ARMED: Mutex<bool> = Mutex::new(false);
 static FORWARD_RESULT: Mutex<Option<ForwardOutcome>> = Mutex::new(None);
+// How far the essential scan's window loop got on this chunk. An empty
+// collector is produced by three structurally different situations (every
+// window skipped by the motion gate / every argmin rejected by the search
+// bounds check / the scan never producing an argmin at all); without these
+// counters they are indistinguishable and collapse onto a single verdict.
+static WINDOWS_SCANNED: Mutex<usize> = Mutex::new(0);
+static WINDOWS_GATED: Mutex<usize> = Mutex::new(0);
 
 /// Arm both collectors and record the scan-K target the essential scan uses to
 /// cap how many (highest-motion) windows it fully scans. Only one deep match
@@ -56,6 +63,8 @@ pub fn arm(scan_k: usize) {
     *SCAN_K.lock() = scan_k;
     *FORWARD_ARMED.lock() = false;
     *FORWARD_RESULT.lock() = None;
+    *WINDOWS_SCANNED.lock() = 0;
+    *WINDOWS_GATED.lock() = 0;
 }
 
 pub fn is_armed() -> bool {
@@ -84,14 +93,42 @@ pub fn record_curve(c: DeepMatchWindowCurve) {
     }
 }
 
+/// A window completed its cost scan and produced a refined argmin — recorded
+/// regardless of whether that argmin was subsequently accepted by the search
+/// bounds check, because this counts *execution*, not acceptance.
+pub fn record_window_scanned() {
+    if is_armed() {
+        *WINDOWS_SCANNED.lock() += 1;
+    }
+}
+
+/// A window was skipped before scanning because its OF-estimated motion fell
+/// below the motion gate.
+pub fn record_window_gated() {
+    if is_armed() {
+        *WINDOWS_GATED.lock() += 1;
+    }
+}
+
+/// Read `(windows_scanned, windows_gated)` for the current chunk WITHOUT
+/// draining them (`take()` resets them, same as the other side channels).
+/// Consumers MUST read this BEFORE `take()` — reading afterwards yields
+/// zeroes and silently restores the pre-change misclassification of every
+/// empty chunk as `ProbeNotRun`.
+pub fn window_counts() -> (usize, usize) {
+    (*WINDOWS_SCANNED.lock(), *WINDOWS_GATED.lock())
+}
+
 /// Take the collected stats and disarm (both collectors + scan-K + forward
-/// slots reset). Call `take_curves()` (and `take_forward()`) BEFORE this if
-/// you need them — this resets everything.
+/// slots + window counters reset). Call `take_curves()`, `take_forward()` and
+/// `window_counts()` BEFORE this if you need them — this resets everything.
 pub fn take() -> Vec<DeepMatchSegStats> {
     *SCAN_K.lock() = 0;
     *CURVE_COLLECTOR.lock() = None;
     *FORWARD_ARMED.lock() = false;
     *FORWARD_RESULT.lock() = None;
+    *WINDOWS_SCANNED.lock() = 0;
+    *WINDOWS_GATED.lock() = 0;
     COLLECTOR.lock().take().unwrap_or_default()
 }
 
@@ -605,6 +642,34 @@ pub enum DeepMatchVerdict {
     WeakValley { worst_ratio: f64 },
 }
 
+/// Classify a chunk that produced no usable per-window result, by how far the
+/// essential scan's window loop actually got. Shared by BOTH decision entry
+/// points (`evaluate` and `decide_posterior`) so the three empty cases can
+/// never drift apart.
+///
+/// - `windows_scanned > 0` — every argmin was rejected by essential's
+///   "within 90% of search size" bounds check. `search_domain` builds the
+///   domain with a 15% margin precisely so that gate sits 1.035x wider than
+///   the legal solution domain, so a rejection there provably means "no
+///   valley anywhere in this chunk", never "a true offset was discarded".
+///   That is chunk-dependent evidence: advance, do not terminate the plan.
+/// - only `windows_gated > 0` — every window fell below the motion gate, so
+///   the chunk says nothing about the gyro data. Video-side motion verdict,
+///   the degenerate (zero-surviving) case of `TooFewWindows`.
+/// - neither — the window loop produced nothing at all: the assembly /
+///   arbitration sentinel this verdict was introduced for.
+fn classify_empty_chunk(windows_scanned: usize, windows_gated: usize) -> DeepMatchVerdict {
+    if windows_scanned > 0 {
+        // Same convention as the no-overlap joint grid in decide_posterior:
+        // the windows do not share an offset domain.
+        DeepMatchVerdict::Inconsistent { spread_ms: f64::INFINITY }
+    } else if windows_gated > 0 {
+        DeepMatchVerdict::TooFewWindows
+    } else {
+        DeepMatchVerdict::ProbeNotRun
+    }
+}
+
 /// Double acceptance gate (spec §3.3). `offsets_ms` are the per-window
 /// offsets returned by the sync run; `stats` come from the collector.
 /// The valley-quality ceiling is two-tier: when the windows agree within
@@ -613,16 +678,19 @@ pub enum DeepMatchVerdict {
 /// ±thousands-of-seconds domain is overwhelming evidence, while the
 /// per-window ratio floor is physically elevated under bare/approximate
 /// lens matrices. `tight_spread_ms = 0` disables the tight tier.
+#[allow(clippy::too_many_arguments)]
 pub fn evaluate(
     offsets_ms: &[f64],
     stats: &[DeepMatchSegStats],
+    windows_scanned: usize,
+    windows_gated: usize,
     spread_max_ms: f64,
     cost_ratio_max: f64,
     tight_spread_ms: f64,
     cost_ratio_tight: f64,
 ) -> DeepMatchVerdict {
     if offsets_ms.is_empty() && stats.is_empty() {
-        return DeepMatchVerdict::ProbeNotRun;
+        return classify_empty_chunk(windows_scanned, windows_gated);
     }
     if offsets_ms.len() < 2 {
         return DeepMatchVerdict::TooFewWindows;
@@ -667,8 +735,11 @@ pub fn evaluate(
 /// on `conf >= conf_min` and `ci95_width <= ci95_base_ms + T(D)`. Maps to the
 /// existing `DeepMatchVerdict` so the chunk orchestration is untouched.
 /// All inputs/outputs in ms.
+#[allow(clippy::too_many_arguments)]
 pub fn decide_posterior(
     curves: &[DeepMatchWindowCurve],
+    windows_scanned: usize,
+    windows_gated: usize,
     clip_duration_ms: f64,
     conf_min: f64,
     ci95_base_ms: f64,
@@ -677,7 +748,7 @@ pub fn decide_posterior(
 ) -> DeepMatchVerdict {
     use crate::synchronization::posterior::{posterior_decide, Prior};
     if curves.is_empty() {
-        return DeepMatchVerdict::ProbeNotRun;
+        return classify_empty_chunk(windows_scanned, windows_gated);
     }
     if curves.len() < 2 {
         return DeepMatchVerdict::TooFewWindows;
@@ -976,7 +1047,20 @@ pub fn drift_fit_rescue(
         .collect();
     // drift_rate=0: dilation degrades to the floor; gates stay the caller's
     // regular constants (decide_posterior itself is deliberately unmodified).
-    match decide_posterior(&shifted, clip_duration_ms, conf_min, ci95_base_ms, 0.0, drift_floor_ms) {
+    // Re-decision over an already non-empty curve set (the caller guards on
+    // `!curves.is_empty()`), so the empty-chunk classification is unreachable;
+    // `shifted.len()` states the honest provenance — every curve here came
+    // from a scanned window.
+    match decide_posterior(
+        &shifted,
+        shifted.len(),
+        0,
+        clip_duration_ms,
+        conf_min,
+        ci95_base_ms,
+        0.0,
+        drift_floor_ms,
+    ) {
         DeepMatchVerdict::Accepted { offset_ms } => {
             ::log::info!(
                 target: "sync",
@@ -1822,7 +1906,7 @@ mod tests {
     fn evaluate_accepts_consistent_deep_valleys() {
         let v = evaluate(
             &[-204692.0, -204690.5, -204693.0],
-            &[stats(0.1), stats(0.2), stats(0.15)],
+            &[stats(0.1), stats(0.2), stats(0.15)], 0, 0,
             200.0,
             0.35,
             10.0,
@@ -1834,7 +1918,7 @@ mod tests {
     #[test]
     fn evaluate_rejects_single_window() {
         assert_eq!(
-            evaluate(&[-100.0], &[stats(0.1)], 200.0, 0.35, 10.0, 0.6),
+            evaluate(&[-100.0], &[stats(0.1)], 0, 0, 200.0, 0.35, 10.0, 0.6),
             DeepMatchVerdict::TooFewWindows
         );
     }
@@ -1843,7 +1927,7 @@ mod tests {
     fn evaluate_rejects_inconsistent_offsets() {
         match evaluate(
             &[0.0, 5000.0],
-            &[stats(0.1), stats(0.1)],
+            &[stats(0.1), stats(0.1)], 0, 0,
             200.0,
             0.35,
             10.0,
@@ -1858,7 +1942,7 @@ mod tests {
     fn evaluate_rejects_shallow_valleys() {
         match evaluate(
             &[0.0, 1.0],
-            &[stats(0.1), stats(0.9)],
+            &[stats(0.1), stats(0.9)], 0, 0,
             200.0,
             0.35,
             10.0,
@@ -1874,7 +1958,7 @@ mod tests {
     #[test]
     fn evaluate_rejects_missing_stats() {
         assert_eq!(
-            evaluate(&[0.0, 1.0], &[], 200.0, 0.35, 10.0, 0.6),
+            evaluate(&[0.0, 1.0], &[], 0, 0, 200.0, 0.35, 10.0, 0.6),
             DeepMatchVerdict::WeakValley { worst_ratio: 1.0 }
         );
     }
@@ -1884,7 +1968,7 @@ mod tests {
         // Bare manual-lens true hit: ms-scale agreement, elevated ratios.
         let v = evaluate(
             &[0.0, 1.0, 2.0],
-            &[stats(0.45), stats(0.47), stats(0.40)],
+            &[stats(0.45), stats(0.47), stats(0.40)], 0, 0,
             200.0,
             0.35,
             10.0,
@@ -1896,7 +1980,7 @@ mod tests {
         // tight ceiling; flat-curve noise (0.875+) must still be rejected.
         let v = evaluate(
             &[-1316494.0, -1316497.0, -1316496.3],
-            &[stats(0.523), stats(0.637), stats(0.626)],
+            &[stats(0.523), stats(0.637), stats(0.626)], 0, 0,
             200.0,
             0.35,
             10.0,
@@ -1905,7 +1989,7 @@ mod tests {
         assert_eq!(v, DeepMatchVerdict::Accepted { offset_ms: -1316496.3 });
         match evaluate(
             &[0.0, 1.0],
-            &[stats(0.875), stats(0.925)],
+            &[stats(0.875), stats(0.925)], 0, 0,
             200.0,
             0.35,
             10.0,
@@ -1920,7 +2004,7 @@ mod tests {
     fn evaluate_loose_spread_keeps_strict_ceiling() {
         match evaluate(
             &[0.0, 150.0],
-            &[stats(0.45), stats(0.45)],
+            &[stats(0.45), stats(0.45)], 0, 0,
             200.0,
             0.35,
             10.0,
@@ -1937,7 +2021,7 @@ mod tests {
     fn evaluate_tight_zero_degrades_to_single_gate() {
         match evaluate(
             &[0.0, 0.0],
-            &[stats(0.45), stats(0.45)],
+            &[stats(0.45), stats(0.45)], 0, 0,
             200.0,
             0.35,
             0.0,
@@ -1953,15 +2037,56 @@ mod tests {
     #[test]
     fn evaluate_reports_probe_not_run_on_empty_inputs() {
         assert_eq!(
-            evaluate(&[], &[], 200.0, 0.35, 10.0, 0.6),
+            evaluate(&[], &[], 0, 0, 200.0, 0.35, 10.0, 0.6),
             DeepMatchVerdict::ProbeNotRun
         );
         // A probe that ran (stats recorded) but produced no offsets is still
         // the low-motion case, not ProbeNotRun.
         assert_eq!(
-            evaluate(&[], &[stats(0.1)], 200.0, 0.35, 10.0, 0.6),
+            evaluate(&[], &[stats(0.1)], 0, 0, 200.0, 0.35, 10.0, 0.6),
             DeepMatchVerdict::TooFewWindows
         );
+    }
+
+    // The three structurally different ways a chunk ends up with an empty
+    // collector. Before this classification they all collapsed onto
+    // ProbeNotRun, which terminates the whole probe plan and reports "deep
+    // match could not run" — see change deep-match-boundary-reject-classification.
+
+    #[test]
+    fn empty_chunk_with_scanned_windows_is_advanceable_not_a_sentinel() {
+        // Every window completed its scan but every argmin was rejected by
+        // essential's bounds check: chunk-dependent evidence, must advance.
+        match evaluate(&[], &[], 2, 0, 200.0, 0.35, 10.0, 0.6) {
+            DeepMatchVerdict::Inconsistent { spread_ms } => assert!(spread_ms.is_infinite()),
+            v => panic!("expected Inconsistent, got {v:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_chunk_with_only_gated_windows_is_low_motion() {
+        assert_eq!(
+            evaluate(&[], &[], 0, 3, 200.0, 0.35, 10.0, 0.6),
+            DeepMatchVerdict::TooFewWindows
+        );
+    }
+
+    #[test]
+    fn empty_chunk_that_scanned_nothing_stays_the_sentinel() {
+        assert_eq!(
+            evaluate(&[], &[], 0, 0, 200.0, 0.35, 10.0, 0.6),
+            DeepMatchVerdict::ProbeNotRun
+        );
+    }
+
+    #[test]
+    fn scanned_windows_outrank_gated_ones_in_the_classification() {
+        // A chunk where some windows were gated and the rest were scanned but
+        // bounds-rejected is still chunk-dependent evidence.
+        match evaluate(&[], &[], 1, 2, 200.0, 0.35, 10.0, 0.6) {
+            DeepMatchVerdict::Inconsistent { .. } => {}
+            v => panic!("expected Inconsistent, got {v:?}"),
+        }
     }
 
     #[test]
@@ -2203,7 +2328,7 @@ mod tests {
         // Peaks within 3ms of each other -> always merge regardless of drift;
         // should be Accepted with any reasonable ci95_base.
         let curves = vec![wc(0, 1000.0, -100.0, 75.0), wc(1, 2000.0, -98.0, 75.0), wc(2, 3000.0, -101.0, 75.0)];
-        match decide_posterior(&curves, 120_000.0, 0.4, 50.0, 2.0, 10.0) {
+        match decide_posterior(&curves, 0, 0, 120_000.0, 0.4, 50.0, 2.0, 10.0) {
             DeepMatchVerdict::Accepted { offset_ms } => assert!((offset_ms + 100.0).abs() <= 10.0, "got {offset_ms}"),
             v => panic!("expected Accepted, got {v:?}"),
         }
@@ -2211,8 +2336,31 @@ mod tests {
 
     #[test]
     fn decide_posterior_too_few_and_empty() {
-        assert_eq!(decide_posterior(&[], 120_000.0, 0.4, 50.0, 2.0, 10.0), DeepMatchVerdict::ProbeNotRun);
-        assert_eq!(decide_posterior(&[wc(0, 1000.0, -100.0, 75.0)], 120_000.0, 0.4, 50.0, 2.0, 10.0), DeepMatchVerdict::TooFewWindows);
+        assert_eq!(decide_posterior(&[], 0, 0, 120_000.0, 0.4, 50.0, 2.0, 10.0), DeepMatchVerdict::ProbeNotRun);
+        assert_eq!(decide_posterior(&[wc(0, 1000.0, -100.0, 75.0)], 0, 0, 120_000.0, 0.4, 50.0, 2.0, 10.0), DeepMatchVerdict::TooFewWindows);
+    }
+
+    #[test]
+    fn decide_posterior_classifies_empty_chunks_identically_to_evaluate() {
+        // Both decision entry points must classify an empty chunk the same
+        // way. This matters structurally, not just for tidiness: an empty
+        // chunk ALWAYS falls through to `evaluate` at the queue-side call
+        // site (`posterior_enabled() && !curves.is_empty()`), so a fix
+        // applied to only one of them would not touch the failing path.
+        for (scanned, gated) in [(2usize, 0usize), (0, 3), (0, 0), (1, 2)] {
+            let post = decide_posterior(&[], scanned, gated, 120_000.0, 0.4, 50.0, 2.0, 10.0);
+            let legacy = evaluate(&[], &[], scanned, gated, 200.0, 0.35, 10.0, 0.6);
+            match (&post, &legacy) {
+                (
+                    DeepMatchVerdict::Inconsistent { spread_ms: a },
+                    DeepMatchVerdict::Inconsistent { spread_ms: b },
+                ) => assert!(a.is_infinite() && b.is_infinite()),
+                (a, b) => assert_eq!(
+                    a, b,
+                    "posterior/legacy disagree for scanned={scanned} gated={gated}"
+                ),
+            }
+        }
     }
 
     #[test]
@@ -2236,7 +2384,7 @@ mod tests {
             wc(0, 100_000.0, -140.0, 150.0),
             wc(1, 3_500_000.0, -60.0, 150.0),
         ];
-        match decide_posterior(&long_curves, 3_600_000.0, 0.4, 20.0, 2.0, 10.0) {
+        match decide_posterior(&long_curves, 0, 0, 3_600_000.0, 0.4, 20.0, 2.0, 10.0) {
             DeepMatchVerdict::Accepted { .. } => {}
             v => panic!("long clip (T=120ms) within drift tolerance should accept, got {v:?}"),
         }
@@ -2244,7 +2392,7 @@ mod tests {
             wc(0, 1_000.0, -140.0, 150.0),
             wc(1, 59_000.0, -60.0, 150.0),
         ];
-        match decide_posterior(&short_curves, 60_000.0, 0.4, 20.0, 2.0, 10.0) {
+        match decide_posterior(&short_curves, 0, 0, 60_000.0, 0.4, 20.0, 2.0, 10.0) {
             DeepMatchVerdict::Inconsistent { .. } => {}
             v => panic!("short clip (T=10ms) beyond drift tolerance should be Inconsistent, got {v:?}"),
         }
@@ -2271,7 +2419,7 @@ mod tests {
         // ci95 stays inside its +T(D)-compensated gate -> WeakValley, exactly
         // as observed live (conf=0.095, width=160ms, gate=254.6ms).
         let (curves, clip_ms) = feedback_110min_curves();
-        match decide_posterior(&curves, clip_ms, 0.5, 35.0, 2.0, 10.0) {
+        match decide_posterior(&curves, 0, 0, clip_ms, 0.5, 35.0, 2.0, 10.0) {
             DeepMatchVerdict::WeakValley { worst_ratio } => {
                 // worst_ratio = 1 - conf: conf must be collapsed (< 0.3), not
                 // marginally under the gate — this anchors the failure mode.
@@ -2433,7 +2581,7 @@ mod tests {
             wc_wide(1, 2_635_533.0, -2100.0),
             wc_wide(2, 3_953_299.0, -4100.0),
         ];
-        match decide_posterior(&curves, 6_588_832.0, 0.5, 35.0, 2.0, 10.0) {
+        match decide_posterior(&curves, 0, 0, 6_588_832.0, 0.5, 35.0, 2.0, 10.0) {
             DeepMatchVerdict::Inconsistent { .. } => {}
             v => panic!("second-scale peak separation must stay Inconsistent, got {v:?}"),
         }
@@ -2475,7 +2623,7 @@ mod tests {
             wc(1, 2_635_533.0, -232.0, 59.0),
             wc(2, 3_953_299.0, -364.0, 59.0),
         ];
-        match decide_posterior(&curves, 6_588_832.0, 0.5, 35.0, 2.0, 10.0) {
+        match decide_posterior(&curves, 0, 0, 6_588_832.0, 0.5, 35.0, 2.0, 10.0) {
             DeepMatchVerdict::WeakValley { .. } => {}
             v => panic!("chain-bridged 6ms/min drift should reach WeakValley, got {v:?}"),
         }
@@ -2505,14 +2653,14 @@ mod tests {
         };
         // Short clip: main path accepts directly.
         let (short_curves, short_clip) = mk(400_000.0, 1.0);
-        match decide_posterior(&short_curves, short_clip, 0.5, 35.0, 2.0, 10.0) {
+        match decide_posterior(&short_curves, 0, 0, short_clip, 0.5, 35.0, 2.0, 10.0) {
             DeepMatchVerdict::Accepted { offset_ms } => assert!((offset_ms + 100.0).abs() <= 10.0),
             v => panic!("short clip consensus must accept on the main path, got {v:?}"),
         }
         // Long clip: main path collapses -> WeakValley; rescue restores the
         // short-clip verdict at the same offset.
         let (long_curves, long_clip) = mk(6_588_832.0, 13.0);
-        match decide_posterior(&long_curves, long_clip, 0.5, 35.0, 2.0, 10.0) {
+        match decide_posterior(&long_curves, 0, 0, long_clip, 0.5, 35.0, 2.0, 10.0) {
             DeepMatchVerdict::WeakValley { .. } => {}
             v => panic!("long clip consensus should conf-collapse on the main path, got {v:?}"),
         }
@@ -2560,7 +2708,7 @@ mod tests {
                 wc(1, 2_635_533.0, a1, 59.0),
                 wc(2, 3_953_299.0, a2, 59.0),
             ];
-            match decide_posterior(&curves, 6_588_832.0, 0.5, 35.0, 2.0, 10.0) {
+            match decide_posterior(&curves, 0, 0, 6_588_832.0, 0.5, 35.0, 2.0, 10.0) {
                 DeepMatchVerdict::Accepted { .. } => main_accepted += 1,
                 DeepMatchVerdict::WeakValley { .. } => {
                     weakvalley += 1;
@@ -2605,7 +2753,7 @@ mod tests {
         // conf_min, ci95 narrow enough to not be "Inconsistent" — the noise
         // match must be rejected as WeakValley, never Accepted.
         let curves = vec![flat_wc(0, 1000.0), flat_wc(1, 2000.0)];
-        let v = decide_posterior(&curves, 120_000.0, 0.4, 50.0, 2.0, 10.0);
+        let v = decide_posterior(&curves, 0, 0, 120_000.0, 0.4, 50.0, 2.0, 10.0);
         assert!(
             !matches!(v, DeepMatchVerdict::Accepted { .. }),
             "flat noise curves must not be accepted, got {v:?}"

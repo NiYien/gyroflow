@@ -129,6 +129,10 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
                         max_angle,
                         motion_gate
                     );
+                    // A chunk whose windows were ALL gated out here carries no
+                    // information about the gyro data — it is a video-side
+                    // motion verdict, not the "probe never ran" sentinel.
+                    crate::synchronization::deep_match::record_window_gated();
                     continue;
                 }
 
@@ -206,6 +210,13 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
                 });
 
                 if let Some(lowest) = lowest {
+                    // Counted OUTSIDE the bounds check below on purpose: this
+                    // records that the scan produced an argmin, not that the
+                    // argmin was accepted. A chunk where every argmin is
+                    // bounds-rejected has still run, and must advance rather
+                    // than terminate the whole probe plan.
+                    crate::synchronization::deep_match::record_window_scanned();
+
                     let middle_timestamp =
                         (*from_ts as f64 + (to_ts - from_ts) as f64 / 2.0) / 1000.0;
 
@@ -434,8 +445,13 @@ fn forward_rescore(
     // outcome is unchanged: a spurious skip lands on the same Accepted verdict,
     // a spurious run merely costs time it cannot misuse.
     if matches!(
+        // Re-decision over the curves this scan just produced (the guard above
+        // returned already when there were too few), so the empty-chunk
+        // classification is unreachable here.
         dm::decide_posterior(
             &curves,
+            curves.len(),
+            0,
             params.scaled_duration_ms,
             dm::post_conf_min(),
             dm::post_ci95_base_ms(),
