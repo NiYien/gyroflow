@@ -31,12 +31,25 @@ MouseArea {
         }
     }
 
-    // Mobile-only: Qt 6.7's onLongPressed is unreliable on Android because
-    // the default DragThreshold gesture policy cancels the press the moment
-    // a finger jitters past ~10px, which real touches almost always do. We
-    // use WithinBounds so jitter does not abort the press, and a manual
-    // Timer driven by `pressed` so the menu fires even if onLongPressed
-    // itself never does. Gated to mobile so desktop behavior is unchanged.
+    // Mobile-only long-press detection. Qt's own onLongPressed is unusable on
+    // Android: the default DragThreshold policy aborts the press as soon as a
+    // finger wobbles past the system drag threshold (~10px), which hand-held
+    // touches almost always do. So the menu is driven by our own Timer, and the
+    // jitter tolerance is defined here (_cancelDistance) instead of inherited.
+    //
+    // HARD CONSTRAINT 1 - this handler MUST NOT take the exclusive grab.
+    // A TapHandler with any gesturePolicy other than DragThreshold grabs
+    // exclusively on press, which (a) suppresses Qt's touch->mouse synthesis
+    // for the item underneath, so text fields never focus, sliders never drag
+    // and buttons never fire onClicked, and (b) starves sibling handlers that
+    // hold only a passive grab, such as the video area's double-tap-to-
+    // fullscreen. Both classes of breakage shipped on Android for months
+    // because of exactly that. PointHandler only ever takes a passive grab, so
+    // everything underneath keeps receiving its events.
+    //
+    // HARD CONSTRAINT 2 - `target` MUST stay null. PointerHandler.target
+    // defaults to parentItem, and PointHandler moves its target to the point
+    // position, so leaving it unset makes the field or slider follow the finger.
     Timer {
         id: touchLongPressTimer;
         interval: 600;
@@ -45,22 +58,32 @@ MouseArea {
             root.contextMenu(true, touchLongPress._lpX, touchLongPress._lpY);
         }
     }
-    TapHandler {
+    PointHandler {
         id: touchLongPress;
         parent: root.underlyingItem || root.parent;
+        target: null;
         acceptedDevices: PointerDevice.TouchScreen;
         enabled: Qt.platform.os === "android" || Qt.platform.os === "ios";
-        gesturePolicy: TapHandler.WithinBounds;
         property real _lpX: 0;
         property real _lpY: 0;
-        onPressedChanged: {
-            if (pressed) {
+        // Generous compared to the ~10px system drag threshold: this is the
+        // wobble of a finger holding still, not a deliberate drag.
+        readonly property real _cancelDistance: 30 * dpiScale;
+        onActiveChanged: {
+            if (active) {
                 touchLongPress._lpX = point.position.x;
                 touchLongPress._lpY = point.position.y;
                 touchLongPressTimer.restart();
             } else {
                 touchLongPressTimer.stop();
             }
+        }
+        onPointChanged: {
+            if (!touchLongPressTimer.running) return;
+            const dx = point.position.x - touchLongPress._lpX;
+            const dy = point.position.y - touchLongPress._lpY;
+            const limit = touchLongPress._cancelDistance;
+            if (dx * dx + dy * dy > limit * limit) touchLongPressTimer.stop();
         }
     }
 }
