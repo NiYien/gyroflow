@@ -5878,6 +5878,16 @@ Cette fonctionnalité est expérimentale, les résultats peuvent ne pas du tout 
 <context>
     <name>VideoArea</name>
     <message>
+        <location filename="../../src/ui/VideoArea.qml" line="1533"/>
+        <source>Save and open the previous queue item</source>
+        <translation>Enregistrer et ouvrir l'élément précédent de la file d'attente</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/VideoArea.qml" line="1556"/>
+        <source>Save and open the next queue item</source>
+        <translation>Enregistrer et ouvrir l'élément suivant de la file d'attente</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/VideoArea.qml" line="1040"/>
         <source>Not stabilized yet. Click &quot;Stabilize (or use with plugins)&quot; first.</source>
         <translation>Pas encore stabilisé. Cliquez d’abord sur « Stabiliser (ou utiliser avec les plugins) ».</translation>

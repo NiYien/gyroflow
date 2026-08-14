@@ -2189,52 +2189,139 @@ Rectangle {
         }
         window.messageBox(Modal.Info, text, [ { text: qsTr("Ok"), accent: true } ]);
     }
+    // queue-edit-writeback: persist the currently edited queue job (thumbnail +
+    // full project state, trim included) back into the queue. Same add() path as
+    // the full-mode Save button; add() clears editing_job_id internally, so it is
+    // re-bound afterwards to keep the editing session alive (gyro_promote
+    // precedent in VideoArea.qml). grabToImage is asynchronous and can fail to
+    // deliver (no rendered frame yet) — the timeout below makes sure a dispatch
+    // chain waiting on onDone can never hang on it.
+    Timer {
+        id: editWritebackTimeout;
+        interval: 800;
+        property var callback: null;
+        onTriggered: { const cb = callback; callback = null; if (cb) cb(); }
+    }
+    function saveEditingJobToQueue(onDone: var): void {
+        const job_id = render_queue.editing_job_id;
+        if (job_id <= 0 || !videoArea.vid.loaded) { if (onDone) onDone(false); return; }
+        let settled = false;
+        function settle(saved) {
+            if (settled) return;
+            settled = true;
+            editWritebackTimeout.stop();
+            editWritebackTimeout.callback = null;
+            if (onDone) onDone(saved);
+        }
+        editWritebackTimeout.callback = function() {
+            console.warn("edit writeback: thumbnail grab timed out, continuing without writeback");
+            settle(false);
+        };
+        editWritebackTimeout.restart();
+        videoArea.vid.grabToImage(function(result) {
+            if (settled) return; // the timeout already gave up on this save
+            render_queue.add(window.getAdditionalProjectDataJson(), controller.image_to_b64(result.image));
+            render_queue.editing_job_id = job_id;
+            videoArea.captureEditingBaseline();
+            settle(true);
+        }, Qt.size(50 * dpiScale * videoArea.vid.parent.ratio, 50 * dpiScale));
+    }
+    // queue-edit-writeback: dispatch-time gate. Synchronous (and zero-cost) when
+    // nothing is being edited, a queue-item load is still in flight, or nothing
+    // changed since the item settled in the preview; asynchronous via the
+    // writeback above when the preview state diverged from the job's stored
+    // state. A missing baseline counts as dirty — losing an edit is worse than
+    // an extra save.
+    function saveEditingJobIfDirty(onDone: var): void {
+        if (render_queue.editing_job_id <= 0
+            || videoArea.queueEditLoading
+            || controller.video_loading_in_progress
+            || !controller.queue_edit_writeback_enabled()) { onDone(); return; }
+        const current = videoArea.currentEditingSnapshot();
+        const baseline = videoArea.editingBaselineSnapshot;
+        if (current && baseline && current === baseline) { onDone(); return; }
+        saveEditingJobToQueue(function(_saved) { onDone(); });
+    }
+    // preview-queue-navigation: open the given queue item in the preview,
+    // saving the current one first ONLY when it was actually edited. Shared by
+    // Ctrl+Shift+A/D and the hover nav arrows. The save must be dirty-gated:
+    // an unconditional save resets the untouched job to Queued, clears its
+    // sync badge and regenerates its project snapshot — pure navigation
+    // through a freshly-synced queue would strip the whole batch green by
+    // green (live repro 2026-08-13). Deliberately NOT behind the
+    // GYROFLOW_QUEUE_EDIT_WRITEBACK gate: this is an explicit user action.
+    function saveAndLoadQueueItem(new_id: int): void {
+        if (render_queue.editing_job_id <= 0) return;
+        function proceed() {
+            if (new_id > 0) {
+                const data = render_queue.get_gyroflow_data(new_id);
+                videoArea.loadGyroflowData(JSON.parse(data), new_id);
+            }
+        }
+        const current = videoArea.currentEditingSnapshot();
+        const baseline = videoArea.editingBaselineSnapshot;
+        if (current && baseline && current === baseline) {
+            console.log("queue nav: job " + render_queue.editing_job_id + " unchanged, skipping save");
+            proceed();
+            return;
+        }
+        console.log("queue nav: job " + render_queue.editing_job_id + " edited, saving back");
+        window.renderBtn.isAddToQueue = true;
+        saveEditingJobToQueue(function(_saved) { proceed(); });
+    }
     // [simple-mode] Shared plugin-stabilize flow (match + sync, writes .gyroflow
     // projects). Extracted verbatim from simpleAutoSyncBtn.onClicked so the bottom
     // bar button, the deep-match success dialog and the same-day deep-search
     // soft-intercept dialog all run the exact same decision tree.
     function runPluginStabilizeFlow(): void {
         const queueMode = videoArea.queue && videoArea.queue.shown && render_queue.queue.rowCount() > 0;
-        // queue-stuck-state-recovery: lift terminal states this dispatch could get
-        // past, BEFORE anything below reads the queue. Keeping it first is what
-        // lets every gate downstream see an ordinary queue instead of needing a
-        // special case for "skipped but should still count".
-        if (queueMode) render_queue.revive_stuck_jobs("sync");
-        const hasGyroFiles = videoArea.queue ? videoArea.queue.hasGyroFiles : false;
-        // No usable gyro/motion data at all: prompt to load gyro instead of a
-        // silent no-op. Gyro files present but still parsing fall through to the
-        // normal flow below (no parse-complete gate).
-        const noGyro = queueMode
-            ? (!hasGyroFiles && !render_queue.batch_motion_ready())
-            : !controller.gyro_loaded;
-        if (noGyro) {
-            window.messageBox(Modal.Info, qsTr("Please load gyro data first."), [ { text: qsTr("Ok") } ]);
+        if (!queueMode) {
+            // Single video, no queue to write back to. No usable gyro data:
+            // prompt to load gyro instead of a silent no-op.
+            if (!controller.gyro_loaded) {
+                window.messageBox(Modal.Info, qsTr("Please load gyro data first."), [ { text: qsTr("Ok") } ]);
+                return;
+            }
+            if (window.sync) window.sync.runAutosync();
             return;
         }
-        // Single video / embedded gyro: sync directly, no match step.
-        if (!queueMode || !hasGyroFiles) {
-            if (queueMode) {
-                // Queue jobs with embedded gyro (no separate files): direct batch sync.
+        // queue-edit-writeback: persist the in-preview edit of the played job
+        // back into the queue before anything below reads it; the original
+        // decision tree continues inside the callback (synchronous when clean).
+        window.saveEditingJobIfDirty(function() {
+            // queue-stuck-state-recovery: lift terminal states this dispatch could get
+            // past, BEFORE anything below reads the queue. Keeping it first is what
+            // lets every gate downstream see an ordinary queue instead of needing a
+            // special case for "skipped but should still count".
+            render_queue.revive_stuck_jobs("sync");
+            const hasGyroFiles = videoArea.queue ? videoArea.queue.hasGyroFiles : false;
+            // No usable gyro/motion data at all: prompt to load gyro instead of a
+            // silent no-op. Gyro files present but still parsing fall through to the
+            // normal flow below (no parse-complete gate).
+            if (!hasGyroFiles && !render_queue.batch_motion_ready()) {
+                window.messageBox(Modal.Info, qsTr("Please load gyro data first."), [ { text: qsTr("Ok") } ]);
+                return;
+            }
+            // Queue jobs with embedded gyro (no separate files): direct batch sync.
+            if (!hasGyroFiles) {
                 if (!render_queue.batch_motion_ready()) { window.explainDispatchBlocked("sync"); return; }
                 window.runSimpleBatchSync();
-            } else if (window.sync) {
-                window.sync.runAutosync();
+                return;
             }
-            return;
-        }
-        // Queue mode with separate gyro files (D3 decision tree).
-        const queue = videoArea.queue;
-        if (queue.matchDirty) {
-            // Gyro set changed / never matched: match first, then sync.
-            queue.beginMatchThenSync("sync");
-        } else if (window.syncDirty) {
-            // AI toggle changed / never synced: re-sync without re-match.
-            window.runSimpleBatchSync();
-        } else {
-            // Everything current: offer a re-export (re-sync) instead of a
-            // passive notice.
-            window.confirmReExport("plugins");
-        }
+            // Queue mode with separate gyro files (D3 decision tree).
+            const queue = videoArea.queue;
+            if (queue.matchDirty) {
+                // Gyro set changed / never matched: match first, then sync.
+                queue.beginMatchThenSync("sync");
+            } else if (window.syncDirty) {
+                // AI toggle changed / never synced: re-sync without re-match.
+                window.runSimpleBatchSync();
+            } else {
+                // Everything current: offer a re-export (re-sync) instead of a
+                // passive notice.
+                window.confirmReExport("plugins");
+            }
+        });
     }
     // [simple-mode] Shared stabilized-video export flow (no-gyro prompt + batch
     // branch). Extracted verbatim from simpleExportStabilizedBtn.onClicked so the
@@ -2244,43 +2331,53 @@ Rectangle {
     // single-video path.
     function runStabilizedBatchExport(): bool {
         const queueMode = videoArea.queue && videoArea.queue.shown && render_queue.queue.rowCount() > 0;
-        // queue-stuck-state-recovery, "export" intent: unlike the stabilize flow
-        // this deliberately leaves plugin-only skips in place (an encode can never
-        // consume those sources), so the blocker below explains them instead.
-        if (queueMode) render_queue.revive_stuck_jobs("export");
-        const hasGyroFiles = videoArea.queue ? videoArea.queue.hasGyroFiles : false;
-        // No usable gyro/motion data at all: prompt to load gyro instead of a
-        // silent no-op. Gyro files present but still parsing fall through to the
-        // normal batch/single path below.
-        const noGyro = queueMode
-            ? (!hasGyroFiles && !render_queue.batch_motion_ready())
-            : !controller.gyro_loaded;
-        if (noGyro) {
-            window.messageBox(Modal.Info, qsTr("Please load gyro data first."), [ { text: qsTr("Ok") } ]);
-            return true;
+        if (!queueMode) {
+            // No usable gyro data on the single video: prompt to load gyro
+            // instead of a silent no-op.
+            if (!controller.gyro_loaded) {
+                window.messageBox(Modal.Info, qsTr("Please load gyro data first."), [ { text: qsTr("Ok") } ]);
+                return true;
+            }
+            return false;
         }
-        if (!queueMode) return false;
-        // Batch path — render queue panel is open with pending jobs.
-        // Match-first (D4): with separate gyro files that have changed / never
-        // matched, run Auto match first; export dispatches on match success
-        // (zero-match reuses matchWarning and does not start rendering).
-        if (hasGyroFiles && videoArea.queue.matchDirty) {
-            videoArea.queue.beginMatchThenSync("export");
-            return true;
-        }
-        if (!render_queue.batch_motion_ready()) {
-            // No renderable job: if every renderable job is already a
-            // finished video export, offer a re-export. Otherwise say why
-            // nothing can run — this branch used to return in silence, which
-            // reads as a dead button.
-            if (render_queue.has_finished_video_exports())
-                window.confirmReExport("video");
-            else
-                window.explainDispatchBlocked("export");
-            return true;
-        }
-        // Batch render auto-syncs not-yet-synced jobs (D4), so no explicit sync first.
-        window.runSimpleBatchExport();
+        // queue-edit-writeback: persist the in-preview edit of the played job
+        // back into the queue before anything below reads it; the original
+        // decision tree continues inside the callback (synchronous when clean).
+        window.saveEditingJobIfDirty(function() {
+            // queue-stuck-state-recovery, "export" intent: unlike the stabilize flow
+            // this deliberately leaves plugin-only skips in place (an encode can never
+            // consume those sources), so the blocker below explains them instead.
+            render_queue.revive_stuck_jobs("export");
+            const hasGyroFiles = videoArea.queue ? videoArea.queue.hasGyroFiles : false;
+            // No usable gyro/motion data at all: prompt to load gyro instead of a
+            // silent no-op. Gyro files present but still parsing fall through to the
+            // normal batch path below.
+            if (!hasGyroFiles && !render_queue.batch_motion_ready()) {
+                window.messageBox(Modal.Info, qsTr("Please load gyro data first."), [ { text: qsTr("Ok") } ]);
+                return;
+            }
+            // Batch path — render queue panel is open with pending jobs.
+            // Match-first (D4): with separate gyro files that have changed / never
+            // matched, run Auto match first; export dispatches on match success
+            // (zero-match reuses matchWarning and does not start rendering).
+            if (hasGyroFiles && videoArea.queue.matchDirty) {
+                videoArea.queue.beginMatchThenSync("export");
+                return;
+            }
+            if (!render_queue.batch_motion_ready()) {
+                // No renderable job: if every renderable job is already a
+                // finished video export, offer a re-export. Otherwise say why
+                // nothing can run — this branch used to return in silence, which
+                // reads as a dead button.
+                if (render_queue.has_finished_video_exports())
+                    window.confirmReExport("video");
+                else
+                    window.explainDispatchBlocked("export");
+                return;
+            }
+            // Batch render auto-syncs not-yet-synced jobs (D4), so no explicit sync first.
+            window.runSimpleBatchExport();
+        });
         return true;
     }
 

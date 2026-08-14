@@ -5868,6 +5868,16 @@ Bu özellik deneyseldir, sonuçlar hiç düzgün görünmeyebilir. Devam etmek i
 <context>
     <name>VideoArea</name>
     <message>
+        <location filename="../../src/ui/VideoArea.qml" line="1533"/>
+        <source>Save and open the previous queue item</source>
+        <translation>Kaydet ve kuyruktaki önceki öğeyi aç</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/VideoArea.qml" line="1556"/>
+        <source>Save and open the next queue item</source>
+        <translation>Kaydet ve kuyruktaki sonraki öğeyi aç</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/VideoArea.qml" line="1040"/>
         <source>Not stabilized yet. Click &quot;Stabilize (or use with plugins)&quot; first.</source>
         <translation>Henüz sabitlenmedi. Önce &quot;Sabitle (veya eklentilerle kullan)&quot; düğmesine tıklayın.</translation>

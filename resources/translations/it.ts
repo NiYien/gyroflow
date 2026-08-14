@@ -5876,6 +5876,16 @@ Sei sicuro di voler continuare?</translation>
 <context>
     <name>VideoArea</name>
     <message>
+        <location filename="../../src/ui/VideoArea.qml" line="1533"/>
+        <source>Save and open the previous queue item</source>
+        <translation>Salva e apri l'elemento precedente della coda</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/VideoArea.qml" line="1556"/>
+        <source>Save and open the next queue item</source>
+        <translation>Salva e apri l'elemento successivo della coda</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/VideoArea.qml" line="1040"/>
         <source>Not stabilized yet. Click &quot;Stabilize (or use with plugins)&quot; first.</source>
         <translation>Non ancora stabilizzato. Fai prima clic su &quot;Stabilizza (o usa con i plugin)&quot;.</translation>

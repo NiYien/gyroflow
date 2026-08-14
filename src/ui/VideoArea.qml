@@ -48,6 +48,40 @@ Item {
     property bool queueEditLoading: false;
     property url loadedFileUrl;
 
+    // queue-edit-writeback: canonical snapshot of the editable state, taken when
+    // a queue item settles in the preview and compared again at batch dispatch
+    // time. Both sides come from the same serializer over the same in-memory
+    // state, so equality ⟺ nothing was edited in between. The day-granularity
+    // "date" field is stripped to avoid a false positive across midnight.
+    property string editingBaselineSnapshot: "";
+    onQueueEditLoadingChanged: if (!queueEditLoading && render_queue.editing_job_id > 0) Qt.callLater(captureEditingBaseline);
+    function currentEditingSnapshot(): string {
+        try {
+            const obj = JSON.parse(controller.export_gyroflow_data("Simple", window.getAdditionalProjectData()));
+            delete obj.date;
+            return JSON.stringify(obj);
+        } catch (e) {
+            return "";
+        }
+    }
+    function captureEditingBaseline(): void {
+        root.editingBaselineSnapshot = (render_queue.editing_job_id > 0) ? currentEditingSnapshot() : "";
+    }
+    // preview-queue-navigation: neighbor ids for the hover nav arrows.
+    // get_prev/next_item_id are plain functions (not reactive), so they are
+    // re-evaluated on queue_changed — which is also editing_job_id's NOTIFY.
+    property int editingPrevJobId: 0;
+    property int editingNextJobId: 0;
+    Connections {
+        target: render_queue;
+        function onQueue_changed(): void {
+            const id = render_queue.editing_job_id;
+            root.editingPrevJobId = id > 0 ? render_queue.get_prev_item_id(id) : 0;
+            root.editingNextJobId = id > 0 ? render_queue.get_next_item_id(id) : 0;
+            if (id <= 0) root.editingBaselineSnapshot = "";
+        }
+    }
+
     property int fullScreen: 0;
     property string detectedCamera: "";
     property real additionalTopMargin: 0;
@@ -1458,6 +1492,67 @@ Item {
                     console.log("[main_drop:dispatch] files=" + fileUrls.length + " target=" + (fileUrls.length > 1 ? "queue" : "main"));
                 } else {
                     console.log("[main_drop:drop] reason=no_video_urls filtered=" + filteredUrls.length);
+                }
+            }
+        }
+
+        // preview-queue-navigation: player-style hover arrows over the video
+        // area. Semantics are exactly Ctrl+Shift+A/D — save the edited queue
+        // job, then open its neighbor. Desktop-only (hover-driven) and only
+        // while a queue item is being edited in the preview; each side hides
+        // at the queue boundary and both disable while a load is in flight.
+        Item {
+            id: queueNavOverlay;
+            anchors.fill: parent;
+            visible: !window.isMobileLayout && vid.loaded && render_queue.editing_job_id > 0;
+            HoverHandler { id: queueNavHover; }
+            readonly property bool arrowsShown: queueNavHover.hovered && !root.queueEditLoading && !controller.video_loading_in_progress;
+            Button {
+                id: queueNavPrev;
+                iconName: "chevron-left";
+                width: 46 * dpiScale;
+                height: 46 * dpiScale;
+                leftPadding: 0; rightPadding: 0; topPadding: 0; bottomPadding: 0;
+                anchors.left: parent.left;
+                anchors.leftMargin: 10 * dpiScale;
+                anchors.verticalCenter: parent.verticalCenter;
+                icon.width: 26 * dpiScale;
+                icon.height: 26 * dpiScale;
+                textColor: "#ffffff";
+                opacity: queueNavOverlay.arrowsShown? 0.85 : 0.0;
+                Ease on opacity { duration: 200; }
+                visible: opacity > 0.01 && root.editingPrevJobId > 0;
+                enabled: visible;
+                tooltip: qsTr("Save and open the previous queue item");
+                onClicked: window.saveAndLoadQueueItem(root.editingPrevJobId);
+                background: Rectangle {
+                    radius: width / 2;
+                    anchors.fill: parent;
+                    color: queueNavPrev.hovered? "#000000" : "#333333";
+                }
+            }
+            Button {
+                id: queueNavNext;
+                iconName: "chevron-right";
+                width: 46 * dpiScale;
+                height: 46 * dpiScale;
+                leftPadding: 0; rightPadding: 0; topPadding: 0; bottomPadding: 0;
+                anchors.right: parent.right;
+                anchors.rightMargin: 10 * dpiScale;
+                anchors.verticalCenter: parent.verticalCenter;
+                icon.width: 26 * dpiScale;
+                icon.height: 26 * dpiScale;
+                textColor: "#ffffff";
+                opacity: queueNavOverlay.arrowsShown? 0.85 : 0.0;
+                Ease on opacity { duration: 200; }
+                visible: opacity > 0.01 && root.editingNextJobId > 0;
+                enabled: visible;
+                tooltip: qsTr("Save and open the next queue item");
+                onClicked: window.saveAndLoadQueueItem(root.editingNextJobId);
+                background: Rectangle {
+                    radius: width / 2;
+                    anchors.fill: parent;
+                    color: queueNavNext.hovered? "#000000" : "#333333";
                 }
             }
         }

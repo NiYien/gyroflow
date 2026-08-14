@@ -4255,6 +4255,37 @@ impl RenderQueue {
                 .unwrap_or(false)
         };
 
+        // queue-edit-writeback: an edit (trim, smoothing, output settings) does
+        // NOT invalidate the job's sync results — the offsets ride along in the
+        // written-back stab — so the sync badge always survives. A project-export
+        // Finished row (last_finished_export_project == Some(2)) also keeps its
+        // green finished display: the video-export dispatch requeues those rows
+        // itself (prepare_finished_jobs_for_video_export), now with the edit
+        // baked in. Only a video-exported row (Some(4)) resets to Queued — its
+        // rendered output is stale by definition.
+        let preserved_sync_status: Option<QString> = if editing {
+            let q = self.queue.borrow();
+            q.iter().find(|i| i.job_id == job_id).map(|i| i.sync_status.clone())
+        } else {
+            None
+        };
+        let keep_finished_project_export = editing
+            && self.jobs.get(&job_id).and_then(|j| j.last_finished_export_project) == Some(2)
+            && {
+                let q = self.queue.borrow();
+                q.iter()
+                    .find(|i| i.job_id == job_id)
+                    .map_or(false, |i| i.status == JobStatus::Finished)
+            };
+        let preserved_progress: Option<(u64, u64, f64)> = if keep_finished_project_export {
+            let q = self.queue.borrow();
+            q.iter()
+                .find(|i| i.job_id == job_id)
+                .map(|i| (i.current_frame, i.total_frames, i.processing_progress))
+        } else {
+            None
+        };
+
         if editing {
             update_model!(self, job_id, itm {
                 itm.output_folder = QString::from(render_options.output_folder.as_str());
@@ -4263,14 +4294,12 @@ impl RenderQueue {
                 itm.export_settings = QString::from(render_options.settings_string(params.get_scaled_fps()));
                 itm.thumbnail_url = thumbnail_url;
                 itm.duration_ms = params.duration_ms;
-                itm.current_frame = 0;
-                itm.total_frames = (params.frame_count as f64 * trim_ratio).ceil() as u64;
                 itm.start_timestamp = 0;
                 itm.start_timestamp2 = 0;
                 itm.start_timestamp_frame = 0;
                 itm.end_timestamp = 0;
                 itm.error_string = QString::default();
-                itm.sync_status = QString::default();
+                itm.sync_status = preserved_sync_status.clone().unwrap_or_default();
                 // in-camera-stabilization-gate: re-editing a job does not change
                 // the clip's stabilizer state, so a blocked job must not be
                 // silently returned to Queued here. Only this reason is written;
@@ -4278,8 +4307,16 @@ impl RenderQueue {
                 if stabilization_blocked {
                     itm.status = JobStatus::Skipped;
                     itm.skip_reason = QString::from("image_stabilization");
+                    itm.current_frame = 0;
+                    itm.total_frames = (params.frame_count as f64 * trim_ratio).ceil() as u64;
+                } else if let Some((cur, total, progress)) = preserved_progress {
+                    itm.current_frame = cur;
+                    itm.total_frames = total;
+                    itm.processing_progress = progress;
                 } else {
                     itm.status = JobStatus::Queued;
+                    itm.current_frame = 0;
+                    itm.total_frames = (params.frame_count as f64 * trim_ratio).ceil() as u64;
                 }
                 itm.frame_times.clear();
             });
@@ -4326,8 +4363,23 @@ impl RenderQueue {
         }
         drop(params);
 
-        let project_data =
-            Self::get_gyroflow_data_internal(&stab, &additional_data, &render_options);
+        // queue-edit-writeback: an edit write-back must keep the snapshot at the
+        // same completeness the batch flows store (WithGyroData, inline — see the
+        // batch-sync write at ~:3705). The default Simple snapshot drops the
+        // embedded gyro, and re-opening such a job with an external gyro file
+        // ends in import branch D ("no gyro loaded", non-blocking) — offsets and
+        // sync points silently vanish on the next Play/navigation.
+        let project_data = if editing {
+            Self::get_gyroflow_data_internal_with_type(
+                &stab,
+                &additional_data,
+                &render_options,
+                core::GyroflowProjectType::WithGyroData,
+                false,
+            )
+        } else {
+            Self::get_gyroflow_data_internal(&stab, &additional_data, &render_options)
+        };
 
         render_options.input_url = stab.input_file.read().url.clone();
         render_options.input_filename = filesystem::get_filename(&stab.input_file.read().url);
@@ -4375,7 +4427,10 @@ impl RenderQueue {
                 cancel_flag: Default::default(),
                 render_epoch: Default::default(),
                 project_data,
-                last_finished_export_project: None,
+                // Preserved across an edit write-back so the video-export
+                // dispatch still recognizes the row as a re-queueable
+                // project-export (see the display preservation above).
+                last_finished_export_project: if keep_finished_project_export { Some(2) } else { None },
                 last_written_offsets: None,
                 stab: Some(stab.clone()),
                 base_lens_metadata,
@@ -21401,6 +21456,74 @@ mod tests {
         }
 
         queue
+    }
+
+    // queue-edit-writeback: helper for the edit write-back tests — a fresh
+    // preview-side stab carrying an edit (trim), as saveEditingJobToQueue would
+    // hand to add().
+    fn edited_preview_stab() -> Arc<StabilizationManager> {
+        let stab = Arc::new(StabilizationManager::default());
+        {
+            let mut params = stab.params.write();
+            params.frame_count = 100;
+            params.duration_ms = 10_000.0;
+            params.fps = 10.0;
+            params.trim_ranges = vec![(0.2, 0.5)];
+        }
+        stab.input_file.write().url = "file:///eta-test.mp4".to_owned();
+        stab
+    }
+
+    // queue-edit-writeback: an edit does not invalidate sync results, so the
+    // write-back must keep the batch-sync display — the green project-export
+    // state (Finished + Some(2)) and the sync badge both survive, while the
+    // edit itself (trim) lands in the replaced stab.
+    #[test]
+    fn edit_writeback_preserves_project_export_green_and_sync_badge() {
+        let mut queue = queue_with_autosync_project(JobStatus::Finished, true, Some(2));
+        {
+            let mut q = queue.queue.borrow_mut();
+            let mut itm = q[0].clone();
+            itm.sync_status = QString::from(r#"{"color":"green"}"#);
+            itm.current_frame = 100;
+            itm.processing_progress = 1.0;
+            q.change_line(0, itm);
+        }
+        queue.editing_job_id = 1;
+        queue.add_internal(1, edited_preview_stab(), RenderOptions::default(), String::new(), QString::default(), None);
+
+        let q = queue.queue.borrow();
+        assert_eq!(q[0].status, JobStatus::Finished, "project-export green must survive an edit");
+        assert_eq!(q[0].sync_status.to_string(), r#"{"color":"green"}"#, "sync badge must survive an edit");
+        drop(q);
+        let job = queue.jobs.get(&1).unwrap();
+        assert_eq!(job.last_finished_export_project, Some(2), "video-export dispatch must still requeue this row");
+        assert_eq!(
+            job.stab.as_ref().unwrap().params.read().trim_ranges,
+            vec![(0.2, 0.5)],
+            "the edit itself must land in the job"
+        );
+    }
+
+    // queue-edit-writeback: an edited video export is stale by definition — it
+    // goes back to Queued for a re-render, but the sync badge still survives.
+    #[test]
+    fn edit_writeback_requeues_a_video_exported_job() {
+        let mut queue = queue_with_autosync_project(JobStatus::Finished, true, Some(4));
+        {
+            let mut q = queue.queue.borrow_mut();
+            let mut itm = q[0].clone();
+            itm.sync_status = QString::from(r#"{"color":"green"}"#);
+            q.change_line(0, itm);
+        }
+        queue.editing_job_id = 1;
+        queue.add_internal(1, edited_preview_stab(), RenderOptions::default(), String::new(), QString::default(), None);
+
+        let q = queue.queue.borrow();
+        assert_eq!(q[0].status, JobStatus::Queued, "an edited video export needs a re-render");
+        assert_eq!(q[0].sync_status.to_string(), r#"{"color":"green"}"#, "sync badge survives — an edit does not invalidate sync");
+        drop(q);
+        assert_eq!(queue.jobs.get(&1).unwrap().last_finished_export_project, None);
     }
 
     fn has_top_level_do_autosync(data: &str) -> bool {

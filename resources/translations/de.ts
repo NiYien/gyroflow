@@ -5879,6 +5879,16 @@ Soll trotzdem mit der Analyse fortgefahren werden?</translation>
 <context>
     <name>VideoArea</name>
     <message>
+        <location filename="../../src/ui/VideoArea.qml" line="1533"/>
+        <source>Save and open the previous queue item</source>
+        <translation>Speichern und vorheriges Element der Warteschlange öffnen</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/VideoArea.qml" line="1556"/>
+        <source>Save and open the next queue item</source>
+        <translation>Speichern und nächstes Element der Warteschlange öffnen</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/VideoArea.qml" line="1040"/>
         <source>Not stabilized yet. Click &quot;Stabilize (or use with plugins)&quot; first.</source>
         <translation>Noch nicht stabilisiert. Zuerst auf „Stabilisieren (oder mit Plugins verwenden)“ klicken.</translation>

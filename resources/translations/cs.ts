@@ -5878,6 +5878,16 @@ Opravdu chcete pokračovat?</translation>
 <context>
     <name>VideoArea</name>
     <message>
+        <location filename="../../src/ui/VideoArea.qml" line="1533"/>
+        <source>Save and open the previous queue item</source>
+        <translation>Uložit a otevřít předchozí položku fronty</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/VideoArea.qml" line="1556"/>
+        <source>Save and open the next queue item</source>
+        <translation>Uložit a otevřít další položku fronty</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/VideoArea.qml" line="1040"/>
         <source>Not stabilized yet. Click &quot;Stabilize (or use with plugins)&quot; first.</source>
         <translation>Zatím nestabilizováno. Nejprve klikněte na &quot;Stabilizovat (nebo použít s pluginy)&quot;.</translation>
