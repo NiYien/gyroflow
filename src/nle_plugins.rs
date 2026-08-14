@@ -5,12 +5,19 @@ use semver::Version;
 use serde::Serialize;
 use std::cmp::Ordering;
 use std::io::{self, Cursor};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use zip_extensions::zip_archive_extensions::ZipArchiveExtensions;
 
 const DEFAULT_RELEASE_PLUGINS_BASE: &str =
     "https://github.com/NiYien/gyroflow-plugins/releases/latest/download";
+
+const RESOLVE_SIDECAR_FILES: [&str; 3] = [
+    "Gyroflow NiYien Auto Cut Current Clip.lua",
+    "Gyroflow NiYien Auto Cut Current Track.lua",
+    "gyroflow_autocut_common.inc",
+];
+const LEGACY_RESOLVE_ENTRY: &str = "Gyroflow NiYien Auto Cut.lua";
 
 #[derive(Debug, Clone, Default, Serialize)]
 struct LatestPluginInfo {
@@ -147,14 +154,121 @@ fn query_file_version_from_plist(path: &str) -> Option<String> {
     Some(v.to_owned())
 }
 
+fn resolve_sidecar_sources(extracted_root: &Path) -> io::Result<Vec<PathBuf>> {
+    let source_dir = extracted_root.join("ResolveScripts");
+    let mut sources = Vec::with_capacity(RESOLVE_SIDECAR_FILES.len());
+    for name in RESOLVE_SIDECAR_FILES {
+        let source = source_dir.join(name);
+        if !source.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("OpenFX package is missing ResolveScripts/{name}"),
+            ));
+        }
+        sources.push(source);
+    }
+    Ok(sources)
+}
+
+fn copy_resolve_scripts_to(extracted_root: &Path, destination: &Path) -> io::Result<()> {
+    let sources = resolve_sidecar_sources(extracted_root)?;
+    std::fs::create_dir_all(destination)?;
+    for source in sources {
+        let name = source.file_name().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Resolve sidecar has no file name",
+            )
+        })?;
+        std::fs::copy(&source, destination.join(name))?;
+    }
+    match std::fs::remove_file(destination.join(LEGACY_RESOLVE_ENTRY)) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    Ok(())
+}
+
+fn resolve_scripts_dir() -> io::Result<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        let appdata = std::env::var_os("APPDATA").ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "APPDATA is unavailable for Resolve script installation",
+            )
+        })?;
+        return Ok(PathBuf::from(appdata)
+            .join("Blackmagic Design")
+            .join("DaVinci Resolve")
+            .join("Support")
+            .join("Fusion")
+            .join("Scripts")
+            .join("Utility"));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var_os("HOME").ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "HOME is unavailable for Resolve script installation",
+            )
+        })?;
+        return Ok(PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("Blackmagic Design")
+            .join("DaVinci Resolve")
+            .join("Fusion")
+            .join("Scripts")
+            .join("Utility"));
+    }
+    #[allow(unreachable_code)]
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "Resolve scripts are supported only on Windows and macOS",
+    ))
+}
+
+fn install_resolve_scripts(extracted_root: &Path) -> io::Result<PathBuf> {
+    let destination = resolve_scripts_dir()?;
+    copy_resolve_scripts_to(extracted_root, &destination)?;
+    Ok(destination)
+}
+
 fn copy_files(tempdir: &str, extract_path: &str, typ: &str) -> io::Result<()> {
     ::log::info!(
         "[nle copy_files] start typ={typ:?} tempdir={tempdir:?} extract_path={extract_path:?} extract_path_exists={}",
         Path::new(extract_path).exists()
     );
+    let source = if typ == "openfx" {
+        Path::new(tempdir).join("GyroflowNiyien.ofx.bundle")
+    } else {
+        PathBuf::from(tempdir)
+    };
+    if !source.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Plugin package is missing {}", source.display()),
+        ));
+    }
+    let destination = if typ == "openfx" {
+        Path::new(extract_path).join("GyroflowNiyien.ofx.bundle")
+    } else {
+        PathBuf::from(extract_path)
+    };
+    let source_arg = source.to_string_lossy().into_owned();
+    let destination_arg = destination.to_string_lossy().into_owned();
+    let macos_copy_source = if typ == "openfx" {
+        source_arg.clone()
+    } else {
+        format!("{tempdir}/")
+    };
+
     let output = if cfg!(target_os = "windows") {
         let xcopy_out = Command::new("xcopy")
-            .args(&[tempdir, extract_path, "/Y", "/E", "/H", "/I"])
+            .args([&source_arg, &destination_arg, "/Y", "/E", "/H", "/I"])
             .output()?;
         let stdout = String::from_utf8_lossy(&xcopy_out.stdout);
         let stderr = String::from_utf8_lossy(&xcopy_out.stderr);
@@ -216,7 +330,7 @@ fn copy_files(tempdir: &str, extract_path: &str, typ: &str) -> io::Result<()> {
             }
             true
         } else {
-            Command::new("osascript").args(&["-e", &format!("do shell script \"mkdir -p \\\"{extract_path}\\\" ; cp -Rpf \\\"{tempdir}/\\\" \\\"{extract_path}\\\"\"")]).output()?.status.success()
+            Command::new("osascript").args(&["-e", &format!("do shell script \"mkdir -p \\\"{extract_path}\\\" ; cp -Rpf \\\"{macos_copy_source}\\\" \\\"{extract_path}\\\"\"")]).output()?.status.success()
         }
     } else {
         return Err(io::Error::new(io::ErrorKind::Other, "Unsupported OS"));
@@ -234,10 +348,17 @@ fn copy_files(tempdir: &str, extract_path: &str, typ: &str) -> io::Result<()> {
         // on macOS osascript shows an admin auth dialog.
         let status = if cfg!(target_os = "windows") {
             runas::Command::new("xcopy")
-                .args(&[tempdir, extract_path, "/Y", "/E", "/H", "/I"])
+                .args(&[
+                    source_arg.as_str(),
+                    destination_arg.as_str(),
+                    "/Y",
+                    "/E",
+                    "/H",
+                    "/I",
+                ])
                 .status()
         } else if cfg!(target_os = "macos") {
-            Command::new("osascript").args(&["-e", &format!("do shell script \"install -m 0755 -o $USER -d \\\"{extract_path}\\\" ; cp -Rpf \\\"{tempdir}/\\\" \\\"{extract_path}\\\"\" with administrator privileges")]).status()
+            Command::new("osascript").args(&["-e", &format!("do shell script \"install -m 0755 -o $USER -d \\\"{extract_path}\\\" ; cp -Rpf \\\"{macos_copy_source}\\\" \\\"{extract_path}\\\"\" with administrator privileges")]).status()
         } else {
             return Err(io::Error::new(io::ErrorKind::Other, "Unsupported OS"));
         }?;
@@ -437,6 +558,9 @@ pub fn install(typ: &str, plugins_base: String) -> io::Result<String> {
             }
             Err(e) => ::log::warn!("[nle install] read_dir tempdir failed: {e}"),
         }
+        if typ == "openfx" {
+            resolve_sidecar_sources(tempdir.path())?;
+        }
         let result = copy_files(tempdir.path().to_str().unwrap(), &extract_path, typ);
         if let Err(e) = result {
             ::log::error!("[nle install] copy_files (zip branch) returned Err: {e:?}");
@@ -447,6 +571,13 @@ pub fn install(typ: &str, plugins_base: String) -> io::Result<String> {
             return Err(e);
         }
         ::log::info!("[nle install] copy_files (zip branch) OK");
+        if typ == "openfx" {
+            let scripts_dir = install_resolve_scripts(tempdir.path())?;
+            ::log::info!(
+                "[nle install] Resolve Utility scripts installed at {:?}; restart Resolve to refresh the Scripts menu",
+                scripts_dir
+            );
+        }
     } else {
         let tempfile = tempdir
             .path()
@@ -793,6 +924,98 @@ fn parse_semver(value: &str) -> Option<Version> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn write_sidecar_file(root: &Path, name: &str, contents: &str) {
+        let source = root.join("ResolveScripts");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join(name), contents).unwrap();
+    }
+
+    #[test]
+    fn resolve_sidecar_copy_requires_all_files() {
+        let source = tempfile::tempdir().unwrap();
+        let destination = tempfile::tempdir().unwrap();
+        write_sidecar_file(
+            source.path(),
+            "Gyroflow NiYien Auto Cut Current Clip.lua",
+            "clip",
+        );
+        write_sidecar_file(
+            source.path(),
+            "Gyroflow NiYien Auto Cut Current Track.lua",
+            "track",
+        );
+
+        let err = copy_resolve_scripts_to(source.path(), destination.path()).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(!destination
+            .path()
+            .join("gyroflow_autocut_common.inc")
+            .exists());
+    }
+
+    #[test]
+    fn resolve_sidecar_copy_installs_exact_contract() {
+        let source = tempfile::tempdir().unwrap();
+        let destination = tempfile::tempdir().unwrap();
+        for (name, contents) in [
+            ("Gyroflow NiYien Auto Cut Current Clip.lua", "clip"),
+            ("Gyroflow NiYien Auto Cut Current Track.lua", "track"),
+            ("gyroflow_autocut_common.inc", "common"),
+        ] {
+            write_sidecar_file(source.path(), name, contents);
+        }
+        std::fs::write(
+            source.path().join("ResolveScripts").join("unexpected.lua"),
+            "unexpected",
+        )
+        .unwrap();
+
+        copy_resolve_scripts_to(source.path(), destination.path()).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(
+                destination
+                    .path()
+                    .join("Gyroflow NiYien Auto Cut Current Clip.lua")
+            )
+            .unwrap(),
+            "clip"
+        );
+        assert_eq!(
+            std::fs::read_to_string(destination.path().join("gyroflow_autocut_common.inc"))
+                .unwrap(),
+            "common"
+        );
+        assert!(!destination.path().join("unexpected.lua").exists());
+    }
+
+    #[test]
+    fn resolve_sidecar_copy_removes_only_legacy_entry() {
+        let source = tempfile::tempdir().unwrap();
+        let destination = tempfile::tempdir().unwrap();
+        for (name, contents) in [
+            ("Gyroflow NiYien Auto Cut Current Clip.lua", "clip"),
+            ("Gyroflow NiYien Auto Cut Current Track.lua", "track"),
+            ("gyroflow_autocut_common.inc", "common"),
+        ] {
+            write_sidecar_file(source.path(), name, contents);
+        }
+        std::fs::write(
+            destination.path().join("Gyroflow NiYien Auto Cut.lua"),
+            "legacy",
+        )
+        .unwrap();
+        std::fs::write(destination.path().join("Other Utility.lua"), "unrelated").unwrap();
+
+        copy_resolve_scripts_to(source.path(), destination.path()).unwrap();
+
+        assert!(!destination
+            .path()
+            .join("Gyroflow NiYien Auto Cut.lua")
+            .exists());
+        assert!(destination.path().join("Other Utility.lua").exists());
+    }
 
     #[test]
     fn compare_semver_versions() {

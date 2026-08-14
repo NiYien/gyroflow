@@ -13,6 +13,7 @@ MenuItem {
 
     property var openfx_status: ({});
     property var adobe_status: ({});
+    property string pendingInstallType: "";
 
     Component.onCompleted: {
         refreshStatuses();
@@ -67,6 +68,7 @@ MenuItem {
         dialog.accepted.connect(function() {
             if (Qt.resolvedUrl(dialog.selectedFolder) != Qt.resolvedUrl(initialFolder)) {
                 root.loader = false;
+                root.pendingInstallType = "";
                 messageBox(Modal.Error, qsTr("You selected the wrong folder.\nMake sure to select %1.").arg("<b>" + folder + "</b>"), [ { text: qsTr("Ok"), accent: true } ]);
             } else {
                 filesystem.folder_access_granted(dialog.selectedFolder);
@@ -75,6 +77,7 @@ MenuItem {
         });
         dialog.rejected.connect(function() {
             root.loader = false;
+            root.pendingInstallType = "";
         });
         dialog.open();
     }
@@ -118,9 +121,12 @@ MenuItem {
                     } else {
                         messageBox(Modal.Error, result, [ { text: qsTr("Ok"), accent: true } ]);
                     }
+                } else if (root.loader && root.pendingInstallType === "openfx") {
+                    messageBox(Modal.Info, qsTr("The OpenFX plugin and Resolve scripts were installed. Restart DaVinci Resolve to refresh the Workspace > Scripts menu."), [ { text: qsTr("Ok"), accent: true } ]);
                 }
                 refreshStatuses();
                 root.loader = false;
+                root.pendingInstallType = "";
             }
         }
     }
@@ -139,6 +145,7 @@ MenuItem {
             rightPadding: 7 * dpiScale;
             onClicked: {
                 root.loader = true;
+                root.pendingInstallType = "adobe";
                 if (Qt.platform.os == "osx" && isSandboxed) {
                     const folder = "/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore";
                     messageBox(Modal.Info, qsTr("At the next prompt, click <b>\"Open\"</b> to grant access to the %1 folder in order for Gyroflow to install the plugin.").arg("<b>\"" + folder + "\"</b>"), [ { text: qsTr("Ok"), accent: true, clicked: () => {
@@ -167,6 +174,7 @@ MenuItem {
             rightPadding: 7 * dpiScale;
             onClicked: {
                 root.loader = true;
+                root.pendingInstallType = "openfx";
                 if (Qt.platform.os == "osx" && isSandboxed) {
                     const folder = "/Library/OFX/Plugins";
                     if (!filesystem.exists("file://" + folder)) {
