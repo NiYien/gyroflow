@@ -16915,6 +16915,62 @@ fn saf_crm_candidate_keep(filename_lower: &str, exts_lower: &[String]) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn empty_senseflow_metadata_keeps_video_lens_metadata() {
+        let mut video = FileMetadata {
+            detected_source: Some("Sony".into()),
+            camera_identifier: Some(CameraIdentifier {
+                brand: "Sony".into(),
+                model: "ILME-FX3".into(),
+                ..Default::default()
+            }),
+            unit_pixel_focal_length: Some(3840.0 / 32.26),
+            ..Default::default()
+        };
+        video.lens_params.insert(
+            0,
+            core::gyro_source::LensParams {
+                focal_length: Some(30.0),
+                pixel_focal_length: Some((3840.0 / 32.26 * 30.0) as f32),
+                ..Default::default()
+            },
+        );
+        let backup = JobLensMetadataBackup::from_metadata(&video);
+        let mut senseflow = FileMetadata {
+            detected_source: Some("SenseFlow".into()),
+            camera_identifier: Some(CameraIdentifier {
+                brand: "SenseFlow".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        backup.apply_missing_to_metadata(&mut senseflow);
+
+        assert_eq!(
+            senseflow.unit_pixel_focal_length,
+            video.unit_pixel_focal_length
+        );
+        assert_eq!(
+            senseflow
+                .lens_params
+                .get(&0)
+                .and_then(|p| p.pixel_focal_length),
+            video
+                .lens_params
+                .get(&0)
+                .and_then(|p| p.pixel_focal_length)
+        );
+        assert_eq!(
+            senseflow
+                .camera_identifier
+                .as_ref()
+                .map(|id| id.model.as_str()),
+            Some("ILME-FX3")
+        );
+        assert_eq!(senseflow.detected_source.as_deref(), Some("Sony"));
+    }
+
     // batch-match-high-fps-duration-precedence: physical recording duration.
     // `fps_scale` is the timeline truth the rest of the pipeline already runs
     // on; `FileMetadata::record_frame_rate` is gyro state that apply_match
