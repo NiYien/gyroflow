@@ -462,6 +462,13 @@ pub struct Controller {
     // loading a sequence; empty for ordinary videos.
     image_sequence_first_frame_url: qt_property!(QString),
 
+    // Real sensor bit depth of the loaded source, when the file states one that
+    // the decoder cannot. Only CinemaDNG sets it today: ffmpeg widens a 12-bit
+    // sensor into a 16-bit CFA container, and MDK has no name for that layout,
+    // so the video info panel's format-name heuristic would report "8 bit" for
+    // a 12-bit raw file. 0 means "nothing more truthful than the decoder said".
+    source_bit_depth: qt_property!(i32),
+
     preview_resolution: i32,
     processing_resolution: i32,
 
@@ -879,10 +886,36 @@ impl Controller {
                         scheme,
                         video_log_decoder_label(&custom_decoder),
                     );
+                    // CinemaDNG decodes to scene-linear samples; MDK renders
+                    // into an RGBA8 texture, so without a curve the preview
+                    // collapses into ~10 distinct levels. Build it before
+                    // `encoded_url` is consumed below, install it after the
+                    // player has been recreated by setUrl.
+                    let dng_curve = core::dng_tone_curve::DngToneCurve::from_url(&encoded_url);
                     vid.setUrl(
                         QUrl::from(QString::from(encoded_url)),
                         QString::from(custom_decoder),
                     );
+                    // Always called: an empty table clears whatever curve the
+                    // previously loaded clip installed, which is what keeps
+                    // every non-DNG source on its existing behaviour.
+                    match &dng_curve {
+                        Some(curve) => {
+                            ::log::info!(
+                                target: "video.load",
+                                "[dng] tone curve active for preview, source is {} bit",
+                                curve.bits_per_sample(),
+                            );
+                            vid.setToneCurve(curve.lut());
+                            this.source_bit_depth = curve.bits_per_sample() as i32;
+                        }
+                        None => {
+                            vid.setToneCurve(&[]);
+                            // Reset too, so a DNG's depth cannot leak onto the
+                            // next clip loaded in the same session.
+                            this.source_bit_depth = 0;
+                        }
+                    }
                     // Converged to upstream: no main-thread GPU invalidation here.
                     // The render thread rebuilds the OpenCL/wgpu backend on its
                     // next frame because `buffers.get_checksum()` (which reflects
@@ -1297,6 +1330,20 @@ impl Controller {
                 // (cheap to clone per attempt) instead of the underlying value.
                 let sync = std::rc::Rc::new(sync);
 
+                // CinemaDNG decodes to scene-linear samples, which the GRAY8 /
+                // NV12 conversion below would collapse into ~10 distinct levels
+                // - far too little signal for optical flow. Rebuild the camera's
+                // own encoding from the file's LinearizationTable so the flow
+                // input keeps its gradients. Built once per sync run (try_run
+                // may be attempted twice on GPU fallback), never per frame.
+                // `None` for anything that is not a DNG carrying that table, so
+                // every other format keeps its existing behaviour byte for byte.
+                let dng_curve = core::dng_tone_curve::DngToneCurve::from_url(&input_file.url)
+                    .map(std::rc::Rc::new);
+                if dng_curve.is_some() {
+                    ::log::info!(target: "sync", "[dng] tone curve active for sync input");
+                }
+
                 let try_run = |use_gpu: bool, ranges: Vec<(f64, f64)>| -> Result<(), rendering::FFmpegError> {
                     let mut frame_no = 0;
                     let mut abs_frame_no = 0;
@@ -1332,6 +1379,7 @@ impl Controller {
 
                     let err2 = err.clone();
                     let sync2 = sync.clone();
+                    let dng_curve2 = dng_curve.clone();
                     proc.on_frame(
                         move |timestamp_us,
                               input_frame,
@@ -1359,6 +1407,14 @@ impl Controller {
                                 } else {
                                     ffmpeg_next::format::Pixel::GRAY8
                                 };
+                                // Must run before the scale below: both target
+                                // formats are 8-bit, and once the samples are
+                                // quantised the levels are gone for good. Sits
+                                // inside the every_nth_frame branch so skipped
+                                // frames cost nothing.
+                                if let Some(curve) = &dng_curve2 {
+                                    rendering::apply_dng_tone_curve(input_frame, curve);
+                                }
                                 match converter.scale(
                                     input_frame,
                                     pix_fmt,
@@ -6033,7 +6089,13 @@ mod tests {
         // drops these and can reintroduce R3D Play stalls, clip-switch
         // freezes, a regressed MDK, macOS preview striping, or Android
         // bottom-of-frame tearing.
-        const PINNED_REV: &str = "d1bab3340f5bfa147e087e687177d3628907a29c";
+        //
+        // The pin also carries `MDKPlayer::setToneCurve()` and its onFrame
+        // filter: CinemaDNG decodes to scene-linear samples, and without the
+        // filter the preview collapses into ~10 distinct levels once MDK
+        // renders into its RGBA8 texture. Reverting past it takes the DNG
+        // preview back to a near-black picture.
+        const PINNED_REV: &str = "ef7c419fde0922c96014b5f5ada0fe0c11ebbefc";
         let lock_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock");
         let lock = std::fs::read_to_string(&lock_path).expect("read Cargo.lock");
         let expected = format!(

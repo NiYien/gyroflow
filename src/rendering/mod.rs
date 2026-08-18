@@ -171,6 +171,57 @@ pub fn pix_fmt_is_high_bit_depth(fmt: ffmpeg_next::format::Pixel) -> bool {
     }
 }
 
+/// True for the 16-bit CFA formats ffmpeg's DNG decoder produces.
+///
+/// Only the little-endian variants are listed: the samples are read and written
+/// as native-endian below, and every platform we ship on is little-endian. A
+/// big-endian frame therefore falls through untouched rather than being
+/// byte-swapped by accident.
+pub fn pix_fmt_is_bayer16(fmt: ffmpeg_next::format::Pixel) -> bool {
+    use ffmpeg_next::format::Pixel as P;
+    matches!(
+        fmt,
+        P::BAYER_BGGR16LE | P::BAYER_GBRG16LE | P::BAYER_GRBG16LE | P::BAYER_RGGB16LE
+    )
+}
+
+/// Maps a scene-linear CinemaDNG frame back onto a perceptually uniform range,
+/// in place, before anything downstream quantises it to 8 bits.
+///
+/// See `gyroflow_core::dng_tone_curve` for why this is needed. Returns whether
+/// the frame was touched, so callers can log/assert the gate rather than
+/// silently doing nothing.
+///
+/// Mutating the decoded frame is safe here because DNG is intra-only - the
+/// decoder keeps no reference frames that could be corrupted by the edit.
+pub fn apply_dng_tone_curve(
+    frame: &mut ffmpeg_next::frame::Video,
+    curve: &gyroflow_core::dng_tone_curve::DngToneCurve,
+) -> bool {
+    if !pix_fmt_is_bayer16(frame.format()) {
+        return false;
+    }
+    let width = frame.width() as usize;
+    let height = frame.height() as usize;
+    let stride = frame.stride(0);
+    let row_bytes = width * 2;
+    if stride < row_bytes {
+        return false;
+    }
+    let data = frame.data_mut(0);
+    for y in 0..height {
+        let start = y * stride;
+        let Some(row) = data.get_mut(start..start + row_bytes) else {
+            break;
+        };
+        for px in row.chunks_exact_mut(2) {
+            let v = u16::from_ne_bytes([px[0], px[1]]);
+            px.copy_from_slice(&curve.map(v).to_ne_bytes());
+        }
+    }
+    true
+}
+
 pub fn get_possible_encoders(codec: &str, use_gpu: bool) -> Vec<(&'static str, bool)> {
     // -> (name, is_gpu)
     if codec.contains("PNG") || codec.contains("png") {
@@ -1279,3 +1330,115 @@ pub fn test_decode() {
     let _ = proc.start_decoder_only(vec![(0.0, 1000.0)], Arc::new(AtomicBool::new(false)));
     ::log::debug!("Done in {:.3} ms", _time.elapsed().as_micros() as f64 / 1000.0);
 }*/
+
+#[cfg(test)]
+mod dng_tone_curve_tests {
+    use super::*;
+    use gyroflow_core::dng_tone_curve::DngToneCurve;
+
+    /// Minimal little-endian DNG header carrying a log-shaped LinearizationTable
+    /// plus BlackLevel/WhiteLevel, so a real curve can be built in-process.
+    fn synth_dng_bytes() -> Vec<u8> {
+        const N: usize = 4096;
+        let table: Vec<u16> = (0..N)
+            .map(|i| {
+                let t = i as f64 / (N - 1) as f64;
+                (65535.0 * ((t * 6.0).exp() - 1.0) / (6.0f64.exp() - 1.0)).min(65535.0) as u16
+            })
+            .collect();
+        let table_offset = 8 + 2 + 3 * 12 + 4;
+        let mut d = Vec::new();
+        d.extend_from_slice(b"II");
+        d.extend_from_slice(&42u16.to_le_bytes());
+        d.extend_from_slice(&8u32.to_le_bytes());
+        d.extend_from_slice(&3u16.to_le_bytes());
+        for (tag, count, payload) in [
+            (0xC618u16, N as u32, table_offset as u32),
+            (0xC61Au16, 1, 256),
+            (0xC61Du16, 1, 60074),
+        ] {
+            d.extend_from_slice(&tag.to_le_bytes());
+            d.extend_from_slice(&3u16.to_le_bytes()); // SHORT
+            d.extend_from_slice(&count.to_le_bytes());
+            d.extend_from_slice(&payload.to_le_bytes());
+        }
+        d.extend_from_slice(&0u32.to_le_bytes());
+        assert_eq!(d.len(), table_offset);
+        for v in &table {
+            d.extend_from_slice(&v.to_le_bytes());
+        }
+        d
+    }
+
+    /// Fills a frame the way a CinemaDNG decodes: everything crammed into the
+    /// bottom few percent of the linear range.
+    fn linear_crushed_frame(fmt: ffmpeg_next::format::Pixel) -> ffmpeg_next::frame::Video {
+        let (w, h) = (64u32, 32u32);
+        let mut f = ffmpeg_next::frame::Video::new(fmt, w, h);
+        let stride = f.stride(0);
+        let data = f.data_mut(0);
+        for y in 0..h as usize {
+            for x in 0..w as usize {
+                // 0 .. ~4.2% of full scale, the measured range of the real frame
+                let v = (((y * w as usize + x) % 2048) as u32 * 2772 / 2048) as u16;
+                let o = y * stride + x * 2;
+                data[o..o + 2].copy_from_slice(&v.to_ne_bytes());
+            }
+        }
+        f
+    }
+
+    fn distinct_high_bytes(f: &ffmpeg_next::frame::Video) -> usize {
+        let stride = f.stride(0);
+        let data = f.data(0);
+        let mut seen = [false; 256];
+        for y in 0..f.height() as usize {
+            for x in 0..f.width() as usize {
+                let o = y * stride + x * 2;
+                let v = u16::from_ne_bytes([data[o], data[o + 1]]);
+                seen[(v >> 8) as usize] = true;
+            }
+        }
+        seen.iter().filter(|s| **s).count()
+    }
+
+    #[test]
+    fn curve_recovers_levels_that_8bit_quantisation_would_destroy() {
+        let curve = DngToneCurve::from_dng_bytes(&synth_dng_bytes()).expect("curve");
+        let mut frame = linear_crushed_frame(ffmpeg_next::format::Pixel::BAYER_GRBG16LE);
+
+        let before = distinct_high_bytes(&frame);
+        assert!(apply_dng_tone_curve(&mut frame, &curve), "bayer16 frame must be processed");
+        let after = distinct_high_bytes(&frame);
+
+        assert!(before <= 12, "baseline should be crushed, got {before}");
+        assert!(after > 120, "curve should restore levels, got {after} (was {before})");
+    }
+
+    #[test]
+    fn every_bayer16_pattern_is_accepted() {
+        use ffmpeg_next::format::Pixel as P;
+        for fmt in [P::BAYER_BGGR16LE, P::BAYER_GBRG16LE, P::BAYER_GRBG16LE, P::BAYER_RGGB16LE] {
+            assert!(pix_fmt_is_bayer16(fmt), "{fmt:?} should be treated as 16-bit CFA");
+        }
+    }
+
+    #[test]
+    fn non_bayer_frames_are_left_untouched() {
+        let curve = DngToneCurve::from_dng_bytes(&synth_dng_bytes()).expect("curve");
+        // Formats that already carry display-domain values must not be touched.
+        for fmt in [
+            ffmpeg_next::format::Pixel::YUV420P,
+            ffmpeg_next::format::Pixel::NV12,
+            ffmpeg_next::format::Pixel::RGBA,
+            ffmpeg_next::format::Pixel::YUV422P10LE,
+            ffmpeg_next::format::Pixel::BAYER_GRBG8,
+        ] {
+            assert!(!pix_fmt_is_bayer16(fmt), "{fmt:?} must not be treated as 16-bit CFA");
+            let mut f = ffmpeg_next::frame::Video::new(fmt, 64, 32);
+            let before = f.data(0).to_vec();
+            assert!(!apply_dng_tone_curve(&mut f, &curve), "{fmt:?} must be skipped");
+            assert_eq!(f.data(0), &before[..], "{fmt:?} data must be unchanged");
+        }
+    }
+}

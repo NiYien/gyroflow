@@ -6,6 +6,7 @@ pub mod calibration;
 pub mod camera_identifier;
 pub mod canon_builtin_gyro;
 pub mod distribution;
+pub mod dng_tone_curve;
 pub mod gyro_source;
 pub mod imu_integration;
 pub mod keyframes;

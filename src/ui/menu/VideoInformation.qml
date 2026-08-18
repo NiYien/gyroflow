@@ -171,6 +171,15 @@ MenuItem {
     }
     function getPixelFormat(md): string {
         let pt = md["stream.video[0].codec.format_name"] || "";
+        // Raw sources whose real depth only the file knows (CinemaDNG today).
+        // The decoder is no help here: it widens a 12-bit sensor into a 16-bit
+        // CFA container, and MDK cannot even name that layout, so format_name
+        // arrives empty and the heuristic below would claim "8 bit" for 12-bit
+        // raw. controller.source_bit_depth is 0 for everything else, which
+        // leaves the existing behaviour untouched.
+        if (controller.source_bit_depth > 0) {
+            return "RAW " + controller.source_bit_depth + " bit";
+        }
         let bits = "8 bit";
         if (pt.indexOf("10le") > -1) { bits = "10 bit"; pt = pt.replace("p10le", "").replace("10le", ""); }
         if (pt.indexOf("12le") > -1) { bits = "12 bit"; pt = pt.replace("p12le", "").replace("12le", ""); }
