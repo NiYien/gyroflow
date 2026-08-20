@@ -1937,18 +1937,21 @@ Rectangle {
                     Label {
                         position: Label.LeftPosition;
                         text: qsTranslate("Advanced", "Device for video processing");
-                        // Hidden in simple-mode-ux-overhaul: defer device choice to defaults.
-                        visible: false;
+                        visible: window.advanced && window.advanced.processingDevice.simpleModel.length > 0;
                         width: parent.width;
                         ComboBox {
                             id: simpleProcessingDevice;
-                            model: window.advanced ? window.advanced.processingDevice.model : [];
+                            model: window.advanced
+                                ? window.advanced.processingDevice.simpleModel.map(x => x.display_name)
+                                : [];
                             font.pixelSize: 11 * dpiScale;
                             width: parent.width;
-                            currentIndex: window.advanced ? window.advanced.processingDevice.currentIndex : 0;
-                            onCurrentIndexChanged: {
-                                if (window.advanced && window.advanced.processingDevice.currentIndex !== currentIndex) {
-                                    window.advanced.processingDevice.currentIndex = currentIndex;
+                            currentIndex: window.advanced
+                                ? window.advanced.processingDevice.simpleCurrentIndex
+                                : -1;
+                            onActivated: function(index) {
+                                if (window.advanced) {
+                                    window.advanced.processingDevice.selectSimpleDevice(index);
                                 }
                             }
                         }

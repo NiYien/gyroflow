@@ -820,17 +820,17 @@ MenuItem {
                 property var orgList: [];
                 Connections {
                     target: controller;
-                    function onGpu_list_loaded(list: list<string>): void {
+                    function onGpu_list_loaded(list: list<var>): void {
                         const saved = settings.value("renderingDevice", defaultInitializedDevice);
-                        const toRemove = [ "[OpenCL]", "[wgpu]", "(Vulkan)", "(Metal)", "(Dx12)", "(Dx11)", "(Gl)" ];
-                        list = list.map(x => {
-                            for (const keyword of toRemove) {
-                                x = x.replace(keyword, "").trim()
-                            }
-                            if (Qt.platform.os == "ios" && x.toLowerCase().includes("apple m")) {
+                        const descriptors = Array.from(list);
+                        const savedDescriptor = descriptors.find(x => x.list_name == saved);
+                        const savedName = savedDescriptor ? savedDescriptor.display_name : saved;
+                        list = descriptors.map(x => {
+                            const name = x.display_name;
+                            if (Qt.platform.os == "ios" && name.toLowerCase().includes("apple m")) {
                                 root.exportFormats[2]['gpu'] = true; // ProRes is supported on apple silicon
                             }
-                            return x;
+                            return name;
                         });
                         list = [...new Set(list)];
 
@@ -838,7 +838,7 @@ MenuItem {
                         renderingDevice.preventChange = true;
                         renderingDevice.model = list;
                         for (let i = 0; i < list.length; ++i) {
-                            if (list[i] == saved) {
+                            if (list[i] == savedName) {
                                 renderingDevice.currentIndex = i;
                                 break;
                             }

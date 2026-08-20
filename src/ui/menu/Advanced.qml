@@ -383,42 +383,88 @@ MenuItem {
             width: parent.width;
             currentIndex: 0;
             property bool preventChange: true;
+            property var deviceDescriptors: [];
+            property var simpleModel: [];
+            property int simpleCurrentIndex: -1;
             Connections {
                 target: controller;
-                function onGpu_list_loaded(list: list<string>): void {
+                function onGpu_list_loaded(list: list<var>): void {
                     const saved = settings.value("processingDevice", defaultInitializedDevice);
+                    const savedPhysical = settings.value("processingDevicePhysicalId", "");
+                    const descriptors = Array.from(list);
                     processingDevice.preventChange = true;
-                    processingDevice.model = [...list, qsTr("CPU only")];
-                    for (let i = 0; i < list.length; ++i) {
-                        if (list[i] == saved) {
-                            processingDevice.currentIndex = i;
+                    processingDevice.deviceDescriptors = descriptors;
+                    processingDevice.simpleModel = descriptors
+                        .filter(x => x.simple_preferred)
+                        .sort((a, b) => (a.simple_priority - b.simple_priority) || (a.raw_index - b.raw_index));
+                    processingDevice.model = [...descriptors.map(x => x.list_name), qsTr("CPU only")];
+
+                    let selectedIndex = -1;
+                    for (const device of descriptors) {
+                        if (device.list_name == saved) {
+                            selectedIndex = device.raw_index;
                             break;
                         }
                     }
-                    if (saved != defaultInitializedDevice) {
-                        Qt.callLater(processingDevice.updateController);
+                    if (selectedIndex < 0 && savedPhysical) {
+                        for (const device of processingDevice.simpleModel) {
+                            if (device.physical_id == savedPhysical) {
+                                selectedIndex = device.raw_index;
+                                break;
+                            }
+                        }
                     }
+                    if (selectedIndex < 0 && processingDevice.simpleModel.length > 0) {
+                        selectedIndex = processingDevice.simpleModel[0].raw_index;
+                    }
+                    if (selectedIndex >= 0) processingDevice.currentIndex = selectedIndex;
+                    processingDevice.syncSimpleCurrentIndex();
                     processingDevice.preventChange = false;
-                    if (saved == "cpu") {
-                        processingDevice.currentIndex = processingDevice.model.length - 1;
-                    }
+                    Qt.callLater(processingDevice.updateController);
                 }
             }
             Component.onCompleted: controller.list_gpu_devices();
             onCurrentIndexChanged: {
                 if (preventChange) return;
+                syncSimpleCurrentIndex();
                 Qt.callLater(processingDevice.updateController);
+            }
+            function syncSimpleCurrentIndex(): void {
+                simpleCurrentIndex = -1;
+                const selected = deviceDescriptors.find(x => x.raw_index == currentIndex);
+                if (!selected) return;
+                for (let i = 0; i < simpleModel.length; ++i) {
+                    if (simpleModel[i].physical_id == selected.physical_id) {
+                        simpleCurrentIndex = i;
+                        return;
+                    }
+                }
+            }
+            function selectSimpleDevice(index: int): void {
+                if (index < 0 || index >= simpleModel.length) return;
+                const rawIndex = simpleModel[index].raw_index;
+                if (currentIndex == rawIndex) {
+                    updateController();
+                } else {
+                    currentIndex = rawIndex;
+                }
             }
             function updateController(): void {
                 if (model.length == 0) return;
                 if (currentIndex == model.length - 1) {
                     controller.set_device(-1);
+                    settings.setValue("processingDevice", "cpu");
+                    settings.setValue("processingDevicePhysicalId", "cpu");
                 } else {
                     controller.set_device(currentIndex);
+                    const selected = deviceDescriptors.find(x => x.raw_index == currentIndex);
+                    if (selected) {
+                        settings.setValue("processingDevice", selected.list_name);
+                        settings.setValue("processingDevicePhysicalId", selected.physical_id);
+                    }
                 }
-                const text = currentIndex == model.length - 1? "cpu" : currentText;
-                settings.setValue("processingDevice", text);
                 settings.setValue("processingDeviceIndex", processingDevice.currentIndex);
+                syncSimpleCurrentIndex();
             }
         }
     }

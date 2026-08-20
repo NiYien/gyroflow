@@ -2,7 +2,7 @@
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
 
 use super::wgpu_interop::*;
-use crate::gpu::{BufferSource, Buffers};
+use crate::gpu::{BufferSource, Buffers, ProcessingDeviceInfo, ProcessingDeviceType};
 use crate::stabilization::KernelParams;
 use crate::stabilization::distortion_models::DistortionModel;
 use parking_lot::{Mutex, RwLock};
@@ -116,7 +116,7 @@ lazy_static::lazy_static! {
 const EXCLUSIONS: &[&'static str] = &["Microsoft Basic Render Driver"];
 
 impl WgpuWrapper {
-    pub fn list_devices() -> Vec<String> {
+    pub fn list_devices() -> Vec<ProcessingDeviceInfo> {
         if ADAPTERS.read().is_empty() {
             let devices = std::panic::catch_unwind(|| -> Vec<Adapter> {
                 pollster::block_on(INSTANCE.lock().enumerate_adapters(wgpu::Backends::all()))
@@ -145,7 +145,24 @@ impl WgpuWrapper {
             .iter()
             .map(|x| {
                 let x = x.get_info();
-                format!("{} ({:?})", x.name, x.backend)
+                let device_type = match x.device_type {
+                    wgpu::DeviceType::DiscreteGpu => ProcessingDeviceType::Discrete,
+                    wgpu::DeviceType::IntegratedGpu => ProcessingDeviceType::Integrated,
+                    _ => ProcessingDeviceType::Unknown,
+                };
+                let vendor = match x.vendor {
+                    0x10de => "NVIDIA".to_string(),
+                    0x8086 => "Intel".to_string(),
+                    0x1002 | 0x1022 => "AMD".to_string(),
+                    vendor => format!("{vendor:#06x}"),
+                };
+                ProcessingDeviceInfo::new(
+                    format!("[wgpu] {} ({:?})", x.name, x.backend),
+                    x.name,
+                    vendor,
+                    device_type,
+                    "wgpu",
+                )
             })
             .collect()
     }

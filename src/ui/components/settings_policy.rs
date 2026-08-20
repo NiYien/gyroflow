@@ -58,6 +58,12 @@ const ALLOW_EXACT: &[&str] = &[
     // only export controls not hidden in Simple mode.
     "queueOutputMode",
     "queueFixedOutputPath",
+    // Simple settings exposes a physical-GPU selector. Keep both the current
+    // backend descriptor and the stable physical ID so backend ordering can
+    // change without losing the user's device choice.
+    "processingDevice",
+    "processingDeviceIndex",
+    "processingDevicePhysicalId",
     // Window geometry and panel splitters: user-dragged, no bearing on output.
     "windowX",
     "windowY",
@@ -149,10 +155,6 @@ const DENY_EXACT: &[&str] = &[
     "r3dGammaCurve",
     "r3dColorSpace",
     "r3dRedlineParams",
-    // Device selection: denial means automatic selection, which is the safer
-    // default and the one a fresh install gets.
-    "processingDevice",
-    "processingDeviceIndex",
     "renderingDevice",
     // Preview resolution. Denial returns -1, which lets VideoArea's existing
     // fallback pick 1080p — the same value the field produced before.
@@ -331,6 +333,9 @@ mod tests {
             "mountingMode",
             "queueOutputMode",
             "queueFixedOutputPath",
+            "processingDevice",
+            "processingDeviceIndex",
+            "processingDevicePhysicalId",
             "niyien_tutorial_seen_v1",
             "bottomPanelSize",
             "bottomPanelSize-full",
@@ -351,7 +356,6 @@ mod tests {
             "previewResolution",
             "defaultOverwriteAction",
             "gpudecode",
-            "processingDevice",
         ] {
             assert!(!is_persisted(key), "expected {key} to be denied");
         }

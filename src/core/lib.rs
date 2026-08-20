@@ -3261,17 +3261,46 @@ impl StabilizationManager {
         }
     }
 
-    pub fn list_gpu_devices<F: Fn(Vec<String>) + Send + Sync + 'static>(&self, cb: F) {
+    pub fn list_gpu_devices<F: Fn(Vec<gpu::ProcessingDeviceInfo>) + Send + Sync + 'static>(
+        &self,
+        cb: F,
+    ) {
         let stab = self.stabilization.clone();
         run_threaded(move || {
             let list = stab.read().list_devices();
 
             log::info!("GPU list: {:?}", &list);
 
-            *stabilization::GPU_LIST.write() = list.clone();
+            *stabilization::GPU_LIST.write() =
+                list.iter().map(|device| device.list_name.clone()).collect();
 
             cb(list);
         });
+    }
+
+    pub fn initialize_processing_device(
+        &self,
+        saved_physical_id: &str,
+        saved_list_name: &str,
+    ) -> Option<gpu::ProcessingDeviceInfo> {
+        let list = self.stabilization.read().list_devices();
+        *stabilization::GPU_LIST.write() =
+            list.iter().map(|device| device.list_name.clone()).collect();
+
+        let (selected, reason) =
+            gpu::select_processing_device(&list, saved_physical_id, saved_list_name)?;
+        let selected = selected.clone();
+        self.set_device(selected.raw_index as i32);
+        log::info!(
+            target: "gpu",
+            "processing_device selected raw_index={} physical_id={} display_name={} backend={} reason={}",
+            selected.raw_index,
+            selected.physical_id,
+            selected.display_name,
+            selected.backend,
+            reason,
+        );
+        Some(selected)
     }
 
     pub fn export_gyroflow_file(

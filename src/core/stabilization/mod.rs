@@ -751,25 +751,17 @@ impl Stabilization {
         self.stab_data.get(&timestamp_us)
     }
 
-    pub fn list_devices(&self) -> Vec<String> {
+    pub fn list_devices(&self) -> Vec<ProcessingDeviceInfo> {
         let mut ret = Vec::new();
 
         #[cfg(feature = "use-opencl")]
         if std::env::var("NO_OPENCL").unwrap_or_default().is_empty() {
-            ret.extend(
-                opencl::OclWrapper::list_devices()
-                    .into_iter()
-                    .map(|x| format!("[OpenCL] {x}")),
-            );
+            ret.extend(opencl::OclWrapper::list_devices());
         }
         if std::env::var("NO_WGPU").unwrap_or_default().is_empty() {
-            ret.extend(
-                wgpu::WgpuWrapper::list_devices()
-                    .into_iter()
-                    .map(|x| format!("[wgpu] {x}")),
-            );
+            ret.extend(wgpu::WgpuWrapper::list_devices());
         }
-        ret
+        prepare_processing_device_infos(ret)
     }
 
     pub fn set_device(&mut self, i: isize) {

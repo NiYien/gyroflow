@@ -382,6 +382,33 @@ fn entry() {
         );
     }
 
+    let saved_physical_id =
+        gyroflow_core::settings::get_str("processingDevicePhysicalId", "");
+    let saved_list_name = gyroflow_core::settings::get_str("processingDevice", "");
+    if let Some(selected) = ctl
+        .borrow()
+        .stabilizer
+        .initialize_processing_device(&saved_physical_id, &saved_list_name)
+    {
+        rendering::set_gpu_type_from_name(&selected.display_name);
+        engine.set_property(
+            "defaultInitializedDevice".into(),
+            QString::from(selected.list_name.clone()).into(),
+        );
+        gyroflow_core::settings::set(
+            "processingDevice",
+            serde_json::Value::String(selected.list_name),
+        );
+        gyroflow_core::settings::set(
+            "processingDevicePhysicalId",
+            serde_json::Value::String(selected.physical_id),
+        );
+        gyroflow_core::settings::set(
+            "processingDeviceIndex",
+            serde_json::Value::from(selected.raw_index),
+        );
+    }
+
     // Pre-load NeuFlow sessions in background while user interacts with UI
     #[cfg(feature = "neuflow-ort")]
     std::thread::spawn(|| core::neuflow::ensure_ready());

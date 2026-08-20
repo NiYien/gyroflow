@@ -61,25 +61,39 @@ impl OclWrapper {
         props
     }
 
-    pub fn list_devices() -> Vec<String> {
-        let devices = std::panic::catch_unwind(|| -> Vec<String> {
+    pub fn list_devices() -> Vec<ProcessingDeviceInfo> {
+        let devices = std::panic::catch_unwind(|| -> Vec<ProcessingDeviceInfo> {
             let mut ret = Vec::new();
             for p in Platform::list() {
                 if let Ok(devs) =
                     Device::list(p, Some(ocl::flags::DeviceType::new().gpu().accelerator()))
                 {
                     ret.extend(devs.into_iter().filter_map(|x| {
-                        Some(format!(
-                            "{} {}: {}",
-                            p.name().ok()?,
-                            x.name().ok()?,
-                            x.version().ok()?
+                        let platform_name = p.name().ok()?;
+                        let display_name = x.name().ok()?;
+                        let vendor = x.vendor().unwrap_or_default();
+                        let version = x.version().ok()?;
+                        let device_type = match x.info(ocl::core::DeviceInfo::HostUnifiedMemory) {
+                            Ok(ocl::core::DeviceInfoResult::HostUnifiedMemory(true)) => {
+                                ProcessingDeviceType::Integrated
+                            }
+                            Ok(ocl::core::DeviceInfoResult::HostUnifiedMemory(false)) => {
+                                ProcessingDeviceType::Discrete
+                            }
+                            _ => ProcessingDeviceType::Unknown,
+                        };
+                        Some(ProcessingDeviceInfo::new(
+                            format!("[OpenCL] {platform_name} {display_name}: {version}"),
+                            display_name,
+                            vendor,
+                            device_type,
+                            "opencl",
                         ))
                     }));
                 }
             }
             ret.drain(..)
-                .filter(|x| !EXCLUSIONS.iter().any(|e| x.contains(e)))
+                .filter(|x| !EXCLUSIONS.iter().any(|e| x.list_name.contains(e)))
                 .collect()
         });
         match devices {
@@ -237,7 +251,12 @@ impl OclWrapper {
             .build()?;
 
         let name = format!("{} {}", device.vendor()?, device.name()?);
-        let list_name = format!("[OpenCL] {} {}", platform.name()?, device.name()?);
+        let list_name = format!(
+            "[OpenCL] {} {}: {}",
+            platform.name()?,
+            device.name()?,
+            device.version()?
+        );
 
         *CONTEXT.write() = Some(CtxWrapper {
             device,
