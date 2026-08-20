@@ -68,13 +68,14 @@ impl ProcessingDeviceInfo {
 }
 
 fn clean_device_name(name: &str) -> String {
-    const COMPUTE_ENGINE: &str = " compute engine";
-    let trimmed = name.trim();
-    let lower = trimmed.to_ascii_lowercase();
-    if lower.ends_with(COMPUTE_ENGINE) {
-        trimmed[..trimmed.len() - COMPUTE_ENGINE.len()].trim_end().to_string()
-    } else {
-        trimmed.to_string()
+    const DRIVER_SUFFIXES: &[&str] = &[" compute engine", "/pcie/sse2", "/sse2"];
+    let mut cleaned = name.trim();
+    loop {
+        let lower = cleaned.to_ascii_lowercase();
+        let Some(suffix) = DRIVER_SUFFIXES.iter().find(|suffix| lower.ends_with(**suffix)) else {
+            return cleaned.to_string();
+        };
+        cleaned = cleaned[..cleaned.len() - suffix.len()].trim_end();
     }
 }
 
@@ -508,6 +509,30 @@ mod processing_device_tests {
         assert!(!devices[1].simple_preferred);
         assert_eq!(devices[0].device_type, ProcessingDeviceType::Discrete);
         assert_eq!(devices[0].simple_priority, 2);
+    }
+
+    #[test]
+    fn opengl_driver_suffix_does_not_create_a_duplicate_gpu() {
+        let devices = prepare_processing_device_infos(vec![
+            device(
+                "[wgpu] NVIDIA GeForce RTX 4060 Ti (Vulkan)",
+                "NVIDIA GeForce RTX 4060 Ti",
+                "NVIDIA",
+                ProcessingDeviceType::Discrete,
+                "wgpu",
+            ),
+            device(
+                "[wgpu] NVIDIA GeForce RTX 4060 Ti/PCIe/SSE2 (Gl)",
+                "NVIDIA GeForce RTX 4060 Ti/PCIe/SSE2",
+                "NVIDIA Corporation",
+                ProcessingDeviceType::Discrete,
+                "wgpu",
+            ),
+        ]);
+        assert_eq!(devices[0].physical_id, devices[1].physical_id);
+        assert_eq!(devices[1].display_name, "NVIDIA GeForce RTX 4060 Ti");
+        assert!(devices[0].simple_preferred);
+        assert!(!devices[1].simple_preferred);
     }
 
     #[test]
