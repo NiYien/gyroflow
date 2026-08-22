@@ -47,6 +47,19 @@ const DEVICE_CAPABILITY_ERRNO: i32 = 78;
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "ios")))]
 const DEVICE_CAPABILITY_ERRNO: i32 = 38;
 
+// HEVC Level 6.2 High-tier CPB cap, VCL, in bits (ITU-T H.265 Table A.9).
+// A codec-standard constant, not a GPU property; GPUs differ only in which
+// maximum level they support.
+const HEVC_L62_HIGH_MAX_CPB_BITS: u64 = 800_000_000;
+
+/// VBV/CPB buffer size passed to hevc_nvenc: ffmpeg's own 2x-bitrate default,
+/// clamped to the largest CPB any HEVC level allows.
+fn hevc_nvenc_vbv_bits(bitrate: usize) -> i32 {
+    // Saturating u64 multiply BEFORE min: ffmpeg's own default computation
+    // overflows i32 past ~536 Mbps input; don't repeat that.
+    (bitrate as u64).saturating_mul(2).min(HEVC_L62_HIGH_MAX_CPB_BITS) as i32
+}
+
 /// Whether an encoder initialization error means "this device cannot encode that".
 ///
 /// Hardware encoders advertise a static pixel format table that is the union of the capabilities of
@@ -251,6 +264,20 @@ impl<'a> VideoTranscoder<'a> {
         }
         unsafe {
             (*encoder.as_mut_ptr()).rc_min_rate = bitrate as i64;
+        }
+        // FFmpeg's nvenc wrapper defaults vbvBufferSize to 2x the average
+        // bitrate when rc_buffer_size is unset. Past 400 Mbps that exceeds
+        // the HEVC L6.2 High-tier CPB cap (800 Mbit) and NVENC rejects the
+        // session with INVALID_PARAM(8). Below 400 Mbps this computes the
+        // exact value ffmpeg would have used (no behavior change); above,
+        // the clamp makes high-bitrate sources encodable at all. On
+        // pre-L6.2 GPUs it is inert. A user-supplied "bufsize" option wins.
+        if bitrate > 0 && codec_name == "hevc_nvenc" && params.options.get("bufsize").is_none() {
+            let vbv = hevc_nvenc_vbv_bits(bitrate);
+            log::debug!("hevc_nvenc: rc_buffer_size set to {vbv} (bitrate {bitrate})");
+            unsafe {
+                (*encoder.as_mut_ptr()).rc_buffer_size = vbv;
+            }
         }
         encoder.set_color_range(color_range);
         encoder.set_colorspace(frame.color_space());
@@ -963,6 +990,31 @@ mod tests {
         // EINVAL: what avcodec_open2 returns for a bad bitrate/resolution, not a capability problem.
         let err = FFmpegError::InternalError(Error::Other { errno: 22 });
         assert!(!is_device_capability_error(&err, "h264_nvenc"));
+    }
+
+    // ---- hevc_nvenc VBV clamp (nvenc-export-failure investigation) ----
+
+    #[test]
+    fn vbv_matches_ffmpeg_default_below_the_knee() {
+        assert_eq!(hevc_nvenc_vbv_bits(100_000_000), 200_000_000);
+    }
+
+    #[test]
+    fn vbv_clamps_at_the_hevc_cpb_cap() {
+        assert_eq!(hevc_nvenc_vbv_bits(400_000_000), 800_000_000);
+        assert_eq!(hevc_nvenc_vbv_bits(500_000_000), 800_000_000);
+    }
+
+    #[test]
+    fn vbv_handles_the_incident_bitrate() {
+        // DSCF8991.MOV: 408,381,516 bps - the export that started all this.
+        assert_eq!(hevc_nvenc_vbv_bits(408_381_516), 800_000_000);
+    }
+
+    #[test]
+    fn vbv_does_not_overflow_on_huge_bitrates() {
+        assert_eq!(hevc_nvenc_vbv_bits(3_000_000_000), 800_000_000);
+        assert_eq!(hevc_nvenc_vbv_bits(usize::MAX), 800_000_000);
     }
 
     // AMF collapses every encoder->Init() failure into AVERROR_BUG, so the encoder-name suffix is
