@@ -66,7 +66,12 @@ impl DngToneCurve {
         let mut file = match crate::filesystem::open_file(url, false, false) {
             Ok(f) => f,
             Err(e) => {
-                log::debug!("dng_tone_curve: cannot open {url}: {e:?}");
+                // warn, not debug: this is the whole reason a curve silently
+                // fails to activate, and at debug it stayed invisible through a
+                // full round of "the DNG preview is still black" debugging.
+                // Callers hand it a url that names a real file, so a healthy
+                // run never reaches this line.
+                log::warn!("dng_tone_curve: cannot open {url}: {e:?}");
                 return None;
             }
         };

@@ -975,14 +975,10 @@ pub fn copy_insta360_metadata(
 // plugin does not parse `tkhd.matrix`, so we bypass via mp4parse to read the
 // real rotation. Real RED2-container R3D files fail `parse_mp4` and we return 0,
 // matching prior behavior.
-// Reconstruct the first-frame url of a `%0Nd` image sequence from its pattern
-// url and start index. Telemetry (camera model, lens params, frame readout
-// time) must be parsed from a real frame, not the `%0Nd` pattern that
-// `open_file` cannot resolve. Returns None when the url carries no `%0Nd` token.
-pub fn image_sequence_first_frame_url(pattern_url: &str, start: i32) -> Option<String> {
-    // Decode to an OS path first so the sequence token is the literal `%0Nd`
-    // (url form may percent-encode the `%` as `%25`).
-    let path = gyroflow_core::filesystem::url_to_path(pattern_url);
+// Locate the `%0Nd` image2-demuxer token in a decoded path. Returns
+// `(start, end, width)`, where `start` indexes the `%` and `end` is one past
+// the trailing `d`.
+fn find_image_sequence_token(path: &str) -> Option<(usize, usize, usize)> {
     let bytes = path.as_bytes();
     let mut i = 0;
     while i + 3 < bytes.len() {
@@ -995,14 +991,7 @@ pub fn image_sequence_first_frame_url(pattern_url: &str, start: i32) -> Option<S
             if j > i + 2 && j < bytes.len() && bytes[j] == b'd' {
                 if let Ok(width) = path[i + 2..j].parse::<usize>() {
                     if width > 0 {
-                        let replaced = format!(
-                            "{}{:0width$}{}",
-                            &path[..i],
-                            start.max(0),
-                            &path[j + 1..],
-                            width = width
-                        );
-                        return Some(gyroflow_core::filesystem::path_to_url(&replaced));
+                        return Some((i, j + 1, width));
                     }
                 }
             }
@@ -1010,6 +999,441 @@ pub fn image_sequence_first_frame_url(pattern_url: &str, start: i32) -> Option<S
         i += 1;
     }
     None
+}
+
+fn is_path_separator(c: char) -> bool {
+    c == '/' || c == '\\'
+}
+
+// Reconstruct the first-frame url of a `%0Nd` image sequence from its pattern
+// url and start index. Telemetry (camera model, lens params, frame readout
+// time) must be parsed from a real frame, not the `%0Nd` pattern that
+// `open_file` cannot resolve. Returns None when the url carries no `%0Nd` token.
+//
+// Formatting only - it does not check that the file exists. Callers that need a
+// url naming a file that is really there use
+// `resolve_image_sequence_first_frame` instead.
+pub fn image_sequence_first_frame_url(pattern_url: &str, start: i32) -> Option<String> {
+    // Decode to an OS path first so the sequence token is the literal `%0Nd`
+    // (url form may percent-encode the `%` as `%25`).
+    let path = gyroflow_core::filesystem::url_to_path(pattern_url);
+    let (i, j, width) = find_image_sequence_token(&path)?;
+    let replaced = format!(
+        "{}{:0width$}{}",
+        &path[..i],
+        start.max(0),
+        &path[j..],
+        width = width
+    );
+    Some(gyroflow_core::filesystem::path_to_url(&replaced))
+}
+
+// Start indices probed by `resolve_image_sequence_first_frame`, in order and
+// deduplicated: the caller's hint first, then the two numbering conventions
+// every writer in the wild uses. A negative hint is clamped, so it collapses
+// onto the `0` candidate instead of formatting a `-1` frame that cannot exist.
+fn first_frame_candidates(start_hint: i32) -> Vec<i32> {
+    let mut candidates: Vec<i32> = Vec::with_capacity(3);
+    for n in [start_hint.max(0), 0, 1] {
+        if !candidates.contains(&n) {
+            candidates.push(n);
+        }
+    }
+    candidates
+}
+
+// Directory backstop for `resolve_image_sequence_first_frame`: list the folder
+// holding the pattern and return the lowest-numbered file matching
+// `<prefix><digits><suffix>`. The digit run is deliberately not required to be
+// `width` wide, so a writer that overflowed its own padding still resolves.
+//
+// Local paths only: an Android SAF url decodes to a bare filename, which has no
+// folder to scan, and a token sitting in a folder component is not a sequence
+// this can enumerate. Both return None and leave the caller on the miss path.
+fn scan_folder_for_first_frame(path: &str, token_start: usize, token_end: usize) -> Option<String> {
+    let sep = path[..token_start].rfind(is_path_separator)?;
+    let prefix = &path[sep + 1..token_start];
+    let suffix = &path[token_end..];
+    if suffix.contains(is_path_separator) {
+        return None;
+    }
+    let folder = &path[..sep];
+
+    let mut best: Option<(u64, String)> = None;
+    for entry in std::fs::read_dir(folder).ok()?.flatten() {
+        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.len() <= prefix.len() + suffix.len()
+            || !name.starts_with(prefix)
+            || !name.ends_with(suffix)
+        {
+            continue;
+        }
+        // `starts_with` / `ends_with` matched, so both offsets are char
+        // boundaries even for non-ASCII filenames.
+        let digits = &name[prefix.len()..name.len() - suffix.len()];
+        if !digits.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        if let Ok(n) = digits.parse::<u64>()
+            && best.as_ref().map(|(b, _)| n < *b).unwrap_or(true)
+        {
+            best = Some((n, name));
+        }
+    }
+
+    let (_, name) = best?;
+    Some(gyroflow_core::filesystem::path_to_url(&format!(
+        "{}{}",
+        &path[..=sep],
+        name
+    )))
+}
+
+// Resolve a `%0Nd` image sequence pattern url to a url naming a file that is
+// really on disk. Shared by every consumer that has to read the sequence's
+// first frame - the preview tone curve, the sync tone curve and
+// `load_telemetry` - because none of them can open the pattern itself.
+//
+// `start_hint` is only a hint: on the queue-Play / .gyroflow-project paths the
+// controller still holds the previous clip's start index, so `0` and `1` are
+// probed as well, and a directory scan backstops sequences numbered from
+// anything else.
+//
+// Returns None both when the url carries no `%0Nd` token - the non-sequence
+// identity path, a control-flow short circuit rather than a value coincidence -
+// and when nothing could be resolved. Callers use the url unchanged in either
+// case, so a miss reproduces exactly the pre-resolve failure path.
+pub fn resolve_image_sequence_first_frame(pattern_url: &str, start_hint: i32) -> Option<String> {
+    let path = gyroflow_core::filesystem::url_to_path(pattern_url);
+    let (i, j, width) = find_image_sequence_token(&path)?;
+
+    let candidates = first_frame_candidates(start_hint);
+
+    for n in &candidates {
+        let replaced = format!("{}{:0width$}{}", &path[..i], n, &path[j..], width = width);
+        let url = gyroflow_core::filesystem::path_to_url(&replaced);
+        if gyroflow_core::filesystem::exists(&url) {
+            ::log::debug!(
+                target: "video.load",
+                "image sequence first frame resolved via candidate:{} -> {}",
+                n,
+                gyroflow_core::filesystem::get_filename(&url),
+            );
+            return Some(url);
+        }
+    }
+
+    if let Some(url) = scan_folder_for_first_frame(&path, i, j) {
+        ::log::debug!(
+            target: "video.load",
+            "image sequence first frame resolved via dir_scan -> {}",
+            gyroflow_core::filesystem::get_filename(&url),
+        );
+        return Some(url);
+    }
+
+    // The direct precursor of "the tone curve should have activated and did
+    // not" / "telemetry was parsed from the pattern" - keep it visible.
+    ::log::warn!(
+        target: "video.load",
+        "image sequence first frame unresolved for {}: candidates {:?} missing, dir_scan found no match",
+        gyroflow_core::filesystem::get_filename(pattern_url),
+        candidates,
+    );
+    None
+}
+
+// Derive a creation timestamp for a clip whose container carries none, from the
+// date in its filename plus its SMPTE timecode.
+//
+// ⚠ THIS IS A DELIBERATE GUESS, kept because the alternative (no timestamp at
+// all) leaves the video-information panel blank. Two ways it can be wrong, both
+// accepted by the user on 2026-08-23:
+//   - The date comes from a NAMING CONVENTION, so renaming a clip changes it.
+//   - The timecode is the camera's LOCAL time of day and CinemaDNG records no
+//     timezone, while every consumer of `video_created_at` works in UTC. On the
+//     reference material the camera read 19:03:44 local while the paired gyro
+//     logger reported +03:00, i.e. the derived value is three hours ahead of the
+//     gyro's UTC. Wall-clock matching and batch-clock learning consume this, so
+//     a wrong value is confidently wrong.
+// Every derivation is logged at info so a suspicious offset can be traced back
+// here in one grep.
+//
+// `timecode` is REQUIRED, not optional, and that is the whole scoping mechanism:
+// only a container that states a timecode and no date - CinemaDNG today - can
+// reach this. Making it a parameter rather than a check at each call site means
+// a new caller cannot widen the guess to ordinary videos by forgetting a
+// condition (an MOV named `A001_002_20240615.MOV` must keep having no creation
+// date rather than acquiring a fabricated one).
+//
+// Returns "YYYY:MM:DD HH:MM:SS" (the format `parse_creation_date_to_millis`
+// expects), or None when the name holds no date or the timecode does not parse.
+pub fn derive_creation_date_from_filename(filename: &str, timecode: &str) -> Option<String> {
+    let (y, mo, d, _) = find_date_in_filename(filename)?;
+    let (h, mi, s) = parse_timecode_hms(timecode)?;
+    let out = format!("{y:04}:{mo:02}:{d:02} {h:02}:{mi:02}:{s:02}");
+    ::log::info!(
+        target: "video.load",
+        "derived creation date {out} for {filename} (date from filename, time from timecode {timecode}) - GUESSED, no timezone in the container",
+    );
+    Some(out)
+}
+
+fn parse_timecode_hms(tc: &str) -> Option<(u32, u32, u32)> {
+    let mut it = tc.split(':');
+    let h: u32 = it.next()?.parse().ok()?;
+    let mi: u32 = it.next()?.parse().ok()?;
+    let s: u32 = it.next()?.parse().ok()?;
+    (h < 24 && mi < 60 && s < 60).then_some((h, mi, s))
+}
+
+fn plausible_date(y: u32, mo: u32, d: u32) -> bool {
+    (1990..=2100).contains(&y) && (1..=12).contains(&mo) && (1..=31).contains(&d)
+}
+
+// `YYYY-MM-DD`, `YYYY_MM_DD`, `YYYY.MM.DD` and bare `YYYYMMDD`, in that order.
+// The separated forms are tried first: a bare 8-digit run is the most likely to
+// collide with a counter, so it only gets a look once the explicit forms miss.
+// Returns the date and the byte index just past it, so the time search can skip
+// the digits the date already consumed.
+fn find_date_in_filename(filename: &str) -> Option<(u32, u32, u32, usize)> {
+    let b = filename.as_bytes();
+    let digits_at = |i: usize, n: usize| -> Option<u32> {
+        if i + n > b.len() || !b[i..i + n].iter().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        filename[i..i + n].parse().ok()
+    };
+    let is_sep = |i: usize| i < b.len() && matches!(b[i], b'-' | b'_' | b'.');
+
+    for i in 0..b.len() {
+        // Do not start mid-number, so `C0002_20260816` cannot match at an offset
+        // that slices a longer digit run.
+        if i > 0 && b[i - 1].is_ascii_digit() {
+            continue;
+        }
+        if let (Some(y), true, Some(mo), true, Some(d)) = (
+            digits_at(i, 4),
+            is_sep(i + 4),
+            digits_at(i + 5, 2),
+            is_sep(i + 7),
+            digits_at(i + 8, 2),
+        ) {
+            if plausible_date(y, mo, d) && digits_at(i + 10, 1).is_none() {
+                return Some((y, mo, d, i + 10));
+            }
+        }
+    }
+    for i in 0..b.len() {
+        if i > 0 && b[i - 1].is_ascii_digit() {
+            continue;
+        }
+        // Exactly 8 digits: a longer run is a counter or a serial, not a date.
+        if digits_at(i, 8).is_some() && digits_at(i + 8, 1).is_none() {
+            let (y, mo, d) = (
+                digits_at(i, 4)?,
+                digits_at(i + 4, 2)?,
+                digits_at(i + 6, 2)?,
+            );
+            if plausible_date(y, mo, d) {
+                return Some((y, mo, d, i + 8));
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod derive_creation_date_tests {
+    use super::derive_creation_date_from_filename as derive;
+
+    #[test]
+    fn bmd_name_plus_timecode_is_second_accurate() {
+        // The reference clip: name carries 2026-08-16 and 1903, the DNG's 0xC763
+        // carries the seconds.
+        assert_eq!(
+            derive("BMCC_2026-08-16_1903_C0002_000000.dng", "19:03:44:00").as_deref(),
+            Some("2026:08:16 19:03:44")
+        );
+        assert_eq!(
+            derive("2025-06-02_2252_C0000_000000.dng", "22:52:08:00").as_deref(),
+            Some("2025:06:02 22:52:08")
+        );
+    }
+
+    #[test]
+    fn accepts_the_other_date_separators_and_the_bare_form() {
+        for name in [
+            "clip_2026_08_16_x.dng",
+            "clip_2026.08.16_x.dng",
+            "clip_20260816_x.dng",
+        ] {
+            assert_eq!(
+                derive(name, "07:08:09:00").as_deref(),
+                Some("2026:08:16 07:08:09"),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn no_date_in_the_name_yields_nothing() {
+        assert_eq!(derive("A001_C0002_000000.dng", "19:03:44:00"), None);
+        assert_eq!(derive("clip.dng", "19:03:44:00"), None);
+    }
+
+    #[test]
+    fn a_longer_digit_run_is_not_read_as_a_date() {
+        // Frame counters and serials must not be mistaken for a bare YYYYMMDD.
+        assert_eq!(derive("SEQ_202608160001.dng", "01:02:03:00"), None);
+        // ...and an implausible month/day is rejected rather than clamped.
+        assert_eq!(derive("SEQ_20269999.dng", "01:02:03:00"), None);
+    }
+
+    #[test]
+    fn an_unusable_timecode_yields_nothing() {
+        // The timecode is the scoping mechanism: without a usable one there is
+        // no derivation, so a dated filename alone never fabricates a date.
+        for tc in ["", "not a timecode", "25:00:00:00", "19:03"] {
+            assert_eq!(
+                derive("BMCC_2026-08-16_1903_C0002_000000.dng", tc),
+                None,
+                "{tc:?}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod image_sequence_resolve_tests {
+    use super::{first_frame_candidates, resolve_image_sequence_first_frame};
+    use gyroflow_core::filesystem::{get_filename, path_to_url};
+    use std::path::{Path, PathBuf};
+
+    // Each test owns a folder of its own so they can run concurrently.
+    fn temp_seq_dir(tag: &str) -> PathBuf {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!("gyroflow_seq_resolve_{}_{}", std::process::id(), tag));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn touch(dir: &Path, name: &str) {
+        std::fs::write(dir.join(name), b"x").unwrap();
+    }
+
+    // `path_to_url` percent-encodes the token's `%` into `%25`, so every test
+    // below goes through the encoded form the app actually carries around.
+    fn pattern_url(dir: &Path, name: &str) -> String {
+        let url = path_to_url(&dir.join(name).to_string_lossy());
+        assert!(url.contains("%25"), "expected an encoded pattern url, got {url}");
+        url
+    }
+
+    #[test]
+    fn non_pattern_url_returns_none() {
+        let dir = temp_seq_dir("non_pattern");
+        touch(&dir, "clip.mov");
+        let url = path_to_url(&dir.join("clip.mov").to_string_lossy());
+        assert_eq!(resolve_image_sequence_first_frame(&url, 0), None);
+        assert_eq!(resolve_image_sequence_first_frame(&url, 7), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn candidate_order_and_dedup() {
+        assert_eq!(first_frame_candidates(5), vec![5, 0, 1]);
+        assert_eq!(first_frame_candidates(0), vec![0, 1]);
+        assert_eq!(first_frame_candidates(1), vec![1, 0]);
+        // Clamped, so it collapses onto the `0` candidate rather than adding one.
+        assert_eq!(first_frame_candidates(-3), vec![0, 1]);
+    }
+
+    #[test]
+    fn encoded_pattern_resolves_zero_based_sequence() {
+        let dir = temp_seq_dir("zero_based");
+        touch(&dir, "BMCC_C0002_000000.dng");
+        touch(&dir, "BMCC_C0002_000001.dng");
+        let url = pattern_url(&dir, "BMCC_C0002_%06d.dng");
+
+        // Stale hint from a previously loaded clip still resolves via the `0`
+        // candidate - the queue-Play / project-restore case.
+        let resolved = resolve_image_sequence_first_frame(&url, 1994).unwrap();
+        assert_eq!(get_filename(&resolved), "BMCC_C0002_000000.dng");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn hint_wins_over_zero_when_both_exist() {
+        let dir = temp_seq_dir("hint_wins");
+        touch(&dir, "A001_000000.dng");
+        touch(&dir, "A001_000005.dng");
+        let url = pattern_url(&dir, "A001_%06d.dng");
+
+        assert_eq!(
+            get_filename(&resolve_image_sequence_first_frame(&url, 5).unwrap()),
+            "A001_000005.dng"
+        );
+        assert_eq!(
+            get_filename(&resolve_image_sequence_first_frame(&url, 0).unwrap()),
+            "A001_000000.dng"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dir_scan_picks_lowest_number_and_filters_non_matches() {
+        let dir = temp_seq_dir("dir_scan");
+        // Numbered from 1994, so none of the {hint, 0, 1} candidates hit.
+        touch(&dir, "SEQ_001996.dng");
+        touch(&dir, "SEQ_001994.dng");
+        touch(&dir, "SEQ_001995.dng");
+        // Must all be filtered out: wrong prefix, wrong suffix, non-digit run,
+        // empty digit run, and a folder that matches the name shape.
+        touch(&dir, "OTHER_000001.dng");
+        touch(&dir, "SEQ_000001.txt");
+        touch(&dir, "SEQ_abcdef.dng");
+        touch(&dir, "SEQ_.dng");
+        std::fs::create_dir_all(dir.join("SEQ_000002.dng")).unwrap();
+        let url = pattern_url(&dir, "SEQ_%06d.dng");
+
+        let resolved = resolve_image_sequence_first_frame(&url, 42).unwrap();
+        assert_eq!(get_filename(&resolved), "SEQ_001994.dng");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dir_scan_tolerates_padding_overflow() {
+        let dir = temp_seq_dir("overflow");
+        touch(&dir, "OVF_1000000.dng"); // 7 digits in a %06d sequence
+        touch(&dir, "OVF_0999999.dng");
+        let url = pattern_url(&dir, "OVF_%06d.dng");
+
+        let resolved = resolve_image_sequence_first_frame(&url, 42).unwrap();
+        assert_eq!(get_filename(&resolved), "OVF_0999999.dng");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unreadable_folder_returns_none() {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!("gyroflow_seq_missing_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let url = path_to_url(&dir.join("NOPE_%06d.dng").to_string_lossy());
+        assert_eq!(resolve_image_sequence_first_frame(&url, 3), None);
+    }
+
+    #[test]
+    fn empty_folder_returns_none() {
+        let dir = temp_seq_dir("empty");
+        let url = pattern_url(&dir, "EMPTY_%06d.dng");
+        assert_eq!(resolve_image_sequence_first_frame(&url, 3), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 pub fn peek_container_rotation_from_url(url: &str) -> i32 {

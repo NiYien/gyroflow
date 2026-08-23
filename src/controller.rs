@@ -456,10 +456,18 @@ pub struct Controller {
 
     image_sequence_start: qt_property!(i32),
     image_sequence_fps: qt_property!(f64),
-    // First-frame url for `%0Nd` image sequences. Telemetry (camera model, lens
-    // params, frame readout time) must be parsed from a real frame, not the
-    // pattern url which `open_file` cannot resolve. Set by VideoArea before
-    // loading a sequence; empty for ordinary videos.
+    // First-frame url for `%0Nd` image sequences, written by VideoArea on a
+    // fresh drag; empty for ordinary videos.
+    //
+    // DELIBERATELY UNREAD - do not wire it back into first-frame resolution.
+    // VideoArea only writes it on the fresh-drag path: loading a sequence from
+    // a queue job or a .gyroflow project leaves the previous clip's value in
+    // place, and that stale value names a file that really exists, so an
+    // existence check cannot tell the mismatch apart from a hit. Trusting it
+    // once made telemetry parse clip A's first frame while clip B was on
+    // screen, stamping A's camera model, readout time and lens params onto B.
+    // `util::resolve_image_sequence_first_frame` derives the frame from the
+    // pattern url instead, which is correct on every entry point.
     image_sequence_first_frame_url: qt_property!(QString),
 
     // Real sensor bit depth of the loaded source, when the file states one that
@@ -891,7 +899,15 @@ impl Controller {
                     // collapses into ~10 distinct levels. Build it before
                     // `encoded_url` is consumed below, install it after the
                     // player has been recreated by setUrl.
-                    let dng_curve = core::dng_tone_curve::DngToneCurve::from_url(&encoded_url);
+                    //
+                    // A `%0Nd` sequence url names no file, so the curve has to
+                    // be read from the resolved first frame; the resolve is a
+                    // no-op for every other input and leaves `encoded_url` as
+                    // the url the curve is built from.
+                    let curve_url =
+                        util::resolve_image_sequence_first_frame(&encoded_url, image_sequence_start)
+                            .unwrap_or_else(|| encoded_url.clone());
+                    let dng_curve = core::dng_tone_curve::DngToneCurve::from_url(&curve_url);
                     vid.setUrl(
                         QUrl::from(QString::from(encoded_url)),
                         QString::from(custom_decoder),
@@ -1338,8 +1354,17 @@ impl Controller {
                 // may be attempted twice on GPU fallback), never per frame.
                 // `None` for anything that is not a DNG carrying that table, so
                 // every other format keeps its existing behaviour byte for byte.
-                let dng_curve = core::dng_tone_curve::DngToneCurve::from_url(&input_file.url)
-                    .map(std::rc::Rc::new);
+                //
+                // As on the preview path, a `%0Nd` sequence url names no file:
+                // resolve it to the real first frame first (identity for every
+                // non-sequence input).
+                let curve_url = util::resolve_image_sequence_first_frame(
+                    &input_file.url,
+                    input_file.image_sequence_start,
+                )
+                .unwrap_or_else(|| input_file.url.clone());
+                let dng_curve =
+                    core::dng_tone_curve::DngToneCurve::from_url(&curve_url).map(std::rc::Rc::new);
                 if dng_curve.is_some() {
                     ::log::info!(target: "sync", "[dng] tone curve active for sync input");
                 }
@@ -1943,11 +1968,9 @@ impl Controller {
                 let in_flight_count = self.stabilizer.in_flight_count.clone();
                 // For `%0Nd` image sequences, parse telemetry from the first frame
                 // (a real file); the pattern url cannot be opened by open_file.
-                // `image_sequence_first_frame_url` is set on a fresh drag; when a
-                // sequence is loaded from a queue job / .gyroflow project it is not,
-                // so fall back to reconstructing the first frame from the pattern +
-                // start index.
-                let image_seq_first_frame = self.image_sequence_first_frame_url.to_string();
+                // The resolve derives that frame from the pattern itself, so it
+                // holds on every entry point - fresh drag, queue Play and
+                // .gyroflow project restore alike.
                 let image_seq_start = self.image_sequence_start;
                 core::run_threaded(move || {
                     // §4.2 OpGuard: load_gyro_data mutates stab.gyro,
@@ -1960,14 +1983,11 @@ impl Controller {
                     {
                         // Image sequences read telemetry from the first frame; all
                         // other inputs use the url unchanged.
-                        let telemetry_url = if !image_seq_first_frame.is_empty() {
-                            image_seq_first_frame.clone()
-                        } else if image_seq_start > 0 {
-                            crate::util::image_sequence_first_frame_url(&url, image_seq_start)
-                                .unwrap_or_else(|| url.clone())
-                        } else {
-                            url.clone()
-                        };
+                        let telemetry_url = crate::util::resolve_image_sequence_first_frame(
+                            &url,
+                            image_seq_start,
+                        )
+                        .unwrap_or_else(|| url.clone());
                         if let Ok(mut file) = filesystem::open_file(&telemetry_url, false, false) {
                             let filesize = file.size;
                             if is_main_video {
@@ -2121,8 +2141,20 @@ impl Controller {
                             serde_json::Number::from_f64(upfl).unwrap().into(),
                         );
                     }
-                    // Pass telemetry creation time to UI and set video_created_at
-                    if let Some(ref utc_str) = file_metadata.creation_date_utc {
+                    // Pass telemetry creation time to UI and set video_created_at.
+                    // When the container states none at all - CinemaDNG, where BMD
+                    // writes only a date-less SMPTE timecode - fall back to the
+                    // filename + timecode guess, same as the queue-add path, so the
+                    // video info panel and the single-video load agree. See
+                    // util::derive_creation_date_from_filename for what the guess
+                    // can get wrong (naming convention, and no timezone).
+                    let derived_creation_date = file_metadata.creation_date_utc.clone().or_else(|| {
+                        crate::util::derive_creation_date_from_filename(
+                            &filesystem::get_filename(&url),
+                            file_metadata.timecode.as_deref()?,
+                        )
+                    });
+                    if let Some(ref utc_str) = derived_creation_date {
                         additional_obj.insert(
                             "creation_date_utc".to_owned(),
                             serde_json::Value::String(utc_str.clone()),
@@ -4925,8 +4957,15 @@ impl Controller {
 
     fn export_full_metadata(&self, url: QUrl, gyro_url: QUrl) {
         let result = || -> Result<(), core::GyroflowCoreError> {
+            // Same consumer class as the tone curves and load_telemetry: this
+            // one has to open a real file, and the caller hands it the loaded
+            // video's url, which is a `%0Nd` pattern for an image sequence.
+            let gyro_url = util::qurl_to_encoded(gyro_url);
+            let gyro_url =
+                util::resolve_image_sequence_first_frame(&gyro_url, self.image_sequence_start)
+                    .unwrap_or(gyro_url);
             let contents = gyroflow_core::gyro_export::export_full_metadata(
-                &util::qurl_to_encoded(gyro_url),
+                &gyro_url,
                 &self.stabilizer,
             )?;
             Ok(filesystem::write(

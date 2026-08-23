@@ -174,6 +174,21 @@ Item {
         if (urls[0] && !isCorrectVideoLoaded) {
             root.pendingGyroflowData = obj;
             root.pendingQueueJobId = targetQueueJobId;
+            // Apply this job's own sequence parameters before loading. A `%0Nd`
+            // filename skips detectImageSequence's reset, so without this the
+            // whole load - load_video, init_from_video_data, the first-frame
+            // resolve hint and the setFrameRate below - runs on whatever the
+            // previously loaded clip left on the controller. The post-load apply
+            // further down is kept and simply replays the same values.
+            // Clearing when the job carries none is deliberate: a missing frame
+            // rate must fall back to the decoder default, never to another clip.
+            // `obj` is a .gyroflow url on one of the call paths, so read the
+            // fields off an empty object rather than off a string.
+            const seqData  = (typeof obj === "object" && obj !== null) ? obj : {};
+            const seqStart = +seqData.image_sequence_start || 0;
+            const seqFps   = +seqData.image_sequence_fps   || 0;
+            controller.image_sequence_start = seqStart > 0 ? seqStart : 0;
+            controller.image_sequence_fps   = seqFps   > 0 ? seqFps   : 0;
             console.log("Loading video file", urls[0]);
             loadFile(urls[0], false, targetQueueJobId);
             if (controller.image_sequence_fps > 0) {
@@ -567,9 +582,16 @@ Item {
         }
 
         window.motionData.lastSelectedFile = "";
-        if (!(/\.(png|jpg|exr|dng)$/i.test(filename) && filename.includes("%0"))) {
-            root.loadedFileUrl = url;
-        }
+        // The `%0Nd` pattern IS the identity of a sequence load, so record it
+        // like any other url. Skipping the assignment for patterns left the
+        // PREVIOUS clip's url here, and everything downstream reads it: the
+        // load_telemetry call below parsed clip A's first frame while clip B
+        // was on screen, and the associated-.gyroflow lookup searched A's
+        // folder. Consumers that need a real file resolve the pattern to its
+        // first frame themselves (util::resolve_image_sequence_first_frame);
+        // the rest only want the folder or the extension, which the pattern
+        // carries unchanged.
+        root.loadedFileUrl = url;
 
         if (isStorePackage && Qt.platform.os == "osx" && filename.toLowerCase().endsWith(".r3d") && folder.toString().length < 3) {
             messageBox(Modal.Info, qsTr("In order to load all R3D parts, you need to select the entire .RDC folder."), [

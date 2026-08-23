@@ -1221,6 +1221,10 @@ impl GyroSource {
         let mut creation_date = None;
         let mut timezone_offset = None;
         let mut creation_date_utc = None;
+        // SMPTE timecode ("HH:MM:SS:FF"), currently only from CinemaDNG's 0xC763.
+        // A time of day with NO DATE and NO TIMEZONE - keep it separate from the
+        // creation-date fields rather than letting it masquerade as one.
+        let mut timecode = None;
         if let Some(ref mut samples) = input.samples {
             if let Some(info) = samples.first() {
                 if let Some(ref tag_map) = info.tag_map {
@@ -1233,6 +1237,9 @@ impl GyroSource {
                         }
                         if let Some(v) = map.get_t(TagId::CreationDateUtc) as Option<&String> {
                             creation_date_utc = Some(v.clone());
+                        }
+                        if let Some(v) = map.get_t(TagId::Custom("timecode".into())) as Option<&String> {
+                            timecode = Some(v.clone());
                         }
                     }
                 }
@@ -1277,6 +1284,7 @@ impl GyroSource {
             creation_date,
             timezone_offset,
             creation_date_utc,
+            timecode,
             additional_data,
             per_frame_time_offsets: Vec::new(),
             unit_pixel_focal_length,

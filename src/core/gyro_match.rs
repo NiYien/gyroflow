@@ -1322,6 +1322,78 @@ fn assign_videos_by_coverage(
     let mut pending: Vec<usize> = Vec::new();
 
     for (vi, v) in videos.iter().enumerate() {
+        // Deep-anchor pin short-circuit (absolute highest priority, BEFORE the
+        // created_at gate, the calibration-video short-circuit and the coverage
+        // competition). A deep-matched clip is content-level ground truth
+        // measured point-to-point; it must NOT be re-assigned or overwritten by
+        // the wall-clock statistical coverage path. With an empty anchor slice
+        // (or no index match) this branch is never taken and the assignment is
+        // byte-identical to the pre-anchor behaviour.
+        //
+        // Deliberately ahead of the created_at gate: pinning THIS clip needs no
+        // wall clock. Substituting the anchor-derived session offset into
+        // `compute_clip_window` cancels `v_created` out of both `gyro_start_ms`
+        // and the drift term, so a clockless clip synthesises the camera clock
+        // its own anchor implies (which makes the session offset 0) and lands on
+        // exactly the same window. It just has no wall-clock baseline to report,
+        // which is what `DeepMatchAnchor`'s "degrades to self-only" means -
+        // self-only still has to mean matched. CinemaDNG is the case in the
+        // wild: BMD writes only a date-less SMPTE timecode, never
+        // DateTime/DateTimeOriginal.
+        //
+        // `anchor_can_pin` keeps the old gate for clips that HAVE a clock (an
+        // anchor without `video_created_at_ms` still may not override their
+        // coverage path) and only widens it for clockless clips, which had no
+        // path to override in the first place.
+        if let Some(a) = deep_anchors
+            .iter()
+            .find(|a| a.video_index == vi && anchor_can_pin(a, v, gyros.len()))
+        {
+            let g = &gyros[a.gyro_index];
+            // Reproduce exactly what the coverage path would emit for this clip
+            // via the deep-anchor session: project with the derived session
+            // offset (delay = 0). This keeps init_offset_ms == -front_comp and
+            // gyro_start_ms == -deep_offset_ms - front_comp, byte-identical to
+            // the deep-anchor session's normal coverage output, but guaranteed
+            // (no coverage competition / clip-bounds gate).
+            let (v_created, session_offset, global_offset_ms) = match v.created_at_ms {
+                Some(t) => {
+                    let off =
+                        derive_session_offset_from_deep_match(g.created_at_ms, t, a.offset_ms);
+                    (t, off, Some(off))
+                }
+                None => (
+                    g.created_at_ms + (-a.offset_ms).round() as i64,
+                    0,
+                    None,
+                ),
+            };
+            let (gyro_start_ms, gyro_end_ms, front_comp, _calib_anchor_ms) =
+                compute_clip_window(v, g, v_created, session_offset, &[], videos);
+            log::info!(
+                "[batch_match_diag] deep_pin vi={} gyro={} session_offset={}ms clocked={} deep_offset_ms={:.1} init_offset_ms={:.1} range=[{:.1},{:.1}]",
+                vi,
+                a.gyro_index,
+                session_offset,
+                v.created_at_ms.is_some(),
+                a.offset_ms,
+                -front_comp,
+                gyro_start_ms,
+                gyro_end_ms
+            );
+            results.push(MatchResult {
+                video_index: vi,
+                job_id: None,
+                gyro_index: Some(a.gyro_index),
+                status: MatchStatus::Matched,
+                global_offset_ms,
+                gyro_start_ms: Some(gyro_start_ms),
+                gyro_end_ms: Some(gyro_end_ms),
+                init_offset_ms: Some(-front_comp),
+            });
+            continue;
+        }
+
         let v_created = match v.created_at_ms {
             Some(t) => t,
             None => {
@@ -1338,55 +1410,6 @@ fn assign_videos_by_coverage(
                 continue;
             }
         };
-
-        // Deep-anchor pin short-circuit (absolute highest priority, BEFORE the
-        // calibration-video short-circuit and the coverage competition). A
-        // deep-matched clip is content-level ground truth measured point-to-
-        // point; it must NOT be re-assigned or overwritten by the wall-clock
-        // statistical coverage path. If this video's index matches some
-        // DeepMatchAnchor (which must carry a valid created_at so the window
-        // can be projected — anchors without created_at degrade to self-only
-        // and never pin), assign it directly to its own deep gyro and deep
-        // offset, then `continue`, skipping the coverage competition and the
-        // clip-bounds gate entirely. With an empty anchor slice (or no index
-        // match) this branch is never taken and the assignment is byte-
-        // identical to the pre-change behaviour.
-        if let Some(a) = deep_anchors.iter().find(|a| {
-            a.video_index == vi && a.video_created_at_ms.is_some() && a.gyro_index < gyros.len()
-        }) {
-            let g = &gyros[a.gyro_index];
-            // Reproduce exactly what the coverage path would emit for this clip
-            // via the deep-anchor session: project with the derived session
-            // offset (delay = 0). This keeps init_offset_ms == -front_comp and
-            // gyro_start_ms == -deep_offset_ms - front_comp, byte-identical to
-            // the deep-anchor session's normal coverage output, but guaranteed
-            // (no coverage competition / clip-bounds gate).
-            let session_offset =
-                derive_session_offset_from_deep_match(g.created_at_ms, v_created, a.offset_ms);
-            let (gyro_start_ms, gyro_end_ms, front_comp, _calib_anchor_ms) =
-                compute_clip_window(v, g, v_created, session_offset, &[], videos);
-            log::info!(
-                "[batch_match_diag] deep_pin vi={} gyro={} session_offset={}ms deep_offset_ms={:.1} init_offset_ms={:.1} range=[{:.1},{:.1}]",
-                vi,
-                a.gyro_index,
-                session_offset,
-                a.offset_ms,
-                -front_comp,
-                gyro_start_ms,
-                gyro_end_ms
-            );
-            results.push(MatchResult {
-                video_index: vi,
-                job_id: None,
-                gyro_index: Some(a.gyro_index),
-                status: MatchStatus::Matched,
-                global_offset_ms: Some(session_offset),
-                gyro_start_ms: Some(gyro_start_ms),
-                gyro_end_ms: Some(gyro_end_ms),
-                init_offset_ms: Some(-front_comp),
-            });
-            continue;
-        }
 
         // Calibration video short-circuit: a video identified as a session's
         // calibration video (recorded in `cal_pairs`, whose keys mirror
@@ -2161,6 +2184,24 @@ fn unmatched_results(videos: &[VideoMatchInfo], error: MatchError) -> BatchMatch
 ///     calibration-derived session.
 /// Anchors without video created_at degrade to self-only (logged, no effect
 /// on the batch); an empty anchor slice leaves `sessions` untouched.
+/// May this anchor place its own clip?
+///
+/// A deep offset measures the video<->gyro pair point to point, so the
+/// placement itself needs no wall clock - `compute_clip_window` cancels
+/// `v_created` out when fed the anchor-derived session offset. What
+/// `video_created_at_ms` has always gated is something narrower: whether the
+/// anchor may OVERRIDE the wall-clock coverage path for a clip that has a clock
+/// of its own. That stays as it was.
+///
+/// A clockless clip has no coverage path to override - without a pin it is
+/// simply unmatchable, which the render queue reports as "no gyro data" and
+/// which blocks Stabilize behind a guide pointing at the very deep match that
+/// just succeeded. CinemaDNG is the case in the wild: BMD writes only a
+/// date-less SMPTE timecode, never DateTime/DateTimeOriginal.
+fn anchor_can_pin(a: &DeepMatchAnchor, v: &VideoMatchInfo, gyro_count: usize) -> bool {
+    a.gyro_index < gyro_count && (a.video_created_at_ms.is_some() || v.created_at_ms.is_none())
+}
+
 fn apply_deep_anchors(
     sessions: &mut Vec<Session>,
     anchors: &[DeepMatchAnchor],
@@ -2268,17 +2309,30 @@ fn auto_match(
         );
     }
 
-    // Deep anchors able to influence the batch (valid gyro index + video
-    // created_at) can build sessions even without any calibration cluster,
-    // so the two early-outs below only fire when no such anchor exists -
-    // with an empty anchor slice this is byte-equivalent to the pre-anchor
-    // flow.
-    let has_usable_anchor = deep_anchors
-        .iter()
-        .any(|a| a.video_created_at_ms.is_some() && a.gyro_index < gyros.len());
+    // Deep anchors can build sessions even without any calibration cluster, so
+    // the early-outs below only fire when no anchor can contribute anything -
+    // with an empty anchor slice this is byte-equivalent to the pre-anchor flow.
+    //
+    // Two tiers, because an anchor's reach depends on the video clock:
+    //   - `pinnable_anchor`: a valid gyro index is enough to place the anchor's
+    //     OWN clip, since the deep offset measures that pair point to point and
+    //     `compute_clip_window` cancels the video clock out of the result. This
+    //     is the "degrades to self-only" contract on `DeepMatchAnchor`.
+    //   - `has_usable_anchor`: extrapolating to OTHER videos is a wall-clock
+    //     operation, so `apply_deep_anchors` additionally needs created_at.
+    // Keeping them apart is what lets a clockless clip through: CinemaDNG has no
+    // DateTime/DateTimeOriginal at all (BMD writes only a date-less SMPTE
+    // timecode), and answering NoCalibrationPairsFound there made the render
+    // queue report "no gyro data" and block Stabilize behind a guide pointing at
+    // the very deep match that had just succeeded.
+    let pinnable_anchor = deep_anchors.iter().any(|a| {
+        videos
+            .get(a.video_index)
+            .is_some_and(|v| anchor_can_pin(a, v, gyros.len()))
+    });
 
     let mut sessions = if v_clusters.is_empty() || g_clusters.is_empty() {
-        if !has_usable_anchor {
+        if !pinnable_anchor {
             return unmatched_results(videos, MatchError::NoCalibrationPairsFound);
         }
         Vec::new()
@@ -2286,7 +2340,7 @@ fn auto_match(
         pair_sessions(v_clusters, g_clusters, videos, gyros)
     };
 
-    if sessions.is_empty() && !has_usable_anchor {
+    if sessions.is_empty() && !pinnable_anchor {
         return unmatched_results(videos, MatchError::NoCalibrationPairsFound);
     }
 
@@ -2321,7 +2375,10 @@ fn auto_match(
     apply_deep_anchors(&mut sessions, deep_anchors, gyros);
 
     let reliable_count = sessions.iter().filter(|s| s.reliable).count();
-    if reliable_count == 0 {
+    // A self-only anchor builds no session at all (apply_deep_anchors skips it),
+    // so "no reliable session" is not the same as "nothing can be placed" once
+    // anchors are in play - the pin in assign_videos_by_coverage still applies.
+    if reliable_count == 0 && !pinnable_anchor {
         return unmatched_results(videos, MatchError::NoCalibrationPairsFound);
     }
 
@@ -4683,6 +4740,83 @@ mod tests {
             content_start,
             -deep_offset_ms
         );
+    }
+
+    #[test]
+    fn deep_anchor_without_video_clock_still_pins_its_own_clip() {
+        // CinemaDNG carries no DateTime/DateTimeOriginal (BMD writes only a
+        // date-less SMPTE timecode), so `created_at_ms` is None and the batch
+        // matcher used to answer NoCalibrationPairsFound - which the render
+        // queue reports as "no gyro data" and which blocks Stabilize behind the
+        // "Could not establish time sync" guide. The guide points at deep match,
+        // and deep match had already succeeded: only the wall clock was missing.
+        //
+        // A deep anchor measures the video<->gyro relationship point to point,
+        // so a clock is not needed to place THIS clip - `DeepMatchAnchor`
+        // documents `video_created_at_ms: None` as "degrades to self-only".
+        // Self-only must still mean matched, not unmatched.
+        let deep_offset_ms = -3_110.0f64;
+        let g_created: i64 = 1_786_896_223_000;
+        let gyros = vec![g(0, 98_398.0, g_created)];
+        let videos = vec![v(0, 90_583.3, None)];
+
+        // Without an anchor a clockless video genuinely cannot be placed.
+        let bare = batch_match(&videos, &gyros, None, &[]);
+        assert_eq!(bare.error, Some(MatchError::NoCalibrationPairsFound));
+
+        let anchors = vec![DeepMatchAnchor {
+            gyro_index: 0,
+            video_index: 0,
+            offset_ms: deep_offset_ms,
+            video_created_at_ms: None,
+        }];
+        let result = batch_match(&videos, &gyros, None, &anchors);
+
+        assert_eq!(result.error, None, "self-only anchor must not fail the batch");
+        let r0 = &result.results[0];
+        assert_eq!(r0.status, MatchStatus::Matched, "got {:?}", r0.status);
+        assert_eq!(r0.gyro_index, Some(0));
+        // No wall clock exists, so there is no wall-clock baseline to report.
+        assert_eq!(r0.global_offset_ms, None);
+        // The placement itself is exact: content start lands at gyro
+        // file-relative -deep_offset_ms, the same identity the clocked path
+        // guarantees (v_created cancels out of compute_clip_window when the
+        // session offset is the anchor-derived one).
+        let content_start = r0.gyro_start_ms.unwrap() - r0.init_offset_ms.unwrap();
+        assert!(
+            (content_start - (-deep_offset_ms)).abs() <= 0.5,
+            "content start {}ms must equal -deep_offset {}ms",
+            content_start,
+            -deep_offset_ms
+        );
+    }
+
+    #[test]
+    fn deep_anchor_without_video_clock_does_not_touch_other_videos() {
+        // "Self-only" is the whole contract: a clockless anchor may place its
+        // own clip and nothing else. A second clockless video with no anchor
+        // must stay NoCreationTime rather than inherit the anchor's session.
+        let deep_offset_ms = -3_110.0f64;
+        let g_created: i64 = 1_786_896_223_000;
+        let gyros = vec![g(0, 98_398.0, g_created)];
+        let videos = vec![v(0, 90_583.3, None), v(1, 60_000.0, None)];
+
+        let anchors = vec![DeepMatchAnchor {
+            gyro_index: 0,
+            video_index: 0,
+            offset_ms: deep_offset_ms,
+            video_created_at_ms: None,
+        }];
+        let result = batch_match(&videos, &gyros, None, &anchors);
+
+        assert_eq!(result.results[0].status, MatchStatus::Matched);
+        assert_eq!(result.results[0].gyro_index, Some(0));
+        assert_eq!(
+            result.results[1].status,
+            MatchStatus::NoCreationTime,
+            "an unanchored clockless video must not borrow the anchor"
+        );
+        assert_eq!(result.results[1].gyro_index, None);
     }
 
     #[test]

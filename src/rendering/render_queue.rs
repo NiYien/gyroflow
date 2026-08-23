@@ -8283,6 +8283,38 @@ impl RenderQueue {
                                                     stab.params.write().video_created_at =
                                                         Some(ms);
                                                 }
+                                            } else if {
+                                                // Bound so no read guard is alive
+                                                // when the block takes the write
+                                                // lock below.
+                                                let none = stab
+                                                    .params
+                                                    .read()
+                                                    .video_created_at
+                                                    .is_none();
+                                                none
+                                            } {
+                                                // Last resort for a container that states no date
+                                                // at all - CinemaDNG, where BMD writes only a
+                                                // date-less SMPTE timecode. Derived from the
+                                                // filename plus that timecode; see
+                                                // util::derive_creation_date_from_filename for
+                                                // what this guess can get wrong (naming
+                                                // convention, and no timezone).
+                                                if let Some(ms) = file_metadata
+                                                    .timecode
+                                                    .as_deref()
+                                                    .and_then(|tc| {
+                                                        util::derive_creation_date_from_filename(
+                                                            &filesystem::get_filename(&url),
+                                                            tc,
+                                                        )
+                                                    })
+                                                    .as_deref()
+                                                    .and_then(parse_creation_date_to_millis)
+                                                {
+                                                    stab.params.write().video_created_at = Some(ms);
+                                                }
                                             }
                                         }
                                     }
@@ -8970,6 +9002,31 @@ impl RenderQueue {
 
                         let sync = Arc::new(sync);
 
+                        // CinemaDNG decodes to scene-linear samples, which the GRAY8 /
+                        // NV12 conversion below would collapse into ~10 distinct levels -
+                        // far too little signal for optical flow. Rebuild the camera's own
+                        // encoding from the file's LinearizationTable so the flow input
+                        // keeps its gradients.
+                        //
+                        // Same treatment as the interactive sync path in controller.rs.
+                        // This path was missed when that one was wired up: syncing one and
+                        // the same BMCC clip logged 145 degraded flow-gate pairs from the
+                        // queue against 0 interactively, with a cost three orders of
+                        // magnitude worse. `None` for anything that is not a DNG carrying
+                        // that table, so every other format keeps its existing behaviour
+                        // byte for byte. Built once per sync run (try_run may be attempted
+                        // twice on GPU fallback), never per frame.
+                        let curve_url = util::resolve_image_sequence_first_frame(
+                            &url,
+                            input_file.image_sequence_start,
+                        )
+                        .unwrap_or_else(|| url.clone());
+                        let dng_curve = core::dng_tone_curve::DngToneCurve::from_url(&curve_url)
+                            .map(Arc::new);
+                        if dng_curve.is_some() {
+                            ::log::info!(target: "sync", "[dng] tone curve active for batch sync input");
+                        }
+
                         // Probe codec signature for GPU blocklist consultation.
                         // Skip when GPU is already disabled (no need to pay probe
                         // cost) or when the input is an image sequence (no codec
@@ -9033,6 +9090,7 @@ impl RenderQueue {
                             let err2 = err.clone();
                             let sync2 = sync.clone();
                             let sync_failed2 = sync_failed.clone();
+                            let dng_curve2 = dng_curve.clone();
                             let frame_error_filename = filesystem::get_filename(&url);
                             proc.on_frame(
                                 move |timestamp_us,
@@ -9048,6 +9106,14 @@ impl RenderQueue {
                                         } else {
                                             ffmpeg_next::format::Pixel::GRAY8
                                         };
+                                        // Must run before the scale below: both target
+                                        // formats are 8-bit, and once the samples are
+                                        // quantised the levels are gone for good. Sits
+                                        // inside the every_nth_frame branch so skipped
+                                        // frames cost nothing.
+                                        if let Some(curve) = &dng_curve2 {
+                                            rendering::apply_dng_tone_curve(input_frame, curve);
+                                        }
                                         match converter.scale(input_frame, pix_fmt, sw, sh) {
                                             Ok(small_frame) => {
                                                 let (width, height, stride, pixels) =

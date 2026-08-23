@@ -75,6 +75,11 @@ pub struct FileMetadata {
     pub creation_date: Option<String>,
     pub timezone_offset: Option<String>,
     pub creation_date_utc: Option<String>,
+    /// SMPTE timecode as "HH:MM:SS:FF", currently only from CinemaDNG's 0xC763.
+    /// A time of day with NO DATE and NO TIMEZONE, which is why it is not folded
+    /// into the creation-date fields: BMD CinemaDNG writes this and nothing else
+    /// time-related, so `creation_date*` stay None for it.
+    pub timecode: Option<String>,
     pub additional_data: serde_json::Value,
     pub per_frame_time_offsets: Vec<f64>,
     pub camera_stab_data: Vec<CameraStabData>,
@@ -107,6 +112,7 @@ impl FileMetadata {
             creation_date: self.creation_date.clone(),
             timezone_offset: self.timezone_offset.clone(),
             creation_date_utc: self.creation_date_utc.clone(),
+            timecode: self.timecode.clone(),
             additional_data: self.additional_data.clone(),
             per_frame_time_offsets: Default::default(),
             camera_stab_data: Default::default(),
