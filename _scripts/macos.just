@@ -77,10 +77,20 @@ install-deps:
     # end, so an interrupted run leaves behind directories that a bare -d check
     # accepts, and the build then fails much later with a missing header. Both
     # arch dirs are checked because `just deploy universal` links against both.
+    ffmpeg_has_videotoolbox_encoders() {
+        local lib="$1"
+        for codec in h264 hevc prores; do
+            nm -g "$lib" | grep -Fq "_ff_${codec}_videotoolbox_encoder" || return 1
+        done
+        return 0
+    }
+
     ffmpeg_installed() {
         for arch_dir in ffmpeg-x86_64 ffmpeg-arm64; do
             [ -f "$arch_dir/include/libavutil/avutil.h" ] || return 1
             [ -f "$arch_dir/lib/libavutil.a" ] || return 1
+            [ -f "$arch_dir/lib/libavcodec.a" ] || return 1
+            ffmpeg_has_videotoolbox_encoders "$arch_dir/lib/libavcodec.a" || return 1
         done
         return 0
     }
@@ -88,14 +98,37 @@ install-deps:
     if ! ffmpeg_installed; then
         echo "Downloading ffmpeg"
 
-        # Download and extract ffmpeg
-        curl -L https://sourceforge.net/projects/avbuild/files/macOS/ffmpeg-8.1-macOS-gpl-lite.tar.xz/download -o ffmpeg.tar.xz
+        # Download, verify, and extract the pinned FFmpeg package.
+        ffmpeg_url="https://github.com/NiYien/avbuild/releases/download/gyroflow-ffmpeg-8.1.2-macos-v1/ffmpeg-8.1-macOS-gpl-lite.tar.xz"
+        ffmpeg_sha256="81f2753520ca1dc463fb681d5fdfa7f45def36a4ee974576d8b978b9cd747f3e"
+        curl --fail --location --retry 3 "$ffmpeg_url" -o ffmpeg.tar.xz
+        echo "$ffmpeg_sha256  ffmpeg.tar.xz" | shasum -a 256 --check -
         7z x -aoa ffmpeg.tar.xz
         tar -xf ffmpeg.tar
         rm ffmpeg.tar ffmpeg.tar.xz
         mkdir -p ffmpeg-x86_64/lib ffmpeg-x86_64/include
         mkdir -p ffmpeg-arm64/lib ffmpeg-arm64/include
         cd ffmpeg-8.1-macOS-gpl-lite
+
+        # Reject incomplete universal packages before populating either arch directory.
+        ffmpeg_archs=" $(lipo -archs lib/libavcodec.a) "
+        for arch in x86_64 arm64; do
+            case "$ffmpeg_archs" in
+                *" $arch "*) ;;
+                *)
+                    echo "ffmpeg package is missing the $arch libavcodec slice" >&2
+                    exit 1
+                    ;;
+            esac
+            for codec in h264 hevc prores; do
+                symbol="_ff_${codec}_videotoolbox_encoder"
+                if ! nm -arch "$arch" -g lib/libavcodec.a | grep -Fq "$symbol"; then
+                    echo "ffmpeg package is missing $symbol for $arch" >&2
+                    exit 1
+                fi
+            done
+        done
+
         lipo lib/libavcodec.a    -thin x86_64 -output ../ffmpeg-x86_64/lib/libavcodec.a
         lipo lib/libavformat.a   -thin x86_64 -output ../ffmpeg-x86_64/lib/libavformat.a
         lipo lib/libavdevice.a   -thin x86_64 -output ../ffmpeg-x86_64/lib/libavdevice.a
@@ -123,7 +156,7 @@ install-deps:
         cd ..
 
         if ! ffmpeg_installed; then
-            echo "ffmpeg was installed but is incomplete: expected include/libavutil/avutil.h and lib/libavutil.a in both ffmpeg-x86_64 and ffmpeg-arm64" >&2
+            echo "ffmpeg was installed but is incomplete or missing VideoToolbox encoders in ffmpeg-x86_64 or ffmpeg-arm64" >&2
             exit 1
         fi
     fi
