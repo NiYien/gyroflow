@@ -241,6 +241,20 @@ fn ensure_install_directory(destination: &Path) -> io::Result<()> {
     std::fs::create_dir_all(destination)
 }
 
+fn windows_elevated_copy_script(
+    extract_path: &str,
+    source_arg: &str,
+    destination_arg: &str,
+) -> String {
+    let powershell_literal = |value: &str| format!("'{}'", value.replace('\'', "''"));
+    format!(
+        "$ErrorActionPreference = 'Stop'; New-Item -ItemType Directory -Force -Path {} | Out-Null; & xcopy.exe {} {} /Y /E /H /I; exit $LASTEXITCODE",
+        powershell_literal(extract_path),
+        powershell_literal(source_arg),
+        powershell_literal(destination_arg)
+    )
+}
+
 fn copy_files(tempdir: &str, extract_path: &str, typ: &str) -> io::Result<()> {
     ::log::info!(
         "[nle copy_files] start typ={typ:?} tempdir={tempdir:?} extract_path={extract_path:?} extract_path_exists={}",
@@ -371,12 +385,10 @@ fn copy_files(tempdir: &str, extract_path: &str, typ: &str) -> io::Result<()> {
         // Retry with elevated privileges. On Windows this triggers a UAC prompt;
         // on macOS osascript shows an admin auth dialog.
         let status = if cfg!(target_os = "windows") {
-            let powershell_literal = |value: &str| format!("'{}'", value.replace('\'', "''"));
-            let script = format!(
-                "$ErrorActionPreference = 'Stop'; New-Item -ItemType Directory -Force -LiteralPath {} | Out-Null; & xcopy.exe {} {} /Y /E /H /I; exit $LASTEXITCODE",
-                powershell_literal(extract_path),
-                powershell_literal(source_arg.as_str()),
-                powershell_literal(destination_arg.as_str())
+            let script = windows_elevated_copy_script(
+                extract_path,
+                source_arg.as_str(),
+                destination_arg.as_str(),
             );
             runas::Command::new("powershell.exe")
                 .args(&[
@@ -970,6 +982,74 @@ mod tests {
         ensure_install_directory(&destination).unwrap();
 
         assert!(destination.is_dir());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_elevated_copy_script_creates_destination_and_copies_payload() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source payload");
+        let source_file = source.join("Contents").join("Win64").join("plugin.bin");
+        std::fs::create_dir_all(source_file.parent().unwrap()).unwrap();
+        std::fs::write(&source_file, b"plugin payload").unwrap();
+
+        let install_root = root
+            .path()
+            .join("Program Files")
+            .join("Common Files")
+            .join("OFX")
+            .join("Plugins");
+        let destination = install_root.join("GyroflowNiyien.ofx.bundle");
+        let script = windows_elevated_copy_script(
+            install_root.to_str().unwrap(),
+            source.to_str().unwrap(),
+            destination.to_str().unwrap(),
+        );
+
+        let status = Command::new(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")
+            .args([
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                script.as_str(),
+            ])
+            .status()
+            .unwrap();
+
+        assert!(status.success());
+        assert_eq!(
+            std::fs::read(
+                destination
+                    .join("Contents")
+                    .join("Win64")
+                    .join("plugin.bin")
+            )
+            .unwrap(),
+            b"plugin payload"
+        );
+    }
+
+    #[test]
+    fn openfx_install_success_is_silent_in_qml() {
+        let qml = include_str!("ui/menu/NlePlugins.qml");
+        let handler_start = qml
+            .find("function onNle_plugins_result(command: string, result: string)")
+            .expect("NLE plugin result handler exists");
+        let handler_remaining = &qml[handler_start..];
+        let handler_end = handler_remaining
+            .find("\n    Row {")
+            .expect("NLE plugin result handler ends before status rows");
+        let handler = &handler_remaining[..handler_end];
+
+        assert!(
+            !handler.contains("Modal.Info"),
+            "successful plugin installation must not show a confirmation modal"
+        );
+        assert!(
+            !qml.contains("pendingInstallType"),
+            "success-modal-only state must be removed with the modal"
+        );
     }
 
     #[test]
