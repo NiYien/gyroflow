@@ -2540,11 +2540,11 @@ impl StabilizationManager {
     }
     pub fn set_input_horizontal_stretch(&self, v: f64) {
         self.lens.write().set_input_horizontal_stretch_mirrored(v);
-        self.invalidate_zooming();
+        self.invalidate_smoothing();
     }
     pub fn set_input_vertical_stretch(&self, v: f64) {
         self.lens.write().set_input_vertical_stretch_mirrored(v);
-        self.invalidate_zooming();
+        self.invalidate_smoothing();
     }
     pub fn set_max_zoom(&self, v: f64, iters: usize) {
         let mut params = self.params.write();
@@ -2571,9 +2571,12 @@ impl StabilizationManager {
     pub fn disable_lens_stretch(&self, adjust_size: bool) {
         let (x_stretch, y_stretch) = {
             let lens = self.lens.read();
-            (lens.input_horizontal_stretch, lens.input_vertical_stretch)
+            (
+                lens.horizontal_stretch_normalized(),
+                lens.vertical_stretch_normalized(),
+            )
         };
-        if (x_stretch > 0.01 && x_stretch != 1.0) || (y_stretch > 0.01 && y_stretch != 1.0) {
+        if x_stretch != 1.0 || y_stretch != 1.0 {
             if adjust_size {
                 let mut params = self.params.write();
                 params.size.0 = (params.size.0 as f64 * x_stretch).round() as usize;
@@ -5004,6 +5007,556 @@ mod tests {
             state,
             "threaded gate must see fresh accounts after a blocking recompute"
         );
+    }
+
+    #[test]
+    fn stretch_setters_invalidate_smoothing_and_zoom_ledgers() {
+        for set_stretch in [
+            StabilizationManager::set_input_horizontal_stretch,
+            StabilizationManager::set_input_vertical_stretch,
+        ] {
+            let manager = StabilizationManager::default();
+            manager.smoothing_checksum.store(123, SeqCst);
+            manager.zooming_checksum.store(456, SeqCst);
+
+            set_stretch(&manager, 1.5);
+
+            assert_eq!(manager.smoothing_checksum.load(SeqCst), 0);
+            assert_eq!(manager.zooming_checksum.load(SeqCst), 0);
+        }
+    }
+
+    fn manager_for_stretch_bake(stretch: (f64, f64)) -> StabilizationManager {
+        let manager = manager_with_synthetic_gyro();
+        let normalized = (
+            if stretch.0 > 0.01 { stretch.0 } else { 1.0 },
+            if stretch.1 > 0.01 { stretch.1 } else { 1.0 },
+        );
+        let calib_size = (
+            (1920.0 * normalized.0).round() as usize,
+            (1080.0 * normalized.1).round() as usize,
+        );
+        let mut lens = LensProfile::default();
+        lens.calib_dimension = crate::lens_profile::Dimensions {
+            w: calib_size.0,
+            h: calib_size.1,
+        };
+        lens.orig_dimension = lens.calib_dimension.clone();
+        lens.fisheye_params.camera_matrix = vec![
+            [3500.0, 0.0, calib_size.0 as f64 / 2.0],
+            [0.0, 3500.0, calib_size.1 as f64 / 2.0],
+            [0.0, 0.0, 1.0],
+        ];
+        lens.fisheye_params.distortion_coeffs = vec![0.0; 4];
+        lens.set_input_stretch(stretch.0, stretch.1);
+        *manager.lens.write() = lens;
+        manager
+    }
+
+    fn scalar_camera_fov_bits(manager: &StabilizationManager) -> u64 {
+        let mut params = stabilization::ComputeParams::from_manager(manager);
+        params.calculate_camera_fovs();
+        assert_eq!(params.camera_diagonal_fovs.len(), 1);
+        params.camera_diagonal_fovs[0].to_bits()
+    }
+
+    #[test]
+    fn stretch_bake_preserves_static_horizontal_and_vertical_fov_signatures() {
+        for stretch in [(1.33, 1.0), (1.5, 1.0), (1.0, 1.5)] {
+            let manager = manager_for_stretch_bake(stretch);
+            let before = scalar_camera_fov_bits(&manager);
+
+            manager.disable_lens_stretch(true);
+
+            assert_eq!(
+                scalar_camera_fov_bits(&manager),
+                before,
+                "stretch {stretch:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn fractional_vertical_bake_detects_scaled_fy_signature_change() {
+        let manager = manager_for_stretch_bake((1.0, 1.33));
+        let before = scalar_camera_fov_bits(&manager);
+
+        manager.disable_lens_stretch(true);
+
+        assert_eq!(manager.params.read().size, (1920, 1436));
+        assert_ne!(scalar_camera_fov_bits(&manager), before);
+    }
+
+    #[test]
+    fn stretch_bake_normalizes_invalid_axis_without_collapsing_size() {
+        let manager = manager_for_stretch_bake((0.0, 1.5));
+
+        manager.disable_lens_stretch(true);
+
+        assert_eq!(manager.params.read().size, (1920, 1620));
+        let lens = manager.lens.read();
+        assert_eq!(lens.input_horizontal_stretch, 1.0);
+        assert_eq!(lens.input_vertical_stretch, 1.0);
+    }
+
+    #[test]
+    fn blocking_gate_real_stretch_change_reruns_smoothing() {
+        let manager = manager_for_stretch_bake((1.0, 1.0));
+        manager.recompute_blocking();
+        plant_smoothing_sentinel(&manager);
+
+        manager.set_input_horizontal_stretch(1.5);
+        manager.recompute_blocking();
+
+        assert!(!smoothing_sentinel_alive(&manager));
+    }
+
+    #[test]
+    fn blocking_gate_dynamic_lens_stretch_change_reruns_smoothing() {
+        let manager = manager_for_stretch_bake((1.0, 1.0));
+        manager.gyro.write().file_metadata.write().lens_params = BTreeMap::from([
+            (
+                0,
+                gyro_source::LensParams {
+                    pixel_focal_length: Some(3500.0),
+                    ..Default::default()
+                },
+            ),
+            (
+                100_000,
+                gyro_source::LensParams {
+                    pixel_focal_length: Some(3600.0),
+                    ..Default::default()
+                },
+            ),
+        ]);
+        manager.recompute_blocking();
+        plant_smoothing_sentinel(&manager);
+
+        manager.set_input_vertical_stretch(1.5);
+        manager.recompute_blocking();
+
+        assert!(!smoothing_sentinel_alive(&manager));
+    }
+
+    #[test]
+    fn blocking_gate_static_fov_equivalent_bake_reuses_smoothing() {
+        let manager = manager_for_stretch_bake((1.5, 1.0));
+        manager.recompute_blocking();
+        plant_smoothing_sentinel(&manager);
+        let before = scalar_camera_fov_bits(&manager);
+
+        manager.disable_lens_stretch(true);
+        assert_eq!(scalar_camera_fov_bits(&manager), before);
+        manager.recompute_blocking();
+
+        assert!(smoothing_sentinel_alive(&manager));
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct RecomputeSignature {
+        fovs: Vec<u64>,
+        minimal_fovs: Vec<u64>,
+        smoothed_quaternions: Vec<(i64, [u64; 4])>,
+    }
+
+    fn manager_for_recompute_regression(
+        stretch: (f64, f64),
+        max_zoom: f64,
+        max_zoom_iterations: usize,
+    ) -> StabilizationManager {
+        let manager = manager_for_stretch_bake(stretch);
+        {
+            let mut params = manager.params.write();
+            params.frame_count = 30;
+            params.duration_ms = 1000.0;
+        }
+        manager.set_max_zoom(max_zoom, max_zoom_iterations);
+        manager
+    }
+
+    fn recompute_signature(manager: &StabilizationManager) -> RecomputeSignature {
+        let params = manager.params.read();
+        let fovs = params.fovs.iter().map(|value| value.to_bits()).collect();
+        let minimal_fovs = params
+            .minimal_fovs
+            .iter()
+            .map(|value| value.to_bits())
+            .collect();
+        drop(params);
+
+        let smoothed_quaternions = manager
+            .gyro
+            .read()
+            .smoothed_quaternions
+            .iter()
+            .map(|(timestamp, quat)| {
+                (
+                    *timestamp,
+                    [
+                        quat.w.to_bits(),
+                        quat.i.to_bits(),
+                        quat.j.to_bits(),
+                        quat.k.to_bits(),
+                    ],
+                )
+            })
+            .collect();
+
+        RecomputeSignature {
+            fovs,
+            minimal_fovs,
+            smoothed_quaternions,
+        }
+    }
+
+    fn assert_recompute_output_is_finite(manager: &StabilizationManager, case: &str) {
+        let params = manager.params.read();
+        assert_eq!(params.fovs.len(), params.frame_count, "case={case}");
+        assert_eq!(params.minimal_fovs.len(), params.frame_count, "case={case}");
+        assert!(
+            params.fovs.iter().all(|value| value.is_finite() && *value > 0.0),
+            "case={case} fovs={:?}",
+            params.fovs
+        );
+        assert!(
+            params
+                .minimal_fovs
+                .iter()
+                .all(|value| value.is_finite() && *value > 0.0),
+            "case={case} minimal_fovs={:?}",
+            params.minimal_fovs
+        );
+        drop(params);
+
+        let gyro = manager.gyro.read();
+        assert!(!gyro.smoothed_quaternions.is_empty(), "case={case}");
+        assert!(
+            gyro.smoothed_quaternions.values().all(|quat| {
+                quat.w.is_finite()
+                    && quat.i.is_finite()
+                    && quat.j.is_finite()
+                    && quat.k.is_finite()
+            }),
+            "case={case}"
+        );
+    }
+
+    fn run_threaded_recompute(manager: &StabilizationManager) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let compute_id = manager.recompute_threaded(move |result| {
+            tx.send(result).unwrap();
+        });
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(10)).unwrap(),
+            (compute_id, false)
+        );
+    }
+
+    fn baseline_zoom_inputs(manager: &StabilizationManager) -> (Vec<f64>, f64) {
+        manager.recompute_smoothness();
+        let mut compute = stabilization::ComputeParams::from_manager(manager);
+        compute.calculate_camera_fovs();
+        let (fovs, _, _) =
+            StabilizationManager::recompute_adaptive_zoom_static(&compute, &manager.params);
+        let params = manager.params.read();
+        let scaling_factor = (params.size.0 as f64
+            * compute.lens.horizontal_stretch_normalized().max(1.0))
+            / params.output_size.0.max(1) as f64;
+        (fovs, scaling_factor)
+    }
+
+    #[test]
+    fn non_anamorphic_default_smoothing_keeps_same_output_with_preskipped_max_zoom() {
+        let disabled = manager_for_recompute_regression((1.0, 1.0), 0.0, 5);
+        disabled.recompute_blocking();
+
+        let enabled = manager_for_recompute_regression((1.0, 1.0), 300.0, 5);
+        let (baseline_fovs, scaling_factor) = baseline_zoom_inputs(&enabled);
+        assert!(max_zoom_preskip_allows_skip(
+            &baseline_fovs,
+            300.0,
+            None,
+            scaling_factor
+        ));
+        enabled.recompute_blocking();
+
+        assert_eq!(recompute_signature(&enabled), recompute_signature(&disabled));
+        assert_recompute_output_is_finite(&enabled, "identity-max-zoom-enabled");
+    }
+
+    #[test]
+    fn anamorphic_blocking_and_threaded_recompute_are_bit_exact() {
+        for stretch in [(1.5, 1.0), (1.0, 1.5)] {
+            for max_zoom in [0.0, 70.0] {
+                let blocking = manager_for_recompute_regression(stretch, max_zoom, 5);
+                blocking.recompute_blocking();
+
+                let threaded = manager_for_recompute_regression(stretch, max_zoom, 5);
+                run_threaded_recompute(&threaded);
+
+                assert_eq!(
+                    recompute_signature(&threaded),
+                    recompute_signature(&blocking),
+                    "stretch={stretch:?} max_zoom={max_zoom}"
+                );
+                assert_recompute_output_is_finite(
+                    &threaded,
+                    &format!("threaded-stretch={stretch:?}-max={max_zoom}"),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn max_zoom_preskip_distinguishes_disabled_skipped_and_active_inputs() {
+        assert!(!max_zoom_preskip_allows_skip(&[], 300.0, None, 1.0));
+        assert!(!max_zoom_preskip_allows_skip(&[0.9], 0.0, None, 1.0));
+        assert!(max_zoom_preskip_allows_skip(&[0.9, 1.0], 300.0, None, 1.0));
+        assert!(!max_zoom_preskip_allows_skip(&[0.9, 1.0], 100.0, None, 1.0));
+    }
+
+    #[test]
+    fn anamorphic_max_zoom_regression_cases_remain_finite() {
+        let cases = [
+            ("disabled", 0.0, 5, None),
+            ("pre-skipped", 300.0, 5, Some(true)),
+            ("reachable", 100.75, 5, Some(false)),
+            ("stalled", 51.0, 5, Some(false)),
+            ("iteration-cap", 70.0, 1, Some(false)),
+        ];
+
+        for (case, max_zoom, iterations, expected_preskip) in cases {
+            let manager = manager_for_recompute_regression((1.5, 1.0), max_zoom, iterations);
+            if let Some(expected_preskip) = expected_preskip {
+                let (baseline_fovs, scaling_factor) = baseline_zoom_inputs(&manager);
+                assert_eq!(
+                    max_zoom_preskip_allows_skip(
+                        &baseline_fovs,
+                        max_zoom,
+                        None,
+                        scaling_factor
+                    ),
+                    expected_preskip,
+                    "case={case} baseline_min={:?} scaling={scaling_factor}",
+                    baseline_fovs.iter().copied().reduce(f64::min)
+                );
+            }
+
+            manager.recompute_blocking();
+            assert_recompute_output_is_finite(&manager, case);
+            if max_zoom > 0.0 {
+                let params = manager.params.read();
+                let scaling_factor = (params.size.0 as f64
+                    * manager.lens.read().horizontal_stretch_normalized().max(1.0))
+                    / params.output_size.0.max(1) as f64;
+                let fov_limit = 1.0 / ((max_zoom / 100.0) * scaling_factor);
+                let min_fov = params.fovs.iter().copied().reduce(f64::min).unwrap();
+                match case {
+                    "pre-skipped" | "reachable" => assert!(
+                        min_fov >= fov_limit,
+                        "case={case} min_fov={min_fov} fov_limit={fov_limit}"
+                    ),
+                    "stalled" | "iteration-cap" => assert!(
+                        min_fov < fov_limit,
+                        "case={case} min_fov={min_fov} fov_limit={fov_limit}"
+                    ),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn max_zoom_threshold_is_applied_once_per_path() {
+        let source = include_str!("lib.rs");
+        let production = &source[..source.find("#[cfg(test)]").unwrap()];
+        assert_eq!(
+            production
+                .matches("let thresholds = [0.95, 0.9, 0.85, 0.8];")
+                .count(),
+            2
+        );
+        assert_eq!(
+            production
+                .matches("params.smoothing_fov_limit_per_frame[i] *=")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    #[ignore = "manual release acceptance; set GYROFLOW_ANAMORPHIC_FIXTURE"]
+    #[serial]
+    fn manual_anamorphic_fixture_ab_and_plugin_bake() {
+        let fixture = std::env::var("GYROFLOW_ANAMORPHIC_FIXTURE")
+            .expect("set GYROFLOW_ANAMORPHIC_FIXTURE to an approved .gyroflow project");
+        let data = std::fs::read(&fixture).unwrap();
+        assert!(StabilizationManager::project_has_motion_data(&data));
+
+        crate::smooth_diag::force_enabled_for_test(true);
+        crate::log_context::LogContext::set_session_id("anamorphic-actual".into());
+        let actual = StabilizationManager::default();
+        let mut is_preset = false;
+        actual
+            .import_gyroflow_data(
+                &data,
+                true,
+                Some(&fixture),
+                |_| (),
+                Arc::new(AtomicBool::new(false)),
+                &mut is_preset,
+                false,
+            )
+            .unwrap();
+        assert!(!is_preset);
+
+        let (lens_params_len, lens_positions_len) = {
+            let gyro = actual.gyro.read();
+            let metadata = gyro.file_metadata.read();
+            (metadata.lens_params.len(), metadata.lens_positions.len())
+        };
+        assert_eq!(
+            lens_positions_len, 0,
+            "plugin stretch bake is intentionally rejected for lens_positions"
+        );
+
+        let actual_stretch = {
+            let lens = actual.lens.read();
+            (
+                lens.horizontal_stretch_normalized(),
+                lens.vertical_stretch_normalized(),
+            )
+        };
+        assert_ne!(actual_stretch, (1.0, 1.0));
+        assert_recompute_output_is_finite(&actual, "real-fixture-actual");
+
+        let identity = actual.get_cloned();
+        {
+            let mut lens = identity.lens.write();
+            lens.input_horizontal_stretch = 1.0;
+            lens.input_vertical_stretch = 1.0;
+            lens.input_horizontal_stretch_raw = Some(1.0);
+            lens.input_vertical_stretch_raw = Some(1.0);
+        }
+        identity.invalidate_smoothing();
+        identity.input_file.write().url = "anamorphic-identity-1x".into();
+        crate::log_context::LogContext::set_session_id("anamorphic-identity-1x".into());
+        identity.recompute_blocking();
+        assert_recompute_output_is_finite(&identity, "real-fixture-identity");
+
+        let plugin_bake = actual.get_cloned();
+        let actual_camera_fov = scalar_camera_fov_bits(&actual);
+        plugin_bake.disable_lens_stretch(true);
+        assert_eq!(scalar_camera_fov_bits(&plugin_bake), actual_camera_fov);
+        plugin_bake.invalidate_zooming();
+        plugin_bake.input_file.write().url = "anamorphic-plugin-bake".into();
+        crate::log_context::LogContext::set_session_id("anamorphic-plugin-bake".into());
+        plugin_bake.recompute_blocking();
+        assert_recompute_output_is_finite(&plugin_bake, "real-fixture-plugin-bake");
+
+        let actual_signature = recompute_signature(&actual);
+        let identity_signature = recompute_signature(&identity);
+        let plugin_signature = recompute_signature(&plugin_bake);
+        assert_ne!(actual_camera_fov, scalar_camera_fov_bits(&identity));
+        assert_ne!(
+            actual_signature.smoothed_quaternions,
+            identity_signature.smoothed_quaternions
+        );
+
+        let (max_fov_delta, max_minimal_fov_delta) = {
+            let actual_params = actual.params.read();
+            let plugin_params = plugin_bake.params.read();
+            (
+                actual_params
+                    .fovs
+                    .iter()
+                    .zip(plugin_params.fovs.iter())
+                    .map(|(left, right)| (left - right).abs())
+                    .reduce(f64::max)
+                    .unwrap(),
+                actual_params
+                    .minimal_fovs
+                    .iter()
+                    .zip(plugin_params.minimal_fovs.iter())
+                    .map(|(left, right)| (left - right).abs())
+                    .reduce(f64::max)
+                    .unwrap(),
+            )
+        };
+        let max_quaternion_delta_deg = {
+            let actual_gyro = actual.gyro.read();
+            let plugin_gyro = plugin_bake.gyro.read();
+            actual_gyro
+                .smoothed_quaternions
+                .iter()
+                .filter_map(|(timestamp, left)| {
+                    plugin_gyro
+                        .smoothed_quaternions
+                        .get(timestamp)
+                        .map(|right| (left.inverse() * right).angle().to_degrees())
+                })
+                .reduce(f64::max)
+                .unwrap()
+        };
+        let plugin_bake_comparison = serde_json::json!({
+            "camera_fov_bit_exact": true,
+            "fov_final_bit_exact": actual_signature.fovs == plugin_signature.fovs,
+            "minimal_fov_bit_exact": actual_signature.minimal_fovs == plugin_signature.minimal_fovs,
+            "smoothed_quaternions_bit_exact": actual_signature.smoothed_quaternions
+                == plugin_signature.smoothed_quaternions,
+            "max_fov_delta": max_fov_delta,
+            "max_minimal_fov_delta": max_minimal_fov_delta,
+            "max_quaternion_delta_deg": max_quaternion_delta_deg,
+        });
+
+        let metrics = |manager: &StabilizationManager| {
+            let mut compute = stabilization::ComputeParams::from_manager(manager);
+            compute.calculate_camera_fovs();
+            let camera_fov_deg = compute.camera_diagonal_fovs[0];
+            let params = manager.params.read();
+            let min_fov_final = params.fovs.iter().copied().reduce(f64::min).unwrap();
+            let max_fov_final = params.fovs.iter().copied().reduce(f64::max).unwrap();
+            drop(params);
+            let max_quaternion_delta_deg = manager
+                .gyro
+                .read()
+                .smoothed_quaternions
+                .values()
+                .map(|quat| quat.angle().to_degrees())
+                .reduce(f64::max)
+                .unwrap();
+            serde_json::json!({
+                "camera_fov_deg": camera_fov_deg,
+                "min_fov_final": min_fov_final,
+                "max_fov_final": max_fov_final,
+                "max_quaternion_delta_deg": max_quaternion_delta_deg,
+            })
+        };
+        eprintln!(
+            "ANAMORPHIC_ACCEPTANCE {}",
+            serde_json::json!({
+                "fixture": fixture,
+                "frame_count": actual.params.read().frame_count,
+                "lens_params_len": lens_params_len,
+                "lens_positions_len": lens_positions_len,
+                "actual_stretch": actual_stretch,
+                "actual": metrics(&actual),
+                "identity_1x": metrics(&identity),
+                "plugin_bake": metrics(&plugin_bake),
+                "plugin_bake_comparison": plugin_bake_comparison,
+            })
+        );
+        assert!(max_fov_delta < 1e-4, "max_fov_delta={max_fov_delta}");
+        assert!(
+            max_minimal_fov_delta < 1e-4,
+            "max_minimal_fov_delta={max_minimal_fov_delta}"
+        );
+        assert!(
+            max_quaternion_delta_deg < 1e-9,
+            "max_quaternion_delta_deg={max_quaternion_delta_deg}"
+        );
+        crate::smooth_diag::force_enabled_for_test(false);
     }
 
     // Operation lifecycle primitive tests (§1.9-1.13).

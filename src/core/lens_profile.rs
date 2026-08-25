@@ -858,6 +858,18 @@ impl LensProfile {
 }
 
 #[cfg(test)]
+pub(crate) fn with_parsed_interpolations_for_test(
+    mut base: LensProfile,
+    entries: impl IntoIterator<Item = (f64, LensProfile)>,
+) -> LensProfile {
+    base.parsed_interpolations = entries
+        .into_iter()
+        .map(|(position, lens)| ((position * 1_000_000.0).round() as i64, lens))
+        .collect();
+    base
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

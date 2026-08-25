@@ -181,19 +181,31 @@ impl ComputeParams {
     }
 
     pub fn calculate_camera_fovs(&mut self) {
-        let frame_count = if self.gyro.read().file_metadata.read().lens_params.len() > 1 {
-            self.frame_count
-        } else {
-            1 // FOV is constant (ie. lens is fixed focal length)
+        let frame_count = {
+            let gyro = self.gyro.read();
+            let file_metadata = gyro.file_metadata.read();
+            if file_metadata.lens_params.len() > 1 || !file_metadata.lens_positions.is_empty() {
+                self.frame_count
+            } else {
+                1 // FOV is constant (ie. lens is fixed focal length)
+            }
         };
         self.camera_diagonal_fovs = Vec::with_capacity(frame_count);
         for f in 0..frame_count as i32 {
             let timestamp = crate::timestamp_at_frame(f, self.scaled_fps);
-            let (camera_matrix, _, _, _, _, _) =
+            let (camera_matrix, _, _, input_horizontal_stretch, input_vertical_stretch, _) =
                 crate::stabilization::FrameTransform::get_lens_data_at_timestamp(
                     &self, timestamp, false,
                 );
-            let diag_length = ((self.width.pow(2) + self.height.pow(2)) as f64).sqrt();
+            let diag_length = if input_horizontal_stretch == 1.0 && input_vertical_stretch == 1.0 {
+                ((self.width.pow(2) + self.height.pow(2)) as f64).sqrt()
+            } else {
+                let effective_width =
+                    (self.width as f64 * input_horizontal_stretch).round() as usize;
+                let effective_height =
+                    (self.height as f64 * input_vertical_stretch).round() as usize;
+                ((effective_width.pow(2) + effective_height.pow(2)) as f64).sqrt()
+            };
             // let diag_pixel_focal_length = (camera_matrix[(0, 0)].powi(2) + camera_matrix[(1, 1)].powi(2)).sqrt();
             let d_fov = 2.0 * ((diag_length / (2.0 * camera_matrix[(1, 1)])).atan()) * 180.0
                 / std::f64::consts::PI;
@@ -264,6 +276,9 @@ impl std::fmt::Debug for ComputeParams {
 #[cfg(test)]
 mod tests {
     use super::anamorphic_lens_correction_decay;
+    use crate::gyro_source::FileMetadata;
+    use crate::lens_profile::{Dimensions, LensProfile, with_parsed_interpolations_for_test};
+    use std::collections::BTreeMap;
 
     #[test]
     fn anamorphic_decay_identity_when_no_stretch() {
@@ -304,8 +319,6 @@ mod tests {
     // construct a ComputeParams by hand (without a full StabilizationManager)
     // since the decay reads `self.lens` only.
     use super::ComputeParams;
-    use crate::lens_profile::LensProfile;
-
     fn build_compute_params_with_stretch(h: f64, v: f64, raw: bool) -> ComputeParams {
         let mut lens = LensProfile::default();
         if raw {
@@ -317,6 +330,163 @@ mod tests {
         let mut cp = ComputeParams::default();
         cp.lens = lens;
         cp
+    }
+
+    fn camera_fov_params(
+        size: (usize, usize),
+        calib_size: (usize, usize),
+        fy: f64,
+        stretch: (f64, f64),
+    ) -> ComputeParams {
+        let mut lens = LensProfile::default();
+        lens.calib_dimension = Dimensions {
+            w: calib_size.0,
+            h: calib_size.1,
+        };
+        lens.orig_dimension = lens.calib_dimension.clone();
+        lens.fisheye_params.camera_matrix = vec![
+            [fy, 0.0, calib_size.0 as f64 / 2.0],
+            [0.0, fy, calib_size.1 as f64 / 2.0],
+            [0.0, 0.0, 1.0],
+        ];
+        lens.fisheye_params.distortion_coeffs = vec![0.0; 4];
+        lens.set_input_stretch(stretch.0, stretch.1);
+
+        ComputeParams {
+            lens,
+            width: size.0,
+            height: size.1,
+            output_width: size.0,
+            output_height: size.1,
+            frame_count: 1,
+            scaled_fps: 30.0,
+            ..Default::default()
+        }
+    }
+
+    fn camera_fov_bits(mut params: ComputeParams) -> u64 {
+        params.calculate_camera_fovs();
+        assert_eq!(params.camera_diagonal_fovs.len(), 1);
+        params.camera_diagonal_fovs[0].to_bits()
+    }
+
+    #[test]
+    fn camera_fov_identity_preserves_legacy_diagonal_bits() {
+        let bits = camera_fov_bits(camera_fov_params(
+            (1920, 1080),
+            (1920, 1080),
+            3500.0,
+            (1.0, 1.0),
+        ));
+
+        assert_eq!(bits, 4_630_113_859_272_122_525);
+    }
+
+    #[test]
+    fn camera_fov_uses_rounded_horizontal_effective_dimensions() {
+        let cases = [
+            (1.33, (2554, 1080), 4_631_279_595_481_258_262u64),
+            (1.5, (2880, 1080), 4_631_873_676_871_306_275u64),
+            (2.0, (3840, 1080), 4_633_550_113_089_397_880u64),
+        ];
+
+        for (stretch, calib_size, expected_bits) in cases {
+            let bits = camera_fov_bits(camera_fov_params(
+                (1920, 1080),
+                calib_size,
+                3500.0,
+                (stretch, 1.0),
+            ));
+            assert_eq!(bits, expected_bits, "horizontal stretch {stretch}");
+        }
+    }
+
+    #[test]
+    fn camera_fov_horizontal_1_5_is_about_47_44_degrees() {
+        let mut params = camera_fov_params((1920, 1080), (2880, 1080), 3500.0, (1.5, 1.0));
+
+        params.calculate_camera_fovs();
+
+        assert!((params.camera_diagonal_fovs[0] - 47.441_940_593_322_464).abs() < 1e-12);
+    }
+
+    #[test]
+    fn camera_fov_uses_rounded_vertical_effective_dimensions() {
+        let cases = [
+            // The rounded 1436 px calibration height makes the timestamp-selected
+            // fy scale slightly above 3500 before the bake; pin that real result.
+            (1.33, (1920, 1436), 4_630_517_310_508_769_320u64),
+            (1.5, (1920, 1620), 4_630_753_649_529_276_010u64),
+        ];
+
+        for (stretch, calib_size, expected_bits) in cases {
+            let bits = camera_fov_bits(camera_fov_params(
+                (1920, 1080),
+                calib_size,
+                3500.0,
+                (1.0, stretch),
+            ));
+            assert_eq!(bits, expected_bits, "vertical stretch {stretch}");
+        }
+    }
+
+    #[test]
+    fn camera_fov_normalizes_unset_and_subthreshold_stretch_axes() {
+        let expected = 4_630_753_649_529_276_010u64;
+        for horizontal in [0.0, 0.01, -1.0] {
+            let bits = camera_fov_bits(camera_fov_params(
+                (1920, 1080),
+                (1920, 1620),
+                3500.0,
+                (horizontal, 1.5),
+            ));
+            assert_eq!(bits, expected, "horizontal stretch {horizontal}");
+        }
+    }
+
+    #[test]
+    fn camera_fov_ignores_raw_mirror_after_stretch_is_baked() {
+        let mut params = camera_fov_params((2880, 1080), (2880, 1080), 3500.0, (1.0, 1.0));
+        params.lens.input_horizontal_stretch_raw = Some(1.5);
+
+        assert_eq!(camera_fov_bits(params), 4_631_873_676_871_306_275u64);
+    }
+
+    #[test]
+    fn lens_positions_force_paired_per_frame_camera_fov_samples() {
+        let first = camera_fov_params((1920, 1080), (1920, 1080), 3000.0, (1.0, 1.0)).lens;
+        let second = camera_fov_params((1920, 1080), (3840, 1080), 4000.0, (2.0, 1.0)).lens;
+        let lens =
+            with_parsed_interpolations_for_test(first.clone(), [(1.0, first), (2.0, second)]);
+        let metadata = FileMetadata {
+            lens_positions: BTreeMap::from([(0, 1.0), (100_000, 2.0)]),
+            ..Default::default()
+        };
+        let gyro = std::sync::Arc::new(parking_lot::RwLock::new(crate::GyroSource::default()));
+        gyro.write().file_metadata = metadata.into();
+        let mut params = ComputeParams {
+            gyro,
+            lens,
+            width: 1920,
+            height: 1080,
+            output_width: 1920,
+            output_height: 1080,
+            frame_count: 2,
+            scaled_fps: 10.0,
+            ..Default::default()
+        };
+
+        params.calculate_camera_fovs();
+
+        assert_eq!(params.camera_diagonal_fovs.len(), 2);
+        assert_eq!(
+            params
+                .camera_diagonal_fovs
+                .iter()
+                .map(|fov| fov.to_bits())
+                .collect::<Vec<_>>(),
+            vec![4_630_871_569_852_204_772, 4_632_656_440_167_812_453]
+        );
     }
 
     fn simulate_disable_lens_stretch(cp: &mut ComputeParams) {
