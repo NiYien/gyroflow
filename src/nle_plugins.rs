@@ -237,6 +237,10 @@ fn install_resolve_scripts(extracted_root: &Path) -> io::Result<PathBuf> {
     Ok(destination)
 }
 
+fn ensure_install_directory(destination: &Path) -> io::Result<()> {
+    std::fs::create_dir_all(destination)
+}
+
 fn copy_files(tempdir: &str, extract_path: &str, typ: &str) -> io::Result<()> {
     ::log::info!(
         "[nle copy_files] start typ={typ:?} tempdir={tempdir:?} extract_path={extract_path:?} extract_path_exists={}",
@@ -267,19 +271,39 @@ fn copy_files(tempdir: &str, extract_path: &str, typ: &str) -> io::Result<()> {
     };
 
     let output = if cfg!(target_os = "windows") {
-        let xcopy_out = Command::new("xcopy")
-            .args([&source_arg, &destination_arg, "/Y", "/E", "/H", "/I"])
-            .output()?;
-        let stdout = String::from_utf8_lossy(&xcopy_out.stdout);
-        let stderr = String::from_utf8_lossy(&xcopy_out.stderr);
-        ::log::info!(
-            "[nle copy_files] xcopy(direct) status={:?} success={} stdout={:?} stderr={:?}",
-            xcopy_out.status.code(),
-            xcopy_out.status.success(),
-            stdout.trim(),
-            stderr.trim()
-        );
-        xcopy_out.status.success()
+        let install_directory_ready = match ensure_install_directory(Path::new(extract_path)) {
+            Ok(()) => {
+                ::log::info!(
+                    target: "plugin",
+                    "[nle copy_files] install directory ready path={extract_path:?}"
+                );
+                true
+            }
+            Err(error) => {
+                ::log::warn!(
+                    target: "plugin",
+                    "[nle copy_files] direct install directory creation failed path={extract_path:?}: {error}; escalating"
+                );
+                false
+            }
+        };
+        if !install_directory_ready {
+            false
+        } else {
+            let xcopy_out = Command::new("xcopy")
+                .args([&source_arg, &destination_arg, "/Y", "/E", "/H", "/I"])
+                .output()?;
+            let stdout = String::from_utf8_lossy(&xcopy_out.stdout);
+            let stderr = String::from_utf8_lossy(&xcopy_out.stderr);
+            ::log::info!(
+                "[nle copy_files] xcopy(direct) status={:?} success={} stdout={:?} stderr={:?}",
+                xcopy_out.status.code(),
+                xcopy_out.status.success(),
+                stdout.trim(),
+                stderr.trim()
+            );
+            xcopy_out.status.success()
+        }
     } else if cfg!(target_os = "macos") {
         if gyroflow_core::filesystem::is_sandboxed() {
             let macosname = match typ {
@@ -347,14 +371,20 @@ fn copy_files(tempdir: &str, extract_path: &str, typ: &str) -> io::Result<()> {
         // Retry with elevated privileges. On Windows this triggers a UAC prompt;
         // on macOS osascript shows an admin auth dialog.
         let status = if cfg!(target_os = "windows") {
-            runas::Command::new("xcopy")
+            let powershell_literal = |value: &str| format!("'{}'", value.replace('\'', "''"));
+            let script = format!(
+                "$ErrorActionPreference = 'Stop'; New-Item -ItemType Directory -Force -LiteralPath {} | Out-Null; & xcopy.exe {} {} /Y /E /H /I; exit $LASTEXITCODE",
+                powershell_literal(extract_path),
+                powershell_literal(source_arg.as_str()),
+                powershell_literal(destination_arg.as_str())
+            );
+            runas::Command::new("powershell.exe")
                 .args(&[
-                    source_arg.as_str(),
-                    destination_arg.as_str(),
-                    "/Y",
-                    "/E",
-                    "/H",
-                    "/I",
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    script.as_str(),
                 ])
                 .status()
         } else if cfg!(target_os = "macos") {
@@ -929,6 +959,17 @@ mod tests {
         let source = root.join("ResolveScripts");
         std::fs::create_dir_all(&source).unwrap();
         std::fs::write(source.join(name), contents).unwrap();
+    }
+
+    #[test]
+    fn install_directory_is_created_when_missing() {
+        let root = tempfile::tempdir().unwrap();
+        let destination = root.path().join("Common Files").join("OFX").join("Plugins");
+        assert!(!destination.exists());
+
+        ensure_install_directory(&destination).unwrap();
+
+        assert!(destination.is_dir());
     }
 
     #[test]

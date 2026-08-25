@@ -27,6 +27,10 @@ Rectangle {
     property var pendingAutoUpdate: null;
     property bool onboardingActive: false;
 
+    // Plugin installers are implemented only for Windows and macOS. Host application
+    // detection must not hide the installer when its target directory is still absent.
+    readonly property bool nlePluginsSupported: Qt.platform.os === "windows" || Qt.platform.os === "osx";
+
     // Simple mode is session-scoped: always starts true, never persisted to QSettings.
     property bool isSimpleMode: true;
     // Simple-mode batch sync dirty flag (window-level because the AI sync toggle lives in
@@ -1668,7 +1672,7 @@ Rectangle {
                     Hr { id: exportHr; visible: !isMobileLayout; }
                     ItemLoader { id: advanced; opacity: batchState.active ? 0.4 : 1.0; sourceComponent: Component { Menu.Advanced { } } }
                     Hr { id: advancedHr; visible: nlePlugins.active; }
-                    ItemLoader { id: nlePlugins; opacity: batchState.active ? 0.4 : 1.0; active: controller.is_nle_installed(); sourceComponent: Component { Menu.NlePlugins { } } }
+                    ItemLoader { id: nlePlugins; opacity: batchState.active ? 0.4 : 1.0; active: window.nlePluginsSupported; sourceComponent: Component { Menu.NlePlugins { } } }
 
                     // Sync and export/advanced overlays to block interaction in batch mode
                     MouseArea {
@@ -1984,7 +1988,7 @@ Rectangle {
                     Rectangle {
                         id: nlePluginsCard;
                         width: parent.width;
-                        visible: controller.is_nle_installed();
+                        visible: window.nlePluginsSupported;
                         height: visible ? nlePluginsLoader.height + 16 * dpiScale : 0;
                         color: styleBackground2;
                         border.color: styleHrColor;
@@ -1992,7 +1996,7 @@ Rectangle {
                         radius: 10 * dpiScale;
                         ItemLoader {
                             id: nlePluginsLoader;
-                            active: controller.is_nle_installed();
+                            active: window.nlePluginsSupported;
                             x: 8 * dpiScale;
                             y: 8 * dpiScale;
                             width: parent.width - 16 * dpiScale;
