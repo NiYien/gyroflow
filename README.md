@@ -245,7 +245,10 @@ The project also supports UI live reload, it's a super quick way of working with
 3. Clone the repo: `git clone https://github.com/gyroflow/gyroflow.git`
 4. Enter the project directory and:
     - Install dependencies: `just install-deps`
+    - Check the full application: `just check`
     - Compile and run: `just run`
+
+On Windows, use the `just` commands for full-application builds and checks instead of invoking Cargo directly. The Just recipes select the repository's MSVC Qt and provide the OpenCV, FFmpeg and LLVM paths; a direct `cargo check` can accidentally select a MinGW Qt from the global `PATH`.
 
 ### Building on MacOS
 0. Prerequisites: `git`, `brew`

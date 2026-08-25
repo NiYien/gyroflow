@@ -174,6 +174,10 @@ build-debug *param:
     cargo build {{param}}
 
 [no-cd]
+check *param:
+    cargo check {{param}}
+
+[no-cd]
 run *param:
     cargo run --release {{param}}
 

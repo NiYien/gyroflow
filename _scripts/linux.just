@@ -154,6 +154,10 @@ install-deps:
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 [no-cd]
+check *param:
+    cargo check {{param}}
+
+[no-cd]
 run *param:
     cargo run --release {{param}}
 

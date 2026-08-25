@@ -11,6 +11,9 @@ test *param:
 test-core *param:
     just -f _scripts/{{BaseFile}}.just test-core {{param}}
 
+check *param:
+    just -f _scripts/{{BaseFile}}.just check {{param}}
+
 build *param:
     just -f _scripts/{{BaseFile}}.just build {{param}}
 

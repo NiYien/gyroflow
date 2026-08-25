@@ -182,6 +182,60 @@ build-debug *param:
     cargo build -- {{param}}
 
 [no-cd]
+check *param:
+    #!powershell
+    $ErrorActionPreference = 'Stop'
+
+    $QmakeCandidates = @(
+        "{{QtPath}}/qmake.exe",
+        "{{QtPath}}/qmake.bat",
+        "{{QtPath}}/qmake"
+    )
+    $Qmake = $QmakeCandidates |
+        Where-Object { Test-Path -LiteralPath $_ } |
+        Select-Object -First 1
+    if (-not $Qmake) {
+        throw "Qt qmake was not found. Run 'just install-deps' before 'just check'."
+    }
+
+    $RequiredFiles = @(
+        "{{OpenCVPath}}/lib/opencv_core4.lib",
+        "{{OPENCV_INCLUDE_PATHS}}/opencv2/core.hpp",
+        "{{FFMPEG_DIR}}/include/libavutil/avutil.h",
+        "{{FFMPEG_DIR}}/lib/avutil.lib",
+        "{{LIBCLANG_PATH}}/libclang.dll"
+    )
+    $MissingFiles = @($RequiredFiles | Where-Object { -not (Test-Path -LiteralPath $_) })
+    if ($MissingFiles.Count -gt 0) {
+        throw "Windows build dependencies are incomplete. Run 'just install-deps'. Missing: $($MissingFiles -join ', ')"
+    }
+
+    $QtMkspec = (& $Qmake -query QMAKE_XSPEC 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $QtMkspec) {
+        throw "Qt qmake preflight failed. In a restricted agent sandbox, rerun 'just check' with permission to execute outside the sandbox. Otherwise run 'just install-deps'."
+    }
+    if (-not ($QtMkspec.StartsWith("win32-") -and $QtMkspec.Contains("msvc"))) {
+        throw "Incompatible Qt toolchain '$QtMkspec'. Gyroflow's Windows Rust target requires the MSVC Qt from ext/. Run 'just install-deps' and use 'just check', not direct 'cargo check'."
+    }
+
+    $ResolvedQmake = (Resolve-Path -LiteralPath $Qmake).Path
+    $ResolvedExternalQmake = $null
+    if ($Env:QMAKE) {
+        foreach ($Candidate in @($Env:QMAKE, "$Env:QMAKE.exe", "$Env:QMAKE.bat")) {
+            if (Test-Path -LiteralPath $Candidate) {
+                $ResolvedExternalQmake = (Resolve-Path -LiteralPath $Candidate).Path
+                break
+            }
+        }
+    }
+    if ($Env:QMAKE -and $ResolvedExternalQmake -ne $ResolvedQmake) {
+        Write-Host "Ignoring external QMAKE='$Env:QMAKE'; just check uses repository MSVC Qt '$Qmake'."
+    }
+    $Env:QMAKE = $ResolvedQmake
+    & cargo check {{param}}
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+[no-cd]
 run *param:
     cargo run --release -- {{param}}
 
