@@ -2951,6 +2951,11 @@ Do you want to submit your profile?</source>
         <translation>取り付け位置</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="280"/>
+        <source>The device mounting position is relative to the camera, regardless of landscape or portrait orientation.</source>
+        <translation>デバイスの取り付け位置はカメラを基準とし、横向き撮影か縦向き撮影かには関係ありません。</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="61"/>
         <source>Top</source>
         <translation>上</translation>
@@ -3716,11 +3721,6 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
         <translation type="vanished">Ok をクリックすると自動一致が実行され、データが割り当てられます。</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="631"/>
-        <source>Not enough camera motion. Try a video with more movement.</source>
-        <translation>カメラの動きが足りません。動きの多い動画でお試しください。</translation>
-    </message>
-    <message>
         <source>No match found in this gyro file. Try another gyro file.</source>
         <translation type="vanished">このジャイロファイルでは一致が見つかりませんでした。別のジャイロファイルをお試しください。</translation>
     </message>
@@ -3840,9 +3840,21 @@ This choice applies to all remaining jobs in this batch.</source>
         <translation>ディープマッチング成功（オフセット %1 秒）。同じ日のクリップは自動でマッチングされます。</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="638"/>
-        <source>No match found (the gyro file may not cover this video, or the video&apos;s motion is too weak).</source>
-        <translation>一致が見つかりません（ジャイロ記録がこの動画をカバーしていないか、映像の動きが不足しています）。</translation>
+        <location filename="../../src/ui/RenderQueue.qml" line="651"/>
+        <source>No match found. Possible reasons:
+1. Not enough camera motion in the video.
+2. The gyro data does not cover the video&apos;s recording time.
+3. In-camera or lens stabilization was not turned off.
+4. The mounting position is incorrect.
+
+Please check and try again.</source>
+        <translation>一致するデータが見つかりませんでした。考えられる原因：
+1. 動画内のカメラの動きが不足しています。
+2. ジャイロデータが動画の撮影時刻をカバーしていません。
+3. カメラ内またはレンズの手ぶれ補正がオフになっていません。
+4. 取り付け位置が正しくありません。
+
+確認してからもう一度お試しください。</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="641"/>
@@ -4239,11 +4251,6 @@ Please provide frame rate: </source>
         <location filename="../../src/ui/RenderQueue.qml" line="513"/>
         <source>timestamp guess</source>
         <translation>タイムスタンプ推定</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="637"/>
-        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
-        <translation>どのジャイロファイルにも一致が見つかりませんでした。記録がこの動画をカバーしていないか、動画の動きが不安定な可能性があります。</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2558"/>

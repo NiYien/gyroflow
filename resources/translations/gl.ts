@@ -2948,6 +2948,11 @@ Quere envialo seu perfil?</translation>
         <translation>Posición de montaxe</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="280"/>
+        <source>The device mounting position is relative to the camera, regardless of landscape or portrait orientation.</source>
+        <translation>A posición de montaxe do dispositivo é relativa á cámara, independentemente de gravar en horizontal ou vertical.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="61"/>
         <source>Top</source>
         <translation>Arriba</translation>
@@ -3713,11 +3718,6 @@ Para vídeos sen emparellar, podes facelo manualmente: clic dereito no vídeo �
         <translation type="vanished">Prema Ok para executar a coincidencia automática e asignar os datos.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="631"/>
-        <source>Not enough camera motion. Try a video with more movement.</source>
-        <translation>Non hai suficiente movemento de cámara. Probe cun vídeo con máis movemento.</translation>
-    </message>
-    <message>
         <source>No match found in this gyro file. Try another gyro file.</source>
         <translation type="vanished">Non se atopou coincidencia neste ficheiro de xiroscopio. Probe con outro ficheiro de xiroscopio.</translation>
     </message>
@@ -3837,9 +3837,21 @@ A escolla aplicarase a todos os traballos restantes desta lote.</translation>
         <translation>Emparellamento profundo correcto (desfase %1 s). Os clips do mesmo día emparellaranse automaticamente.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="638"/>
-        <source>No match found (the gyro file may not cover this video, or the video&apos;s motion is too weak).</source>
-        <translation>Non se atopou coincidencia (o ficheiro do xiroscopio pode non cubrir este vídeo ou o movemento da imaxe é insuficiente).</translation>
+        <location filename="../../src/ui/RenderQueue.qml" line="651"/>
+        <source>No match found. Possible reasons:
+1. Not enough camera motion in the video.
+2. The gyro data does not cover the video&apos;s recording time.
+3. In-camera or lens stabilization was not turned off.
+4. The mounting position is incorrect.
+
+Please check and try again.</source>
+        <translation>Non se atopou coincidencia. Posibles causas:
+1. Non hai movemento de cámara abondo no vídeo.
+2. Os datos do xiroscopio non cobren o momento de gravación do vídeo.
+3. Non se desactivou a estabilización da cámara ou do obxectivo.
+4. A posición de montaxe é incorrecta.
+
+Revise estes puntos e ténteo de novo.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="641"/>
@@ -4236,11 +4248,6 @@ Proporcione taxa de fotogramas: </translation>
         <location filename="../../src/ui/RenderQueue.qml" line="513"/>
         <source>timestamp guess</source>
         <translation>estimación por marca de tempo</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="637"/>
-        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
-        <translation>Non se atopou ningunha coincidencia en ningún ficheiro do xiroscopio. É posible que as gravacións non cubran este vídeo, ou que o movemento do vídeo non sexa fiable.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2558"/>

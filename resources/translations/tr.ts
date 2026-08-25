@@ -2946,6 +2946,11 @@ Profilinizi yüklemek istiyor musunuz?</translation>
         <translation>Montaj pozisyonu</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="280"/>
+        <source>The device mounting position is relative to the camera, regardless of landscape or portrait orientation.</source>
+        <translation>Cihazın montaj konumu kameraya göredir; yatay veya dikey çekimden bağımsızdır.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="61"/>
         <source>Top</source>
         <translation>Üst</translation>
@@ -3710,11 +3715,6 @@ Eşleşmeyen videoları manuel olarak eşleştirebilirsiniz: videoya sağ tıkla
         <translation type="vanished">Ok&apos;a tıklayın; otomatik eşleştirme çalışıp verileri atayacaktır.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="631"/>
-        <source>Not enough camera motion. Try a video with more movement.</source>
-        <translation>Yeterli kamera hareketi yok. Daha fazla hareket içeren bir video deneyin.</translation>
-    </message>
-    <message>
         <source>No match found in this gyro file. Try another gyro file.</source>
         <translation type="vanished">Bu jiroskop dosyasında eşleşme bulunamadı. Başka bir jiroskop dosyası deneyin.</translation>
     </message>
@@ -3833,9 +3833,21 @@ Bu seçim bu toplu işteki tüm kalan işlere uygulanır.</translation>
         <translation>Derin eşleştirme başarılı (kayma %1 sn). Aynı güne ait klipler otomatik eşleştirilecek.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="638"/>
-        <source>No match found (the gyro file may not cover this video, or the video&apos;s motion is too weak).</source>
-        <translation>Eşleşme bulunamadı (jiroskop dosyası bu videoyu kapsamıyor olabilir veya görüntü hareketi çok zayıf).</translation>
+        <location filename="../../src/ui/RenderQueue.qml" line="651"/>
+        <source>No match found. Possible reasons:
+1. Not enough camera motion in the video.
+2. The gyro data does not cover the video&apos;s recording time.
+3. In-camera or lens stabilization was not turned off.
+4. The mounting position is incorrect.
+
+Please check and try again.</source>
+        <translation>Eşleşme bulunamadı. Olası nedenler:
+1. Videoda yeterli kamera hareketi yok.
+2. Jiroskop verileri videonun kayıt zamanını kapsamıyor.
+3. Kamera içi veya lens sabitleme kapatılmamış.
+4. Montaj konumu yanlış.
+
+Kontrol edip tekrar deneyin.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="641"/>
@@ -4231,11 +4243,6 @@ Lütfen frame rate&apos;i belirtin: </translation>
         <location filename="../../src/ui/RenderQueue.qml" line="513"/>
         <source>timestamp guess</source>
         <translation>zaman damgası tahmini</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="637"/>
-        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
-        <translation>Hiçbir jiroskop dosyasında eşleşme bulunamadı. Kayıtlar bu videoyu kapsamıyor olabilir veya videonun hareketi güvenilir değil.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2558"/>

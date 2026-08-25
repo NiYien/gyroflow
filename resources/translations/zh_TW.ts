@@ -2950,6 +2950,11 @@ Do you want to submit your profile?</source>
         <translation>安裝位置</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="280"/>
+        <source>The device mounting position is relative to the camera, regardless of landscape or portrait orientation.</source>
+        <translation>裝置安裝位置是相對於相機，與橫拍或直拍無關</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="61"/>
         <source>Top</source>
         <translation>頂部</translation>
@@ -3715,11 +3720,6 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
         <translation type="vanished">點擊確定後將自動執行自動配對並分配資料。</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="631"/>
-        <source>Not enough camera motion. Try a video with more movement.</source>
-        <translation>相機運動不足，請換一個運動更多的影片。</translation>
-    </message>
-    <message>
         <source>No match found in this gyro file. Try another gyro file.</source>
         <translation type="vanished">在該陀螺儀檔案中未找到匹配，請嘗試其他陀螺儀檔案。</translation>
     </message>
@@ -3839,9 +3839,21 @@ This choice applies to all remaining jobs in this batch.</source>
         <translation>深度匹配成功（偏移 %1 s）。同天片段將自動匹配。</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="638"/>
-        <source>No match found (the gyro file may not cover this video, or the video&apos;s motion is too weak).</source>
-        <translation>未找到匹配（陀螺儀未涵蓋此影片，或畫面運動不足）。</translation>
+        <location filename="../../src/ui/RenderQueue.qml" line="651"/>
+        <source>No match found. Possible reasons:
+1. Not enough camera motion in the video.
+2. The gyro data does not cover the video&apos;s recording time.
+3. In-camera or lens stabilization was not turned off.
+4. The mounting position is incorrect.
+
+Please check and try again.</source>
+        <translation>未找到匹配，可能原因：
+1. 影片中的相機運動不足
+2. 陀螺儀資料未涵蓋影片錄製時間
+3. 相機機身或鏡頭防震未關閉
+4. 安裝位置選擇不正確
+
+請檢查後再試。</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="641"/>
@@ -4238,11 +4250,6 @@ Please provide frame rate: </source>
         <location filename="../../src/ui/RenderQueue.qml" line="513"/>
         <source>timestamp guess</source>
         <translation>時間戳預測</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="637"/>
-        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
-        <translation>所有陀螺儀檔案中均未找到匹配。記錄可能未涵蓋此影片，或影片運動不可靠。</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2558"/>

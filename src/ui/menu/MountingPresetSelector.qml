@@ -252,6 +252,40 @@ MenuItem {
         }
     }
 
+    Rectangle {
+        id: mountingGuidance;
+        readonly property color accentColorC: styleAccentColor;
+        width: parent.width;
+        implicitHeight: Math.max(mountingGuidanceIcon.implicitHeight, mountingGuidanceText.implicitHeight) + 16 * dpiScale;
+        height: implicitHeight;
+        radius: 6 * dpiScale;
+        color: Qt.rgba(accentColorC.r, accentColorC.g, accentColorC.b, 0.07);
+        border.color: Qt.rgba(accentColorC.r, accentColorC.g, accentColorC.b, 0.28);
+        border.width: Math.max(1, 1 * dpiScale);
+
+        BasicText {
+            id: mountingGuidanceIcon;
+            x: 10 * dpiScale;
+            anchors.verticalCenter: parent.verticalCenter;
+            text: "i";
+            color: styleAccentColor;
+            font.pixelSize: 11 * dpiScale;
+            font.bold: true;
+            leftPadding: 0;
+        }
+        BasicText {
+            id: mountingGuidanceText;
+            x: mountingGuidanceIcon.x + mountingGuidanceIcon.implicitWidth + 7 * dpiScale;
+            width: parent.width - x - 10 * dpiScale;
+            anchors.verticalCenter: parent.verticalCenter;
+            text: qsTr("The device mounting position is relative to the camera, regardless of landscape or portrait orientation.");
+            color: styleTextColor;
+            font.pixelSize: 11 * dpiScale;
+            wrapMode: Text.WordWrap;
+            leftPadding: 0;
+        }
+    }
+
     // ── Mode selector ──
     ComboBox {
         id: modeCombo;

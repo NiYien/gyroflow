@@ -2949,6 +2949,11 @@ Do you want to submit your profile?</source>
         <translation>장착 위치</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="280"/>
+        <source>The device mounting position is relative to the camera, regardless of landscape or portrait orientation.</source>
+        <translation>장치 장착 위치는 카메라를 기준으로 하며 가로 또는 세로 촬영 방향과 관계없습니다.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="61"/>
         <source>Top</source>
         <translation>위</translation>
@@ -3714,11 +3719,6 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
         <translation type="vanished">Ok를 클릭하면 자동 매칭이 실행되어 데이터가 할당됩니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="631"/>
-        <source>Not enough camera motion. Try a video with more movement.</source>
-        <translation>카메라 움직임이 부족합니다. 움직임이 더 많은 영상으로 시도하세요.</translation>
-    </message>
-    <message>
         <source>No match found in this gyro file. Try another gyro file.</source>
         <translation type="vanished">이 자이로 파일에서 일치 항목을 찾지 못했습니다. 다른 자이로 파일을 시도하세요.</translation>
     </message>
@@ -3838,9 +3838,21 @@ This choice applies to all remaining jobs in this batch.</source>
         <translation>딥 매칭 성공(오프셋 %1초). 같은 날짜의 클립은 자동으로 매칭됩니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="638"/>
-        <source>No match found (the gyro file may not cover this video, or the video&apos;s motion is too weak).</source>
-        <translation>일치 항목을 찾지 못했습니다(자이로 기록이 이 비디오를 포함하지 않거나 화면 움직임이 부족합니다).</translation>
+        <location filename="../../src/ui/RenderQueue.qml" line="651"/>
+        <source>No match found. Possible reasons:
+1. Not enough camera motion in the video.
+2. The gyro data does not cover the video&apos;s recording time.
+3. In-camera or lens stabilization was not turned off.
+4. The mounting position is incorrect.
+
+Please check and try again.</source>
+        <translation>일치 항목을 찾지 못했습니다. 가능한 원인:
+1. 영상에 카메라 움직임이 충분하지 않습니다.
+2. 자이로 데이터가 영상 촬영 시간을 포함하지 않습니다.
+3. 카메라 또는 렌즈 손떨림 보정이 꺼져 있지 않습니다.
+4. 장착 위치가 올바르지 않습니다.
+
+확인한 후 다시 시도하세요.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="641"/>
@@ -4237,11 +4249,6 @@ Please provide frame rate: </source>
         <location filename="../../src/ui/RenderQueue.qml" line="513"/>
         <source>timestamp guess</source>
         <translation>타임스탬프 추정</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="637"/>
-        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
-        <translation>어떤 자이로 파일에서도 일치 항목을 찾지 못했습니다. 기록이 이 영상을 포함하지 않거나 영상의 움직임이 불안정할 수 있습니다.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2558"/>

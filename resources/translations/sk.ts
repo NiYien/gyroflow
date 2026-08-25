@@ -2950,6 +2950,11 @@ Chceš nahrať tvoj profil?</translation>
         <translation>Poloha uchytenia</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="280"/>
+        <source>The device mounting position is relative to the camera, regardless of landscape or portrait orientation.</source>
+        <translation>Poloha zariadenia sa určuje vzhľadom na kameru bez ohľadu na orientáciu na šírku alebo na výšku.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="61"/>
         <source>Top</source>
         <translation>Hore</translation>
@@ -3715,11 +3720,6 @@ Nespárované video môžete spárovať ručne: pravým tlačidlom na video → 
         <translation type="vanished">Kliknite na Ok pre spustenie automatického párovania a priradenie dát.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="631"/>
-        <source>Not enough camera motion. Try a video with more movement.</source>
-        <translation>Nedostatočný pohyb kamery. Skúste video s väčším pohybom.</translation>
-    </message>
-    <message>
         <source>No match found in this gyro file. Try another gyro file.</source>
         <translation type="vanished">V tomto súbore gyroskopu sa nenašla zhoda. Skúste iný súbor gyroskopu.</translation>
     </message>
@@ -3839,9 +3839,21 @@ Voľba sa použije na všetky zostávajúce úlohy v tejto dávke.</translation>
         <translation>Hlboké párovanie uspelo (posun %1 s). Klipy z rovnakého dňa budú spárované automaticky.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="638"/>
-        <source>No match found (the gyro file may not cover this video, or the video&apos;s motion is too weak).</source>
-        <translation>Zhoda sa nenašla (súbor gyroskopu možno nepokrýva toto video, alebo je pohyb obrazu príliš slabý).</translation>
+        <location filename="../../src/ui/RenderQueue.qml" line="651"/>
+        <source>No match found. Possible reasons:
+1. Not enough camera motion in the video.
+2. The gyro data does not cover the video&apos;s recording time.
+3. In-camera or lens stabilization was not turned off.
+4. The mounting position is incorrect.
+
+Please check and try again.</source>
+        <translation>Zhoda sa nenašla. Možné príčiny:
+1. Vo videu nie je dostatočný pohyb kamery.
+2. Údaje gyroskopu nepokrývajú čas záznamu videa.
+3. Stabilizácia v tele fotoaparátu alebo objektíve nebola vypnutá.
+4. Poloha uchytenia je nesprávna.
+
+Skontrolujte nastavenie a skúste to znova.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="641"/>
@@ -4238,11 +4250,6 @@ Prosím nastav snímkovú frekvenciu:</translation>
         <location filename="../../src/ui/RenderQueue.qml" line="513"/>
         <source>timestamp guess</source>
         <translation>odhad podľa časovej pečiatky</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="637"/>
-        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
-        <translation>V žiadnom súbore gyroskopu sa nenašla zhoda. Záznamy nemusia pokrývať toto video, alebo je pohyb videa nespoľahlivý.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2558"/>

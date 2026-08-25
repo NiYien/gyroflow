@@ -2950,6 +2950,11 @@ Vil du sende inn profilen din?</translation>
         <translation>Monteringsposisjon</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="280"/>
+        <source>The device mounting position is relative to the camera, regardless of landscape or portrait orientation.</source>
+        <translation>Enhetens monteringsposisjon er i forhold til kameraet, uavhengig av liggende eller stående opptak.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="61"/>
         <source>Top</source>
         <translation>Topp</translation>
@@ -3715,11 +3720,6 @@ Du kan pare manuelt: høyreklikk på videoen → **&quot;Par med gyro&quot;** og
         <translation type="vanished">Klikk Ok for å kjøre automatch og tilordne dataene.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="631"/>
-        <source>Not enough camera motion. Try a video with more movement.</source>
-        <translation>Ikke nok kamerabevegelse. Prøv en video med mer bevegelse.</translation>
-    </message>
-    <message>
         <source>No match found in this gyro file. Try another gyro file.</source>
         <translation type="vanished">Ingen treff funnet i denne gyrofilen. Prøv en annen gyrofil.</translation>
     </message>
@@ -3839,9 +3839,21 @@ Valget gjelder alle gjenværende jobber i denne batchen.</translation>
         <translation>Dyp matching lyktes (forskyvning %1 s). Klipp fra samme dag matches automatisk.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="638"/>
-        <source>No match found (the gyro file may not cover this video, or the video&apos;s motion is too weak).</source>
-        <translation>Ingen match funnet (gyrofilen dekker kanskje ikke denne videoen, eller bildebevegelsen er for svak).</translation>
+        <location filename="../../src/ui/RenderQueue.qml" line="651"/>
+        <source>No match found. Possible reasons:
+1. Not enough camera motion in the video.
+2. The gyro data does not cover the video&apos;s recording time.
+3. In-camera or lens stabilization was not turned off.
+4. The mounting position is incorrect.
+
+Please check and try again.</source>
+        <translation>Ingen treff funnet. Mulige årsaker:
+1. Det er ikke nok kamerabevegelse i videoen.
+2. Gyrodataene dekker ikke tidspunktet da videoen ble tatt opp.
+3. Stabilisering i kameraet eller objektivet ble ikke slått av.
+4. Monteringsposisjonen er feil.
+
+Kontroller dette og prøv igjen.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="641"/>
@@ -4238,11 +4250,6 @@ Vennligst oppgi bildefrekvens:</translation>
         <location filename="../../src/ui/RenderQueue.qml" line="513"/>
         <source>timestamp guess</source>
         <translation>tidsstempel-anslag</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="637"/>
-        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
-        <translation>Ingen match funnet i noen gyrofil. Opptakene dekker kanskje ikke denne videoen, eller videoens bevegelse er upålitelig.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2558"/>

@@ -2949,6 +2949,11 @@ Soll das Profil hoch geladen werden?</translation>
         <translation>Montageposition</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="280"/>
+        <source>The device mounting position is relative to the camera, regardless of landscape or portrait orientation.</source>
+        <translation>Die Montageposition des Geräts bezieht sich auf die Kamera und ist unabhängig von Quer- oder Hochformat.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="61"/>
         <source>Top</source>
         <translation>Oben</translation>
@@ -3714,11 +3719,6 @@ Nicht zugeordnete Videos kannst du manuell zuordnen: Rechtsklick auf das Video �
         <translation type="vanished">Klicken Sie auf Ok, um die automatische Übereinstimmung auszuführen und die Daten zuzuweisen.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="631"/>
-        <source>Not enough camera motion. Try a video with more movement.</source>
-        <translation>Nicht genug Kamerabewegung. Versuchen Sie ein Video mit mehr Bewegung.</translation>
-    </message>
-    <message>
         <source>No match found in this gyro file. Try another gyro file.</source>
         <translation type="vanished">Keine Übereinstimmung in dieser Gyro-Datei gefunden. Versuchen Sie eine andere Gyro-Datei.</translation>
     </message>
@@ -3838,9 +3838,21 @@ Die Auswahl gilt für alle verbleibenden Jobs in diesem Batch.</translation>
         <translation>Tiefenabgleich erfolgreich (Versatz %1 s). Clips desselben Tages werden automatisch zugeordnet.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="638"/>
-        <source>No match found (the gyro file may not cover this video, or the video&apos;s motion is too weak).</source>
-        <translation>Keine Übereinstimmung gefunden (die Gyrodatei deckt dieses Video möglicherweise nicht ab, oder die Bildbewegung ist zu schwach).</translation>
+        <location filename="../../src/ui/RenderQueue.qml" line="651"/>
+        <source>No match found. Possible reasons:
+1. Not enough camera motion in the video.
+2. The gyro data does not cover the video&apos;s recording time.
+3. In-camera or lens stabilization was not turned off.
+4. The mounting position is incorrect.
+
+Please check and try again.</source>
+        <translation>Keine Übereinstimmung gefunden. Mögliche Ursachen:
+1. Das Video enthält nicht genügend Kamerabewegung.
+2. Die Gyrodaten decken den Aufnahmezeitraum des Videos nicht ab.
+3. Die Stabilisierung in Kamera oder Objektiv wurde nicht ausgeschaltet.
+4. Die Montageposition ist falsch.
+
+Bitte prüfen und erneut versuchen.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="641"/>
@@ -4237,11 +4249,6 @@ Bitte Bildrate in FPS angeben: </translation>
         <location filename="../../src/ui/RenderQueue.qml" line="513"/>
         <source>timestamp guess</source>
         <translation>Zeitstempel-Schätzung</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="637"/>
-        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
-        <translation>In keiner Gyro-Datei wurde eine Übereinstimmung gefunden. Die Aufzeichnungen decken dieses Video möglicherweise nicht ab, oder die Bewegung des Videos ist unzuverlässig.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2558"/>

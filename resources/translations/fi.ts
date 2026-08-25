@@ -2949,6 +2949,11 @@ Haluatko lähettää profiilisi tähän?</translation>
         <translation>Kiinnitysasento</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="280"/>
+        <source>The device mounting position is relative to the camera, regardless of landscape or portrait orientation.</source>
+        <translation>Laitteen asennusasento määritetään suhteessa kameraan riippumatta vaaka- tai pystysuuntaisesta kuvauksesta.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="61"/>
         <source>Top</source>
         <translation>Ylhäällä</translation>
@@ -3714,11 +3719,6 @@ Voit yhdistää manuaalisesti: napsauta videota hiiren oikealla → **&quot;Yhdi
         <translation type="vanished">Napsauta Ok suorittaaksesi automaattisen sovituksen ja määrittääksesi tiedot.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="631"/>
-        <source>Not enough camera motion. Try a video with more movement.</source>
-        <translation>Kameran liikettä ei ole tarpeeksi. Kokeile videota, jossa on enemmän liikettä.</translation>
-    </message>
-    <message>
         <source>No match found in this gyro file. Try another gyro file.</source>
         <translation type="vanished">Tästä gyrotiedostosta ei löytynyt osumaa. Kokeile toista gyrotiedostoa.</translation>
     </message>
@@ -3838,9 +3838,21 @@ Valinta koskee kaikkia jäljellä olevia tämän erän töitä.</translation>
         <translation>Syväsovitus onnistui (siirtymä %1 s). Saman päivän klipit sovitetaan automaattisesti.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="638"/>
-        <source>No match found (the gyro file may not cover this video, or the video&apos;s motion is too weak).</source>
-        <translation>Osumaa ei löytynyt (gyrotiedosto ei ehkä kata tätä videota, tai kuvan liike on liian vähäistä).</translation>
+        <location filename="../../src/ui/RenderQueue.qml" line="651"/>
+        <source>No match found. Possible reasons:
+1. Not enough camera motion in the video.
+2. The gyro data does not cover the video&apos;s recording time.
+3. In-camera or lens stabilization was not turned off.
+4. The mounting position is incorrect.
+
+Please check and try again.</source>
+        <translation>Vastaavuutta ei löytynyt. Mahdolliset syyt:
+1. Videossa ei ole riittävästi kameran liikettä.
+2. Gyrodata ei kata videon tallennusajankohtaa.
+3. Kameran tai objektiivin vakautusta ei poistettu käytöstä.
+4. Asennusasento on virheellinen.
+
+Tarkista nämä ja yritä uudelleen.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="641"/>
@@ -4237,11 +4249,6 @@ Anna kuvanopeus:</translation>
         <location filename="../../src/ui/RenderQueue.qml" line="513"/>
         <source>timestamp guess</source>
         <translation>aikaleima-arvio</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="637"/>
-        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
-        <translation>Osumaa ei löytynyt yhdestäkään gyrotiedostosta. Tallenteet eivät ehkä kata tätä videota, tai videon liike on epäluotettava.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2558"/>

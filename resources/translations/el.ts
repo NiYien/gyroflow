@@ -2950,6 +2950,11 @@ Do you want to submit your profile?</source>
         <translation>Θέση τοποθέτησης</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="280"/>
+        <source>The device mounting position is relative to the camera, regardless of landscape or portrait orientation.</source>
+        <translation>Η θέση τοποθέτησης της συσκευής είναι σε σχέση με την κάμερα, ανεξάρτητα από οριζόντιο ή κατακόρυφο προσανατολισμό.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="61"/>
         <source>Top</source>
         <translation>Επάνω</translation>
@@ -3715,11 +3720,6 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
         <translation type="vanished">Κάντε κλικ στο Ok για να εκτελέσετε την αυτόματη αντιστοίχιση και να αντιστοιχίσετε τα δεδομένα.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="631"/>
-        <source>Not enough camera motion. Try a video with more movement.</source>
-        <translation>Ανεπαρκής κίνηση κάμερας. Δοκιμάστε ένα βίντεο με περισσότερη κίνηση.</translation>
-    </message>
-    <message>
         <source>No match found in this gyro file. Try another gyro file.</source>
         <translation type="vanished">Δεν βρέθηκε αντιστοίχιση σε αυτό το αρχείο γυροσκοπίου. Δοκιμάστε άλλο αρχείο γυροσκοπίου.</translation>
     </message>
@@ -3839,9 +3839,21 @@ This choice applies to all remaining jobs in this batch.</source>
         <translation>Η βαθιά αντιστοίχιση πέτυχε (μετατόπιση %1 s). Τα κλιπ της ίδιας ημέρας θα αντιστοιχιστούν αυτόματα.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="638"/>
-        <source>No match found (the gyro file may not cover this video, or the video&apos;s motion is too weak).</source>
-        <translation>Δεν βρέθηκε αντιστοιχία (το αρχείο γυροσκοπίου ίσως δεν καλύπτει αυτό το βίντεο, ή η κίνηση της εικόνας είναι πολύ ασθενής).</translation>
+        <location filename="../../src/ui/RenderQueue.qml" line="651"/>
+        <source>No match found. Possible reasons:
+1. Not enough camera motion in the video.
+2. The gyro data does not cover the video&apos;s recording time.
+3. In-camera or lens stabilization was not turned off.
+4. The mounting position is incorrect.
+
+Please check and try again.</source>
+        <translation>Δεν βρέθηκε αντιστοίχιση. Πιθανές αιτίες:
+1. Δεν υπάρχει αρκετή κίνηση κάμερας στο βίντεο.
+2. Τα δεδομένα γυροσκοπίου δεν καλύπτουν τον χρόνο εγγραφής του βίντεο.
+3. Η σταθεροποίηση στην κάμερα ή στον φακό δεν απενεργοποιήθηκε.
+4. Η θέση τοποθέτησης είναι λανθασμένη.
+
+Ελέγξτε τα παραπάνω και δοκιμάστε ξανά.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="641"/>
@@ -4238,11 +4250,6 @@ Please provide frame rate: </source>
         <location filename="../../src/ui/RenderQueue.qml" line="513"/>
         <source>timestamp guess</source>
         <translation>εκτίμηση από χρονοσήμανση</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="637"/>
-        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
-        <translation>Δεν βρέθηκε αντιστοιχία σε κανένα αρχείο γυροσκοπίου. Οι εγγραφές ενδέχεται να μην καλύπτουν αυτό το βίντεο, ή η κίνηση του βίντεο είναι αναξιόπιστη.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2558"/>

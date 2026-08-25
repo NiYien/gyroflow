@@ -2950,6 +2950,11 @@ Do you want to submit your profile?</source>
         <translation>Положення кріплення</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="280"/>
+        <source>The device mounting position is relative to the camera, regardless of landscape or portrait orientation.</source>
+        <translation>Положення встановлення пристрою задається відносно камери й не залежить від горизонтальної чи вертикальної зйомки.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="61"/>
         <source>Top</source>
         <translation>Зверху</translation>
@@ -3715,11 +3720,6 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
         <translation type="vanished">Натисніть Ok, щоб запустити автоматичне зіставлення та призначити дані.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="631"/>
-        <source>Not enough camera motion. Try a video with more movement.</source>
-        <translation>Недостатньо руху камери. Спробуйте відео з більшим рухом.</translation>
-    </message>
-    <message>
         <source>No match found in this gyro file. Try another gyro file.</source>
         <translation type="vanished">У цьому файлі гіроскопа збігів не знайдено. Спробуйте інший файл гіроскопа.</translation>
     </message>
@@ -3839,9 +3839,21 @@ This choice applies to all remaining jobs in this batch.</source>
         <translation>Глибоке зіставлення виконано (зсув %1 с). Кліпи того ж дня буде зіставлено автоматично.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="638"/>
-        <source>No match found (the gyro file may not cover this video, or the video&apos;s motion is too weak).</source>
-        <translation>Збіг не знайдено (файл гіроскопа може не покривати це відео, або рух у кадрі надто слабкий).</translation>
+        <location filename="../../src/ui/RenderQueue.qml" line="651"/>
+        <source>No match found. Possible reasons:
+1. Not enough camera motion in the video.
+2. The gyro data does not cover the video&apos;s recording time.
+3. In-camera or lens stabilization was not turned off.
+4. The mounting position is incorrect.
+
+Please check and try again.</source>
+        <translation>Збігів не знайдено. Можливі причини:
+1. У відео недостатньо руху камери.
+2. Дані гіроскопа не охоплюють час запису відео.
+3. Стабілізацію в камері або об’єктиві не було вимкнено.
+4. Положення встановлення вказано неправильно.
+
+Перевірте та повторіть спробу.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="641"/>
@@ -4238,11 +4250,6 @@ Please provide frame rate: </source>
         <location filename="../../src/ui/RenderQueue.qml" line="513"/>
         <source>timestamp guess</source>
         <translation>оцінка за міткою часу</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="637"/>
-        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
-        <translation>Збігів не знайдено в жодному файлі гіроскопа. Записи можуть не охоплювати це відео, або рух у відео ненадійний.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2558"/>

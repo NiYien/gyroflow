@@ -26456,6 +26456,71 @@ mod tests {
     }
 
     #[test]
+    fn deep_match_ordinary_failures_share_fixed_troubleshooting_guidance() {
+        let qml = include_str!("../ui/RenderQueue.qml");
+        let branch_start = qml
+            .find("if (error_kind === \"low_motion\" || error_kind === \"not_in_range\")")
+            .expect("ordinary deep-match failures must share one UI branch");
+        let branch_rest = &qml[branch_start..];
+        let branch_end = branch_rest
+            .find("else if (error_kind === \"probe_not_run\")")
+            .expect("probe-not-run handling must remain separate");
+        let branch = &branch_rest[..branch_end];
+        let guidance = "No match found. Possible reasons:\\n1. Not enough camera motion in the video.\\n2. The gyro data does not cover the video's recording time.\\n3. In-camera or lens stabilization was not turned off.\\n4. The mounting position is incorrect.\\n\\nPlease check and try again.";
+
+        assert!(
+            branch.contains(&format!("qsTr(\"{guidance}\")")),
+            "ordinary deep-match failures must show the approved fixed-order troubleshooting list"
+        );
+        assert_eq!(
+            qml.matches(guidance).count(),
+            1,
+            "the troubleshooting message must have one translatable source of truth"
+        );
+        assert!(
+            !qml.contains("Not enough camera motion. Try a video with more movement.")
+                && !qml.contains("No match found (the gyro file may not cover this video")
+                && !qml.contains("No match found in any gyro file."),
+            "legacy verdict-specific no-match messages must not remain user-visible"
+        );
+    }
+
+    #[test]
+    fn mounting_selector_guidance_explains_camera_relative_position_before_control() {
+        let qml = include_str!("../ui/menu/MountingPresetSelector.qml");
+        let hint_idx = qml
+            .find("id: mountingGuidance")
+            .expect("mounting selector must expose an always-visible guidance strip");
+        let combo_idx = qml
+            .find("id: modeCombo")
+            .expect("mounting selector ComboBox exists");
+        let hint = &qml[hint_idx..combo_idx];
+
+        assert!(
+            hint_idx < combo_idx,
+            "camera-relative guidance must appear before the mounting selector"
+        );
+        assert!(
+            hint.contains("qsTr(\"The device mounting position is relative to the camera, regardless of landscape or portrait orientation.\")"),
+            "mounting guidance must explain both the camera-relative frame and landscape/portrait independence"
+        );
+        assert!(
+            hint.contains("wrapMode: Text.WordWrap"),
+            "mounting guidance must wrap instead of clipping on narrow layouts"
+        );
+        assert!(
+            hint.contains("implicitHeight"),
+            "mounting guidance height must follow translated text height"
+        );
+        assert!(
+            hint.contains("readonly property color accentColorC: styleAccentColor;")
+                && hint.contains("Qt.rgba(accentColorC.r")
+                && !hint.contains("Qt.rgba(styleAccentColor.r"),
+            "QString theme values must be coerced to QML color before reading RGB channels"
+        );
+    }
+
+    #[test]
     fn render_queue_qml_displays_batch_sync_status_and_prompt() {
         let qml = include_str!("../ui/RenderQueue.qml");
 

@@ -2950,6 +2950,11 @@ Czy chcesz przesłać swój profil?</translation>
         <translation>Pozycja mocowania</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="280"/>
+        <source>The device mounting position is relative to the camera, regardless of landscape or portrait orientation.</source>
+        <translation>Pozycja montażu urządzenia jest określana względem kamery, niezależnie od nagrywania poziomo lub pionowo.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="61"/>
         <source>Top</source>
         <translation>Góra</translation>
@@ -3715,11 +3720,6 @@ Niesparowany film możesz sparować ręcznie: kliknij prawym przyciskiem na film
         <translation type="vanished">Kliknij Ok, aby uruchomić automatyczne dopasowanie i przypisać dane.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="631"/>
-        <source>Not enough camera motion. Try a video with more movement.</source>
-        <translation>Za mało ruchu kamery. Spróbuj wideo z większą ilością ruchu.</translation>
-    </message>
-    <message>
         <source>No match found in this gyro file. Try another gyro file.</source>
         <translation type="vanished">Nie znaleziono dopasowania w tym pliku żyroskopu. Spróbuj innego pliku żyroskopu.</translation>
     </message>
@@ -3839,9 +3839,21 @@ Wybór zostanie zastosowany do wszystkich pozostałych zadań w tej partii.</tra
         <translation>Głębokie dopasowanie powiodło się (przesunięcie %1 s). Klipy z tego samego dnia zostaną dopasowane automatycznie.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="638"/>
-        <source>No match found (the gyro file may not cover this video, or the video&apos;s motion is too weak).</source>
-        <translation>Nie znaleziono dopasowania (plik żyroskopu może nie obejmować tego wideo lub ruch obrazu jest zbyt słaby).</translation>
+        <location filename="../../src/ui/RenderQueue.qml" line="651"/>
+        <source>No match found. Possible reasons:
+1. Not enough camera motion in the video.
+2. The gyro data does not cover the video&apos;s recording time.
+3. In-camera or lens stabilization was not turned off.
+4. The mounting position is incorrect.
+
+Please check and try again.</source>
+        <translation>Nie znaleziono dopasowania. Możliwe przyczyny:
+1. W filmie jest za mało ruchu kamery.
+2. Dane żyroskopu nie obejmują czasu nagrania filmu.
+3. Stabilizacja w aparacie lub obiektywie nie została wyłączona.
+4. Pozycja montażu jest nieprawidłowa.
+
+Sprawdź te punkty i spróbuj ponownie.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="641"/>
@@ -4238,11 +4250,6 @@ Podaj ilość klatek na sekundę: </translation>
         <location filename="../../src/ui/RenderQueue.qml" line="513"/>
         <source>timestamp guess</source>
         <translation>oszacowanie ze znacznika czasu</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="637"/>
-        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
-        <translation>Nie znaleziono dopasowania w żadnym pliku żyroskopu. Nagrania mogą nie obejmować tego wideo lub ruch w wideo jest niewiarygodny.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2558"/>

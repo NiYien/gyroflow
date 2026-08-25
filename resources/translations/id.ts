@@ -2947,6 +2947,11 @@ Do you want to submit your profile?</source>
         <translation>Posisi pemasangan</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="280"/>
+        <source>The device mounting position is relative to the camera, regardless of landscape or portrait orientation.</source>
+        <translation>Posisi pemasangan perangkat mengacu pada kamera, tidak bergantung pada orientasi lanskap atau potret.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="61"/>
         <source>Top</source>
         <translation>Atas</translation>
@@ -3712,11 +3717,6 @@ Untuk video yang belum dipasangkan, Anda dapat memasangkannya secara manual: kli
         <translation type="vanished">Klik Ok untuk menjalankan pencocokan otomatis dan menetapkan data.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="631"/>
-        <source>Not enough camera motion. Try a video with more movement.</source>
-        <translation>Gerakan kamera tidak cukup. Coba video dengan lebih banyak gerakan.</translation>
-    </message>
-    <message>
         <source>No match found in this gyro file. Try another gyro file.</source>
         <translation type="vanished">Tidak ditemukan kecocokan di file giroskop ini. Coba file giroskop lain.</translation>
     </message>
@@ -3835,9 +3835,21 @@ Pilihan ini berlaku untuk semua pekerjaan tersisa dalam batch ini.</translation>
         <translation>Pencocokan mendalam berhasil (offset %1 s). Klip dari hari yang sama akan dicocokkan secara otomatis.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="638"/>
-        <source>No match found (the gyro file may not cover this video, or the video&apos;s motion is too weak).</source>
-        <translation>Tidak ditemukan kecocokan (file giroskop mungkin tidak mencakup video ini, atau gerakan gambar terlalu lemah).</translation>
+        <location filename="../../src/ui/RenderQueue.qml" line="651"/>
+        <source>No match found. Possible reasons:
+1. Not enough camera motion in the video.
+2. The gyro data does not cover the video&apos;s recording time.
+3. In-camera or lens stabilization was not turned off.
+4. The mounting position is incorrect.
+
+Please check and try again.</source>
+        <translation>Kecocokan tidak ditemukan. Kemungkinan penyebab:
+1. Gerakan kamera dalam video tidak cukup.
+2. Data giroskop tidak mencakup waktu perekaman video.
+3. Stabilisasi pada kamera atau lensa belum dimatikan.
+4. Posisi pemasangan tidak benar.
+
+Periksa lalu coba lagi.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="641"/>
@@ -4234,11 +4246,6 @@ Silakan masukan frame rate: </translation>
         <location filename="../../src/ui/RenderQueue.qml" line="513"/>
         <source>timestamp guess</source>
         <translation>perkiraan stempel waktu</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="637"/>
-        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
-        <translation>Tidak ditemukan kecocokan di file giroskop mana pun. Rekaman mungkin tidak mencakup video ini, atau gerakan video tidak dapat diandalkan.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2558"/>
