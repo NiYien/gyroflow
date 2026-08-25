@@ -10725,30 +10725,51 @@ impl RenderQueue {
         }
     }
 
+    fn prepare_batch_match_job_ids(&mut self) -> Vec<u32> {
+        // [queue-render-skip] Re-match recoverable skips, but keep fixed
+        // in-camera-stabilization skips out of both the reset and this match run.
+        // External motion data cannot compensate a stabilized image when the
+        // video carries no IBIS/OIS displacement stream.
+        let (job_ids, skipped_ids, stabilization_blocked_ids) = {
+            let q = self.queue.borrow();
+            let mut job_ids = Vec::with_capacity(q.row_count() as usize);
+            let mut skipped_ids = Vec::new();
+            let mut stabilization_blocked_ids = Vec::new();
+            for item in q.iter() {
+                if item.status == JobStatus::Skipped {
+                    if item.skip_reason.to_string() == "image_stabilization" {
+                        stabilization_blocked_ids.push(item.job_id);
+                        continue;
+                    }
+                    skipped_ids.push(item.job_id);
+                }
+                job_ids.push(item.job_id);
+            }
+            (job_ids, skipped_ids, stabilization_blocked_ids)
+        };
+        for job_id in skipped_ids {
+            update_model!(self, job_id, itm {
+                itm.skip_reason = QString::default();
+                itm.status = JobStatus::Queued;
+            });
+        }
+        if !stabilization_blocked_ids.is_empty() {
+            ::log::info!(
+                "[queue-render-skip] batch match excluded fixed image_stabilization job(s): {:?}",
+                stabilization_blocked_ids
+            );
+        }
+        job_ids
+    }
+
     // T3: Collect metadata and run batch matching algorithm.
     fn batch_match_gyro(&mut self) {
         let t_total = std::time::Instant::now();
         self.stabilizer.clear_lens_group_status();
 
-        // [queue-render-skip] 重新 match 前，清除所有已有的 Skipped 标记
-        {
-            let q = self.queue.borrow();
-            let skipped_ids: Vec<u32> = q
-                .iter()
-                .filter(|v| v.status == JobStatus::Skipped)
-                .map(|v| v.job_id)
-                .collect();
-            drop(q);
-            for job_id in skipped_ids {
-                update_model!(self, job_id, itm {
-                    itm.skip_reason = QString::default();
-                    itm.status = JobStatus::Queued;
-                });
-            }
-        }
+        let job_ids = self.prepare_batch_match_job_ids();
 
         let t0 = std::time::Instant::now();
-        let job_ids = self.get_ordered_job_ids();
         ::log::info!(
             "[batch_match T16] ordered job_ids at match start: {:?}",
             job_ids
@@ -22358,6 +22379,24 @@ mod tests {
                 "intent={intent}"
             );
         }
+    }
+
+    #[test]
+    fn batch_match_preserves_and_excludes_image_stabilization_skips() {
+        let mut queue = recovery_queue(&[
+            (10, JobStatus::Queued, "", "", false),
+            (1, JobStatus::Skipped, "image_stabilization", "", false),
+            (2, JobStatus::Skipped, "no_gyro", "", false),
+        ]);
+
+        let prepared_job_ids = queue.prepare_batch_match_job_ids();
+
+        assert_eq!(
+            row_status(&queue, 1),
+            (JobStatus::Skipped, "image_stabilization".to_string())
+        );
+        assert_eq!(row_status(&queue, 2), (JobStatus::Queued, String::new()));
+        assert_eq!(prepared_job_ids, vec![10, 2]);
     }
 
     #[test]
