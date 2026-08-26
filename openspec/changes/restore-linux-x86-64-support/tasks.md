@@ -1,38 +1,38 @@
 ## 1. Plugin producer contract (`gyroflow-plugins`)
 
-- [ ] 1.1 Add a failing static/package test proving the Linux job builds OpenFX but does not invoke or upload Adobe
-- [ ] 1.2 Add a failing ZIP-contract test for the Linux x86_64 binary, three Resolve sidecars, license metadata, and explicit version file
-- [ ] 1.3 Update the root Justfile so Linux deploy runs OpenFX and existing frei0r only while Windows/macOS behavior remains unchanged
-- [ ] 1.4 Add the explicit Linux version file to `GyroflowNiyien-OpenFX-linux.zip` and make the packaging check fail when any required member is missing
-- [ ] 1.5 Update the plugin release workflow to upload the Linux OpenFX artifact without a Linux Adobe artifact
+- [x] 1.1 Add a failing static/package test proving the Linux job builds OpenFX but does not invoke or upload Adobe
+- [x] 1.2 Add a failing ZIP-contract test for the Linux x86_64 binary, three Resolve sidecars, license metadata, and explicit version file
+- [x] 1.3 Update the root Justfile so Linux deploy runs OpenFX and existing frei0r only while Windows/macOS behavior remains unchanged
+- [x] 1.4 Add the explicit Linux version file to `GyroflowNiyien-OpenFX-linux.zip` and make the packaging check fail when any required member is missing
+- [x] 1.5 Update the plugin release workflow to upload the Linux OpenFX artifact without a Linux Adobe artifact
 - [ ] 1.6 Run the focused plugin contract tests and a Linux container deploy; inspect the produced ZIP and dynamic dependencies
 
 ## 2. Linux application build contract (`gyroflow`)
 
-- [ ] 2.1 Add failing release-automation/static tests for Linux x86_64-only architecture handling and the complete Linux Just recipe surface
-- [ ] 2.2 Make `_scripts/linux.just` reject non-x86_64 overrides before dependency installation or compilation
-- [ ] 2.3 Implement Linux `build`, `build-debug`, `test-core`, `clippy`, `profile`, and `bundle` recipes with root-Justfile-compatible parameter forwarding
-- [ ] 2.4 Add failing package-producer tests for both exact Linux filenames, non-empty output, required archive members, and executable payload
-- [ ] 2.5 Add explicit dependency/tool probes and final AppImage/tar validation to the Linux install/deploy recipes
-- [ ] 2.6 Run Linux recipe listing/static checks and the focused producer tests
+- [x] 2.1 Add failing release-automation/static tests for Linux x86_64-only architecture handling and the complete Linux Just recipe surface
+- [x] 2.2 Make `_scripts/linux.just` reject non-x86_64 overrides before dependency installation or compilation
+- [x] 2.3 Implement Linux `build`, `build-debug`, `test-core`, `clippy`, `profile`, and `bundle` recipes with root-Justfile-compatible parameter forwarding
+- [x] 2.4 Add failing package-producer tests for both exact Linux filenames, non-empty output, required archive members, and executable payload
+- [x] 2.5 Add explicit dependency/tool probes and final AppImage/tar validation to the Linux install/deploy recipes
+- [x] 2.6 Run Linux recipe listing/static checks and the focused producer tests
 
 ## 3. Application CI and release artifacts (`gyroflow`)
 
-- [ ] 3.1 Add failing workflow tests for the active Linux matrix row, two tag uploads, two nightly uploads, and two GitHub Release files
-- [ ] 3.2 Restore the Linux x86_64 matrix job and retain the `just deploy docker` build entry
-- [ ] 3.3 Add raw tag uploads for `gyroflow-niyien-linux64.AppImage` and `gyroflow-niyien-linux64.tar.gz`
-- [ ] 3.4 Add independent nightly artifacts `gyroflow-niyien-linux-appimage` and `gyroflow-niyien-linux-tar`
-- [ ] 3.5 Attach both raw Linux files to GitHub Release and make missing files fail visibly
-- [ ] 3.6 Add Linux artifact smoke steps for tar/AppImage extraction, packaged `--version`, and unresolved dynamic libraries
-- [ ] 3.7 Run the focused workflow contract tests
+- [x] 3.1 Add failing workflow tests for the active Linux matrix row, two tag uploads, two nightly uploads, and two GitHub Release files
+- [x] 3.2 Restore the Linux x86_64 matrix job and retain the `just deploy docker` build entry
+- [x] 3.3 Add raw tag uploads for `gyroflow-niyien-linux64.AppImage` and `gyroflow-niyien-linux64.tar.gz`
+- [x] 3.4 Add independent nightly artifacts `gyroflow-niyien-linux-appimage` and `gyroflow-niyien-linux-tar`
+- [x] 3.5 Attach both raw Linux files to GitHub Release and make missing files fail visibly
+- [x] 3.6 Add Linux artifact smoke steps for tar/AppImage extraction, packaged `--version`, and unresolved dynamic libraries
+- [x] 3.7 Run the focused workflow contract tests
 
 ## 4. Publisher and release-center Linux asset model (`gyroflow`)
 
-- [ ] 4.1 Add failing Python tests that require both Linux application assets when the matrix is active and require neither when Linux is paused
-- [ ] 4.2 Add failing artifact-source tests mapping the two Linux short artifact names to their exact raw files with cache reuse
-- [ ] 4.3 Extend app asset, platform, role, artifact, and remote-name maps with the Linux tar and independent nightly artifacts
-- [ ] 4.4 Add failing metadata tests for Linux `package_*` AppImage fields and `archive_*` tar fields
-- [ ] 4.5 Emit both Linux metadata sets, artifact URLs, 123 uploads, pre-warms, and finalize-summary values
+- [x] 4.1 Add failing Python tests that require both Linux application assets when the matrix is active and require neither when Linux is paused
+- [x] 4.2 Add failing artifact-source tests mapping the two Linux short artifact names to their exact raw files with cache reuse
+- [x] 4.3 Extend app asset, platform, role, artifact, and remote-name maps with the Linux tar and independent nightly artifacts
+- [x] 4.4 Add failing metadata tests for Linux `package_*` AppImage fields and `archive_*` tar fields
+- [x] 4.5 Emit both Linux metadata sets, artifact URLs, 123 uploads, pre-warms, and finalize-summary values
 - [ ] 4.6 Extend release-center policy normalization, inventory, version details, and manifest preview to preserve/display `archive_*`
 - [ ] 4.7 Run publisher, release-center backend, and release-automation Rust wrapper tests
 

@@ -1,19 +1,32 @@
 import 'common.just'
 
 AptGetExists := `which apt-get > /dev/null && echo true || echo false`
-QtLinuxArch      := if Arch == "aarch64" { "linux_arm64" } else { "linux" }
-FFmpegLinuxArch  := if Arch == "aarch64" { "arm64"       } else { "amd64" }
-ArchName         := if Arch == "aarch64" { "arm64"       } else { "x86_64" }
-PackageSuffix    := if Arch == "aarch64" { "linux-arm64" } else { "linux64" }
+QtLinuxArch      := "linux"
+FFmpegLinuxArch  := "amd64"
+ArchName         := "x86_64"
+PackageSuffix    := "linux64"
+
+[no-cd]
+assert-linux-x86-64:
+    #!/bin/bash
+    set -e
+    if [ "{{Arch}}" != "x86_64" ]; then
+        echo "Unsupported Linux architecture '{{Arch}}'; only x86_64 is supported." >&2
+        exit 2
+    fi
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Dependencies ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 [no-cd]
-install-deps:
+install-deps: assert-linux-x86-64
     #!/bin/bash
     set -e
+
+    for tool in bash cargo curl git python3 tar unzip zip; do
+        command -v "$tool" >/dev/null || { echo "Required Linux build tool is missing: $tool" >&2; exit 1; }
+    done
 
     echo "Installing dependencies $LIBCLANG_PATH {{AptGetExists}}"
     if [ "{{AptGetExists}}" == "true" ]; then
@@ -154,27 +167,53 @@ install-deps:
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 [no-cd]
-check *param:
+build *param: assert-linux-x86-64
+    cargo build --release {{param}}
+
+[no-cd]
+build-debug *param: assert-linux-x86-64
+    cargo build {{param}}
+
+[no-cd]
+check *param: assert-linux-x86-64
     cargo check {{param}}
 
 [no-cd]
-run *param:
+run *param: assert-linux-x86-64
     cargo run --release {{param}}
 
 [no-cd]
-test *param:
+test *param: assert-linux-x86-64
     cargo test -- {{param}}
 
 [no-cd]
-debug *param:
+test-core *param: assert-linux-x86-64
+    cargo test -p gyroflow-core --lib {{param}}
+
+[no-cd]
+clippy *param: assert-linux-x86-64
+    cargo clippy {{param}}
+
+[no-cd]
+debug *param: assert-linux-x86-64
     cargo run {{param}}
+
+[no-cd]
+profile *param: assert-linux-x86-64
+    cargo run --profile profile -- {{param}}
+
+[no-cd]
+bundle *param: assert-linux-x86-64
+    python3 "{{ProjectDir}}/_scripts/verify_linux_app_packages.py" \
+        "{{ProjectDir}}/_deployment/_binaries/{{ArtifactPrefix}}-linux64.AppImage" \
+        "{{ProjectDir}}/_deployment/_binaries/{{ArtifactPrefix}}-linux64.tar.gz" {{param}}
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Deployment ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 [no-cd]
-deploy *param:
+deploy *param: assert-linux-x86-64
     #!/bin/bash
     set -e
     mkdir -p "{{ProjectDir}}/target/deploy" || true
@@ -200,11 +239,7 @@ deploy *param:
             curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal
             source \$HOME/.cargo/env
             cargo install --force just
-            if [ "$FORCE_ARCH" == "aarch64" ]; then
-                export FORCE_ARCH=aarch64
-                rustup target add aarch64-unknown-linux-gnu
-                apt install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-            fi
+            export FORCE_ARCH=x86_64
             cd $PROJECT_DIR
             just install-deps
             just deploy
@@ -217,6 +252,18 @@ deploy *param:
     fi
 
     cargo build --profile deploy
+
+    for required in \
+        "$QT_DIR/lib/libQt6Core.so.6" \
+        "$QT_DIR/plugins/platforms/libqxcb.so" \
+        "$FFMPEG_DIR/lib/{{FFmpegLinuxArch}}/libavcodec.so.62" \
+        "$CARGO_TARGET/gyroflow" \
+        "$CARGO_TARGET/libmdk.so.0"; do
+        if [ ! -s "$required" ]; then
+            echo "Required Linux packaging input is missing or empty: $required" >&2
+            exit 1
+        fi
+    done
 
     rm -rf "$PROJECT_DIR/_deployment/_binaries/{{PackageSuffix}}"
 
@@ -361,20 +408,21 @@ deploy *param:
     # Bundle BRAW and RED SDK so users don't hit a runtime download.
     # Mirrors macos/windows deploy; SDK shared objects go into $TARGET/lib/
     # which matches Rust-side `external_sdk::SDK_PATH` on Linux (exe_dir/lib/).
-    if [ "{{Arch}}" == "x86_64" ]; then
-        : "${SDK_BASE:=https://www.niyien.com/api/sdk}"
-        curl -L "$SDK_BASE/libshaderc_shared.so" -o "$TARGET/lib/libshaderc_shared.so"
-        if [ ! -f "$TARGET/lib/REDR3D-x64.so" ]; then
-            curl -fSL "$SDK_BASE/RED_SDK_Linux_9.2.0.tar.gz" -o /tmp/red_sdk.tar.gz
-            tar -xzf /tmp/red_sdk.tar.gz -C "$TARGET/lib/"
-            rm -f /tmp/red_sdk.tar.gz
-        fi
-        if [ ! -f "$TARGET/lib/libBlackmagicRawAPI.so" ]; then
-            curl -fSL "$SDK_BASE/Blackmagic_RAW_SDK_Linux_5.0.0.tar.gz" -o /tmp/braw_sdk.tar.gz
-            tar -xzf /tmp/braw_sdk.tar.gz -C "$TARGET/lib/"
-            rm -f /tmp/braw_sdk.tar.gz
-        fi
+    : "${SDK_BASE:=https://www.niyien.com/api/sdk}"
+    curl -fSL "$SDK_BASE/libshaderc_shared.so" -o "$TARGET/lib/libshaderc_shared.so"
+    if [ ! -s "$TARGET/lib/REDR3D-x64.so" ]; then
+        curl -fSL "$SDK_BASE/RED_SDK_Linux_9.2.0.tar.gz" -o /tmp/red_sdk.tar.gz
+        tar -xzf /tmp/red_sdk.tar.gz -C "$TARGET/lib/"
+        rm -f /tmp/red_sdk.tar.gz
     fi
+    if [ ! -s "$TARGET/lib/libBlackmagicRawAPI.so" ]; then
+        curl -fSL "$SDK_BASE/Blackmagic_RAW_SDK_Linux_5.0.0.tar.gz" -o /tmp/braw_sdk.tar.gz
+        tar -xzf /tmp/braw_sdk.tar.gz -C "$TARGET/lib/"
+        rm -f /tmp/braw_sdk.tar.gz
+    fi
+    for sdk_file in libshaderc_shared.so REDR3D-x64.so libBlackmagicRawAPI.so; do
+        test -s "$TARGET/lib/$sdk_file" || { echo "Required Linux SDK payload is missing or empty: $TARGET/lib/$sdk_file" >&2; exit 1; }
+    done
 
     cp -f "$CARGO_TARGET/gyroflow"                         "$TARGET/gyroflow-niyien"
     strip "$TARGET/gyroflow-niyien"
@@ -406,15 +454,9 @@ deploy *param:
     fi
 
     cp -rf $TARGET/* $APP_DIR/
-    if [ "{{Arch}}" == "aarch64" ]; then
-        cp $PROJECT_DIR/_deployment/linux/AppImageBuilder.yml AppImageBuilder-arm64.yml
-        sed -i 's|x86_64|aarch64|' AppImageBuilder-arm64.yml
-        sed -i 's|amd64|aarch64|' AppImageBuilder-arm64.yml
-        appimage-builder --recipe AppImageBuilder-arm64.yml
-        rm AppImageBuilder-arm64.yml
-    else
-        appimage-builder --recipe $PROJECT_DIR/_deployment/linux/AppImageBuilder.yml
-    fi
+    command -v appimage-builder >/dev/null || { echo "Required Linux packaging tool is missing: appimage-builder" >&2; exit 1; }
+    command -v appimagetool >/dev/null || { echo "Required Linux packaging tool is missing: appimagetool" >&2; exit 1; }
+    appimage-builder --recipe $PROJECT_DIR/_deployment/linux/AppImageBuilder.yml
     chmod +x Gyroflow-${APP_VERSION}-{{ArchName}}.AppImage
 
     # Try to fix AppImage permissions
@@ -428,6 +470,10 @@ deploy *param:
 
     mv Gyroflow-{{ArchName}}.AppImage {{ArtifactPrefix}}-{{PackageSuffix}}.AppImage
     # ---- Build AppImage ----
+
+    python3 "$PROJECT_DIR/_scripts/verify_linux_app_packages.py" \
+        "$TARGET/../{{ArtifactPrefix}}-{{PackageSuffix}}.AppImage" \
+        "$TARGET/../{{ArtifactPrefix}}-{{PackageSuffix}}.tar.gz"
 
     rm -rf $APP_DIR
     rm -rf $TARGET
