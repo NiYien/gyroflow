@@ -1492,18 +1492,18 @@ impl GyroSource {
         // render queue's per-job metadata snapshot goes through thin(), so a
         // consumer reading the splines later would see an empty clip.
         //
-        // Only Sony records compensation streams, so every other brand passes
-        // zeroed counts — the predicate short-circuits on `is_sony` and never
-        // touches camera_stab_data for them.
+        // Canon's raw signal is retained but ignored because it produces false
+        // positives. Only Sony records compensation streams; remaining brands
+        // pass zeroed counts and never read camera_stab_data.
         {
-            let is_sony = input.camera_type() == "Sony";
+            let camera_type = input.camera_type();
             let stabilizer_on = md
                 .additional_data
                 .get("image_stabilizer")
                 .and_then(|v| v.as_bool());
             let verdict = file_metadata::classify_in_camera_stabilization(
                 stabilizer_on,
-                is_sony,
+                &camera_type,
                 is_temp.ibis_x.len(),
                 is_temp.ois_x.len(),
                 ois_sentinel,
@@ -1513,7 +1513,7 @@ impl GyroSource {
                     target: "gyro",
                     "[stabilization_gate] blocked: verdict={} camera_type={} stabilizer_on={:?} ibis_points={} ois_points={} ois_sentinel={}",
                     verdict.as_str(),
-                    input.camera_type(),
+                    camera_type,
                     stabilizer_on,
                     is_temp.ibis_x.len(),
                     is_temp.ois_x.len(),
