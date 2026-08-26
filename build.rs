@@ -268,7 +268,11 @@ fn main() {
 
     if target_os == "ios" {
         println!("cargo:rerun-if-changed=_deployment/ios/qml_plugins.cpp");
+        println!("cargo:rerun-if-changed=_deployment/ios/ios_video_picker.h");
+        println!("cargo:rerun-if-changed=_deployment/ios/ios_video_picker.mm");
+        config.include("_deployment/ios");
         config.file("_deployment/ios/qml_plugins.cpp");
+        config.file("_deployment/ios/ios_video_picker.mm");
 
         println!("cargo:rustc-link-arg=-Wl,-e,_qt_main_wrapper");
         println!("cargo:rustc-link-arg=-fapple-link-rtlib");
@@ -296,6 +300,7 @@ fn main() {
             "UniformTypeIdentifiers",
             "VideoToolbox",
             "Photos",
+            "PhotosUI",
         ];
 
         println!("cargo:rustc-link-lib=z");
