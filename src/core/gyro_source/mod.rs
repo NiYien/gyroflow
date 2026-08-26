@@ -1732,6 +1732,23 @@ impl GyroSource {
             self.integrate();
         }
     }
+
+    /// Return the transforms that are effective for the currently loaded motion
+    /// source while leaving the configured mounting angles untouched for project
+    /// serialization and UI readback.
+    fn effective_imu_transforms(&self, keep_video_gyro: bool) -> IMUTransforms {
+        let mut transforms = self.imu_transforms.clone();
+        if keep_video_gyro {
+            // Trusted camera-built-in motion is already expressed in the camera
+            // frame. The configured mounting rotation describes the external
+            // NiYien device, so only that matrix is suppressed. Parser-provided
+            // orientation, independent accelerometer rotation, bias and filters
+            // remain effective.
+            transforms.imu_rotation = None;
+        }
+        transforms
+    }
+
     pub fn integrate(&mut self) {
         // Entry guard: degenerate state from a concurrent project load (e.g.
         // duration_ms reset to 0 by init_from_params) MUST NOT trigger
@@ -1806,7 +1823,9 @@ impl GyroSource {
                         log::error!("Filter error {:?}", e);
                     }
                 }
-                if let Some(rot) = self.imu_transforms.imu_rotation {
+                let effective_transforms =
+                    self.effective_imu_transforms(file_metadata.keep_video_gyro);
+                if let Some(rot) = effective_transforms.imu_rotation {
                     for (_ts, q) in &mut self.quaternions {
                         *q = rot * *q;
                     }
@@ -2182,40 +2201,41 @@ impl GyroSource {
 
     pub fn apply_transforms(&mut self) {
         let file_metadata = self.file_metadata.read();
+        let effective_transforms = self.effective_imu_transforms(file_metadata.keep_video_gyro);
 
-        if self.imu_transforms.has_any() {
+        if effective_transforms.has_any() {
             self.raw_imu = file_metadata.raw_imu.clone();
             for x in self.raw_imu.iter_mut() {
                 if let Some(g) = x.gyro.as_mut() {
-                    self.imu_transforms.transform(g, false);
+                    effective_transforms.transform(g, false);
                 }
                 if let Some(a) = x.accl.as_mut() {
-                    self.imu_transforms.transform(a, true);
+                    effective_transforms.transform(a, true);
                 }
                 if let Some(m) = x.magn.as_mut() {
-                    self.imu_transforms.transform(m, false);
+                    effective_transforms.transform(m, false);
                 }
             }
-            if self.imu_transforms.imu_lpf > 0.0
+            if effective_transforms.imu_lpf > 0.0
                 && !file_metadata.raw_imu.is_empty()
                 && self.duration_ms > 0.0
             {
                 let sample_rate = file_metadata.raw_imu.len() as f64 / (self.duration_ms / 1000.0);
                 if let Err(e) = super::filtering::Lowpass::filter_gyro_forward_backward(
-                    self.imu_transforms.imu_lpf,
+                    effective_transforms.imu_lpf,
                     sample_rate,
                     &mut self.raw_imu,
                 ) {
                     log::error!("Filter error {:?}", e);
                 }
             }
-            if self.imu_transforms.imu_mf > 0
+            if effective_transforms.imu_mf > 0
                 && !file_metadata.raw_imu.is_empty()
                 && self.duration_ms > 0.0
             {
                 let sample_rate = file_metadata.raw_imu.len() as f64 / (self.duration_ms / 1000.0);
                 super::filtering::Median::filter_gyro_forward_backward(
-                    self.imu_transforms.imu_mf,
+                    effective_transforms.imu_mf,
                     sample_rate,
                     &mut self.raw_imu,
                 );
@@ -2596,6 +2616,151 @@ mod tests {
             accl: Some(accl),
             magn: None,
         }
+    }
+
+    fn motion_sample(
+        timestamp_ms: f64,
+        gyro: [f64; 3],
+        accl: Option<[f64; 3]>,
+        magn: Option<[f64; 3]>,
+    ) -> TimeIMU {
+        TimeIMU {
+            timestamp_ms,
+            gyro: Some(gyro),
+            accl,
+            magn,
+        }
+    }
+
+    fn metadata_with_motion(keep_video_gyro: bool, samples: Vec<TimeIMU>) -> FileMetadata {
+        FileMetadata {
+            duration_ms: 1000.0,
+            raw_imu: samples,
+            keep_video_gyro,
+            ..Default::default()
+        }
+    }
+
+    fn source_with_motion(metadata: FileMetadata) -> GyroSource {
+        let mut source = GyroSource::new();
+        source.duration_ms = 1000.0;
+        source.integration_method = 1;
+        source.file_metadata = metadata.into();
+        source
+    }
+
+    fn assert_vector_close(actual: [f64; 3], expected: [f64; 3]) {
+        for axis in 0..3 {
+            assert!(
+                (actual[axis] - expected[axis]).abs() < 1e-9,
+                "axis {axis}: actual={actual:?} expected={expected:?}"
+            );
+        }
+    }
+
+    fn first_processed_sample(source: &GyroSource) -> TimeIMU {
+        let metadata = source.file_metadata.read();
+        source.raw_imu(&metadata)[0].clone()
+    }
+
+    #[test]
+    fn mounting_source_arbitration_rotates_external_but_not_builtin_raw_motion() {
+        let samples = vec![
+            motion_sample(0.0, [1.0, 0.0, 0.0], None, Some([1.0, 0.0, 0.0])),
+            motion_sample(10.0, [1.0, 0.0, 0.0], None, Some([1.0, 0.0, 0.0])),
+        ];
+
+        let mut external = source_with_motion(metadata_with_motion(false, samples.clone()));
+        external.imu_transforms.set_imu_rotation(0.0, -90.0, 0.0);
+        external.apply_transforms();
+        let external_sample = first_processed_sample(&external);
+        assert_vector_close(external_sample.gyro.unwrap(), [0.0, -1.0, 0.0]);
+        assert_vector_close(external_sample.magn.unwrap(), [0.0, -1.0, 0.0]);
+
+        let mut builtin = source_with_motion(metadata_with_motion(true, samples));
+        builtin.imu_transforms.set_imu_rotation(0.0, -90.0, 0.0);
+        builtin.apply_transforms();
+        let builtin_sample = first_processed_sample(&builtin);
+        assert_vector_close(builtin_sample.gyro.unwrap(), [1.0, 0.0, 0.0]);
+        assert_vector_close(builtin_sample.magn.unwrap(), [1.0, 0.0, 0.0]);
+        assert_eq!(
+            builtin.imu_transforms.imu_rotation_angles,
+            Some([0.0, -90.0, 0.0])
+        );
+    }
+
+    #[test]
+    fn mounting_source_arbitration_tracks_builtin_external_builtin_transition() {
+        let sample = || {
+            vec![
+                motion_sample(0.0, [1.0, 0.0, 0.0], None, None),
+                motion_sample(10.0, [1.0, 0.0, 0.0], None, None),
+            ]
+        };
+        let builtin_metadata = metadata_with_motion(true, sample());
+        let external_metadata = metadata_with_motion(false, sample());
+        let mut source = source_with_motion(builtin_metadata.clone());
+        source.imu_transforms.set_imu_rotation(0.0, -90.0, 0.0);
+
+        source.apply_transforms();
+        assert_vector_close(first_processed_sample(&source).gyro.unwrap(), [1.0, 0.0, 0.0]);
+
+        source.file_metadata = external_metadata.into();
+        source.apply_transforms();
+        assert_vector_close(first_processed_sample(&source).gyro.unwrap(), [0.0, -1.0, 0.0]);
+
+        source.file_metadata = builtin_metadata.into();
+        source.apply_transforms();
+        assert_vector_close(first_processed_sample(&source).gyro.unwrap(), [1.0, 0.0, 0.0]);
+        assert_eq!(
+            source.imu_transforms.imu_rotation_angles,
+            Some([0.0, -90.0, 0.0])
+        );
+    }
+
+    #[test]
+    fn mounting_source_arbitration_ignores_builtin_quaternion_rotation() {
+        let mut source = GyroSource::new();
+        source.duration_ms = 1000.0;
+        source.integration_method = 0;
+        source.file_metadata = FileMetadata {
+            duration_ms: 1000.0,
+            quaternions: BTreeMap::from([
+                (0, UnitQuaternion::identity()),
+                (1_000_000, UnitQuaternion::identity()),
+            ]),
+            keep_video_gyro: true,
+            ..Default::default()
+        }
+        .into();
+        source.imu_transforms.set_imu_rotation(0.0, -90.0, 0.0);
+
+        source.integrate();
+
+        for quat in source.quaternions.values() {
+            assert!(quat.angle() < 1e-12, "built-in quaternion was rotated: {quat:?}");
+        }
+        assert_eq!(
+            source.imu_transforms.imu_rotation_angles,
+            Some([0.0, -90.0, 0.0])
+        );
+    }
+
+    #[test]
+    fn mounting_source_arbitration_preserves_orientation_and_acc_rotation() {
+        let samples = vec![
+            motion_sample(0.0, [1.0, 2.0, 3.0], Some([1.0, 0.0, 0.0]), None),
+            motion_sample(10.0, [1.0, 2.0, 3.0], Some([1.0, 0.0, 0.0]), None),
+        ];
+        let mut source = source_with_motion(metadata_with_motion(true, samples));
+        source.imu_transforms.imu_orientation = Some("YZX".to_owned());
+        source.imu_transforms.set_imu_rotation(0.0, -90.0, 0.0);
+        source.imu_transforms.set_acc_rotation(0.0, 0.0, 180.0);
+
+        source.apply_transforms();
+
+        assert_vector_close(source.raw_imu[0].gyro.unwrap(), [2.0, 3.0, 1.0]);
+        assert_vector_close(source.raw_imu[0].accl.unwrap(), [0.0, 0.0, -1.0]);
     }
 
     #[test]

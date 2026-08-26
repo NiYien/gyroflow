@@ -7784,6 +7784,23 @@ mod tests {
         assert_eq!(gyro.imu_transforms.imu_rotation_angles, None);
     }
 
+    #[test]
+    fn export_builtin_motion_preserves_configured_mounting_rotation() {
+        let manager = StabilizationManager::default();
+        {
+            let mut gyro = manager.gyro.write();
+            gyro.imu_transforms.set_imu_rotation(0.0, -90.0, 0.0);
+            gyro.file_metadata.write().keep_video_gyro = true;
+        }
+
+        let project = export_project_json(&manager);
+
+        assert_eq!(
+            project["gyro_source"]["rotation"],
+            serde_json::json!([0.0, -90.0, 0.0])
+        );
+    }
+
     // mounting-rotation-propagation: reloading gyro data must keep the user's
     // mounting rotation, while a direct clear() still resets everything.
     #[test]
