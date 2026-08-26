@@ -901,6 +901,16 @@ Due to limitations of the system video encoders, rendering in the background is 
         <translation>DMG 열고 종료</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2705"/>
+        <source>The AppImage is ready. Open its folder, then launch it when you are ready. Gyroflow will stay open.</source>
+        <translation>AppImage가 준비되었습니다. 폴더를 연 다음 준비가 되면 실행하세요. Gyroflow는 계속 열려 있습니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2712"/>
+        <source>Open containing folder</source>
+        <translation>포함된 폴더 열기</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2425"/>
         <source>Install and quit</source>
         <translation>설치하고 종료</translation>

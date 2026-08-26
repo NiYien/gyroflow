@@ -902,6 +902,16 @@ Z důvodu omezení systémových kodérů není vykreslování na pozadí podpor
         <translation>Otevřít DMG a ukončit</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2705"/>
+        <source>The AppImage is ready. Open its folder, then launch it when you are ready. Gyroflow will stay open.</source>
+        <translation>Soubor AppImage je připraven. Otevřete jeho složku a spusťte jej, až budete připraveni. Gyroflow zůstane otevřený.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2712"/>
+        <source>Open containing folder</source>
+        <translation>Otevřít složku</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2425"/>
         <source>Install and quit</source>
         <translation>Nainstalovat a ukončit</translation>

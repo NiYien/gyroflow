@@ -902,6 +902,16 @@ Ze względu na ograniczenia systemowych enkoderów wideo, renderowanie w tle nie
         <translation>Otwórz DMG i zakończ</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2705"/>
+        <source>The AppImage is ready. Open its folder, then launch it when you are ready. Gyroflow will stay open.</source>
+        <translation>Plik AppImage jest gotowy. Otwórz jego folder i uruchom go, gdy będziesz gotowy. Gyroflow pozostanie otwarty.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2712"/>
+        <source>Open containing folder</source>
+        <translation>Otwórz folder zawierający</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2425"/>
         <source>Install and quit</source>
         <translation>Zainstaluj i zakończ</translation>

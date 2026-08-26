@@ -902,6 +902,16 @@ En raison des limitations du système d&apos;encodage vidéo, le rendu en arriè
         <translation>Ouvrir le DMG et quitter</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2705"/>
+        <source>The AppImage is ready. Open its folder, then launch it when you are ready. Gyroflow will stay open.</source>
+        <translation>L’AppImage est prête. Ouvrez son dossier, puis lancez-la lorsque vous êtes prêt. Gyroflow restera ouvert.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2712"/>
+        <source>Open containing folder</source>
+        <translation>Ouvrir le dossier contenant</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2425"/>
         <source>Install and quit</source>
         <translation>Installer et quitter</translation>

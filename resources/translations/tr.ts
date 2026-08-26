@@ -900,6 +900,16 @@ Sisteminizin video enkoderlerinin sınırlarından ötürü arkaplanda render i�
         <translation>DMG&apos;yi aç ve çık</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2705"/>
+        <source>The AppImage is ready. Open its folder, then launch it when you are ready. Gyroflow will stay open.</source>
+        <translation>AppImage hazır. Klasörünü açın ve hazır olduğunuzda çalıştırın. Gyroflow açık kalacaktır.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2712"/>
+        <source>Open containing folder</source>
+        <translation>İçeren klasörü aç</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2425"/>
         <source>Install and quit</source>
         <translation>Yükle ve çık</translation>

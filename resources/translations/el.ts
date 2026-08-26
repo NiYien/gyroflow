@@ -902,6 +902,16 @@ Due to limitations of the system video encoders, rendering in the background is 
         <translation>Άνοιγμα DMG και έξοδος</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2705"/>
+        <source>The AppImage is ready. Open its folder, then launch it when you are ready. Gyroflow will stay open.</source>
+        <translation>Το AppImage είναι έτοιμο. Ανοίξτε τον φάκελό του και εκκινήστε το όταν είστε έτοιμοι. Το Gyroflow θα παραμείνει ανοιχτό.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2712"/>
+        <source>Open containing folder</source>
+        <translation>Άνοιγμα φακέλου που το περιέχει</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2425"/>
         <source>Install and quit</source>
         <translation>Εγκατάσταση και έξοδος</translation>

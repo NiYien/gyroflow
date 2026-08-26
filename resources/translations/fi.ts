@@ -901,6 +901,16 @@ Järjestelmän videoenkooderien rajoitusten vuoksi taustalla hahmontamista ei tu
         <translation>Avaa DMG ja sulje</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2705"/>
+        <source>The AppImage is ready. Open its folder, then launch it when you are ready. Gyroflow will stay open.</source>
+        <translation>AppImage on valmis. Avaa sen kansio ja käynnistä se, kun olet valmis. Gyroflow pysyy avoinna.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2712"/>
+        <source>Open containing folder</source>
+        <translation>Avaa sisältävä kansio</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2425"/>
         <source>Install and quit</source>
         <translation>Asenna ja sulje</translation>

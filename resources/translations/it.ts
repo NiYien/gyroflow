@@ -902,6 +902,16 @@ A causa delle limitazioni degli encoder video di sistema, il rendering in backgr
         <translation>Apri DMG ed esci</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2705"/>
+        <source>The AppImage is ready. Open its folder, then launch it when you are ready. Gyroflow will stay open.</source>
+        <translation>L'AppImage è pronta. Apri la cartella e avviala quando vuoi. Gyroflow rimarrà aperto.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2712"/>
+        <source>Open containing folder</source>
+        <translation>Apri cartella contenente</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2425"/>
         <source>Install and quit</source>
         <translation>Installa ed esci</translation>

@@ -901,6 +901,16 @@ Aufgrund von Einschränkungen der Systemvideo-Encoder wird das Rendern im Hinter
         <translation>DMG öffnen und beenden</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2705"/>
+        <source>The AppImage is ready. Open its folder, then launch it when you are ready. Gyroflow will stay open.</source>
+        <translation>Das AppImage ist bereit. Öffne den Ordner und starte es, wenn du bereit bist. Gyroflow bleibt geöffnet.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2712"/>
+        <source>Open containing folder</source>
+        <translation>Enthaltenden Ordner öffnen</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2425"/>
         <source>Install and quit</source>
         <translation>Installieren und beenden</translation>

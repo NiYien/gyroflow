@@ -901,6 +901,16 @@ Debido ás limitacións dos codificadores de vídeo do sistema, non se admite a 
         <translation>Abrir DMG e saír</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2705"/>
+        <source>The AppImage is ready. Open its folder, then launch it when you are ready. Gyroflow will stay open.</source>
+        <translation>A AppImage está lista. Abre o seu cartafol e execútaa cando queiras. Gyroflow permanecerá aberto.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2712"/>
+        <source>Open containing folder</source>
+        <translation>Abrir o cartafol contedor</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2425"/>
         <source>Install and quit</source>
         <translation>Instalar e saír</translation>

@@ -902,6 +902,16 @@ Kôli limitácii video enkodéra, renderovanie na pozadí nieje podporované.</t
         <translation>Otvoriť DMG a ukončiť</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2705"/>
+        <source>The AppImage is ready. Open its folder, then launch it when you are ready. Gyroflow will stay open.</source>
+        <translation>Súbor AppImage je pripravený. Otvorte jeho priečinok a spustite ho, keď budete pripravení. Gyroflow zostane otvorený.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2712"/>
+        <source>Open containing folder</source>
+        <translation>Otvoriť priečinok</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2425"/>
         <source>Install and quit</source>
         <translation>Nainštalovať a ukončiť</translation>

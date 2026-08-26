@@ -684,6 +684,16 @@ Please check the file bitrate after rendering and if you&apos;re affected by thi
         <translation>打开 DMG 并退出</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2705"/>
+        <source>The AppImage is ready. Open its folder, then launch it when you are ready. Gyroflow will stay open.</source>
+        <translation>AppImage 已准备就绪。请打开其所在文件夹，并在准备好后启动它。Gyroflow 将保持打开状态。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2712"/>
+        <source>Open containing folder</source>
+        <translation>打开文件所在目录</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2888"/>
         <source>Cannot write the output file: permission denied. Change the output path, or make sure the file is not in use by another application.</source>
         <translation>无法写入输出文件：权限不足。请更换输出路径，或确认文件未被其他程序占用。</translation>

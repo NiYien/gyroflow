@@ -46,14 +46,14 @@
 
 ## 6. Linux application update handoff (`gyroflow`)
 
-- [ ] 6.1 Add failing Rust tests for Linux package kind, default AppImage filename, wrapper extraction name, and selection of AppImage over tar metadata
-- [ ] 6.2 Implement Linux-specific defaults in manifest/update selection and remove every Linux-to-DMG fallback
-- [ ] 6.3 Add failing Unix permission tests proving preparation adds only the owner executable bit required by the cached AppImage
-- [ ] 6.4 Mark the verified Linux AppImage executable after download while preserving existing cache and integrity behavior
-- [ ] 6.5 Add failing command-selection tests for `xdg-open`, `gio open` fallback, both-fail absolute-path error, and no automatic quit
-- [ ] 6.6 Implement Linux open-containing-directory handoff without self-replacement, root escalation, or application exit
-- [ ] 6.7 Add Linux ready-state QML instructions/action text and update all translation catalogs using English source comments/strings
-- [ ] 6.8 Run focused app-update Rust tests and translation/static UI checks
+- [x] 6.1 Add failing Rust tests for Linux package kind, default AppImage filename, wrapper extraction name, and selection of AppImage over tar metadata
+- [x] 6.2 Implement Linux-specific defaults in manifest/update selection and remove every Linux-to-DMG fallback
+- [x] 6.3 Add failing Unix permission tests proving preparation adds only the owner executable bit required by the cached AppImage
+- [x] 6.4 Mark the verified Linux AppImage executable after download while preserving existing cache and integrity behavior
+- [x] 6.5 Add failing command-selection tests for `xdg-open`, `gio open` fallback, both-fail absolute-path error, and no automatic quit
+- [x] 6.6 Implement Linux open-containing-directory handoff without self-replacement, root escalation, or application exit
+- [x] 6.7 Add Linux ready-state QML instructions/action text and update all translation catalogs using English source comments/strings
+- [x] 6.8 Run focused app-update Rust tests and translation/static UI checks
 
 ## 7. Linux Resolve/OpenFX client integration (`gyroflow`)
 

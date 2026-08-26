@@ -2700,17 +2700,21 @@ Rectangle {
             appUpdateReadyMessage = message || "";
             window.closeAppUpdateDialog();
             const isAndroid = platform === "android";
-            const quitWarning = isAndroid
+            const isLinux = platform === "linux";
+            const quitWarning = isLinux
+                ? qsTr("The AppImage is ready. Open its folder, then launch it when you are ready. Gyroflow will stay open.")
+                : isAndroid
                 ? qsTr("The system installer will close Gyroflow while it updates. Make sure your project is saved before continuing.")
                 : qsTr("Installing the update will quit Gyroflow. Make sure your project is saved before continuing.");
             const extra = platform === "macos"
                 ? "\n\n" + qsTr("After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.")
                 : "";
-            const installLabel = platform === "macos" ? qsTr("Open DMG and quit")
+            const installLabel = isLinux             ? qsTr("Open containing folder")
+                               : platform === "macos" ? qsTr("Open DMG and quit")
                                : isAndroid           ? qsTr("Install")
                                                      : qsTr("Install and quit");
             appUpdateDialog = messageBox(Modal.Info, qsTr("Update is ready.") + "\n\n" + quitWarning + extra, [
-                { text: installLabel, accent: true, clicked: () => controller.open_downloaded_update_and_quit() },
+                { text: installLabel, accent: true, clicked: () => controller.open_downloaded_update() },
                 { text: qsTr("Close") }
             ], undefined, Text.MarkdownText);
         }
@@ -2730,10 +2734,9 @@ Rectangle {
             ]);
         }
         function onApp_update_handoff_started(): void {
-            if (Qt.platform.os === "android") {
-                // The system installer takes over from here: it kills the app
-                // when the install commits, and a user-canceled install should
-                // return to a live session — so no self-quit on Android.
+            if (Qt.platform.os === "android" || Qt.platform.os === "linux") {
+                // Android's installer owns its lifecycle, while Linux only opens
+                // the AppImage folder. Neither handoff should close this session.
                 return;
             }
             main_window.closeConfirmed = true;

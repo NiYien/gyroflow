@@ -902,6 +902,16 @@ På grund af begrænsninger af systemets videokodere understøttes gengivelse i 
         <translation>Åbn DMG og afslut</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2705"/>
+        <source>The AppImage is ready. Open its folder, then launch it when you are ready. Gyroflow will stay open.</source>
+        <translation>AppImage-filen er klar. Åbn dens mappe, og start den, når du er klar. Gyroflow forbliver åben.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2712"/>
+        <source>Open containing folder</source>
+        <translation>Åbn indeholdende mappe</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2425"/>
         <source>Install and quit</source>
         <translation>Installer og afslut</translation>
