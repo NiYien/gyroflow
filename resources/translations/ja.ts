@@ -902,6 +902,16 @@ Due to limitations of the system video encoders, rendering in the background is 
         <translation>DMG を開いて終了</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2705"/>
+        <source>The AppImage is ready. Open its folder, exit Gyroflow, replace your previous AppImage, then start the new file. Gyroflow will stay open until you close it.</source>
+        <translation>AppImage の準備ができました。フォルダーを開き、Gyroflow を終了して以前の AppImage を置き換え、その後新しいファイルを起動してください。Gyroflow は閉じるまで開いたままになります。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2712"/>
+        <source>Open containing folder</source>
+        <translation>保存先フォルダーを開く</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2425"/>
         <source>Install and quit</source>
         <translation>インストールして終了</translation>
@@ -3044,6 +3054,11 @@ Make sure to select %1.</source>
 Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation>サンドボックスの制限のため、プラグインをコピーできません。
  &lt;b&gt;ターミナル&lt;/b&gt; を開き、次のコマンドを入力します。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="102"/>
+        <source>Automatic installation could not be completed. Open Terminal and run the following command:</source>
+        <translation>自動インストールを完了できませんでした。ターミナルを開き、次のコマンドを実行してください:</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="266"/>

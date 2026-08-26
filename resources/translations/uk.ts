@@ -902,6 +902,16 @@ Due to limitations of the system video encoders, rendering in the background is 
         <translation>Відкрити DMG і вийти</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2705"/>
+        <source>The AppImage is ready. Open its folder, exit Gyroflow, replace your previous AppImage, then start the new file. Gyroflow will stay open until you close it.</source>
+        <translation>AppImage готовий. Відкрийте його папку, закрийте Gyroflow, замініть попередній AppImage, а потім запустіть новий файл. Gyroflow залишатиметься відкритим, доки ви його не закриєте.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2712"/>
+        <source>Open containing folder</source>
+        <translation>Відкрити папку з файлом</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2425"/>
         <source>Install and quit</source>
         <translation>Встановити та вийти</translation>
@@ -3043,6 +3053,11 @@ Make sure to select %1.</source>
 Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation>Неможливо скопіювати плагін через обмеження пісочниці.
 Відкрийте &lt;b&gt;Термінал&lt;/b&gt; і введіть наступну команду:</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="102"/>
+        <source>Automatic installation could not be completed. Open Terminal and run the following command:</source>
+        <translation>Не вдалося завершити автоматичне встановлення. Відкрийте Термінал і виконайте таку команду:</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="266"/>

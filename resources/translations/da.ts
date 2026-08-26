@@ -902,6 +902,16 @@ På grund af begrænsninger af systemets videokodere understøttes gengivelse i 
         <translation>Åbn DMG og afslut</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2705"/>
+        <source>The AppImage is ready. Open its folder, exit Gyroflow, replace your previous AppImage, then start the new file. Gyroflow will stay open until you close it.</source>
+        <translation>AppImage-filen er klar. Åbn dens mappe, afslut Gyroflow, erstat din tidligere AppImage, og start derefter den nye fil. Gyroflow forbliver åben, indtil du lukker den.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2712"/>
+        <source>Open containing folder</source>
+        <translation>Åbn indeholdende mappe</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2425"/>
         <source>Install and quit</source>
         <translation>Installer og afslut</translation>
@@ -3043,6 +3053,11 @@ Sørg for at vælge %1.</translation>
 Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation>Kunne ikke kopiere pluginnet på grund af sandbox-begrænsninger.
 Åbn &lt;b&gt;Terminal&lt;/b&gt; og indtast følgende kommando:</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="102"/>
+        <source>Automatic installation could not be completed. Open Terminal and run the following command:</source>
+        <translation>Den automatiske installation kunne ikke fuldføres. Åbn Terminal, og kør følgende kommando:</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="266"/>

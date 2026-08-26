@@ -41,9 +41,9 @@ jobs:
     if: ${{ always() && (needs.validate-tag.result == 'success' || needs.validate-tag.result == 'skipped') }}
     strategy:
       fail-fast: false
-      # Linux remains paused; Android APK publishing is restored.
       matrix:
         targets: [
+          { os: ubuntu-22.04,   type: linux },
           { os: macos-14,      type: macos },
           { os: windows-2022,  type: windows },
           { os: windows-2022,  type: android }
@@ -124,6 +124,30 @@ jobs:
         if: ${{ matrix.targets.type == 'linux' }}
         run: just deploy docker
 
+      - name: Smoke test Linux packages
+        if: ${{ matrix.targets.type == 'linux' }}
+        run: |
+          set -euo pipefail
+          packages="${{ github.workspace }}/_deployment/_binaries"
+          python3 _scripts/verify_linux_app_packages.py "$packages/gyroflow-niyien-linux64.AppImage" "$packages/gyroflow-niyien-linux64.tar.gz"
+          smoke_dir="$(mktemp -d)"
+          trap 'rm -rf "$smoke_dir"' EXIT
+          tar -xzf "$packages/gyroflow-niyien-linux64.tar.gz" -C "$smoke_dir"
+          export LD_LIBRARY_PATH="$smoke_dir/Gyroflow/lib"
+          "$smoke_dir/Gyroflow/gyroflow-niyien" --version
+          if ldd "$smoke_dir/Gyroflow/gyroflow-niyien" | grep -q 'not found'; then
+            ldd "$smoke_dir/Gyroflow/gyroflow-niyien"
+            exit 1
+          fi
+          cd "$smoke_dir"
+          "$packages/gyroflow-niyien-linux64.AppImage" --appimage-extract
+          export LD_LIBRARY_PATH="$smoke_dir/squashfs-root/lib"
+          "$smoke_dir/squashfs-root/gyroflow-niyien" --version
+          if ldd "$smoke_dir/squashfs-root/gyroflow-niyien" | grep -q 'not found'; then
+            ldd "$smoke_dir/squashfs-root/gyroflow-niyien"
+            exit 1
+          fi
+
       - name: Build gyroflow(niyien) (Windows)
         if: ${{ matrix.targets.type == 'windows' }}
         run: |
@@ -186,6 +210,24 @@ jobs:
           archive: false
           if-no-files-found: error
 
+      - name: Upload Linux AppImage (release)
+        if: ${{ matrix.targets.type == 'linux' && startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: gyroflow-niyien-linux64.AppImage
+          path: _deployment/_binaries/gyroflow-niyien-linux64.AppImage
+          archive: false
+          if-no-files-found: error
+
+      - name: Upload Linux tar archive (release)
+        if: ${{ matrix.targets.type == 'linux' && startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: gyroflow-niyien-linux64.tar.gz
+          path: _deployment/_binaries/gyroflow-niyien-linux64.tar.gz
+          archive: false
+          if-no-files-found: error
+
       # Nightly flow (workflow_dispatch) — V4 with short name + no pre-zip.
       # V4's auto-archive wraps the raw build output once, so nightly.link URL
       # `<short_name>.zip` returns a wrapper containing the deliverable file.
@@ -223,6 +265,22 @@ jobs:
           path: _deployment/_binaries/gyroflow-niyien.apk
           if-no-files-found: error
 
+      - name: Upload Linux AppImage (nightly)
+        if: ${{ matrix.targets.type == 'linux' && github.event_name == 'workflow_dispatch' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: gyroflow-niyien-linux-appimage
+          path: _deployment/_binaries/gyroflow-niyien-linux64.AppImage
+          if-no-files-found: error
+
+      - name: Upload Linux tar archive (nightly)
+        if: ${{ matrix.targets.type == 'linux' && github.event_name == 'workflow_dispatch' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: gyroflow-niyien-linux-tar
+          path: _deployment/_binaries/gyroflow-niyien-linux64.tar.gz
+          if-no-files-found: error
+
   github_release:
     name: Create GitHub release
     needs: build
@@ -239,10 +297,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           prerelease: false
-          # Linux remains paused; Windows, macOS, and Android are published.
           files: |
             ./release_artifacts/gyroflow-niyien-windows64-setup.exe
             ./release_artifacts/gyroflow-niyien-windows64.zip
             ./release_artifacts/gyroflow-niyien-mac-universal.dmg
+            ./release_artifacts/gyroflow-niyien-linux64.AppImage
+            ./release_artifacts/gyroflow-niyien-linux64.tar.gz
             ./release_artifacts/gyroflow-niyien.apk
 

@@ -10,6 +10,14 @@ FRONTEND_ROOT = Path(__file__).resolve().parents[1] / "frontend"
 
 
 class ReleaseCenterUiTests(unittest.TestCase):
+    def test_package_metadata_renders_linux_archive_fields(self):
+        app_js = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("'archive_filename' in meta", app_js)
+        self.assertIn("filename: meta.archive_filename", app_js)
+        self.assertIn("size: meta.archive_size", app_js)
+        self.assertIn("sha256: meta.archive_sha256", app_js)
+
     def test_resources_are_not_a_separate_top_level_view(self):
         html = (FRONTEND_ROOT / "index.html").read_text(encoding="utf-8")
 

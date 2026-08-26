@@ -902,6 +902,16 @@ Z důvodu omezení systémových kodérů není vykreslování na pozadí podpor
         <translation>Otevřít DMG a ukončit</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2705"/>
+        <source>The AppImage is ready. Open its folder, exit Gyroflow, replace your previous AppImage, then start the new file. Gyroflow will stay open until you close it.</source>
+        <translation>Soubor AppImage je připraven. Otevřete jeho složku, ukončete Gyroflow, nahraďte předchozí AppImage a poté spusťte nový soubor. Gyroflow zůstane otevřený, dokud jej nezavřete.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2712"/>
+        <source>Open containing folder</source>
+        <translation>Otevřít složku</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2425"/>
         <source>Install and quit</source>
         <translation>Nainstalovat a ukončit</translation>
@@ -3043,6 +3053,11 @@ Ujistěte se, že jste vybrali %1.</translation>
 Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation>Plugin nelze zkopírovat kvůli omezením sandboxu.
 Otevřete &lt;b&gt;Terminal&lt;/b&gt; a zadejte následující příkaz:</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="102"/>
+        <source>Automatic installation could not be completed. Open Terminal and run the following command:</source>
+        <translation>Automatickou instalaci se nepodařilo dokončit. Otevřete Terminál a spusťte následující příkaz:</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="266"/>

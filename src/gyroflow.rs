@@ -16,7 +16,7 @@ pub mod distribution;
 pub mod external_sdk;
 pub mod network;
 pub mod niyien_device;
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 pub mod nle_plugins;
 pub mod rendering;
 mod resources;

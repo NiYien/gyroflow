@@ -902,6 +902,16 @@ Devido a limitações dos codificadores de vídeo do sistema, a renderização e
         <translation>Abrir DMG e sair</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2705"/>
+        <source>The AppImage is ready. Open its folder, exit Gyroflow, replace your previous AppImage, then start the new file. Gyroflow will stay open until you close it.</source>
+        <translation>A AppImage está pronta. Abra a pasta, saia do Gyroflow, substitua a AppImage anterior e, em seguida, inicie o novo ficheiro. O Gyroflow permanecerá aberto até o fechar.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2712"/>
+        <source>Open containing folder</source>
+        <translation>Abrir pasta de destino</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2425"/>
         <source>Install and quit</source>
         <translation>Instalar e sair</translation>
@@ -3043,6 +3053,11 @@ Certifique-se de selecionar %1.</translation>
 Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation>Não foi possível copiar o plugin devido a limitações do sandbox.
 Abra &lt;b&gt;Terminal&lt;/b&gt; e digite o seguinte comando:</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="102"/>
+        <source>Automatic installation could not be completed. Open Terminal and run the following command:</source>
+        <translation>Não foi possível concluir a instalação automática. Abra o Terminal e execute o seguinte comando:</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="266"/>

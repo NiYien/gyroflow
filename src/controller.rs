@@ -339,7 +339,7 @@ pub struct Controller {
     updates_available: qt_signal!(version: QString, changelog: QString, download_url: QString, changelog_truncated: bool),
     start_app_update: qt_method!(fn(&self)),
     start_app_update_version: qt_method!(fn(&self, version: QString)),
-    open_downloaded_update_and_quit: qt_method!(fn(&self)),
+    open_downloaded_update: qt_method!(fn(&self)),
     app_update_progress: qt_signal!(downloaded: f64, total: f64, message: QString),
     app_update_ready: qt_signal!(path: QString, platform: QString, message: QString),
     app_update_error: qt_signal!(message: QString),
@@ -3940,11 +3940,17 @@ impl Controller {
         });
     }
 
-    fn open_downloaded_update_and_quit(&self) {
+    fn open_downloaded_update(&self) {
         let prepared = self.app_update_state.lock().clone();
         match prepared {
             Some(prepared) => match crate::distribution::open_downloaded_update(&prepared) {
-                Ok(()) => self.app_update_handoff_started(),
+                Ok(()) => {
+                    if crate::distribution::app_update_handoff_should_quit(
+                        &prepared.selection.platform,
+                    ) {
+                        self.app_update_handoff_started();
+                    }
+                }
                 Err(err) => self.app_update_error(QString::from(err)),
             },
             None => self.app_update_error(QString::from("No downloaded update is ready")),
@@ -5579,18 +5585,18 @@ impl Controller {
     }
 
     fn is_nle_installed(&self) -> bool {
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
         {
             crate::nle_plugins::is_nle_installed("openfx")
                 || crate::nle_plugins::is_nle_installed("adobe")
         }
-        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
         {
             false
         }
     }
     fn nle_plugins(&self, command: QString, typ: QString) -> QString {
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
         {
             let typ = typ.to_string();
             let command = command.to_string();
@@ -5685,7 +5691,7 @@ impl Controller {
                 Err(e) => QString::from(format!("An error occured: {e:?}")),
             }
         }
-        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
         {
             QString::default()
         }
