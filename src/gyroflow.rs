@@ -261,6 +261,7 @@ fn entry() {
     let fspinned = unsafe { QObjectPinned::new(&fs) };
 
     util::set_url_catcher(fspinned.get_or_create_cpp_object());
+    util::cleanup_ios_video_imports();
     util::register_url_handlers();
 
     let mut engine = QmlEngine::new();

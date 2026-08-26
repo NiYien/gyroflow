@@ -124,6 +124,9 @@ cpp! {{
     #ifdef Q_OS_ANDROID
     #   include <QJniObject>
     #endif
+    #ifdef Q_OS_IOS
+    #   include "ios_video_picker.h"
+    #endif
     #include <QDesktopServices>
     #include <QLocale>
     #include <QStandardPaths>
@@ -229,6 +232,22 @@ pub fn set_url_catcher(ctlptr: *mut c_void) {
             QMetaObject::invokeMethod(globalUrlCatcherPtr, "catch_urls_open", Qt::QueuedConnection, Q_ARG(QStringList, pendingUrls));
             pendingUrls.clear();
         }
+    });
+}
+pub fn open_ios_video_picker() -> bool {
+    cpp!(unsafe [] -> bool as "bool" {
+        #ifdef Q_OS_IOS
+            return gyroflowIosOpenVideoPicker(globalUrlCatcherPtr);
+        #else
+            return false;
+        #endif
+    })
+}
+pub fn cleanup_ios_video_imports() {
+    cpp!(unsafe [] {
+        #ifdef Q_OS_IOS
+            gyroflowIosCleanupVideoImports();
+        #endif
     });
 }
 pub fn register_url_handlers() {

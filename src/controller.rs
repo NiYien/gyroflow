@@ -6174,7 +6174,9 @@ pub struct Filesystem {
     catch_url_open: qt_method!(fn(&self, url: QUrl)),
     catch_urls_open: qt_method!(fn(&self, urls: QStringList)),
     open_native_picker: qt_method!(fn(&self, mode: i32, allow_multiple: bool, initial_url: QString) -> bool),
+    open_ios_video_picker: qt_method!(fn(&self) -> bool),
     catch_picker_cancelled: qt_method!(fn(&self)),
+    catch_picker_error: qt_method!(fn(&self, message: QString)),
     remove_file: qt_method!(fn(&self, url: QUrl)),
     folder_access_granted: qt_method!(fn(&self, url: QUrl)),
     move_to_trash: qt_method!(fn(&self, url: QUrl)),
@@ -6184,6 +6186,7 @@ pub struct Filesystem {
     url_opened: qt_signal!(url: QUrl),
     urls_opened: qt_signal!(urls: QStringList),
     picker_cancelled: qt_signal!(),
+    picker_error: qt_signal!(message: QString),
 }
 impl Filesystem {
     fn exists_in_folder(&self, folder: QUrl, filename: QString) -> bool {
@@ -6262,6 +6265,9 @@ impl Filesystem {
         // pending callback (no Qt dialog exists to emit onRejected for it).
         self.picker_cancelled();
     }
+    fn catch_picker_error(&self, message: QString) {
+        self.picker_error(message);
+    }
     // Opens the platform file picker directly instead of going through Qt's
     // FileDialog. Returns false when there is no native path (every non-Android
     // platform, or a failure on Android), in which case the caller must fall back
@@ -6282,6 +6288,9 @@ impl Filesystem {
             let _ = (mode, allow_multiple, initial_url);
             false
         }
+    }
+    fn open_ios_video_picker(&self) -> bool {
+        util::open_ios_video_picker()
     }
     fn remove_file(&self, url: QUrl) {
         let _ = filesystem::remove_file(&util::qurl_to_encoded(url));
