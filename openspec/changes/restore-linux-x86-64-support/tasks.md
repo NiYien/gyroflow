@@ -71,7 +71,7 @@
 
 ## 8. Documentation and cross-repository verification
 
-- [ ] 8.1 Update deployment/build documentation with Linux x86_64 scope, both application formats, update behavior, Resolve paths, driver-dependent hardware encoding, and explicit exclusions
+- [x] 8.1 Update deployment/build documentation with Linux x86_64 scope, both application formats, update behavior, Resolve paths, driver-dependent hardware encoding, and explicit exclusions
 - [ ] 8.2 Run the full relevant `gyroflow` Rust, Python, Node, release-center, workflow, and formatting checks
 - [ ] 8.3 Run the relevant `docs` manifest/API tests and formatting checks
 - [ ] 8.4 Run the relevant `gyroflow-plugins` Cargo, packaging, workflow, and formatting checks
