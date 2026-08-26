@@ -293,6 +293,13 @@ function renderPackageMetadata(packages) {
         sha256: meta.package_sha256,
       }));
     }
+    if ('archive_filename' in meta || 'archive_sha256' in meta || 'archive_size' in meta) {
+      parts.push(renderPackageMetadataPart('archive', {
+        filename: meta.archive_filename,
+        size: meta.archive_size,
+        sha256: meta.archive_sha256,
+      }));
+    }
     rows.push(`<div><span class="font-semibold">${label}</span>: ${parts.join(' · ') || '无 package 字段'}</div>`);
   }
   return `<div class="mt-1 text-[11px] text-slate-600">${rows.join('')}</div>`;

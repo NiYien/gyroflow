@@ -33,16 +33,16 @@
 - [x] 4.3 Extend app asset, platform, role, artifact, and remote-name maps with the Linux tar and independent nightly artifacts
 - [x] 4.4 Add failing metadata tests for Linux `package_*` AppImage fields and `archive_*` tar fields
 - [x] 4.5 Emit both Linux metadata sets, artifact URLs, 123 uploads, pre-warms, and finalize-summary values
-- [ ] 4.6 Extend release-center policy normalization, inventory, version details, and manifest preview to preserve/display `archive_*`
+- [x] 4.6 Extend release-center policy normalization, inventory, version details, and manifest preview to preserve/display `archive_*`
 - [ ] 4.7 Run publisher, release-center backend, and release-automation Rust wrapper tests
 
 ## 5. Template and production manifest (`gyroflow` + `docs`)
 
-- [ ] 5.1 Add failing Node tests in `gyroflow` for Linux `kind=appimage`, AppImage `package_*`, tar `archive_*`, absolute URLs, and legacy-policy fallback
-- [ ] 5.2 Extend `gyroflow/api/_distribution.js` normalization and release/artifact/CN URL resolution with optional Linux archive fields and an `appimage` default
-- [ ] 5.3 Add the equivalent failing production-manifest tests in `docs`
-- [ ] 5.4 Mirror the normalized Linux package/archive behavior in `docs/api/_control-plane.js` without changing other platform routes
-- [ ] 5.5 Run both repositories' Node manifest suites and compare normalized Linux output shapes
+- [x] 5.1 Add failing Node tests in `gyroflow` for Linux `kind=appimage`, AppImage `package_*`, tar `archive_*`, absolute URLs, and legacy-policy fallback
+- [x] 5.2 Extend `gyroflow/api/_distribution.js` normalization and release/artifact/CN URL resolution with optional Linux archive fields and an `appimage` default
+- [x] 5.3 Add the equivalent failing production-manifest tests in `docs`
+- [x] 5.4 Mirror the normalized Linux package/archive behavior in `docs/api/_control-plane.js` without changing other platform routes
+- [x] 5.5 Run both repositories' Node manifest suites and compare normalized Linux output shapes
 
 ## 6. Linux application update handoff (`gyroflow`)
 
