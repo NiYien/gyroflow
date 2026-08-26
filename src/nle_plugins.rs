@@ -18,6 +18,31 @@ const RESOLVE_SIDECAR_FILES: [&str; 3] = [
     "gyroflow_autocut_common.inc",
 ];
 const LEGACY_RESOLVE_ENTRY: &str = "Gyroflow NiYien Auto Cut.lua";
+const LINUX_OPENFX_INSTALL_ROOT: &str = "/usr/OFX/Plugins/";
+const LINUX_PLUGIN_MANUAL_INSTALL_REQUIRED: &str = "PLUGIN_MANUAL_INSTALL_REQUIRED:";
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PluginPlatform {
+    Windows,
+    Macos,
+    Linux,
+}
+
+fn current_plugin_platform() -> PluginPlatform {
+    #[cfg(target_os = "windows")]
+    {
+        PluginPlatform::Windows
+    }
+    #[cfg(target_os = "macos")]
+    {
+        PluginPlatform::Macos
+    }
+    #[cfg(target_os = "linux")]
+    {
+        PluginPlatform::Linux
+    }
+}
 
 #[derive(Debug, Clone, Default, Serialize)]
 struct LatestPluginInfo {
@@ -53,20 +78,37 @@ struct PluginStatus {
 }
 
 pub fn get_path(typ: &str) -> &'static str {
-    if cfg!(target_os = "windows") {
-        if typ == "openfx" {
-            return "C:/Program Files/Common Files/OFX/Plugins/GyroflowNiyien.ofx.bundle";
-        } else if typ == "adobe" {
-            return "C:/Program Files/Adobe/Common/Plug-ins/7.0/MediaCore/GyroflowNiyien-Adobe-windows.aex";
-        }
-    } else if cfg!(target_os = "macos") {
-        if typ == "openfx" {
-            return "/Library/OFX/Plugins/GyroflowNiyien.ofx.bundle";
-        } else if typ == "adobe" {
-            return "/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/GyroflowNiyien.plugin";
+    get_path_for_platform(typ, current_plugin_platform())
+}
+
+fn plugin_available_on_platform(typ: &str, platform: PluginPlatform) -> bool {
+    match platform {
+        PluginPlatform::Linux => typ == "openfx",
+        PluginPlatform::Windows | PluginPlatform::Macos => {
+            typ == "openfx" || typ == "adobe"
         }
     }
-    ""
+}
+
+fn get_path_for_platform(typ: &str, platform: PluginPlatform) -> &'static str {
+    match (typ, platform) {
+        ("openfx", PluginPlatform::Windows) => {
+            "C:/Program Files/Common Files/OFX/Plugins/GyroflowNiyien.ofx.bundle"
+        }
+        ("adobe", PluginPlatform::Windows) => {
+            "C:/Program Files/Adobe/Common/Plug-ins/7.0/MediaCore/GyroflowNiyien-Adobe-windows.aex"
+        }
+        ("openfx", PluginPlatform::Macos) => {
+            "/Library/OFX/Plugins/GyroflowNiyien.ofx.bundle"
+        }
+        ("adobe", PluginPlatform::Macos) => {
+            "/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/GyroflowNiyien.plugin"
+        }
+        ("openfx", PluginPlatform::Linux) => {
+            "/usr/OFX/Plugins/GyroflowNiyien.ofx.bundle"
+        }
+        _ => "",
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -140,7 +182,7 @@ fn query_file_version(path: &str) -> Option<String> {
     }
 }
 
-#[cfg_attr(target_os = "windows", allow(dead_code))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn query_file_version_from_plist(path: &str) -> Option<String> {
     let file = std::fs::read_to_string(path).ok()?;
     let re =
@@ -191,44 +233,68 @@ fn copy_resolve_scripts_to(extracted_root: &Path, destination: &Path) -> io::Res
 }
 
 fn resolve_scripts_dir() -> io::Result<PathBuf> {
-    #[cfg(target_os = "windows")]
-    {
-        let appdata = std::env::var_os("APPDATA").ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                "APPDATA is unavailable for Resolve script installation",
-            )
-        })?;
-        return Ok(PathBuf::from(appdata)
-            .join("Blackmagic Design")
-            .join("DaVinci Resolve")
-            .join("Support")
-            .join("Fusion")
-            .join("Scripts")
-            .join("Utility"));
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let appdata = std::env::var_os("APPDATA").map(PathBuf::from);
+    resolve_scripts_dir_for_platform(
+        current_plugin_platform(),
+        home.as_deref(),
+        appdata.as_deref(),
+    )
+}
+
+fn resolve_scripts_dir_for_platform(
+    platform: PluginPlatform,
+    home: Option<&Path>,
+    appdata: Option<&Path>,
+) -> io::Result<PathBuf> {
+    match platform {
+        PluginPlatform::Windows => {
+            let appdata = appdata.ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "APPDATA is unavailable for Resolve script installation",
+                )
+            })?;
+            Ok(appdata
+                .join("Blackmagic Design")
+                .join("DaVinci Resolve")
+                .join("Support")
+                .join("Fusion")
+                .join("Scripts")
+                .join("Utility"))
+        }
+        PluginPlatform::Macos => {
+            let home = home.ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "HOME is unavailable for Resolve script installation",
+                )
+            })?;
+            Ok(home
+                .join("Library")
+                .join("Application Support")
+                .join("Blackmagic Design")
+                .join("DaVinci Resolve")
+                .join("Fusion")
+                .join("Scripts")
+                .join("Utility"))
+        }
+        PluginPlatform::Linux => {
+            let home = home.ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "HOME is unavailable for Resolve script installation",
+                )
+            })?;
+            Ok(home
+                .join(".local")
+                .join("share")
+                .join("DaVinciResolve")
+                .join("Fusion")
+                .join("Scripts")
+                .join("Utility"))
+        }
     }
-    #[cfg(target_os = "macos")]
-    {
-        let home = std::env::var_os("HOME").ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                "HOME is unavailable for Resolve script installation",
-            )
-        })?;
-        return Ok(PathBuf::from(home)
-            .join("Library")
-            .join("Application Support")
-            .join("Blackmagic Design")
-            .join("DaVinci Resolve")
-            .join("Fusion")
-            .join("Scripts")
-            .join("Utility"));
-    }
-    #[allow(unreachable_code)]
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "Resolve scripts are supported only on Windows and macOS",
-    ))
 }
 
 fn install_resolve_scripts(extracted_root: &Path) -> io::Result<PathBuf> {
@@ -239,6 +305,95 @@ fn install_resolve_scripts(extracted_root: &Path) -> io::Result<PathBuf> {
 
 fn ensure_install_directory(destination: &Path) -> io::Result<()> {
     std::fs::create_dir_all(destination)
+}
+
+fn linux_openfx_binary(bundle: &Path) -> PathBuf {
+    bundle
+        .join("Contents")
+        .join("Linux-x86-64")
+        .join("GyroflowNiyien.ofx")
+}
+
+fn detect_linux_openfx_bundle(bundle: &Path) -> io::Result<String> {
+    let version_file = bundle.join("Contents").join("version.txt");
+    if !linux_openfx_binary(bundle).is_file() || !version_file.is_file() {
+        return Ok(String::new());
+    }
+    Ok(std::fs::read_to_string(version_file)?.trim().to_owned())
+}
+
+fn validate_linux_openfx_source(extracted_root: &Path) -> io::Result<PathBuf> {
+    let canonical_root = extracted_root.canonicalize()?;
+    let source = canonical_root
+        .join("GyroflowNiyien.ofx.bundle")
+        .canonicalize()?;
+    if !source.starts_with(&canonical_root) || detect_linux_openfx_bundle(&source)?.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Linux OpenFX package is missing its x86_64 binary or version file",
+        ));
+    }
+    Ok(source)
+}
+
+fn copy_directory_contents(source: &Path, destination: &Path) -> io::Result<()> {
+    std::fs::create_dir_all(destination)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_directory_contents(&source_path, &destination_path)?;
+        } else {
+            std::fs::copy(source_path, destination_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_linux_openfx_bundle_direct(source: &Path, install_root: &Path) -> io::Result<()> {
+    let destination = install_root.join("GyroflowNiyien.ofx.bundle");
+    copy_directory_contents(source, &destination)
+}
+
+fn linux_manual_install_error(source: &Path, detail: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        format!(
+            "{LINUX_PLUGIN_MANUAL_INSTALL_REQUIRED}{}|{LINUX_OPENFX_INSTALL_ROOT}|{detail}",
+            source.display()
+        ),
+    )
+}
+
+fn run_linux_privileged_copy_with<F>(source: &Path, mut run: F) -> io::Result<()>
+where
+    F: FnMut(&str, &[std::ffi::OsString]) -> io::Result<bool>,
+{
+    let args = vec![
+        std::ffi::OsString::from("/bin/cp"),
+        std::ffi::OsString::from("-a"),
+        std::ffi::OsString::from("--"),
+        source.as_os_str().to_owned(),
+        std::ffi::OsString::from(LINUX_OPENFX_INSTALL_ROOT),
+    ];
+    match run("pkexec", &args) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(linux_manual_install_error(
+            source,
+            "pkexec returned a failure status",
+        )),
+        Err(error) => Err(linux_manual_install_error(source, &error.to_string())),
+    }
+}
+
+fn run_linux_privileged_copy(source: &Path) -> io::Result<()> {
+    run_linux_privileged_copy_with(source, |program, args| {
+        Command::new(program)
+            .args(args)
+            .status()
+            .map(|status| status.success())
+    })
 }
 
 fn windows_elevated_copy_script(
@@ -370,6 +525,25 @@ fn copy_files(tempdir: &str, extract_path: &str, typ: &str) -> io::Result<()> {
         } else {
             Command::new("osascript").args(&["-e", &format!("do shell script \"mkdir -p \\\"{extract_path}\\\" ; cp -Rpf \\\"{macos_copy_source}\\\" \\\"{extract_path}\\\"\"")]).output()?.status.success()
         }
+    } else if cfg!(target_os = "linux") {
+        if typ != "openfx" || extract_path != LINUX_OPENFX_INSTALL_ROOT {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Linux supports only the fixed system OpenFX destination",
+            ));
+        }
+        let canonical_source = validate_linux_openfx_source(Path::new(tempdir))?;
+        match copy_linux_openfx_bundle_direct(&canonical_source, Path::new(extract_path)) {
+            Ok(()) => true,
+            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+                ::log::warn!(
+                    "[nle copy_files] Linux direct copy denied; requesting PolicyKit authorization"
+                );
+                run_linux_privileged_copy(&canonical_source)?;
+                true
+            }
+            Err(error) => return Err(error),
+        }
     } else {
         return Err(io::Error::new(io::ErrorKind::Other, "Unsupported OS"));
     };
@@ -383,7 +557,8 @@ fn copy_files(tempdir: &str, extract_path: &str, typ: &str) -> io::Result<()> {
             "[nle copy_files] direct copy failed, escalating to UAC/sudo retry (typ={typ:?})"
         );
         // Retry with elevated privileges. On Windows this triggers a UAC prompt;
-        // on macOS osascript shows an admin auth dialog.
+        // on macOS osascript shows an admin auth dialog. Linux handles its
+        // constrained PolicyKit retry in the platform branch above.
         let status = if cfg!(target_os = "windows") {
             let script = windows_elevated_copy_script(
                 extract_path,
@@ -432,17 +607,60 @@ fn copy_files(tempdir: &str, extract_path: &str, typ: &str) -> io::Result<()> {
 // side) + `control_center.config.json::publish_defaults.plugins_artifact_name`
 // (CSV of artifact names). On macOS the `-zip` suffix selects the .zip variant
 // over the .dmg artifact.
-fn nightly_artifact_name_for_plugin(typ: &str) -> &'static str {
-    match (typ, cfg!(target_os = "windows")) {
-        ("openfx", true) => "GyroflowNiyien-OpenFX-windows",
-        ("openfx", false) => "GyroflowNiyien-OpenFX-macos-zip",
-        ("adobe", true) => "GyroflowNiyien-Adobe-windows",
-        ("adobe", false) => "GyroflowNiyien-Adobe-macos-zip",
-        _ => unreachable!(),
+fn nightly_artifact_name_for_plugin_on_platform(
+    typ: &str,
+    platform: PluginPlatform,
+) -> Option<&'static str> {
+    match (typ, platform) {
+        ("openfx", PluginPlatform::Windows) => Some("GyroflowNiyien-OpenFX-windows"),
+        ("openfx", PluginPlatform::Macos) => Some("GyroflowNiyien-OpenFX-macos-zip"),
+        ("openfx", PluginPlatform::Linux) => Some("GyroflowNiyien-OpenFX-linux"),
+        ("adobe", PluginPlatform::Windows) => Some("GyroflowNiyien-Adobe-windows"),
+        ("adobe", PluginPlatform::Macos) => Some("GyroflowNiyien-Adobe-macos-zip"),
+        _ => None,
+    }
+}
+
+fn nightly_artifact_name_for_plugin(typ: &str) -> Option<&'static str> {
+    nightly_artifact_name_for_plugin_on_platform(typ, current_plugin_platform())
+}
+
+fn plugin_package_for_platform(
+    typ: &str,
+    platform: PluginPlatform,
+) -> Option<(&'static str, &'static str)> {
+    match (typ, platform) {
+        ("openfx", PluginPlatform::Windows) => Some((
+            "GyroflowNiyien-OpenFX-windows.zip",
+            "C:/Program Files/Common Files/OFX/Plugins/",
+        )),
+        ("openfx", PluginPlatform::Macos) => Some((
+            "GyroflowNiyien-OpenFX-macos.zip",
+            "/Library/OFX/Plugins/",
+        )),
+        ("openfx", PluginPlatform::Linux) => {
+            Some(("GyroflowNiyien-OpenFX-linux.zip", LINUX_OPENFX_INSTALL_ROOT))
+        }
+        ("adobe", PluginPlatform::Windows) => Some((
+            "GyroflowNiyien-Adobe-windows.aex",
+            "C:/Program Files/Adobe/Common/Plug-ins/7.0/MediaCore/",
+        )),
+        ("adobe", PluginPlatform::Macos) => Some((
+            "GyroflowNiyien-Adobe-macos.zip",
+            "/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/",
+        )),
+        _ => None,
     }
 }
 
 pub fn install(typ: &str, plugins_base: String) -> io::Result<String> {
+    let platform = current_plugin_platform();
+    if !plugin_available_on_platform(typ, platform) {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("Plugin type {typ} is unavailable on this platform"),
+        ));
+    }
     // Single base for all plugin downloads — manifest.plugins_base when present,
     // GitHub releases as offline fallback. Filenames are fixed and match
     // _scripts/publish_pan123_release.py PLUGIN_ASSET_NAMES (release naming,
@@ -455,35 +673,12 @@ pub fn install(typ: &str, plugins_base: String) -> io::Result<String> {
         format!("{normalized_custom_base}/")
     };
     let is_nightly_base = base.contains("nightly.link");
-    let (filename, extract_path) = match typ {
-        "openfx" => {
-            if cfg!(target_os = "windows") {
-                (
-                    "GyroflowNiyien-OpenFX-windows.zip",
-                    "C:/Program Files/Common Files/OFX/Plugins/",
-                )
-            } else {
-                (
-                    "GyroflowNiyien-OpenFX-macos.zip",
-                    "/Library/OFX/Plugins/",
-                )
-            }
-        }
-        "adobe" => {
-            if cfg!(target_os = "windows") {
-                (
-                    "GyroflowNiyien-Adobe-windows.aex",
-                    "C:/Program Files/Adobe/Common/Plug-ins/7.0/MediaCore/",
-                )
-            } else {
-                (
-                    "GyroflowNiyien-Adobe-macos.zip",
-                    "/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/",
-                )
-            }
-        }
-        _ => unreachable!(),
-    };
+    let (filename, extract_path) = plugin_package_for_platform(typ, platform).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("Plugin type {typ} is unavailable on this platform"),
+        )
+    })?;
     // For nightly-style bases (artifact-mode plugin publish), URLs follow
     //   {base}{artifact_name}.zip
     // where {artifact_name} is the V4 short name from the plugin workflow
@@ -492,7 +687,12 @@ pub fn install(typ: &str, plugins_base: String) -> io::Result<String> {
     // by `filename`; the existing zip-branch in this function unwraps one
     // layer, so the only change needed is the URL construction.
     let download_url = if is_nightly_base {
-        let artifact_name = nightly_artifact_name_for_plugin(typ);
+        let artifact_name = nightly_artifact_name_for_plugin(typ).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("Plugin type {typ} has no artifact on this platform"),
+            )
+        })?;
         format!("{base}{artifact_name}.zip")
     } else {
         format!("{base}{filename}")
@@ -648,42 +848,66 @@ pub fn install(typ: &str, plugins_base: String) -> io::Result<String> {
     Ok(detected)
 }
 
-pub fn is_nle_installed(typ: &str) -> bool {
+fn nle_detection_paths_for_platform(
+    typ: &str,
+    platform: PluginPlatform,
+    username: &str,
+) -> Vec<PathBuf> {
     use chrono::{Datelike, Utc};
 
-    match typ {
-        "openfx" => {
-            if cfg!(target_os = "windows") {
-                Path::new(&format!(
-                    "C:/Users/{}/AppData/Roaming/Blackmagic Design/DaVinci Resolve",
-                    whoami::username().unwrap_or_default()
-                ))
-                .exists()
-                    || Path::new("C:/Program Files/Common Files/OFX/Plugins").exists()
-                    || Path::new("C:/Program Files/VEGAS").exists()
-            } else {
-                Path::new("/Applications/DaVinci Resolve/").exists()
-                    || Path::new("/Applications/DaVinci Resolve.app/").exists()
-                    || Path::new("/Applications/DaVinci Resolve Studio/").exists()
-                    || Path::new("/Applications/DaVinci Resolve Studio.app/").exists()
-                    || Path::new("/Library/OFX/Plugins").exists()
+    match (typ, platform) {
+        ("openfx", PluginPlatform::Windows) => vec![
+            PathBuf::from(format!(
+                "C:/Users/{}/AppData/Roaming/Blackmagic Design/DaVinci Resolve",
+                username
+            )),
+            PathBuf::from("C:/Program Files/Common Files/OFX/Plugins"),
+            PathBuf::from("C:/Program Files/VEGAS"),
+        ],
+        ("openfx", PluginPlatform::Macos) => vec![
+            PathBuf::from("/Applications/DaVinci Resolve/"),
+            PathBuf::from("/Applications/DaVinci Resolve.app/"),
+            PathBuf::from("/Applications/DaVinci Resolve Studio/"),
+            PathBuf::from("/Applications/DaVinci Resolve Studio.app/"),
+            PathBuf::from("/Library/OFX/Plugins"),
+        ],
+        ("openfx", PluginPlatform::Linux) => vec![
+            PathBuf::from("/opt/resolve"),
+            PathBuf::from("/usr/OFX/Plugins"),
+        ],
+        ("adobe", PluginPlatform::Windows) => vec![PathBuf::from(
+            "C:/Program Files/Adobe/Common/Plug-ins/7.0/MediaCore/",
+        )],
+        ("adobe", PluginPlatform::Macos) => {
+            let mut paths = Vec::new();
+            for year in 2019..(Utc::now().year() + 1) {
+                paths.push(PathBuf::from(format!(
+                    "/Applications/Adobe Premiere Pro {year}/"
+                )));
+                paths.push(PathBuf::from(format!(
+                    "/Applications/Adobe After Effects {year}/"
+                )));
+                paths.push(PathBuf::from(format!(
+                    "/Applications/Adobe Premiere Pro {year}.app/"
+                )));
+                paths.push(PathBuf::from(format!(
+                    "/Applications/Adobe After Effects {year}.app/"
+                )));
             }
+            paths
         }
-        "adobe" => {
-            if cfg!(target_os = "windows") {
-                Path::new("C:/Program Files/Adobe/Common/Plug-ins/7.0/MediaCore/").exists()
-            } else {
-                (2019..(Utc::now().year() + 1)).any(|y| {
-                    Path::new(&format!("/Applications/Adobe Premiere Pro {y}/")).exists()
-                        || Path::new(&format!("/Applications/Adobe After Effects {y}/")).exists()
-                        || Path::new(&format!("/Applications/Adobe Premiere Pro {y}.app/")).exists()
-                        || Path::new(&format!("/Applications/Adobe After Effects {y}.app/"))
-                            .exists()
-                })
-            }
-        }
-        _ => unreachable!(),
+        _ => Vec::new(),
     }
+}
+
+pub fn is_nle_installed(typ: &str) -> bool {
+    nle_detection_paths_for_platform(
+        typ,
+        current_plugin_platform(),
+        &whoami::username().unwrap_or_default(),
+    )
+    .iter()
+    .any(|path| path.exists())
 }
 
 pub fn latest_version() -> Option<String> {
@@ -724,6 +948,9 @@ pub fn status_json(typ: &str) -> io::Result<String> {
 }
 
 pub fn detect(typ: &str) -> io::Result<String> {
+    if !plugin_available_on_platform(typ, current_plugin_platform()) {
+        return Ok(String::new());
+    }
     let path = get_path(typ);
     ::log::info!(
         "[nle detect] typ={typ:?} get_path={path:?} exists={}",
@@ -761,6 +988,16 @@ pub fn detect(typ: &str) -> io::Result<String> {
             Ok(version.unwrap_or_default())
         } else {
             ::log::info!("[nle detect] macos: path missing, returning empty version");
+            Ok(String::new())
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if typ == "openfx" && !path.is_empty() {
+            let version = detect_linux_openfx_bundle(Path::new(path))?;
+            ::log::info!("[nle detect] linux bundle={path:?} version={version:?}");
+            Ok(version)
+        } else {
             Ok(String::new())
         }
     }
@@ -967,6 +1204,18 @@ fn parse_semver(value: &str) -> Option<Version> {
 mod tests {
     use super::*;
 
+    fn write_linux_openfx_bundle(root: &Path, version: &str) -> PathBuf {
+        let bundle = root.join("GyroflowNiyien.ofx.bundle");
+        let binary = bundle
+            .join("Contents")
+            .join("Linux-x86-64")
+            .join("GyroflowNiyien.ofx");
+        std::fs::create_dir_all(binary.parent().unwrap()).unwrap();
+        std::fs::write(binary, b"linux openfx").unwrap();
+        std::fs::write(bundle.join("Contents").join("version.txt"), version).unwrap();
+        bundle
+    }
+
     fn write_sidecar_file(root: &Path, name: &str, contents: &str) {
         let source = root.join("ResolveScripts");
         std::fs::create_dir_all(&source).unwrap();
@@ -982,6 +1231,145 @@ mod tests {
         ensure_install_directory(&destination).unwrap();
 
         assert!(destination.is_dir());
+    }
+
+    #[test]
+    fn linux_platform_exposes_only_resolve_openfx_contract() {
+        assert!(plugin_available_on_platform("openfx", PluginPlatform::Linux));
+        assert!(!plugin_available_on_platform("adobe", PluginPlatform::Linux));
+        assert_eq!(
+            get_path_for_platform("openfx", PluginPlatform::Linux),
+            "/usr/OFX/Plugins/GyroflowNiyien.ofx.bundle"
+        );
+        assert_eq!(get_path_for_platform("adobe", PluginPlatform::Linux), "");
+
+        let package = plugin_package_for_platform("openfx", PluginPlatform::Linux).unwrap();
+        assert_eq!(package.0, "GyroflowNiyien-OpenFX-linux.zip");
+        assert_eq!(package.1, "/usr/OFX/Plugins/");
+        assert_eq!(
+            nightly_artifact_name_for_plugin_on_platform("openfx", PluginPlatform::Linux),
+            Some("GyroflowNiyien-OpenFX-linux")
+        );
+        assert!(plugin_package_for_platform("adobe", PluginPlatform::Linux).is_none());
+        assert_eq!(
+            nightly_artifact_name_for_plugin_on_platform("adobe", PluginPlatform::Linux),
+            None
+        );
+    }
+
+    #[test]
+    fn linux_resolve_detection_uses_standard_host_and_ofx_paths() {
+        assert_eq!(
+            nle_detection_paths_for_platform("openfx", PluginPlatform::Linux, "tester"),
+            vec![PathBuf::from("/opt/resolve"), PathBuf::from("/usr/OFX/Plugins")]
+        );
+        assert!(nle_detection_paths_for_platform("adobe", PluginPlatform::Linux, "tester")
+            .is_empty());
+    }
+
+    #[test]
+    fn linux_resolve_scripts_use_user_local_data_directory() {
+        let home = Path::new("/home/tester");
+        assert_eq!(
+            resolve_scripts_dir_for_platform(PluginPlatform::Linux, Some(home), None).unwrap(),
+            home.join(".local")
+                .join("share")
+                .join("DaVinciResolve")
+                .join("Fusion")
+                .join("Scripts")
+                .join("Utility")
+        );
+    }
+
+    #[test]
+    fn linux_detect_requires_binary_and_explicit_version_file() {
+        let root = tempfile::tempdir().unwrap();
+        let bundle = write_linux_openfx_bundle(root.path(), " 2.1.2.34\n");
+        assert_eq!(detect_linux_openfx_bundle(&bundle).unwrap(), "2.1.2.34");
+
+        std::fs::remove_file(bundle.join("Contents").join("version.txt")).unwrap();
+        assert_eq!(detect_linux_openfx_bundle(&bundle).unwrap(), "");
+        std::fs::write(bundle.join("Contents").join("version.txt"), "2.1.2.34\n").unwrap();
+        std::fs::remove_file(
+            bundle
+                .join("Contents")
+                .join("Linux-x86-64")
+                .join("GyroflowNiyien.ofx"),
+        )
+        .unwrap();
+        assert_eq!(detect_linux_openfx_bundle(&bundle).unwrap(), "");
+    }
+
+    #[test]
+    fn linux_openfx_source_is_canonical_and_complete_before_copy() {
+        let root = tempfile::tempdir().unwrap();
+        let bundle = write_linux_openfx_bundle(root.path(), "2.1.2.34\n");
+
+        let validated = validate_linux_openfx_source(root.path()).unwrap();
+
+        assert!(validated.is_absolute());
+        assert_eq!(validated, bundle.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn linux_openfx_direct_copy_installs_complete_bundle() {
+        let source_root = tempfile::tempdir().unwrap();
+        let destination_root = tempfile::tempdir().unwrap();
+        let source = write_linux_openfx_bundle(source_root.path(), "2.1.2.34\n")
+            .canonicalize()
+            .unwrap();
+
+        copy_linux_openfx_bundle_direct(&source, destination_root.path()).unwrap();
+
+        let installed = destination_root.path().join("GyroflowNiyien.ofx.bundle");
+        assert_eq!(detect_linux_openfx_bundle(&installed).unwrap(), "2.1.2.34");
+    }
+
+    #[test]
+    fn linux_privileged_copy_uses_shell_free_fixed_pkexec_arguments() {
+        let root = tempfile::tempdir().unwrap();
+        let source = write_linux_openfx_bundle(root.path(), "2.1.2.34\n")
+            .canonicalize()
+            .unwrap();
+        let mut calls = Vec::new();
+
+        run_linux_privileged_copy_with(&source, |program, args| {
+            calls.push((program.to_owned(), args.to_vec()));
+            Ok(true)
+        })
+        .unwrap();
+
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "pkexec");
+        assert_eq!(
+            calls[0].1,
+            vec![
+                std::ffi::OsString::from("/bin/cp"),
+                std::ffi::OsString::from("-a"),
+                std::ffi::OsString::from("--"),
+                source.into_os_string(),
+                std::ffi::OsString::from("/usr/OFX/Plugins/"),
+            ]
+        );
+        assert!(!calls[0].1.iter().any(|arg| arg == "sh" || arg == "-c"));
+    }
+
+    #[test]
+    fn linux_privileged_copy_failure_returns_manual_fallback_with_fixed_destination() {
+        let root = tempfile::tempdir().unwrap();
+        let source = write_linux_openfx_bundle(root.path(), "2.1.2.34\n")
+            .canonicalize()
+            .unwrap();
+
+        let error = run_linux_privileged_copy_with(&source, |_program, _args| {
+            Err(io::Error::new(io::ErrorKind::NotFound, "pkexec missing"))
+        })
+        .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(error.to_string().starts_with(LINUX_PLUGIN_MANUAL_INSTALL_REQUIRED));
+        assert!(error.to_string().contains(&source.to_string_lossy().into_owned()));
+        assert!(error.to_string().contains("/usr/OFX/Plugins/"));
     }
 
     #[cfg(target_os = "windows")]

@@ -903,8 +903,8 @@ Due to limitations of the system video encoders, rendering in the background is 
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="2705"/>
-        <source>The AppImage is ready. Open its folder, then launch it when you are ready. Gyroflow will stay open.</source>
-        <translation>AppImage готов. Откройте его папку и запустите, когда будете готовы. Gyroflow останется открытым.</translation>
+        <source>The AppImage is ready. Open its folder, exit Gyroflow, replace your previous AppImage, then start the new file. Gyroflow will stay open until you close it.</source>
+        <translation>AppImage готов. Откройте его папку, закройте Gyroflow, замените предыдущий AppImage, затем запустите новый файл. Gyroflow останется открытым, пока вы его не закроете.</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="2712"/>
@@ -3053,6 +3053,11 @@ Make sure to select %1.</source>
 Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation>Невозможно скопировать плагин из-за ограничений режима песочницы.
 Откройте &lt;b&gt;терминал&lt;/b&gt; и введите следующую команду:</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="102"/>
+        <source>Automatic installation could not be completed. Open Terminal and run the following command:</source>
+        <translation>Не удалось завершить автоматическую установку. Откройте Терминал и выполните следующую команду:</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="266"/>

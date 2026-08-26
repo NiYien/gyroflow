@@ -8,8 +8,8 @@ APP_QML = ROOT / "src" / "ui" / "App.qml"
 TRANSLATIONS = ROOT / "resources" / "translations"
 
 LINUX_READY_TEXT = (
-    "The AppImage is ready. Open its folder, then launch it when you are ready. "
-    "Gyroflow will stay open."
+    "The AppImage is ready. Open its folder, exit Gyroflow, replace your previous "
+    "AppImage, then start the new file. Gyroflow will stay open until you close it."
 )
 LINUX_OPEN_LABEL = "Open containing folder"
 

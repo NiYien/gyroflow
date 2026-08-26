@@ -680,8 +680,8 @@ Please check the file bitrate after rendering and if you&apos;re affected by thi
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="2705"/>
-        <source>The AppImage is ready. Open its folder, then launch it when you are ready. Gyroflow will stay open.</source>
-        <translation>AppImage 已準備就緒。請開啟其所在資料夾，並在準備好後啟動它。Gyroflow 將保持開啟狀態。</translation>
+        <source>The AppImage is ready. Open its folder, exit Gyroflow, replace your previous AppImage, then start the new file. Gyroflow will stay open until you close it.</source>
+        <translation>AppImage 已準備就緒。請開啟其所在資料夾，退出 Gyroflow，取代先前的 AppImage，然後啟動新檔案。Gyroflow 將保持開啟狀態，直到您將其關閉。</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="2712"/>
@@ -3053,6 +3053,11 @@ Make sure to select %1.</source>
 Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation>由於沙盒限制，無法複製外掛程式。
 請開啟 &lt;b&gt;終端機&lt;/b&gt; 並輸入以下指令：</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="102"/>
+        <source>Automatic installation could not be completed. Open Terminal and run the following command:</source>
+        <translation>無法完成自動安裝。請開啟終端機並執行以下命令：</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="266"/>

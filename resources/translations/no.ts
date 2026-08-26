@@ -903,8 +903,8 @@ På grunn av begrensninger for systemets videokodere, støttes ikke gjengivelse 
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="2705"/>
-        <source>The AppImage is ready. Open its folder, then launch it when you are ready. Gyroflow will stay open.</source>
-        <translation>AppImage-filen er klar. Åpne mappen og start den når du er klar. Gyroflow forblir åpen.</translation>
+        <source>The AppImage is ready. Open its folder, exit Gyroflow, replace your previous AppImage, then start the new file. Gyroflow will stay open until you close it.</source>
+        <translation>AppImage-filen er klar. Åpne mappen, avslutt Gyroflow, erstatt den forrige AppImage-filen, og start deretter den nye filen. Gyroflow forblir åpen til du lukker den.</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="2712"/>
@@ -3053,6 +3053,11 @@ Sørg for å velge %1.</translation>
 Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation>Kan ikke kopiere programtillegget på grunn av sandkassebegrensninger.
 Åpne &lt;b&gt;Terminal&lt;/b&gt; og skriv inn følgende kommando:</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="102"/>
+        <source>Automatic installation could not be completed. Open Terminal and run the following command:</source>
+        <translation>Den automatiske installasjonen kunne ikke fullføres. Åpne Terminal og kjør følgende kommando:</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="266"/>

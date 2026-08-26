@@ -903,8 +903,8 @@ Ze względu na ograniczenia systemowych enkoderów wideo, renderowanie w tle nie
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="2705"/>
-        <source>The AppImage is ready. Open its folder, then launch it when you are ready. Gyroflow will stay open.</source>
-        <translation>Plik AppImage jest gotowy. Otwórz jego folder i uruchom go, gdy będziesz gotowy. Gyroflow pozostanie otwarty.</translation>
+        <source>The AppImage is ready. Open its folder, exit Gyroflow, replace your previous AppImage, then start the new file. Gyroflow will stay open until you close it.</source>
+        <translation>Plik AppImage jest gotowy. Otwórz jego folder, zamknij Gyroflow, zastąp poprzedni plik AppImage, a następnie uruchom nowy plik. Gyroflow pozostanie otwarty, dopóki go nie zamkniesz.</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="2712"/>
@@ -3053,6 +3053,11 @@ Upewnij się, że wybrano %1.</translation>
 Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation>Nie można skopiować wtyczki ze względu na ograniczenia sandbox.
 Otwórz &lt;b&gt;Terminal&lt;/b&gt; i wprowadź następujące polecenie:</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="102"/>
+        <source>Automatic installation could not be completed. Open Terminal and run the following command:</source>
+        <translation>Nie udało się ukończyć automatycznej instalacji. Otwórz Terminal i uruchom następujące polecenie:</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="266"/>

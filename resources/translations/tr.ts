@@ -901,8 +901,8 @@ Sisteminizin video enkoderlerinin sınırlarından ötürü arkaplanda render i�
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="2705"/>
-        <source>The AppImage is ready. Open its folder, then launch it when you are ready. Gyroflow will stay open.</source>
-        <translation>AppImage hazır. Klasörünü açın ve hazır olduğunuzda çalıştırın. Gyroflow açık kalacaktır.</translation>
+        <source>The AppImage is ready. Open its folder, exit Gyroflow, replace your previous AppImage, then start the new file. Gyroflow will stay open until you close it.</source>
+        <translation>AppImage hazır. Klasörünü açın, Gyroflow'dan çıkın, önceki AppImage'ı değiştirin ve ardından yeni dosyayı başlatın. Gyroflow siz kapatana kadar açık kalacaktır.</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="2712"/>
@@ -3049,6 +3049,11 @@ Make sure to select %1.</source>
 Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation>Sandbox kısıtlamaları nedeniyle eklenti kopyalanamıyor.
 &lt;b&gt;Terminal&lt;/b&gt; uygulamasını açın ve aşağıdaki komutu girin:</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="102"/>
+        <source>Automatic installation could not be completed. Open Terminal and run the following command:</source>
+        <translation>Otomatik kurulum tamamlanamadı. Terminal'i açın ve aşağıdaki komutu çalıştırın:</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="266"/>

@@ -5585,18 +5585,18 @@ impl Controller {
     }
 
     fn is_nle_installed(&self) -> bool {
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
         {
             crate::nle_plugins::is_nle_installed("openfx")
                 || crate::nle_plugins::is_nle_installed("adobe")
         }
-        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
         {
             false
         }
     }
     fn nle_plugins(&self, command: QString, typ: QString) -> QString {
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
         {
             let typ = typ.to_string();
             let command = command.to_string();
@@ -5691,7 +5691,7 @@ impl Controller {
                 Err(e) => QString::from(format!("An error occured: {e:?}")),
             }
         }
-        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
         {
             QString::default()
         }

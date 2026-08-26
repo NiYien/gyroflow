@@ -27,9 +27,9 @@ Rectangle {
     property var pendingAutoUpdate: null;
     property bool onboardingActive: false;
 
-    // Plugin installers are implemented only for Windows and macOS. Host application
-    // detection must not hide the installer when its target directory is still absent.
-    readonly property bool nlePluginsSupported: Qt.platform.os === "windows" || Qt.platform.os === "osx";
+    // Linux exposes Resolve/OpenFX only; Adobe remains a Windows/macOS integration.
+    // Host detection must not hide the installer when its target directory is absent.
+    readonly property bool nlePluginsSupported: Qt.platform.os === "windows" || Qt.platform.os === "osx" || Qt.platform.os === "linux";
 
     // Simple mode is session-scoped: always starts true, never persisted to QSettings.
     property bool isSimpleMode: true;
@@ -2702,7 +2702,7 @@ Rectangle {
             const isAndroid = platform === "android";
             const isLinux = platform === "linux";
             const quitWarning = isLinux
-                ? qsTr("The AppImage is ready. Open its folder, then launch it when you are ready. Gyroflow will stay open.")
+                ? qsTr("The AppImage is ready. Open its folder, exit Gyroflow, replace your previous AppImage, then start the new file. Gyroflow will stay open until you close it.")
                 : isAndroid
                 ? qsTr("The system installer will close Gyroflow while it updates. Make sure your project is saved before continuing.")
                 : qsTr("Installing the update will quit Gyroflow. Make sure your project is saved before continuing.");

@@ -904,8 +904,8 @@ Rendering di latar belakang tidak didukung, karena keterbatasan sistem encoder v
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="2705"/>
-        <source>The AppImage is ready. Open its folder, then launch it when you are ready. Gyroflow will stay open.</source>
-        <translation>AppImage sudah siap. Buka foldernya, lalu jalankan saat Anda siap. Gyroflow akan tetap terbuka.</translation>
+        <source>The AppImage is ready. Open its folder, exit Gyroflow, replace your previous AppImage, then start the new file. Gyroflow will stay open until you close it.</source>
+        <translation>AppImage sudah siap. Buka foldernya, keluar dari Gyroflow, ganti AppImage sebelumnya, lalu jalankan file baru. Gyroflow akan tetap terbuka sampai Anda menutupnya.</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="2712"/>
@@ -3050,6 +3050,11 @@ Pastikan untuk memilih %1.</translation>
 Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation>Tidak dapat menyalin plugin karena keterbatasan sandbox.
 Buka &lt;b&gt;Terminal&lt;/b&gt; dan masukkan perintah berikut:</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="102"/>
+        <source>Automatic installation could not be completed. Open Terminal and run the following command:</source>
+        <translation>Instalasi otomatis tidak dapat diselesaikan. Buka Terminal dan jalankan perintah berikut:</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="266"/>

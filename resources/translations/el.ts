@@ -903,8 +903,8 @@ Due to limitations of the system video encoders, rendering in the background is 
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="2705"/>
-        <source>The AppImage is ready. Open its folder, then launch it when you are ready. Gyroflow will stay open.</source>
-        <translation>Το AppImage είναι έτοιμο. Ανοίξτε τον φάκελό του και εκκινήστε το όταν είστε έτοιμοι. Το Gyroflow θα παραμείνει ανοιχτό.</translation>
+        <source>The AppImage is ready. Open its folder, exit Gyroflow, replace your previous AppImage, then start the new file. Gyroflow will stay open until you close it.</source>
+        <translation>Το AppImage είναι έτοιμο. Ανοίξτε τον φάκελό του, κλείστε το Gyroflow, αντικαταστήστε το προηγούμενο AppImage και μετά εκκινήστε το νέο αρχείο. Το Gyroflow θα παραμείνει ανοιχτό μέχρι να το κλείσετε.</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="2712"/>
@@ -3053,6 +3053,11 @@ Make sure to select %1.</source>
 Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation>Δεν είναι δυνατή η αντιγραφή της προσθήκης λόγω περιορισμών του sandbox.
 Ανοίξτε το &lt;b&gt;Terminal&lt;/b&gt; και πληκτρολογήστε την ακόλουθη εντολή:</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="102"/>
+        <source>Automatic installation could not be completed. Open Terminal and run the following command:</source>
+        <translation>Η αυτόματη εγκατάσταση δεν ολοκληρώθηκε. Ανοίξτε το Τερματικό και εκτελέστε την ακόλουθη εντολή:</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="266"/>

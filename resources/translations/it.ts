@@ -903,8 +903,8 @@ A causa delle limitazioni degli encoder video di sistema, il rendering in backgr
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="2705"/>
-        <source>The AppImage is ready. Open its folder, then launch it when you are ready. Gyroflow will stay open.</source>
-        <translation>L'AppImage è pronta. Apri la cartella e avviala quando vuoi. Gyroflow rimarrà aperto.</translation>
+        <source>The AppImage is ready. Open its folder, exit Gyroflow, replace your previous AppImage, then start the new file. Gyroflow will stay open until you close it.</source>
+        <translation>L'AppImage è pronta. Apri la cartella, chiudi Gyroflow, sostituisci l'AppImage precedente, quindi avvia il nuovo file. Gyroflow rimarrà aperto finché non lo chiudi.</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="2712"/>
@@ -3051,6 +3051,11 @@ Assicurati di selezionare %1.</translation>
 Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation>Impossibile copiare il plugin a causa delle limitazioni della sandbox.
 Apri &lt;b&gt;Terminale&lt;/b&gt; e inserisci il seguente comando:</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="102"/>
+        <source>Automatic installation could not be completed. Open Terminal and run the following command:</source>
+        <translation>Non è stato possibile completare l'installazione automatica. Apri Terminale ed esegui il seguente comando:</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="266"/>

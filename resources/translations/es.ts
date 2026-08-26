@@ -902,8 +902,8 @@ Debido a las limitaciones de los codificadores de vídeo del sistema, no se admi
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="2705"/>
-        <source>The AppImage is ready. Open its folder, then launch it when you are ready. Gyroflow will stay open.</source>
-        <translation>El AppImage está listo. Abre su carpeta y ejecútalo cuando quieras. Gyroflow permanecerá abierto.</translation>
+        <source>The AppImage is ready. Open its folder, exit Gyroflow, replace your previous AppImage, then start the new file. Gyroflow will stay open until you close it.</source>
+        <translation>El AppImage está listo. Abre su carpeta, cierra Gyroflow, sustituye el AppImage anterior y luego inicia el archivo nuevo. Gyroflow permanecerá abierto hasta que lo cierres.</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="2712"/>
@@ -3051,6 +3051,11 @@ Asegúrate de seleccionar %1.</translation>
 Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation>No se puede copiar el complemento debido a limitaciones de la zona de pruebas.
 Abra &lt;b&gt;Terminal&lt;/b&gt; e ingrese el siguiente comando:</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="102"/>
+        <source>Automatic installation could not be completed. Open Terminal and run the following command:</source>
+        <translation>No se pudo completar la instalación automática. Abre Terminal y ejecuta el siguiente comando:</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="266"/>

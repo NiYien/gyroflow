@@ -57,17 +57,17 @@
 
 ## 7. Linux Resolve/OpenFX client integration (`gyroflow`)
 
-- [ ] 7.1 Add failing platform-parameterized tests for Linux OpenFX availability, Linux asset name, standard install path, Resolve detection paths, and hidden Adobe
-- [ ] 7.2 Compile the NLE module on Linux and expose only the OpenFX entry through controller and QML platform gates
-- [ ] 7.3 Select `GyroflowNiyien-OpenFX-linux.zip`, `/usr/OFX/Plugins/GyroflowNiyien.ofx.bundle`, `/opt/resolve`, and `Contents/Linux-x86-64/GyroflowNiyien.ofx` without macOS fallthrough
-- [ ] 7.4 Add failing version-detection tests for a complete Linux bundle and incomplete binary/version-file cases
-- [ ] 7.5 Read the explicit Linux bundle version file during detect and return empty for incomplete bundles
-- [ ] 7.6 Add failing Linux Resolve Utility path/copy tests for `~/.local/share/DaVinciResolve/Fusion/Scripts/Utility`, exact sidecars, legacy removal, and unrelated-file preservation
-- [ ] 7.7 Implement Linux Resolve sidecar installation without privilege escalation
-- [ ] 7.8 Add failing privilege-path tests for direct copy, canonical source validation, fixed destination, shell-free `pkexec`, and preserved manual fallback
-- [ ] 7.9 Implement Linux direct/pkexec OFX copy with a typed/sentinel manual-fallback result and no untrusted shell command construction
-- [ ] 7.10 Add Linux install/update/manual-fallback QML handling and translations while preserving Windows/macOS behavior
-- [ ] 7.11 Run focused `nle_plugins` Rust tests, QML static tests, and main-repository plugin asset contract tests
+- [x] 7.1 Add failing platform-parameterized tests for Linux OpenFX availability, Linux asset name, standard install path, Resolve detection paths, and hidden Adobe
+- [x] 7.2 Compile the NLE module on Linux and expose only the OpenFX entry through controller and QML platform gates
+- [x] 7.3 Select `GyroflowNiyien-OpenFX-linux.zip`, `/usr/OFX/Plugins/GyroflowNiyien.ofx.bundle`, `/opt/resolve`, and `Contents/Linux-x86-64/GyroflowNiyien.ofx` without macOS fallthrough
+- [x] 7.4 Add failing version-detection tests for a complete Linux bundle and incomplete binary/version-file cases
+- [x] 7.5 Read the explicit Linux bundle version file during detect and return empty for incomplete bundles
+- [x] 7.6 Add failing Linux Resolve Utility path/copy tests for `~/.local/share/DaVinciResolve/Fusion/Scripts/Utility`, exact sidecars, legacy removal, and unrelated-file preservation
+- [x] 7.7 Implement Linux Resolve sidecar installation without privilege escalation
+- [x] 7.8 Add failing privilege-path tests for direct copy, canonical source validation, fixed destination, shell-free `pkexec`, and preserved manual fallback
+- [x] 7.9 Implement Linux direct/pkexec OFX copy with a typed/sentinel manual-fallback result and no untrusted shell command construction
+- [x] 7.10 Add Linux install/update/manual-fallback QML handling and translations while preserving Windows/macOS behavior
+- [x] 7.11 Run focused `nle_plugins` Rust tests, QML static tests, and main-repository plugin asset contract tests
 
 ## 8. Documentation and cross-repository verification
 
