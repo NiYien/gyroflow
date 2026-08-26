@@ -12,6 +12,7 @@ Item {
     required property var filesystemObject
     required property int questionType
     required property int errorType
+    property bool busy: false
 
     function open(platformOs: string, callback: var, fallbackDialog: var): void {
         if (platformOs !== "ios") {
@@ -24,9 +25,11 @@ Item {
                 text: qsTr("Photos"),
                 accent: true,
                 clicked: function() {
-                    hostObject.pendingPickerCallback = callback
-                    if (!filesystemObject.open_ios_video_picker()) {
-                        hostObject.pendingPickerCallback = null
+                    if (root.busy) return
+                    if (filesystemObject.open_ios_video_picker()) {
+                        root.busy = true
+                        hostObject.pendingPickerCallback = callback
+                    } else {
                         hostObject.messageBox(
                             errorType,
                             qsTr("Unable to open the photo library."),
@@ -50,16 +53,22 @@ Item {
         target: root.filesystemObject
 
         function onPicker_cancelled(): void {
+            root.busy = false
             root.hostObject.pendingPickerCallback = null
         }
 
         function onPicker_error(message: string): void {
+            root.busy = false
             root.hostObject.pendingPickerCallback = null
             root.hostObject.messageBox(
                 root.errorType,
                 qsTr("Some videos could not be imported: %1").arg(message),
                 [ { text: qsTranslate("App", "Ok") } ]
             )
+        }
+
+        function onUrls_opened(): void {
+            root.busy = false
         }
     }
 }

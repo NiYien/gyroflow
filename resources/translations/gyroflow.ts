@@ -5806,27 +5806,27 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
 <context>
     <name>VideoSourcePicker</name>
     <message>
-        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="22"/>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="23"/>
         <source>Choose video source</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="24"/>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="25"/>
         <source>Photos</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="32"/>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="35"/>
         <source>Unable to open the photo library.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="39"/>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="42"/>
         <source>Files and external storage</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="60"/>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="65"/>
         <source>Some videos could not be imported: %1</source>
         <translation type="unfinished"></translation>
     </message>

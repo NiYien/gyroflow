@@ -50,6 +50,7 @@ TestCase {
         QtObject {
             signal picker_cancelled()
             signal picker_error(string message)
+            signal urls_opened(var urls)
             property int nativeOpenCalls: 0
             property bool nativeOpenResult: true
 
@@ -74,6 +75,10 @@ TestCase {
         callbackUrls = urls
     }
 
+    function secondSelectedCallback(urls): void {
+        callbackUrls = ["second", urls]
+    }
+
     function init(): void {
         hostObject = hostFactory.createObject(testCase)
         filesystemObject = filesystemFactory.createObject(testCase)
@@ -87,6 +92,11 @@ TestCase {
             errorType: 9
         })
         verify(picker !== null)
+        filesystemObject.urls_opened.connect(function(urls) {
+            const callback = hostObject.pendingPickerCallback
+            hostObject.pendingPickerCallback = null
+            if (callback) callback(urls)
+        })
     }
 
     function cleanup(): void {
@@ -122,6 +132,46 @@ TestCase {
         compare(filesystemObject.nativeOpenCalls, 1)
         verify(hostObject.pendingPickerCallback === selectedCallback)
         compare(fallbackDialog.open2Calls, 0)
+    }
+
+    function test_secondPhotoOpenDoesNotReplaceActiveCallback(): void {
+        picker.open("ios", selectedCallback, fallbackDialog)
+        hostObject.lastButtons[0].clicked()
+        verify(hostObject.pendingPickerCallback === selectedCallback)
+
+        filesystemObject.nativeOpenResult = false
+        picker.open("ios", secondSelectedCallback, fallbackDialog)
+        hostObject.lastButtons[0].clicked()
+
+        compare(filesystemObject.nativeOpenCalls, 1)
+        verify(hostObject.pendingPickerCallback === selectedCallback)
+        compare(hostObject.messageBoxCalls, 2)
+    }
+
+    function test_successDeliversAndUnlocksPicker(): void {
+        picker.open("ios", selectedCallback, fallbackDialog)
+        hostObject.lastButtons[0].clicked()
+        compare(picker.busy, true)
+
+        filesystemObject.urls_opened(["file:///clip.mov"])
+
+        compare(picker.busy, false)
+        compare(hostObject.pendingPickerCallback, null)
+        compare(callbackUrls, ["file:///clip.mov"])
+    }
+
+    function test_partialSuccessDeliversBeforeShowingError(): void {
+        picker.open("ios", selectedCallback, fallbackDialog)
+        hostObject.lastButtons[0].clicked()
+
+        filesystemObject.urls_opened(["file:///good.mov"])
+        filesystemObject.picker_error("bad.mov")
+
+        compare(callbackUrls, ["file:///good.mov"])
+        compare(hostObject.pendingPickerCallback, null)
+        compare(picker.busy, false)
+        compare(hostObject.messageBoxCalls, 2)
+        verify(hostObject.lastMessageText.indexOf("bad.mov") >= 0)
     }
 
     function test_iosFilesUsesDocumentPicker(): void {
