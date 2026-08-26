@@ -51,17 +51,25 @@ export MACOSX_DEPLOYMENT_TARGET := "10.15"
 # ――――――――――――――――――――――――――――――――――――――― Clang ―――――――――――――――――――――――――――――――――――――――――
 LlvmConfigExists := if os() == "linux" { `which llvm-config > /dev/null && echo true || echo false` } else { "false" }
 LinuxClangLibDir := if os() == "linux" { `find /usr/lib/llvm-*/lib -maxdepth 1 -name 'libclang.so*' -printf '%h\n' 2>/dev/null | sort -V | tail -n 1` } else { "" }
+LinuxLibClangVersion := "16.0.6"
+LinuxBundledLibClangDir := ExtDir / ("libclang-" + LinuxLibClangVersion) / "clang/native"
 export LIBCLANG_PATH := if os() == "macos" {
    DYLD_FALLBACK_LIBRARY_PATH
-} else {
-   if path_exists(ExtDir / "llvm/bin") == "true" {
-      ExtDir / "llvm/bin"
+} else if os() == "linux" {
+   if path_exists(LinuxBundledLibClangDir / "libclang.so") == "true" {
+      LinuxBundledLibClangDir
    } else {
       env_var_or_default("LIBCLANG_PATH", if "{{LlvmConfigExists}}" == "true" {
          `llvm-config --libdir`
       } else {
          LinuxClangLibDir
       })
+   }
+} else {
+   if path_exists(ExtDir / "llvm/bin") == "true" {
+      ExtDir / "llvm/bin"
+   } else {
+      env_var_or_default("LIBCLANG_PATH", "")
    }
 }
 LLVMPath := LIBCLANG_PATH

@@ -15,6 +15,7 @@ from _scripts import publish_pan123_release as publish
 
 ROOT = Path(__file__).resolve().parents[2]
 VERIFY_SCRIPT = ROOT / "_scripts" / "verify_linux_app_packages.py"
+LIBCLANG_VERIFY_SCRIPT = ROOT / "_scripts" / "verify_linux_libclang.py"
 APPIMAGE_NAME = "gyroflow-niyien-linux64.AppImage"
 TAR_NAME = "gyroflow-niyien-linux64.tar.gz"
 
@@ -23,6 +24,15 @@ def load_verifier():
     spec = importlib.util.spec_from_file_location("verify_linux_app_packages", VERIFY_SCRIPT)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load {VERIFY_SCRIPT}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_libclang_verifier():
+    spec = importlib.util.spec_from_file_location("verify_linux_libclang", LIBCLANG_VERIFY_SCRIPT)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load {LIBCLANG_VERIFY_SCRIPT}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -96,6 +106,26 @@ class BootstrapPythonCompatibilityTests(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), "gyroflow-niyien")
 
 
+class LinuxLibClangVerifierTests(unittest.TestCase):
+    def setUp(self):
+        self.verifier = load_libclang_verifier()
+
+    def test_rejects_libclang_older_than_the_binding_generator_requires(self):
+        with self.assertRaisesRegex(ValueError, "requires libclang 9 or newer"):
+            self.verifier.validate_version("Debian clang version 7.0.1-8+deb10u2", 9)
+
+    def test_accepts_the_pinned_libclang_version(self):
+        major = self.verifier.validate_version("clang version 16.0.6", 9)
+
+        self.assertEqual(major, 16)
+
+    def test_missing_shared_library_fails_with_the_expected_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            expected = Path(directory) / "libclang.so"
+            with self.assertRaisesRegex(FileNotFoundError, str(expected).replace("\\", "\\\\")):
+                self.verifier.probe_libclang(Path(directory), 9)
+
+
 class LinuxJustContractTests(unittest.TestCase):
     def test_linux_rejects_non_x86_64_before_installing_or_building(self):
         script = (ROOT / "_scripts" / "linux.just").read_text(encoding="utf-8")
@@ -135,9 +165,9 @@ class LinuxJustContractTests(unittest.TestCase):
     def test_linux_installs_bootstrap_tools_before_probing_consumers(self):
         script = (ROOT / "_scripts" / "linux.just").read_text(encoding="utf-8")
 
-        self.assertIn("for tool in curl git tar unzip zip; do", script)
+        self.assertIn("for tool in curl git sha256sum tar unzip zip; do", script)
         apt_install = script.index("sudo apt-get install -y p7zip-full")
-        consumer_probe = script.index("for tool in curl git tar unzip zip; do")
+        consumer_probe = script.index("for tool in curl git sha256sum tar unzip zip; do")
         self.assertLess(apt_install, consumer_probe)
         self.assertIn("for tool in bash cargo python3; do", script)
         self.assertIn(
@@ -145,14 +175,22 @@ class LinuxJustContractTests(unittest.TestCase):
             script,
         )
 
-    def test_linux_discovers_the_distribution_libclang_instead_of_pin_to_13(self):
+    def test_linux_installs_and_probes_a_pinned_compatible_libclang(self):
         script = (ROOT / "_scripts" / "linux.just").read_text(encoding="utf-8")
         common = (ROOT / "_scripts" / "common.just").read_text(encoding="utf-8")
 
-        self.assertNotIn("libclang-13-dev", script)
-        self.assertNotIn('/usr/lib/llvm-13/lib/', common)
-        self.assertIn("find /usr/lib/llvm-*/lib", script)
-        self.assertIn("find /usr/lib/llvm-*/lib", common)
+        self.assertIn('LinuxLibClangVersion := "16.0.6"', common)
+        self.assertIn("LinuxBundledLibClangDir", common)
+        self.assertIn(
+            "libclang-{{LinuxLibClangVersion}}-py2.py3-none-manylinux2010_x86_64.whl",
+            script,
+        )
+        self.assertIn(
+            "libclang-{{LinuxLibClangVersion}}.data/platlib/clang/native",
+            script,
+        )
+        self.assertIn("9dcdc730939788b8b69ffd6d5d75fe5366e3ee007f1e36a99799ec0b0c001492", script)
+        self.assertIn("verify_linux_libclang.py", script)
 
     def test_linux_python_bootstrap_uses_the_current_readline_package(self):
         script = (ROOT / "_scripts" / "linux.just").read_text(encoding="utf-8")

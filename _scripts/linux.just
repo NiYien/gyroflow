@@ -39,11 +39,37 @@ install-deps: assert-linux-x86-64
         sudo apt-get install -y libstdc++-8-dev || true
     fi
 
-    for tool in curl git tar unzip zip; do
+    for tool in curl git sha256sum tar unzip zip; do
         command -v "$tool" >/dev/null || { echo "Required Linux build tool is missing after dependency installation: $tool" >&2; exit 1; }
     done
 
     mkdir -p {{ExtDir}}
+
+    libclang_wheel_name="libclang-{{LinuxLibClangVersion}}-py2.py3-none-manylinux2010_x86_64.whl"
+    libclang_url="https://files.pythonhosted.org/packages/ea/df/55525e489c43f9dbb6c8ea27d8a567b3dcd18a22f3c45483055f5ca6611d/$libclang_wheel_name"
+    libclang_sha256="9dcdc730939788b8b69ffd6d5d75fe5366e3ee007f1e36a99799ec0b0c001492"
+    libclang_root="{{ExtDir}}/libclang-{{LinuxLibClangVersion}}"
+    libclang_dir="{{LinuxBundledLibClangDir}}"
+    if ! python3 "{{ProjectDir}}/_scripts/verify_linux_libclang.py" "$libclang_dir" --minimum-major 9 >/dev/null 2>&1; then
+        echo "Installing pinned libclang {{LinuxLibClangVersion}} for Linux x86_64"
+        libclang_temp="$(mktemp -d "{{ExtDir}}/.libclang-{{LinuxLibClangVersion}}.XXXXXX")"
+        cleanup_libclang_temp() { rm -rf "$libclang_temp"; }
+        trap cleanup_libclang_temp EXIT
+        curl -fL --retry 3 --retry-connrefused "$libclang_url" -o "$libclang_temp/$libclang_wheel_name"
+        printf '%s  %s\n' "$libclang_sha256" "$libclang_temp/$libclang_wheel_name" | sha256sum --check -
+        unzip -q "$libclang_temp/$libclang_wheel_name" -d "$libclang_temp/unpacked"
+        libclang_wheel_native="$libclang_temp/unpacked/libclang-{{LinuxLibClangVersion}}.data/platlib/clang/native"
+        test -s "$libclang_wheel_native/libclang.so" || { echo "Pinned libclang wheel is missing clang/native/libclang.so" >&2; exit 1; }
+        mkdir -p "$libclang_temp/extracted/clang"
+        mv "$libclang_wheel_native" "$libclang_temp/extracted/clang/native"
+        python3 "{{ProjectDir}}/_scripts/verify_linux_libclang.py" "$libclang_temp/extracted/clang/native" --minimum-major 9
+        rm -rf "$libclang_root"
+        mv "$libclang_temp/extracted" "$libclang_root"
+        trap - EXIT
+        rm -rf "$libclang_temp"
+    fi
+    python3 "{{ProjectDir}}/_scripts/verify_linux_libclang.py" "$libclang_dir" --minimum-major 9
+    export LIBCLANG_PATH="$libclang_dir"
 
     if [ ! -f "{{OpenCVPath}}/lib/libopencv_core4.a" ]; then
         echo "Installing OpenCV from vcpkg"
@@ -66,16 +92,6 @@ install-deps: assert-linux-x86-64
         rm -rf {{ExtDir}}/vcpkg/buildtrees
         rm -rf {{ExtDir}}/vcpkg/downloads
     fi
-
-    clang_lib_dir="${LIBCLANG_PATH:-}"
-    if [ ! -d "$clang_lib_dir" ]; then
-        clang_lib_dir="$(find /usr/lib/llvm-*/lib -maxdepth 1 -name 'libclang.so*' -printf '%h\n' 2>/dev/null | sort -V | tail -n 1)"
-    fi
-    if [ ! -d "$clang_lib_dir" ]; then
-        echo "Unable to locate the libclang directory after installing libclang-dev." >&2
-        exit 1
-    fi
-    export LIBCLANG_PATH="$clang_lib_dir"
 
     pushd {{ExtDir}}
 
@@ -176,39 +192,43 @@ install-deps: assert-linux-x86-64
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 [no-cd]
-build *param: assert-linux-x86-64
+verify-linux-libclang: assert-linux-x86-64
+    python3 "{{ProjectDir}}/_scripts/verify_linux_libclang.py" "{{LIBCLANG_PATH}}" --minimum-major 9
+
+[no-cd]
+build *param: verify-linux-libclang
     cargo build --release {{param}}
 
 [no-cd]
-build-debug *param: assert-linux-x86-64
+build-debug *param: verify-linux-libclang
     cargo build {{param}}
 
 [no-cd]
-check *param: assert-linux-x86-64
+check *param: verify-linux-libclang
     cargo check {{param}}
 
 [no-cd]
-run *param: assert-linux-x86-64
+run *param: verify-linux-libclang
     cargo run --release {{param}}
 
 [no-cd]
-test *param: assert-linux-x86-64
+test *param: verify-linux-libclang
     cargo test -- {{param}}
 
 [no-cd]
-test-core *param: assert-linux-x86-64
+test-core *param: verify-linux-libclang
     cargo test -p gyroflow-core --lib {{param}}
 
 [no-cd]
-clippy *param: assert-linux-x86-64
+clippy *param: verify-linux-libclang
     cargo clippy {{param}}
 
 [no-cd]
-debug *param: assert-linux-x86-64
+debug *param: verify-linux-libclang
     cargo run {{param}}
 
 [no-cd]
-profile *param: assert-linux-x86-64
+profile *param: verify-linux-libclang
     cargo run --profile profile -- {{param}}
 
 [no-cd]
@@ -260,6 +280,7 @@ deploy *param: assert-linux-x86-64
         exit;
     fi
 
+    python3 "$PROJECT_DIR/_scripts/verify_linux_libclang.py" "$LIBCLANG_PATH" --minimum-major 9
     cargo build --profile deploy
 
     for required in \
