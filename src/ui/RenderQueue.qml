@@ -1259,7 +1259,11 @@ Item {
                     window.showCanonCrmProjectOnlyMessage();
                     return;
                 }
-                render_queue[statuses[status][3]]();
+                if (status === "stopped") {
+                    window.runQueueWithIosOutputCheck(function() { render_queue.start(); });
+                } else {
+                    render_queue[statuses[status][3]]();
+                }
             }
         }
     }
@@ -2906,6 +2910,7 @@ Item {
 
             let foldersWithoutAccess = [];
             let additional = prepareBatchAdditionalData(window.getAdditionalProjectData());
+            const deferIosPhotoOutput = window.deferIosPhotoQueueOutputCheck(urls);
             if (!outFolder) {
                 // Android SAF picker hands out per-file content URIs, so the
                 // source folder is never writable. Resolve outFolder from the
@@ -2930,7 +2935,7 @@ Item {
                 }
                 delete additional.output.output_folder;
                 delete additional.output.output_filename;
-                if (isSandboxed) {
+                if (isSandboxed && !deferIosPhotoOutput) {
                     for (const url of urls) {
                         const folder = filesystem.get_folder(url);
                         if (!foldersWithoutAccess.includes(folder) && !filesystem.can_create_file(folder, "check.tmp")) {
@@ -2941,7 +2946,7 @@ Item {
             } else {
                 additional.output.output_folder = outFolder;
                 delete additional.output.output_filename;
-                if (isSandboxed) {
+                if (isSandboxed && !deferIosPhotoOutput) {
                     if (!foldersWithoutAccess.includes(outFolder) && !filesystem.can_create_file(outFolder, "check.tmp")) {
                         foldersWithoutAccess.push(outFolder);
                     }
@@ -3156,7 +3161,7 @@ Item {
                         const fixedPath = window.exportSettings.queueFixedOutputPath;
                         if (fixedPath) {
                             outFolder = fixedPath;
-                        } else {
+                        } else if (!window.deferIosPhotoQueueOutputCheck(videoUrls)) {
                             window.outputFile.selectFolder("", function(folder_url) {
                                 if (window.exportSettings) {
                                     window.exportSettings.queueFixedOutputPath = folder_url;

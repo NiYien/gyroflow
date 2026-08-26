@@ -6163,6 +6163,7 @@ pub struct Filesystem {
     protected_folder_kind: qt_method!(fn(&self, url: QUrl) -> QString),
     get_filename: qt_method!(fn(&self, url: QUrl) -> QString),
     get_folder: qt_method!(fn(&self, url: QUrl) -> QString),
+    is_ios_photo_import: qt_method!(fn(&self, url: QUrl) -> bool),
     filename_with_extension: qt_method!(fn(&self, filename: QString, ext: QString) -> QString),
     filename_with_suffix: qt_method!(fn(&self, filename: QString, suffix: QString) -> QString),
     open_file_externally: qt_method!(fn(&self, url: QUrl)),
@@ -6212,6 +6213,9 @@ impl Filesystem {
     }
     fn get_folder(&self, url: QUrl) -> QString {
         QString::from(filesystem::get_folder(&util::qurl_to_encoded(url)))
+    }
+    fn is_ios_photo_import(&self, url: QUrl) -> bool {
+        filesystem::is_ios_photo_import_url(&util::qurl_to_encoded(url))
     }
     fn filename_with_extension(&self, filename: QString, ext: QString) -> QString {
         QString::from(filesystem::filename_with_extension(

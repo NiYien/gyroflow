@@ -638,6 +638,11 @@ pub fn can_open_file(url: &str) -> bool {
     let x = open_file(url, false, false).is_ok();
     x
 }
+
+pub fn is_ios_photo_import_url(url: &str) -> bool {
+    url.contains("/ios-photo-imports/")
+}
+
 pub fn can_create_file(folder: &str, filename: &str) -> bool {
     if folder.is_empty() || filename.is_empty() {
         return false;
@@ -852,6 +857,19 @@ mod tests {
         filename_from_url_string, get_filename, is_bare_content_tree_url,
         reencode_url_for_android,
     };
+
+    #[test]
+    fn ios_photo_import_url_matches_only_the_picker_cache_component() {
+        assert!(super::is_ios_photo_import_url(
+            "file:///private/var/mobile/Containers/Data/Application/ABC/Library/Caches/NiYien/GyroflowNiYien/ios-photo-imports/session/item/IMG_0001.mov"
+        ));
+        assert!(!super::is_ios_photo_import_url(
+            "file:///private/var/mobile/Containers/Data/Application/ABC/Library/Caches/NiYien/GyroflowNiYien/ios-photo-imports-backup/IMG_0001.mov"
+        ));
+        assert!(!super::is_ios_photo_import_url(
+            "file:///private/var/mobile/Containers/Shared/AppGroup/DCIM/IMG_0001.mov"
+        ));
+    }
 
     // The picker hands out a fully encoded URI; QML's `url` type decodes the
     // non-ASCII half on the way through while leaving %3A / %2F alone. SAF

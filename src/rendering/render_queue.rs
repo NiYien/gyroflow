@@ -1629,6 +1629,7 @@ pub struct RenderQueue {
     // from QML into queue_output_mode / queue_fixed_output_path. Called on every
     // setting change and at panel init; consumed by reapply_queue_output_path.
     set_queue_output_path: qt_method!(fn(&mut self, mode: u32, fixed_path: QString)),
+    ios_photo_imports_need_output_folder: qt_method!(fn(&self) -> bool),
 
     pause_flag: Arc<AtomicBool>,
 
@@ -2314,6 +2315,27 @@ impl RenderQueue {
             mode,
             self.queue_fixed_output_path
         );
+    }
+
+    pub fn ios_photo_imports_need_output_folder(&self) -> bool {
+        let Ok(queue) = self.queue.try_borrow() else {
+            return false;
+        };
+        self.jobs.values().any(|job| {
+            if job.queue_index >= queue.row_count() as usize
+                || queue[job.queue_index].status != JobStatus::Queued
+                || !filesystem::is_ios_photo_import_url(&job.render_options.input_url)
+            {
+                return false;
+            }
+
+            let folder = if self.queue_output_mode == 1 {
+                self.queue_fixed_output_path.as_str()
+            } else {
+                job.render_options.output_folder.as_str()
+            };
+            folder.is_empty() || !filesystem::can_create_file(folder, "check.tmp")
+        })
     }
 
     // Re-derive every Queued job's output_folder from the current output-path
@@ -24192,6 +24214,36 @@ mod tests {
     }
 
     // --- batch-output-path-source-and-reapply ---
+
+    #[test]
+    fn queued_ios_photo_import_requires_output_folder_only_before_export() {
+        let queue = queue_with_input_job(
+            1,
+            "file:///private/var/mobile/Containers/Data/Application/ABC/Library/Caches/NiYien/GyroflowNiYien/ios-photo-imports/session/item/IMG_0001.mov",
+        );
+
+        assert!(queue.ios_photo_imports_need_output_folder());
+    }
+
+    #[test]
+    fn ordinary_queued_file_does_not_use_the_ios_photo_output_guard() {
+        let queue = queue_with_input_job(1, "file:///Users/example/Videos/clip.mov");
+
+        assert!(!queue.ios_photo_imports_need_output_folder());
+    }
+
+    #[test]
+    fn writable_fixed_output_satisfies_an_ios_photo_import_job() {
+        let output = tempfile::tempdir().expect("create output directory");
+        let output_url = filesystem::path_to_url(&output.path().to_string_lossy());
+        let mut queue = queue_with_input_job(
+            1,
+            "file:///private/var/mobile/Containers/Data/Application/ABC/Library/Caches/NiYien/GyroflowNiYien/ios-photo-imports/session/item/IMG_0001.mov",
+        );
+        queue.set_queue_output_path(1, QString::from(output_url.as_str()));
+
+        assert!(!queue.ios_photo_imports_need_output_folder());
+    }
 
     // Issue 1: stabilize/batch-sync .gyroflow lands next to the source video,
     // decoupled from a fixed render output folder.
