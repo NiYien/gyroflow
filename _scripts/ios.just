@@ -6,12 +6,12 @@ import 'common.just'
 # Make sure to unlock the keychain if using ssh: security -v unlock-keychain -p 1234 login.keychain
 # To list available certificates: security find-identity -v -p codesigning
 
-TeamID                        := "RR3ZC2L4DF"
+TeamID                        := "H59FJRN2AM"
 BundleIdentifier              := "com.niyien.gyroflow"
-DevelopmentCertificateSHA     := "612D010FA5522A25CE1F1D5A38B84DCD2798704B"
+DevelopmentCertificateSHA     := "F4722C6FA73CC1749FFFDECFD1B04599513757B4"
 DevelopmentProvisioning       := ProjectDir / "_deployment/ios/Gyroflow_dev.mobileprovision"
 DevelopmentProvisioningName   := "Gyroflow dev"
-DistributionCertificateSHA    := "05AC9B1B232615B6DBE1FECD5A02AC21BBE967A9"
+DistributionCertificateSHA    := "91B8D990131A6DE4525121FC14D56B39633ED71F"
 DistributionProvisioning      := ProjectDir / "_deployment/ios/Gyroflow_dist.mobileprovision"
 DistributionProvisioningName  := "Gyroflow dist"
 
