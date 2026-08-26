@@ -88,7 +88,7 @@ Rectangle {
     function openMainFileDialog(): void {
         // Routes the picked batch into videoArea.loadMultipleFiles, matching the
         // desktop "Open" UX.
-        window.openPicker(0, true, function(urls) {
+        videoSourcePicker.open(Qt.platform.os, function(urls) {
             videoArea.loadMultipleFiles(urls, false);
         }, fileDialog);
     }
@@ -692,6 +692,14 @@ Rectangle {
     Connections {
         target: (simpleStab && batchState.active) ? simpleStab.lensCorrectionToggle : null;
         function onCheckedChanged() { batchState.lensCorrection = target.checked ? 1.0 : 0.0; }
+    }
+
+    VideoSourcePicker {
+        id: videoSourcePicker
+        hostObject: window
+        filesystemObject: filesystem
+        questionType: Modal.Question
+        errorType: Modal.Error
     }
 
     FileDialog {

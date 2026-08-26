@@ -26986,8 +26986,14 @@ mod tests {
             add_area.contains("visible: window.isMobileLayout"),
             "title-row add buttons must only be visible on mobile layout"
         );
-        assert!(add_area.contains("mobileAddFilesDialog.open2()"));
-        assert!(add_area.contains("mobileAddFolderDialog.open()"));
+        assert!(
+            add_area.contains("videoSourcePicker.open(Qt.platform.os"),
+            "Add files must use the shared video source coordinator"
+        );
+        assert!(
+            add_area.contains("window.openPicker(1, false"),
+            "Add folder must keep the existing folder picker"
+        );
 
         let hint_idx = qml
             .find("Drop video files or gyroscope data here")

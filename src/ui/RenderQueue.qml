@@ -884,8 +884,7 @@ Item {
             icon.width: 13 * dpiScale;
             icon.height: 13 * dpiScale;
             onClicked: {
-                // Route picked URIs into the render queue batch loader on Android.
-                window.openPicker(0, true, function(urls) {
+                videoSourcePicker.open(Qt.platform.os, function(urls) {
                     dt.loadFiles(urls);
                 }, mobileAddFilesDialog);
             }

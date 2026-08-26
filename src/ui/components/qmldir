@@ -54,4 +54,5 @@ TimelineSyncPoint 1.0 TimelineSyncPoint.qml
 ToolTip 1.0 ToolTip.qml
 TutorialOverlay 1.0 TutorialOverlay.qml
 TutorialQueueRow 1.0 TutorialQueueRow.qml
+VideoSourcePicker 1.0 VideoSourcePicker.qml
 WindowCloseButton 1.0 WindowCloseButton.qml
