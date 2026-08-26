@@ -4,106 +4,86 @@
 
 **Goal:** 仅在 iOS 上让主页面和渲染队列“添加文件”同时支持照片图库视频与文件/外接存储，并保留渲染队列现有文件夹入口。
 
-**Architecture:** 在 iOS 构建中加入一个独立 Objective-C++ PhotosUI 桥接，使用 `PHPickerViewController` 多选视频，把临时 provider URL 复制到应用缓存后，通过现有 `Filesystem.urls_opened` 信号返回 QML。`App.qml` 统一管理来源对话框和 pending callback，主页面与渲染队列只提供各自的加载回调；现有 `FileDialog`/`FolderDialog` 继续负责内部、iCloud 和外接存储。
+**Architecture:** iOS 构建加入一个 Objective-C++ PhotosUI 桥接，使用 `PHPickerViewController` 多选视频，把 provider 临时 URL 复制到应用缓存，再通过既有 `Filesystem.urls_opened` 返回 QML。一个独立、可实例化测试的 `VideoSourcePicker.qml` 负责来源对话框和 callback 生命周期；主页面与渲染队列共享该组件，现有文件/文件夹 picker 继续负责本机、iCloud 和外接存储。
 
-**Tech Stack:** Rust 2024、qmetaobject-rs、Qt 6.7.3/QML、Objective-C++、PhotosUI、UniformTypeIdentifiers、Cargo/cpp_build
+**Tech Stack:** Rust 2024、qmetaobject-rs、Qt 6.7.3/QML/Qt Quick Test、Objective-C++、PhotosUI、UniformTypeIdentifiers、Cargo/cpp_build
 
 **Spec:** `docs/superpowers/specs/2026-08-26-ios-video-source-picker-design.md`
 
 ## Global Constraints
 
-- 行为变更只允许发生在 `Qt.platform.os === "ios"` 或 `#[cfg(target_os = "ios")]` 分支。
-- Android、macOS、Windows 和 Linux 的 picker 入口与回调路径必须保持不变。
-- Photos picker 只展示视频，`selectionLimit = 0`，并使用 `PHPickerConfigurationAssetRepresentationModeCurrent`。
-- provider 返回的临时 URL 必须在 completion handler 内复制到 `QStandardPaths::CacheLocation/ios-photo-imports/<picker-uuid>/<item-uuid>/`。
-- URL 批量回调必须保持用户选择顺序；部分失败时加载成功项并汇总提示失败项。
-- 渲染队列“添加文件夹”继续使用现有 `FolderDialog`，不显示照片来源。
-- 不启用旧的 `QIosOptionalPlugin_NSPhotoLibrary`。
-- 不暂存或提交用户现有的 `.gitignore` 与 AppIcon 改动。
+- 行为变化只出现在 `Qt.platform.os === "ios"` 或 iOS 编译分支。
+- Photos picker 使用 `videosFilter`、`selectionLimit = 0` 和 `PHPickerConfigurationAssetRepresentationModeCurrent`。
+- provider 临时 URL 在 completion handler 内复制到 `CacheLocation/ios-photo-imports/<picker UUID>/<item UUID>/`。
+- 成功 URL 保持用户选择顺序；部分失败仍加载成功项并汇总失败项。
+- 渲染队列“添加文件夹”继续使用现有 `FolderDialog`。
+- 不启用 `QIosOptionalPlugin_NSPhotoLibrary`。
+- 不暂存或提交用户现有 `.gitignore` 与 AppIcon 改动。
+- 当前基线：host build 通过；host tests 为 735 pass / 10 个既有失败。最终不得增加失败项。
 
 ## File Structure
 
-- Create `_deployment/ios/ios_video_picker.h`: C++ 可调用的 iOS picker/缓存清理边界。
-- Create `_deployment/ios/ios_video_picker.mm`: PhotosUI 呈现、异步导入、顺序聚合、错误与取消回调。
-- Modify `build.rs`: 仅 iOS 编译 `.mm`、增加 include path、链接 `PhotosUI`。
-- Modify `src/util.rs`: 从已有 `globalUrlCatcherPtr` 调用原生桥接。
-- Modify `src/controller.rs`: 给 QML 暴露 `open_ios_video_picker`、错误回调，并存放源码契约测试。
-- Modify `src/gyroflow.rs`: URL catcher 建立后清理上一会话照片导入缓存。
-- Modify `src/ui/App.qml`: 统一 iOS 视频来源对话框、pending callback 与错误/取消清理。
-- Modify `src/ui/RenderQueue.qml`: “添加文件”接入统一来源函数；“添加文件夹”不变。
-- Modify `resources/translations/gyroflow.ts`: 登记新的 App 上下文源字符串。
-- Modify `resources/translations/zh_CN.ts` and regenerate `resources/translations/zh_CN.qm`: 提供简体中文文案。
+- Create `_deployment/ios/ios_video_picker.h`: Qt/Rust 可调用的原生边界。
+- Create `_deployment/ios/ios_video_picker.mm`: PhotosUI 与缓存导入实现。
+- Create `_scripts/test_ios_video_picker_bridge.sh`: 真正编译 Objective-C++ bridge 的 iOS 测试。
+- Modify `build.rs`: iOS 编译和 PhotosUI 链接。
+- Modify `src/util.rs`, `src/controller.rs`, `src/gyroflow.rs`: Qt QObject 桥接与缓存清理。
+- Create `src/ui/components/VideoSourcePicker.qml`: 可测试的统一来源协调器。
+- Create `tests/qml/tst_video_source_picker.qml`: 来源、callback、取消和错误行为测试。
+- Modify `src/ui/components/qmldir`, `src/resources_qml.rs`: 注册组件。
+- Modify `src/ui/App.qml`, `src/ui/RenderQueue.qml`: 主页面和队列接入。
+- Modify `resources/translations/gyroflow.ts`, `zh_CN.ts`, `zh_CN.qm`: 文案。
 
 ---
 
-### Task 1: Implement the native PhotosUI bridge and iOS build integration
+### Task 1: Native PhotosUI bridge
 
 **Files:**
+- Create: `_scripts/test_ios_video_picker_bridge.sh`
 - Create: `_deployment/ios/ios_video_picker.h`
 - Create: `_deployment/ios/ios_video_picker.mm`
 - Modify: `build.rs:269-306`
-- Modify: `src/controller.rs` after the `Filesystem` implementation
-- Test: `src/controller.rs`
 
 **Interfaces:**
-- Consumes: repository files through `env!("CARGO_MANIFEST_DIR")`.
-- Produces: `ios_video_picker_native_contract`, `bool gyroflowIosOpenVideoPicker(QObject *receiver)`, and `void gyroflowIosCleanupVideoImports()`.
+- Consumes: `QObject *receiver` with `catch_urls_open(QStringList)`, `catch_picker_cancelled()`, `catch_picker_error(QString)`.
+- Produces: `bool gyroflowIosOpenVideoPicker(QObject *)`, `void gyroflowIosCleanupVideoImports()`.
 
-- [ ] **Step 1: Add a repository-source helper and the failing native bridge contract test**
+- [ ] **Step 1: Write the failing bridge compile test**
 
-```rust
-#[cfg(test)]
-mod ios_video_picker_contract_tests {
-    fn source(path: &str) -> String {
-        std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path),
-        )
-        .unwrap_or_default()
-    }
-
-    #[test]
-    fn ios_video_picker_native_contract() {
-        let native = source("_deployment/ios/ios_video_picker.mm");
-        for required in [
-            "PHPickerFilter videosFilter",
-            "selectionLimit = 0",
-            "PHPickerConfigurationAssetRepresentationModeCurrent",
-            "loadFileRepresentationForTypeIdentifier",
-            "QStandardPaths::CacheLocation",
-            "catch_urls_open",
-            "catch_picker_cancelled",
-            "catch_picker_error",
-        ] {
-            assert!(native.contains(required), "missing native picker contract: {required}");
-        }
-    }
-}
+```sh
+#!/bin/sh
+set -eu
+repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+source_file="$repo_dir/_deployment/ios/ios_video_picker.mm"
+header_file="$repo_dir/_deployment/ios/ios_video_picker.h"
+sdk_path=$(xcrun --sdk iphoneos --show-sdk-path)
+qt_dir="$repo_dir/ext/6.7.3/ios"
+test -f "$source_file"
+test -f "$header_file"
+xcrun --sdk iphoneos clang++ -std=c++17 -fsyntax-only -x objective-c++ \
+  -target arm64-apple-ios14.0 -isysroot "$sdk_path" \
+  -F "$qt_dir/lib" -I "$qt_dir/include" -I "$qt_dir/include/QtCore" \
+  "$source_file"
 ```
 
-- [ ] **Step 2: Run the focused test and verify it fails for missing implementation**
+- [ ] **Step 2: Run it and observe RED**
 
-Run:
+Run: `sh _scripts/test_ios_video_picker_bridge.sh`
 
-```bash
-cargo test ios_video_picker_native_contract -- --nocapture
-```
+Expected: non-zero because the header/source do not exist.
 
-Expected: FAIL because `_deployment/ios/ios_video_picker.mm` does not exist.
-
-- [ ] **Step 3: Declare the small C++ bridge boundary**
+- [ ] **Step 3: Declare the bridge API**
 
 ```cpp
 #pragma once
-
 class QObject;
-
 bool gyroflowIosOpenVideoPicker(QObject *receiver);
 void gyroflowIosCleanupVideoImports();
 ```
 
-- [ ] **Step 4: Implement picker configuration and top-view-controller lookup**
+- [ ] **Step 4: Implement picker presentation**
 
-In `_deployment/ios/ios_video_picker.mm`, import UIKit, PhotosUI, UniformTypeIdentifiers, Objective-C runtime, and Qt Core types. Implement `gyroflowIosOpenVideoPicker` so it rejects a null receiver or a second active picker, creates this configuration, and presents it on the main thread:
+In `.mm`, import UIKit, Photos, PhotosUI, UniformTypeIdentifiers, Objective-C runtime and Qt Core. Reject null receiver or an already-active picker. Resolve the top view controller by walking presented/navigation/tab controllers. Configure:
 
 ```objc
 PHPickerConfiguration *configuration =
@@ -114,43 +94,32 @@ configuration.preferredAssetRepresentationMode =
     PHPickerConfigurationAssetRepresentationModeCurrent;
 ```
 
-Walk `presentedViewController`, `visibleViewController`, and `selectedViewController` so presentation works from the Qt root controller in phone and tablet layouts.
+Retain the delegate with `objc_setAssociatedObject` because `PHPickerViewController.delegate` is not the lifetime owner.
 
-- [ ] **Step 5: Implement ordered asynchronous imports**
+- [ ] **Step 5: Implement ordered imports**
 
-Use a per-picker session object containing `QPointer<QObject>`, an indexed result array, an indexed error array, and a `dispatch_group_t`. For each `PHPickerResult`:
+For each result, choose the first registered `UTType` conforming to `UTTypeMovie`, then call:
 
 ```objc
 [provider loadFileRepresentationForTypeIdentifier:typeIdentifier
                                  completionHandler:^(NSURL *url, NSError *error) {
-    // Before returning from this block, copy url into:
-    // CacheLocation/ios-photo-imports/<picker uuid>/<item uuid>/<filename>.<ext>
-    // Store the copied path at the original picker index, then leave the group.
+    // Copy synchronously inside this callback into the session/item UUID directory.
+    // Store either the copied path or a localized error at the original result index.
+    dispatch_group_leave(group);
 }];
 ```
 
-Choose the first registered identifier whose `UTType` conforms to `UTTypeMovie`; fall back to `UTTypeMovie.identifier`. Preserve `provider.suggestedName`, derive a missing extension from `UTType.preferredFilenameExtension`, and isolate every item in a UUID directory to avoid name collisions.
+Use one `dispatch_group`, indexed `NSMutableArray` values, and `@synchronized(session)` so callback completion order cannot reorder output. Preserve `suggestedName`; derive a missing extension from `UTType.preferredFilenameExtension`.
 
-- [ ] **Step 6: Deliver success, partial failure, and cancellation through Qt**
+- [ ] **Step 6: Deliver terminal outcomes**
 
-On an empty result list, invoke `catch_picker_cancelled`. After the dispatch group finishes, build a `QStringList` in original selection order and invoke:
+Empty results invoke `catch_picker_cancelled`. Group completion builds `QStringList` in index order and invokes `catch_urls_open` only when non-empty; an aggregate `QString` invokes `catch_picker_error` only when failures exist. Use `QPointer<QObject>` and `Qt::QueuedConnection`. Clear the active guard on every terminal path.
 
-```cpp
-QMetaObject::invokeMethod(receiver, "catch_urls_open", Qt::QueuedConnection,
-                          Q_ARG(QStringList, urls));
-QMetaObject::invokeMethod(receiver, "catch_picker_error", Qt::QueuedConnection,
-                          Q_ARG(QString, errorSummary));
-```
+- [ ] **Step 7: Implement exact cache cleanup**
 
-Only call `catch_urls_open` when at least one copy succeeded and only call `catch_picker_error` when at least one item failed. Clear the active-picker guard on every terminal path and protect the receiver with `QPointer<QObject>`.
+`gyroflowIosCleanupVideoImports()` removes and recreates only `QStandardPaths::CacheLocation/ios-photo-imports`, never the parent cache directory.
 
-- [ ] **Step 7: Implement cache cleanup**
-
-`gyroflowIosCleanupVideoImports()` removes and recreates only the exact `QStandardPaths::CacheLocation/ios-photo-imports` directory. It must not touch the wider Qt cache directory.
-
-- [ ] **Step 8: Compile and link the bridge only for iOS**
-
-Inside `build.rs`'s `target_os == "ios"` branch:
+- [ ] **Step 8: Add iOS build integration**
 
 ```rust
 println!("cargo:rerun-if-changed=_deployment/ios/ios_video_picker.h");
@@ -159,73 +128,41 @@ config.include("_deployment/ios");
 config.file("_deployment/ios/ios_video_picker.mm");
 ```
 
-Add `"PhotosUI"` beside the existing `"Photos"` framework. Do not import or enable `QIosOptionalPlugin_NSPhotoLibrary`.
+Add `"PhotosUI"` next to existing `"Photos"` in the iOS framework list.
 
-- [ ] **Step 9: Run the native contract test**
+- [ ] **Step 9: Verify GREEN**
 
-Run:
+Run: `sh _scripts/test_ios_video_picker_bridge.sh`
 
-```bash
-cargo test ios_video_picker_native_contract -- --nocapture
-```
+Expected: Objective-C++ syntax check exits 0.
 
-Expected: PASS.
-
-- [ ] **Step 10: Commit the native bridge and its passing test**
+- [ ] **Step 10: Commit**
 
 ```bash
-git add _deployment/ios/ios_video_picker.h _deployment/ios/ios_video_picker.mm build.rs src/controller.rs
+git add _scripts/test_ios_video_picker_bridge.sh _deployment/ios/ios_video_picker.h _deployment/ios/ios_video_picker.mm build.rs
 git commit -m "feat(ios): add native multi-video photo picker"
 ```
 
 ---
 
-### Task 2: Connect PhotosUI to the Rust/Qt Filesystem object
+### Task 2: Rust/Qt bridge
 
 **Files:**
 - Modify: `src/util.rs:120-270`
 - Modify: `src/controller.rs:6140-6290`
 - Modify: `src/gyroflow.rs:260-265`
-- Test: `src/controller.rs`
 
 **Interfaces:**
-- Consumes: `gyroflowIosOpenVideoPicker(QObject *)` and `gyroflowIosCleanupVideoImports()` from Task 1.
-- Produces: QML method `filesystem.open_ios_video_picker() -> bool`, Qt method `catch_picker_error(QString)`, signal `picker_error(QString)`, and startup cleanup.
+- Consumes: native functions from Task 1.
+- Produces: `filesystem.open_ios_video_picker() -> bool`, `catch_picker_error(QString)`, `picker_error(QString)`.
 
-- [ ] **Step 1: Extend the contract test with the Qt bridge names**
-
-Add assertions to `ios_video_picker_native_contract`:
-
-```rust
-let controller = source("src/controller.rs");
-let util = source("src/util.rs");
-assert!(controller.contains("open_ios_video_picker: qt_method!"));
-assert!(controller.contains("picker_error: qt_signal!"));
-assert!(util.contains("gyroflowIosOpenVideoPicker(globalUrlCatcherPtr)"));
-assert!(util.contains("gyroflowIosCleanupVideoImports()"));
-```
-
-- [ ] **Step 2: Run the focused test and verify the new assertions fail**
-
-Run:
-
-```bash
-cargo test ios_video_picker_native_contract -- --nocapture
-```
-
-Expected: FAIL on the missing Rust/Qt bridge strings.
-
-- [ ] **Step 3: Add util wrappers guarded by `Q_OS_IOS` / Rust cfg**
-
-In the global `cpp!` include block:
+- [ ] **Step 1: Include the bridge and add util wrappers**
 
 ```cpp
 #ifdef Q_OS_IOS
 #  include "ios_video_picker.h"
 #endif
 ```
-
-Add Rust functions with non-iOS-safe behavior:
 
 ```rust
 pub fn open_ios_video_picker() -> bool {
@@ -247,9 +184,7 @@ pub fn cleanup_ios_video_imports() {
 }
 ```
 
-- [ ] **Step 4: Expose methods and signals on `Filesystem`**
-
-Add:
+- [ ] **Step 2: Expose QObject methods/signals**
 
 ```rust
 open_ios_video_picker: qt_method!(fn(&self) -> bool),
@@ -257,42 +192,24 @@ catch_picker_error: qt_method!(fn(&self, message: QString)),
 picker_error: qt_signal!(message: QString),
 ```
 
-and implementations:
+Implement the first by calling `util::open_ios_video_picker()` and the second by emitting `self.picker_error(message)`. Keep existing URL/cancel signatures unchanged.
 
-```rust
-fn open_ios_video_picker(&self) -> bool {
-    util::open_ios_video_picker()
-}
+- [ ] **Step 3: Clean stale imports at startup**
 
-fn catch_picker_error(&self, message: QString) {
-    self.picker_error(message);
-}
-```
+Immediately after `util::set_url_catcher(fspinned.get_or_create_cpp_object());`, call `util::cleanup_ios_video_imports()`. It is a no-op outside iOS.
 
-Keep the existing `catch_urls_open`, `catch_picker_cancelled`, `urls_opened`, and `picker_cancelled` signatures unchanged.
-
-- [ ] **Step 5: Clean previous photo-import cache after installing the URL catcher**
-
-Immediately after `util::set_url_catcher(...)` in `src/gyroflow.rs`, call:
-
-```rust
-util::cleanup_ios_video_imports();
-```
-
-The function is a no-op on every non-iOS build.
-
-- [ ] **Step 6: Run focused and host regression tests**
+- [ ] **Step 4: Verify compilation**
 
 Run:
 
 ```bash
-cargo test ios_video_picker_native_contract -- --nocapture
-cargo test
+sh _scripts/test_ios_video_picker_bridge.sh
+cargo test --no-run
 ```
 
-Expected: the native/bridge contract passes and all existing library tests pass.
+Expected: native syntax and host Rust/Qt test binary compilation pass.
 
-- [ ] **Step 7: Commit the Qt bridge**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add src/util.rs src/controller.rs src/gyroflow.rs
@@ -301,159 +218,148 @@ git commit -m "feat(ios): bridge photo picker results into QML"
 
 ---
 
-### Task 3: Add the shared iOS source chooser to all three relevant entrances
+### Task 3: Tested QML source coordinator and all entrances
 
 **Files:**
+- Create: `tests/qml/tst_video_source_picker.qml`
+- Create: `src/ui/components/VideoSourcePicker.qml`
+- Modify: `src/ui/components/qmldir`
+- Modify: `src/resources_qml.rs`
 - Modify: `src/ui/App.qml:64-95,697-750`
 - Modify: `src/ui/RenderQueue.qml:868-982`
-- Test: `src/controller.rs::ios_video_picker_contract_tests::ios_video_source_routing_contract`
 
 **Interfaces:**
-- Consumes: `filesystem.open_ios_video_picker()`, `filesystem.urls_opened`, `filesystem.picker_cancelled`, and `filesystem.picker_error` from Task 2.
-- Produces: `window.openVideoSourcePicker(callback, fallbackDialog)` used by the main viewer and queue “Add files”; queue “Add folder” remains on `openPicker(1, ...)`.
+- Consumes: `filesystem.open_ios_video_picker`, `picker_cancelled`, `picker_error`, host `openPicker`/`messageBox`/`pendingPickerCallback`.
+- Produces: `VideoSourcePicker.open(platformOs, callback, fallbackDialog)`.
 
-- [ ] **Step 1: Add the failing QML routing contract test**
+- [ ] **Step 1: Write a failing Qt Quick Test**
 
-Append this test to `ios_video_picker_contract_tests`:
-
-```rust
-#[test]
-fn ios_video_source_routing_contract() {
-    let app = source("src/ui/App.qml");
-    let queue = source("src/ui/RenderQueue.qml");
-    assert!(app.contains("function openVideoSourcePicker("));
-    assert!(app.contains("Qt.platform.os === \"ios\""));
-    assert!(app.contains("filesystem.open_ios_video_picker()"));
-    assert!(app.contains("videoArea.loadMultipleFiles(urls, false)"));
-    assert!(queue.contains("window.openVideoSourcePicker(function(urls)"));
-    assert!(queue.contains("dt.loadFiles(urls)"));
-    assert!(queue.contains("window.openPicker(1, false"));
-}
-```
-
-- [ ] **Step 2: Run the focused test and verify it fails**
-
-Run:
-
-```bash
-cargo test ios_video_source_routing_contract -- --nocapture
-```
-
-Expected: FAIL because `openVideoSourcePicker` does not exist.
-
-- [ ] **Step 3: Add a centralized source chooser in `App.qml`**
-
-Place this beside `openPicker`:
+The test creates real `VideoSourcePicker` instances with fake boundary QObjects. It verifies these literal outcomes:
 
 ```qml
-function openVideoSourcePicker(callback: var, fallbackDialog: var): void {
-    if (Qt.platform.os !== "ios") {
-        window.openPicker(0, true, callback, fallbackDialog);
-        return;
-    }
-    window.messageBox(Modal.Question, qsTr("Choose video source"), [
-        {
-            text: qsTr("Photos"),
-            accent: true,
-            clicked: function() {
-                window.pendingPickerCallback = callback;
-                if (!filesystem.open_ios_video_picker()) {
-                    window.pendingPickerCallback = null;
-                    window.messageBox(Modal.Error, qsTr("Unable to open the photo library."), [ { text: qsTr("Ok") } ]);
-                }
-            }
-        },
-        {
-            text: qsTr("Files and external storage"),
-            clicked: function() {
-                if (fallbackDialog.open2) fallbackDialog.open2(); else fallbackDialog.open();
-            }
-        },
-        { text: qsTr("Cancel") }
-    ]);
+function test_nonIosUsesExistingPicker() {
+    picker.open("android", selectedCallback, fallback)
+    compare(host.openPickerCalls, 1)
+    compare(host.lastMode, 0)
+    compare(host.lastAllowMultiple, true)
+}
+
+function test_iosPhotosUsesNativePicker() {
+    picker.open("ios", selectedCallback, fallback)
+    compare(host.lastButtons.length, 3)
+    host.lastButtons[0].clicked()
+    compare(filesystem.nativeOpenCalls, 1)
+    compare(host.pendingPickerCallback, selectedCallback)
+}
+
+function test_iosFilesUsesDocumentPicker() {
+    picker.open("ios", selectedCallback, fallback)
+    host.lastButtons[1].clicked()
+    compare(fallback.open2Calls, 1)
+    compare(filesystem.nativeOpenCalls, 0)
+}
+
+function test_cancelAndErrorClearPendingCallback() {
+    picker.open("ios", selectedCallback, fallback)
+    host.lastButtons[0].clicked()
+    filesystem.picker_cancelled()
+    compare(host.pendingPickerCallback, null)
+    host.pendingPickerCallback = selectedCallback
+    filesystem.picker_error("clip.mov")
+    compare(host.pendingPickerCallback, null)
+    compare(host.messageBoxCalls, 2)
 }
 ```
 
-- [ ] **Step 4: Route the main page through the shared chooser**
+- [ ] **Step 2: Run it and observe RED**
 
-Change `openMainFileDialog` to:
+Run: `ext/6.7.3/macos/bin/qmltestrunner -input tests/qml/tst_video_source_picker.qml -platform offscreen`
+
+Expected: fail because `VideoSourcePicker.qml` does not exist.
+
+- [ ] **Step 3: Implement `VideoSourcePicker.qml`**
+
+Create a zero-size `Item` with `hostObject`, `filesystemObject`, `questionType`, and `errorType` properties. Its `open()` method:
+
+```qml
+function open(platformOs: string, callback: var, fallbackDialog: var): void {
+    if (platformOs !== "ios") {
+        hostObject.openPicker(0, true, callback, fallbackDialog)
+        return
+    }
+    hostObject.messageBox(questionType, qsTr("Choose video source"), [
+        { text: qsTr("Photos"), accent: true, clicked: function() {
+            hostObject.pendingPickerCallback = callback
+            if (!filesystemObject.open_ios_video_picker()) {
+                hostObject.pendingPickerCallback = null
+                hostObject.messageBox(errorType, qsTr("Unable to open the photo library."), [ { text: qsTr("Ok") } ])
+            }
+        }},
+        { text: qsTr("Files and external storage"), clicked: function() {
+            if (fallbackDialog.open2) fallbackDialog.open2(); else fallbackDialog.open()
+        }},
+        { text: qsTr("Cancel") }
+    ])
+}
+```
+
+Connections clear `hostObject.pendingPickerCallback` on cancel, and on error also call `hostObject.messageBox(errorType, qsTr("Some videos could not be imported: %1").arg(message), [ { text: qsTr("Ok") } ])`.
+
+- [ ] **Step 4: Register and instantiate the component**
+
+Add it to `qmldir` and `resources_qml.rs`. Instantiate once in `App.qml` with `hostObject: window`, `filesystemObject: filesystem`, and Modal enum values.
+
+- [ ] **Step 5: Route the main page**
 
 ```qml
 function openMainFileDialog(): void {
-    window.openVideoSourcePicker(function(urls) {
-        videoArea.loadMultipleFiles(urls, false);
-    }, fileDialog);
+    videoSourcePicker.open(Qt.platform.os, function(urls) {
+        videoArea.loadMultipleFiles(urls, false)
+    }, fileDialog)
 }
 ```
 
-The three existing main-page triggers already call `openMainFileDialog`, so they require no individual changes.
-
-- [ ] **Step 5: Handle native cancel and import errors**
-
-In the existing `Connections { target: filesystem }` block add:
+- [ ] **Step 6: Route render queue “Add files” only**
 
 ```qml
-function onPicker_cancelled(): void {
-    window.pendingPickerCallback = null;
-}
-function onPicker_error(message: string): void {
-    window.pendingPickerCallback = null;
-    window.messageBox(Modal.Error, qsTr("Some videos could not be imported: %1").arg(message), [ { text: qsTr("Ok") } ]);
-}
+videoSourcePicker.open(Qt.platform.os, function(urls) {
+    dt.loadFiles(urls)
+}, mobileAddFilesDialog)
 ```
 
-The native bridge queues successful `urls_opened` before a partial-failure error, so successful items reach the saved callback before the error handler clears it.
+Leave the adjacent “Add folder” call unchanged: it continues to pass mode `1`, `allowMultiple = false`, its existing folder-access-grant callback, and `mobileAddFolderDialog` to `window.openPicker`.
 
-- [ ] **Step 6: Route render queue “Add files” through the same chooser**
-
-Replace only the first mobile add button handler with:
-
-```qml
-onClicked: {
-    window.openVideoSourcePicker(function(urls) {
-        dt.loadFiles(urls);
-    }, mobileAddFilesDialog);
-}
-```
-
-Leave the adjacent “Add folder” handler exactly on `window.openPicker(1, false, ...)`, including access-grant registration and `dt.loadFiles([folderUrl])`.
-
-- [ ] **Step 7: Run the QML routing contract and existing picker tests**
+- [ ] **Step 7: Verify GREEN and focused regressions**
 
 Run:
 
 ```bash
-cargo test ios_video_source_routing_contract -- --nocapture
+ext/6.7.3/macos/bin/qmltestrunner -input tests/qml/tst_video_source_picker.qml -platform offscreen
 cargo test mobile_file_picker -- --nocapture
 cargo test main_file_dialog -- --nocapture
 ```
 
-Expected: PASS. The existing tests continue to see `FileDialog.OpenFiles`, video extension filters, and Android `openPicker` behavior.
+Expected: new QML tests pass; focused existing tests pass after updating only stale expectations that assert the old direct `open2()` call.
 
-- [ ] **Step 8: Commit QML routing and its passing test**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src/ui/App.qml src/ui/RenderQueue.qml src/controller.rs
+git add tests/qml/tst_video_source_picker.qml src/ui/components/VideoSourcePicker.qml src/ui/components/qmldir src/resources_qml.rs src/ui/App.qml src/ui/RenderQueue.qml src/rendering/render_queue.rs
 git commit -m "feat(ios): offer photos or external files for video input"
 ```
 
 ---
 
-### Task 4: Add Simplified Chinese strings and perform full verification
+### Task 4: Translation and complete verification
 
 **Files:**
 - Modify: `resources/translations/gyroflow.ts`
 - Modify: `resources/translations/zh_CN.ts`
-- Modify (generated): `resources/translations/zh_CN.qm`
-- Verify: all implementation files from Tasks 1-3
+- Modify generated: `resources/translations/zh_CN.qm`
 
-**Interfaces:**
-- Consumes: QML strings `Choose video source`, `Photos`, `Files and external storage`, `Unable to open the photo library.`, and `Some videos could not be imported: %1`.
-- Produces: App-context source catalog entries and Simplified Chinese runtime translations.
+- [ ] **Step 1: Add App/VideoSourcePicker catalog messages**
 
-- [ ] **Step 1: Add source-catalog and zh_CN App-context messages**
-
-Add the five source entries to the `App` context in both `.ts` files. In `zh_CN.ts`, use:
+Use these Simplified Chinese literals and keep `%1` intact:
 
 ```text
 Choose video source -> 选择视频来源
@@ -463,43 +369,24 @@ Unable to open the photo library. -> 无法打开照片图库。
 Some videos could not be imported: %1 -> 部分视频无法导入：%1
 ```
 
-Keep `%1` unchanged.
+- [ ] **Step 2: Generate runtime catalog**
 
-- [ ] **Step 2: Regenerate the Simplified Chinese binary catalog**
+Run: `ext/6.7.3/macos/bin/lrelease resources/translations/zh_CN.ts -qm resources/translations/zh_CN.qm`
 
-Run:
-
-```bash
-ext/6.7.3/macos/bin/lrelease resources/translations/zh_CN.ts -qm resources/translations/zh_CN.qm
-```
-
-Expected: exit 0 and a regenerated Qt Translation file.
-
-- [ ] **Step 3: Run formatting and source-contract checks**
-
-Run:
+- [ ] **Step 3: Run formatting and focused tests**
 
 ```bash
 git diff --check
 cargo fmt --all -- --check
-cargo test ios_video_picker_contract_tests -- --nocapture
+sh _scripts/test_ios_video_picker_bridge.sh
+ext/6.7.3/macos/bin/qmltestrunner -input tests/qml/tst_video_source_picker.qml -platform offscreen
 ```
 
-Expected: no whitespace errors, formatting passes, both contracts pass.
+- [ ] **Step 4: Run host regression comparison**
 
-- [ ] **Step 4: Run the host regression suite**
+Run the same environment-qualified `cargo test` used for the baseline outside the sandbox. Expected: no new failures beyond the recorded 10; all new/focused tests pass.
 
-Run:
-
-```bash
-cargo test
-```
-
-Expected: all existing and new library tests pass.
-
-- [ ] **Step 5: Build the iOS target**
-
-Use the same environment as `_scripts/ios.just` and build without packaging/signing:
+- [ ] **Step 5: Build iOS target**
 
 ```bash
 FFMPEG_DIR="$PWD/ext/ffmpeg-8.1-iOS-gpl-lite" \
@@ -511,26 +398,20 @@ OPENCV_INCLUDE_PATHS="$PWD/ext/vcpkg/installed/arm64-ios/include/opencv4" \
 cargo build --target aarch64-apple-ios
 ```
 
-Expected: Objective-C++ compiles, PhotosUI resolves, and the final `gyroflow` link succeeds.
-
-- [ ] **Step 6: Inspect the iOS binary for the new bridge**
-
-Run:
+- [ ] **Step 6: Inspect final binary**
 
 ```bash
-nm -gU target/aarch64-apple-ios/debug/gyroflow | rg "gyroflowIosOpenVideoPicker"
-otool -L target/aarch64-apple-ios/debug/gyroflow | rg "PhotosUI.framework"
+nm -gU target/aarch64-apple-ios/debug/gyroflow | rg gyroflowIosOpenVideoPicker
+otool -L target/aarch64-apple-ios/debug/gyroflow | rg PhotosUI.framework
 ```
 
-Expected: bridge symbol is present and PhotosUI is linked.
-
-- [ ] **Step 7: Commit translations and verification-ready state**
+- [ ] **Step 7: Commit translations**
 
 ```bash
 git add resources/translations/gyroflow.ts resources/translations/zh_CN.ts resources/translations/zh_CN.qm
 git commit -m "i18n: translate iOS video source picker"
 ```
 
-- [ ] **Step 8: Record manual-device checks for handoff**
+- [ ] **Step 8: Handoff manual device matrix**
 
-Report these as pending unless a signed iOS device run was actually performed: main-page Photos single/multi-select, queue Photos multi-select, iCloud-only video, duplicate names, cancel, partial failure, “On My iPhone”, iCloud Drive, USB/SD file, and USB/SD folder.
+Report as pending unless actually run on a signed device: main Photos single/multi-select, queue Photos multi-select, iCloud-only video, duplicate names, cancel, partial failure, On My iPhone, iCloud Drive, USB/SD file, USB/SD folder.
