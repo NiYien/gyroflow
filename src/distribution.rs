@@ -3742,7 +3742,12 @@ mod release_automation_tests {
 
     fn run_script(program: &str, script: &str) {
         let eval_arg = if program == "node" { "-e" } else { "-c" };
-        let output = Command::new(program)
+        let executable = if program == "python" && !cfg!(windows) {
+            "python3"
+        } else {
+            program
+        };
+        let output = Command::new(executable)
             .arg(eval_arg)
             .arg(script)
             .current_dir(repo_root())
@@ -3835,7 +3840,7 @@ import hashlib
 from pathlib import Path
 from _scripts import publish_pan123_release as publish
 
-apk_content_source = Path("openspec/changes/distribution-restore-linux-android-ci/proposal.md")
+apk_content_source = Path("_scripts/publish_pan123_release.py")
 payload = apk_content_source.read_bytes()
 packages = publish.build_app_packages_metadata({"gyroflow-niyien.apk": apk_content_source})
 

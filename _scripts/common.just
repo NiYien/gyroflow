@@ -4,11 +4,11 @@ PathSep := if os() == "windows" { ";" } else { ":" }
 ProjectDir := if path_exists(justfile_directory() / "Cargo.toml") == "true" { justfile_directory()
        } else if path_exists(justfile_directory() / ".." / "Cargo.toml") == "true" { justfile_directory() / "../"
        } else { justfile_directory() }
-ProjectVersion := if os() == "windows" { `cd ..; python _scripts/niyien_version.py base --repo-root "$PWD"` } else { `cd .. && python _scripts/niyien_version.py base --repo-root "$PWD"` }
+ProjectVersion := if os() == "windows" { `cd ..; python _scripts/niyien_version.py base --repo-root "$PWD"` } else { `cd .. && python3 _scripts/niyien_version.py base --repo-root "$PWD"` }
 ExtDir := ProjectDir / "ext"
 Arch := env("FORCE_ARCH", arch())
-ArtifactPrefix := `python read_distribution_config.py brand.artifact_prefix`
-DisplayName := `python read_distribution_config.py brand.display_name`
+ArtifactPrefix := if os() == "windows" { `python read_distribution_config.py brand.artifact_prefix` } else { `python3 read_distribution_config.py brand.artifact_prefix` }
+DisplayName := if os() == "windows" { `python read_distribution_config.py brand.display_name` } else { `python3 read_distribution_config.py brand.display_name` }
 
 # ――――――――――――――――――――――――――――――――――――――――― Qt ――――――――――――――――――――――――――――――――――――――――――
 QtVersion := env_var_or_default("FORCE_QT_VERSION", if os() == "windows" { "6.7.3" } else { if Arch == "aarch64" { "6.7.3" } else { "6.4.3" } })
@@ -50,6 +50,7 @@ export MACOSX_DEPLOYMENT_TARGET := "10.15"
 
 # ――――――――――――――――――――――――――――――――――――――― Clang ―――――――――――――――――――――――――――――――――――――――――
 LlvmConfigExists := if os() == "linux" { `which llvm-config > /dev/null && echo true || echo false` } else { "false" }
+LinuxClangLibDir := if os() == "linux" { `find /usr/lib/llvm-*/lib -maxdepth 1 -name 'libclang.so*' -printf '%h\n' 2>/dev/null | sort -V | tail -n 1` } else { "" }
 export LIBCLANG_PATH := if os() == "macos" {
    DYLD_FALLBACK_LIBRARY_PATH
 } else {
@@ -59,7 +60,7 @@ export LIBCLANG_PATH := if os() == "macos" {
       env_var_or_default("LIBCLANG_PATH", if "{{LlvmConfigExists}}" == "true" {
          `llvm-config --libdir`
       } else {
-         if path_exists("/usr/lib/llvm-13/lib/") == "true" { "/usr/lib/llvm-13/lib/" } else { "" }
+         LinuxClangLibDir
       })
    }
 }

@@ -24,19 +24,24 @@ install-deps: assert-linux-x86-64
     #!/bin/bash
     set -e
 
-    for tool in bash cargo curl git python3 tar unzip zip; do
+    for tool in bash cargo python3; do
         command -v "$tool" >/dev/null || { echo "Required Linux build tool is missing: $tool" >&2; exit 1; }
     done
 
     echo "Installing dependencies $LIBCLANG_PATH {{AptGetExists}}"
     if [ "{{AptGetExists}}" == "true" ]; then
-        sudo apt-get install -y p7zip-full python3-pip python3-venv clang libclang-dev bison pkg-config gperf curl unzip zip git
+        command -v sudo >/dev/null || { echo "Required Linux dependency installer is missing: sudo" >&2; exit 1; }
+        sudo apt-get install -y p7zip-full python3-pip python3-venv python3-requests nodejs clang libclang-dev bison pkg-config gperf curl unzip zip git
         sudo apt-get install -y libc++-dev libva-dev libvdpau-dev libvdpau1 mesa-va-drivers ocl-icd-opencl-dev opencl-headers
         sudo apt-get install -y libpulse-dev libasound-dev libxkbcommon-dev
         sudo apt-get install -y libfontconfig1 libfreetype6
         sudo apt-get install -y libstdc++-12-dev || true
         sudo apt-get install -y libstdc++-8-dev || true
     fi
+
+    for tool in curl git tar unzip zip; do
+        command -v "$tool" >/dev/null || { echo "Required Linux build tool is missing after dependency installation: $tool" >&2; exit 1; }
+    done
 
     mkdir -p {{ExtDir}}
 
@@ -62,11 +67,15 @@ install-deps: assert-linux-x86-64
         rm -rf {{ExtDir}}/vcpkg/downloads
     fi
 
-    if [[ ! -d "${LIBCLANG_PATH}" ]]; then
-        if [ "{{AptGetExists}}" == "true" ]; then
-            sudo apt-get install -y libclang-13-dev
-        fi
+    clang_lib_dir="${LIBCLANG_PATH:-}"
+    if [ ! -d "$clang_lib_dir" ]; then
+        clang_lib_dir="$(find /usr/lib/llvm-*/lib -maxdepth 1 -name 'libclang.so*' -printf '%h\n' 2>/dev/null | sort -V | tail -n 1)"
     fi
+    if [ ! -d "$clang_lib_dir" ]; then
+        echo "Unable to locate the libclang directory after installing libclang-dev." >&2
+        exit 1
+    fi
+    export LIBCLANG_PATH="$clang_lib_dir"
 
     pushd {{ExtDir}}
 
@@ -119,7 +128,7 @@ install-deps: assert-linux-x86-64
 
         # Compile python 3.8
         if [[ ! -d "{{ExtDir}}/python3.8" ]]; then
-            sudo apt-get install -y build-essential libreadline-gplv2-dev libncursesw5-dev libssl-dev libsqlite3-dev tk-dev libgdbm-dev libc6-dev libbz2-dev libffi-dev zlib1g-dev wget
+            sudo apt-get install -y build-essential libreadline-dev libncursesw5-dev libssl-dev libsqlite3-dev tk-dev libgdbm-dev libc6-dev libbz2-dev libffi-dev zlib1g-dev wget
             wget https://www.python.org/ftp/python/3.8.6/Python-3.8.6.tgz
             tar xzf Python-3.8.6.tgz
             pushd Python-3.8.6
@@ -230,7 +239,7 @@ deploy *param: assert-linux-x86-64
             set -e
             apt update
             echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections
-            apt install -y sudo dialog apt-utils curl clang
+            apt install -y sudo dialog apt-utils curl clang python3 git tar unzip zip
             export RUNLEVEL=1
             export GITHUB_RUN_NUMBER=$GITHUB_RUN_NUMBER
             export VULKAN_SDK=$VULKAN_SDK
@@ -457,18 +466,18 @@ deploy *param: assert-linux-x86-64
     command -v appimage-builder >/dev/null || { echo "Required Linux packaging tool is missing: appimage-builder" >&2; exit 1; }
     command -v appimagetool >/dev/null || { echo "Required Linux packaging tool is missing: appimagetool" >&2; exit 1; }
     appimage-builder --recipe $PROJECT_DIR/_deployment/linux/AppImageBuilder.yml
-    chmod +x Gyroflow-${APP_VERSION}-{{ArchName}}.AppImage
+    BUILDER_APPIMAGE="$TARGET/../Gyroflow(NiYien)-${APP_VERSION}-{{ArchName}}.AppImage"
+    test -s "$BUILDER_APPIMAGE" || { echo "AppImage builder output is missing or empty: $BUILDER_APPIMAGE" >&2; exit 1; }
+    chmod +x "$BUILDER_APPIMAGE"
 
     # Try to fix AppImage permissions
-    ./Gyroflow-${APP_VERSION}-{{ArchName}}.AppImage --appimage-extract
-    rm -f Gyroflow-${APP_VERSION}-{{ArchName}}.AppImage
+    "$BUILDER_APPIMAGE" --appimage-extract
+    rm -f "$BUILDER_APPIMAGE" "$BUILDER_APPIMAGE.zsync"
     sudo chmod 755 squashfs-root
     find ./squashfs-root -type d -exec sudo chmod 755 {} \;
     mv squashfs-root Gyroflow.AppDir
-    ARCH={{Arch}} appimagetool ./Gyroflow.AppDir
+    ARCH={{Arch}} appimagetool ./Gyroflow.AppDir "{{ArtifactPrefix}}-{{PackageSuffix}}.AppImage"
     rm -rf Gyroflow.AppDir
-
-    mv Gyroflow-{{ArchName}}.AppImage {{ArtifactPrefix}}-{{PackageSuffix}}.AppImage
     # ---- Build AppImage ----
 
     python3 "$PROJECT_DIR/_scripts/verify_linux_app_packages.py" \

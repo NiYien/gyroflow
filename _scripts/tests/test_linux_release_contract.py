@@ -53,6 +53,63 @@ class LinuxJustContractTests(unittest.TestCase):
         ):
             self.assertRegex(script, rf"(?m)^{recipe}(?: \*param)?:")
 
+    def test_linux_justfile_parsing_uses_python3_before_dependency_install(self):
+        common = (ROOT / "_scripts" / "common.just").read_text(encoding="utf-8")
+
+        self.assertIn("cd .. && python3 _scripts/niyien_version.py", common)
+        self.assertIn("`python3 read_distribution_config.py brand.artifact_prefix`", common)
+        self.assertIn("`python3 read_distribution_config.py brand.display_name`", common)
+
+    def test_linux_installs_bootstrap_tools_before_probing_consumers(self):
+        script = (ROOT / "_scripts" / "linux.just").read_text(encoding="utf-8")
+
+        self.assertIn("for tool in curl git tar unzip zip; do", script)
+        apt_install = script.index("sudo apt-get install -y p7zip-full")
+        consumer_probe = script.index("for tool in curl git tar unzip zip; do")
+        self.assertLess(apt_install, consumer_probe)
+        self.assertIn("for tool in bash cargo python3; do", script)
+        self.assertIn(
+            "apt install -y sudo dialog apt-utils curl clang python3 git tar unzip zip",
+            script,
+        )
+
+    def test_linux_discovers_the_distribution_libclang_instead_of_pin_to_13(self):
+        script = (ROOT / "_scripts" / "linux.just").read_text(encoding="utf-8")
+        common = (ROOT / "_scripts" / "common.just").read_text(encoding="utf-8")
+
+        self.assertNotIn("libclang-13-dev", script)
+        self.assertNotIn('/usr/lib/llvm-13/lib/', common)
+        self.assertIn("find /usr/lib/llvm-*/lib", script)
+        self.assertIn("find /usr/lib/llvm-*/lib", common)
+
+    def test_linux_python_bootstrap_uses_the_current_readline_package(self):
+        script = (ROOT / "_scripts" / "linux.just").read_text(encoding="utf-8")
+
+        self.assertNotIn("libreadline-gplv2-dev", script)
+        self.assertIn("build-essential libreadline-dev", script)
+
+    def test_linux_installs_node_for_the_release_automation_test_suite(self):
+        script = (ROOT / "_scripts" / "linux.just").read_text(encoding="utf-8")
+
+        dependency_line = next(
+            line for line in script.splitlines() if "python3-pip" in line
+        )
+        self.assertIn("nodejs", dependency_line)
+        self.assertIn("python3-requests", dependency_line)
+
+    def test_linux_deploy_uses_the_branded_builder_output_and_explicit_final_name(self):
+        script = (ROOT / "_scripts" / "linux.just").read_text(encoding="utf-8")
+
+        self.assertIn(
+            'BUILDER_APPIMAGE="$TARGET/../Gyroflow(NiYien)-${APP_VERSION}-{{ArchName}}.AppImage"',
+            script,
+        )
+        self.assertIn(
+            'ARCH={{Arch}} appimagetool ./Gyroflow.AppDir "{{ArtifactPrefix}}-{{PackageSuffix}}.AppImage"',
+            script,
+        )
+        self.assertNotIn("mv Gyroflow-{{ArchName}}.AppImage", script)
+
 
 class LinuxWorkflowContractTests(unittest.TestCase):
     def setUp(self):
