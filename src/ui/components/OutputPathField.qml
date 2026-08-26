@@ -12,7 +12,6 @@ TextField {
     width: parent.width;
     rightPadding: linkBtn.width;
 
-    property var cbAfterSelect: null;
     property bool folderOnly: false;
 
     property url fullFileUrl;
@@ -81,10 +80,14 @@ TextField {
         return "";
     }
 
-    function selectFolder(folder: url, cb: var): void {
-        root.cbAfterSelect = cb;
+    function selectFolder(folder: url, cb: var, rejectedCb: var): void {
+        folderContinuation.begin(cb, rejectedCb);
         outputFolderDialog.currentFolder = root.getFolderForDialog(folder);
         outputFolderDialog.open();
+    }
+
+    FolderSelectionContinuation {
+        id: folderContinuation;
     }
 
     LinkButton {
@@ -131,10 +134,8 @@ TextField {
                 settings.setValue("folder-video", filesystem.get_folder(window.videoArea.loadedFileUrl).toString());
             }
 
-            if (root.cbAfterSelect) {
-                root.cbAfterSelect(root.folderUrl);
-                root.cbAfterSelect = null;
-            }
+            folderContinuation.accept(root.folderUrl);
         }
+        onRejected: folderContinuation.reject();
     }
 }

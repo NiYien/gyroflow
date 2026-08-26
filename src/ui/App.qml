@@ -95,9 +95,6 @@ Rectangle {
     function deferIosPhotoQueueOutputCheck(urls: var): bool {
         return iosQueueOutputPolicy.deferAddTimeOutputCheck(urls);
     }
-    function runQueueWithIosOutputCheck(callback: var): void {
-        iosQueueOutputPolicy.runBeforeExport(callback);
-    }
     // Index 1 in smoothingAlgorithms corresponds to DefaultAlgo (see src/core/smoothing/mod.rs).
     readonly property int defaultSmoothingIndex: 1;
     function applySimpleModeDefaults(): void {
@@ -532,6 +529,12 @@ Rectangle {
                 window.exportSettings.resetToSourceDefaults();
             }
         }
+        function onOutput_folder_required(job_id: real): void {
+            iosQueueOutputPolicy.resolveOutputFolder(function() {
+                if (job_id > 0) render_queue.render_job(job_id);
+                else render_queue.start();
+            });
+        }
     }
 
     function loadBatchParams() {
@@ -712,7 +715,6 @@ Rectangle {
         id: iosQueueOutputPolicy
         platformOs: Qt.platform.os
         filesystemObject: filesystem
-        renderQueueObject: render_queue
         outputFileObject: outputFile
         exportSettingsObject: window.exportSettings
     }
@@ -2134,20 +2136,18 @@ Rectangle {
         // the post-match continuation), so the explanation belongs here rather
         // than at each of them.
         if (render_queue.dispatch_blocker_reason("sync")) { window.explainDispatchBlocked("sync"); return; }
-        const startSync = function() {
-            if (videoArea.queue) videoArea.queue.notifyBatchSyncStarted();
-            render_queue.start_batch_autosync();
-        };
         const anamorphicCount = render_queue.get_anamorphic_applied_count();
         if (anamorphicCount > 0) {
             messageBox(Modal.Question, qsTranslate("RenderQueue", "%1 video(s) will use Anamorphic lens").arg(anamorphicCount), [
                 { text: qsTr("Cancel") },
                 { text: qsTr("Continue"), accent: true, clicked: function() {
-                    window.runQueueWithIosOutputCheck(startSync);
+                    if (videoArea.queue) videoArea.queue.notifyBatchSyncStarted();
+                    render_queue.start_batch_autosync();
                 } }
             ]);
         } else {
-            window.runQueueWithIosOutputCheck(startSync);
+            if (videoArea.queue) videoArea.queue.notifyBatchSyncStarted();
+            render_queue.start_batch_autosync();
         }
     }
     // Simple-mode batch export dispatch (queue mode). Shared by simpleExportStabilizedBtn and
@@ -2160,7 +2160,7 @@ Rectangle {
         }
         render_queue.export_project = 4;
         render_queue.prepare_finished_jobs_for_video_export();
-        window.runQueueWithIosOutputCheck(function() { render_queue.start(); });
+        render_queue.start();
     }
     // simple-mode-reexport: when all of a Simple-mode batch button's work is
     // already done, ask before re-running it instead of a silent no-op / bare
@@ -2182,7 +2182,7 @@ Rectangle {
                     }
                     render_queue.export_project = 4;
                     render_queue.prepare_video_exports_for_rerender();
-                    window.runQueueWithIosOutputCheck(function() { render_queue.start(); });
+                    render_queue.start();
                 } else if (kind === "plugins") {
                     window.runSimpleBatchSync();
                 }

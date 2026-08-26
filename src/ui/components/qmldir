@@ -14,6 +14,7 @@ DropTargetRect 1.0 DropTargetRect.qml
 Ease 1.0 Ease.qml
 FeedbackDialog 1.0 FeedbackDialog.qml
 FileDialog 1.0 FileDialog.qml
+FolderSelectionContinuation 1.0 FolderSelectionContinuation.qml
 FrequencyChart 1.0 FrequencyChart.qml
 GridGuide 1.0 GridGuide.qml
 Hr 1.0 Hr.qml

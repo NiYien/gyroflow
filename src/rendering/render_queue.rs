@@ -1610,6 +1610,7 @@ pub struct RenderQueue {
     pub add_skipped: qt_signal!(job_id: u32, filename: QString, reason: QString),
     pub processing_done: qt_signal!(job_id: u32, by_preset: bool),
     pub processing_progress: qt_signal!(job_id: u32, progress: f64),
+    pub output_folder_required: qt_signal!(job_id: u32),
 
     get_prev_item_id: qt_method!(fn(&self, job_id: u32) -> u32),
     get_next_item_id: qt_method!(fn(&self, job_id: u32) -> u32),
@@ -1629,7 +1630,6 @@ pub struct RenderQueue {
     // from QML into queue_output_mode / queue_fixed_output_path. Called on every
     // setting change and at panel init; consumed by reapply_queue_output_path.
     set_queue_output_path: qt_method!(fn(&mut self, mode: u32, fixed_path: QString)),
-    ios_photo_imports_need_output_folder: qt_method!(fn(&self) -> bool),
 
     pause_flag: Arc<AtomicBool>,
 
@@ -2317,25 +2317,42 @@ impl RenderQueue {
         );
     }
 
-    pub fn ios_photo_imports_need_output_folder(&self) -> bool {
-        let Ok(queue) = self.queue.try_borrow() else {
+    fn ios_photo_import_job_needs_output_folder(&self, job_id: u32, is_ios: bool) -> bool {
+        if !is_ios {
+            return false;
+        }
+        let Some(job) = self.jobs.get(&job_id) else {
             return false;
         };
-        self.jobs.values().any(|job| {
-            if job.queue_index >= queue.row_count() as usize
-                || queue[job.queue_index].status != JobStatus::Queued
-                || !filesystem::is_ios_photo_import_url(&job.render_options.input_url)
-            {
-                return false;
-            }
+        if !filesystem::is_ios_photo_import_url(&job.render_options.input_url) {
+            return false;
+        }
 
-            let folder = if self.queue_output_mode == 1 {
-                self.queue_fixed_output_path.as_str()
-            } else {
-                job.render_options.output_folder.as_str()
-            };
-            folder.is_empty() || !filesystem::can_create_file(folder, "check.tmp")
-        })
+        let folder = if self.queue_output_mode == 1 {
+            self.queue_fixed_output_path.as_str()
+        } else {
+            job.render_options.output_folder.as_str()
+        };
+        folder.is_empty() || !filesystem::can_create_file(folder, "check.tmp")
+    }
+
+    fn ios_photo_output_request(
+        &self,
+        requested_job: Option<u32>,
+        is_ios: bool,
+    ) -> Option<u32> {
+        if let Some(job_id) = requested_job {
+            return self
+                .ios_photo_import_job_needs_output_folder(job_id, is_ios)
+                .then_some(job_id);
+        }
+
+        let queue = self.queue.try_borrow().ok()?;
+        queue
+            .iter()
+            .filter(|item| item.status == JobStatus::Queued)
+            .any(|item| self.ios_photo_import_job_needs_output_folder(item.job_id, is_ios))
+            .then_some(0)
     }
 
     // Re-derive every Queued job's output_folder from the current output-path
@@ -4594,6 +4611,10 @@ impl RenderQueue {
         // without a restart. Single choke point for every batch entry
         // (start_batch_autosync, video export, re-export, match-then-sync).
         self.reapply_queue_output_path();
+        if let Some(job_id) = self.ios_photo_output_request(None, cfg!(target_os = "ios")) {
+            self.output_folder_required(job_id);
+            return;
+        }
 
         for (_id, job) in self.jobs.iter() {
             job.cancel_flag.store(false, SeqCst);
@@ -6385,6 +6406,13 @@ impl RenderQueue {
             crate::log_context::LogContextUpdate::default()
                 .op(format!("render@item{job_id}")),
         );
+        self.reapply_queue_output_path();
+        if let Some(job_id) =
+            self.ios_photo_output_request(Some(job_id), cfg!(target_os = "ios"))
+        {
+            self.output_folder_required(job_id);
+            return;
+        }
         // plugin-only-export-gate: refuse to enter a video encode for sources
         // ffmpeg cannot decode. Batch starts are swept in start(); this guard
         // catches direct "Render now" calls. Project-only exports pass through.
@@ -24222,14 +24250,15 @@ mod tests {
             "file:///private/var/mobile/Containers/Data/Application/ABC/Library/Caches/NiYien/GyroflowNiYien/ios-photo-imports/session/item/IMG_0001.mov",
         );
 
-        assert!(queue.ios_photo_imports_need_output_folder());
+        assert_eq!(queue.ios_photo_output_request(None, true), Some(0));
+        assert_eq!(queue.ios_photo_output_request(Some(1), true), Some(1));
     }
 
     #[test]
     fn ordinary_queued_file_does_not_use_the_ios_photo_output_guard() {
         let queue = queue_with_input_job(1, "file:///Users/example/Videos/clip.mov");
 
-        assert!(!queue.ios_photo_imports_need_output_folder());
+        assert_eq!(queue.ios_photo_output_request(None, true), None);
     }
 
     #[test]
@@ -24242,7 +24271,18 @@ mod tests {
         );
         queue.set_queue_output_path(1, QString::from(output_url.as_str()));
 
-        assert!(!queue.ios_photo_imports_need_output_folder());
+        assert_eq!(queue.ios_photo_output_request(None, true), None);
+    }
+
+    #[test]
+    fn non_ios_dispatch_never_requests_a_photo_output_folder() {
+        let queue = queue_with_input_job(
+            1,
+            "file:///private/var/mobile/Containers/Data/Application/ABC/Library/Caches/NiYien/GyroflowNiYien/ios-photo-imports/session/item/IMG_0001.mov",
+        );
+
+        assert_eq!(queue.ios_photo_output_request(None, false), None);
+        assert_eq!(queue.ios_photo_output_request(Some(1), false), None);
     }
 
     // Issue 1: stabilize/batch-sync .gyroflow lands next to the source video,

@@ -640,7 +640,7 @@ pub fn can_open_file(url: &str) -> bool {
 }
 
 pub fn is_ios_photo_import_url(url: &str) -> bool {
-    url.contains("/ios-photo-imports/")
+    url.contains("/Library/Caches/") && url.contains("/ios-photo-imports/")
 }
 
 pub fn can_create_file(folder: &str, filename: &str) -> bool {
