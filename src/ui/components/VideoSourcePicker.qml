@@ -30,7 +30,7 @@ Item {
                         hostObject.messageBox(
                             errorType,
                             qsTr("Unable to open the photo library."),
-                            [ { text: qsTr("Ok") } ]
+                            [ { text: qsTranslate("App", "Ok") } ]
                         )
                     }
                 }
@@ -42,7 +42,7 @@ Item {
                     else fallbackDialog.open()
                 }
             },
-            { text: qsTr("Cancel") }
+            { text: qsTranslate("App", "Cancel") }
         ])
     }
 
@@ -58,7 +58,7 @@ Item {
             root.hostObject.messageBox(
                 root.errorType,
                 qsTr("Some videos could not be imported: %1").arg(message),
-                [ { text: qsTr("Ok") } ]
+                [ { text: qsTranslate("App", "Ok") } ]
             )
         }
     }

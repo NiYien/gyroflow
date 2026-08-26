@@ -5804,6 +5804,34 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
     </message>
 </context>
 <context>
+    <name>VideoSourcePicker</name>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="22"/>
+        <source>Choose video source</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="24"/>
+        <source>Photos</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="32"/>
+        <source>Unable to open the photo library.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="39"/>
+        <source>Files and external storage</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="60"/>
+        <source>Some videos could not be imported: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>main_window</name>
     <message>
         <location filename="../../src/ui/main_window.qml" line="112"/>
