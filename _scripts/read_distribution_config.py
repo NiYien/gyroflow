@@ -3,10 +3,10 @@ import json
 import sys
 from pathlib import Path
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover
-    import tomli as tomllib
+if __package__:
+    from .bootstrap_toml import dotted_value
+else:
+    from bootstrap_toml import dotted_value
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -17,12 +17,7 @@ def main() -> int:
     if len(sys.argv) != 2:
         print("usage: read_distribution_config.py dotted.path", file=sys.stderr)
         return 1
-    with CONFIG_PATH.open("rb") as fh:
-        data = tomllib.load(fh)
-
-    value = data
-    for part in sys.argv[1].split("."):
-        value = value[part]
+    value = dotted_value(CONFIG_PATH, sys.argv[1])
 
     if isinstance(value, (dict, list)):
         print(json.dumps(value))

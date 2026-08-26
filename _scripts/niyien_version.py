@@ -3,30 +3,32 @@ from __future__ import annotations
 import argparse
 import os
 import pathlib
-import tomllib
+
+if __package__:
+    from .bootstrap_toml import table_value
+else:
+    from bootstrap_toml import table_value
 
 
 def cargo_version(repo_root: pathlib.Path) -> str:
-    payload = tomllib.loads((repo_root / "Cargo.toml").read_text(encoding="utf-8"))
-    package = payload.get("package", {})
-    version = package.get("version")
+    cargo_toml = repo_root / "Cargo.toml"
+    try:
+        version = table_value(cargo_toml, "package", "version")
+    except KeyError:
+        version = None
     if isinstance(version, str) and version.strip():
         return version.strip()
 
-    workspace_ref = package.get("version.workspace")
+    try:
+        workspace_ref = table_value(cargo_toml, "package", "version.workspace")
+    except KeyError:
+        workspace_ref = False
     if workspace_ref is True:
-        workspace_package = payload.get("workspace", {}).get("package", {})
-        workspace_version = workspace_package.get("version")
+        workspace_version = table_value(cargo_toml, "workspace.package", "version")
         if isinstance(workspace_version, str) and workspace_version.strip():
             return workspace_version.strip()
 
-    if isinstance(package.get("version"), dict) and package["version"].get("workspace") is True:
-        workspace_package = payload.get("workspace", {}).get("package", {})
-        workspace_version = workspace_package.get("version")
-        if isinstance(workspace_version, str) and workspace_version.strip():
-            return workspace_version.strip()
-
-    raise RuntimeError(f"unable to resolve package version from {repo_root / 'Cargo.toml'}")
+    raise RuntimeError(f"unable to resolve package version from {cargo_toml}")
 
 
 def tag_version() -> str | None:

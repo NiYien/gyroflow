@@ -1,8 +1,12 @@
 import hashlib
 import importlib.util
+import os
 import stat
+import subprocess
+import sys
 import tarfile
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -22,6 +26,74 @@ def load_verifier():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+class BootstrapPythonCompatibilityTests(unittest.TestCase):
+    def run_without_toml_modules(self, *args: str) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as directory:
+            blocker = Path(directory) / "sitecustomize.py"
+            blocker.write_text(
+                textwrap.dedent(
+                    """
+                    import builtins
+
+                    original_import = builtins.__import__
+
+                    def import_without_toml(name, *args, **kwargs):
+                        if name in {"tomllib", "tomli"}:
+                            raise ModuleNotFoundError(f"No module named {name!r}")
+                        return original_import(name, *args, **kwargs)
+
+                    builtins.__import__ = import_without_toml
+                    """
+                ),
+                encoding="utf-8",
+            )
+            env = os.environ.copy()
+            env["PYTHONPATH"] = directory
+            return subprocess.run(
+                [sys.executable, *args],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+    def test_version_reader_runs_without_toml_modules(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo_root = Path(directory)
+            (repo_root / "Cargo.toml").write_text(
+                textwrap.dedent(
+                    """
+                    [package]
+                    name = "bootstrap-test"
+                    version.workspace = true
+
+                    [workspace.package]
+                    version = "9.8.7"
+                    """
+                ),
+                encoding="utf-8",
+            )
+            result = self.run_without_toml_modules(
+                str(ROOT / "_scripts" / "niyien_version.py"),
+                "base",
+                "--repo-root",
+                str(repo_root),
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "9.8.7")
+
+    def test_distribution_reader_runs_without_toml_modules(self):
+        result = self.run_without_toml_modules(
+            str(ROOT / "_scripts" / "read_distribution_config.py"),
+            "brand.artifact_prefix",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "gyroflow-niyien")
 
 
 class LinuxJustContractTests(unittest.TestCase):
