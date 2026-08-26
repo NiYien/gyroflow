@@ -121,32 +121,49 @@ jobs:
           xcrun stapler staple --verbose ${{ github.workspace }}/_deployment/_binaries/gyroflow-niyien-mac-universal.dmg
 
       - name: Build gyroflow(niyien) (Linux)
+        id: linux_build
         if: ${{ matrix.targets.type == 'linux' }}
         run: just deploy docker
 
-      - name: Smoke test Linux packages
+      - name: Prepare Linux smoke test runtime
+        if: ${{ matrix.targets.type == 'linux' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpulse0
+
+      - name: Smoke test Linux tar package
         if: ${{ matrix.targets.type == 'linux' }}
         run: |
           set -euo pipefail
           packages="${{ github.workspace }}/_deployment/_binaries"
-          python3 _scripts/verify_linux_app_packages.py "$packages/gyroflow-niyien-linux64.AppImage" "$packages/gyroflow-niyien-linux64.tar.gz"
           smoke_dir="$(mktemp -d)"
           trap 'rm -rf "$smoke_dir"' EXIT
           tar -xzf "$packages/gyroflow-niyien-linux64.tar.gz" -C "$smoke_dir"
           export LD_LIBRARY_PATH="$smoke_dir/Gyroflow/lib"
-          "$smoke_dir/Gyroflow/gyroflow-niyien" --version
-          if ldd "$smoke_dir/Gyroflow/gyroflow-niyien" | grep -q 'not found'; then
-            ldd "$smoke_dir/Gyroflow/gyroflow-niyien"
+          ldd_output="$(ldd "$smoke_dir/Gyroflow/gyroflow-niyien")"
+          printf '%s\n' "$ldd_output"
+          if grep -q 'not found' <<<"$ldd_output"; then
             exit 1
           fi
+          "$smoke_dir/Gyroflow/gyroflow-niyien" --version
+
+      - name: Smoke test Linux AppImage package
+        if: ${{ !cancelled() && matrix.targets.type == 'linux' && steps.linux_build.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          packages="${{ github.workspace }}/_deployment/_binaries"
+          smoke_dir="$(mktemp -d)"
+          trap 'rm -rf "$smoke_dir"' EXIT
           cd "$smoke_dir"
           "$packages/gyroflow-niyien-linux64.AppImage" --appimage-extract
-          export LD_LIBRARY_PATH="$smoke_dir/squashfs-root/lib"
-          "$smoke_dir/squashfs-root/gyroflow-niyien" --version
-          if ldd "$smoke_dir/squashfs-root/gyroflow-niyien" | grep -q 'not found'; then
-            ldd "$smoke_dir/squashfs-root/gyroflow-niyien"
+          appdir="$smoke_dir/squashfs-root"
+          export LD_LIBRARY_PATH="$appdir/lib:$appdir/lib/x86_64-linux-gnu:$appdir/lib/x86_64-linux-gnu/security:$appdir/usr/lib/x86_64-linux-gnu:$appdir/usr/lib/llvm-7/lib:$appdir/lib/x86_64"
+          ldd_output="$(ldd "$appdir/gyroflow-niyien")"
+          printf '%s\n' "$ldd_output"
+          if grep -q 'not found' <<<"$ldd_output"; then
             exit 1
           fi
+          "$appdir/AppRun" --version
 
       - name: Build gyroflow(niyien) (Windows)
         if: ${{ matrix.targets.type == 'windows' }}

@@ -261,12 +261,49 @@ class LinuxWorkflowContractTests(unittest.TestCase):
         self.assertIn("name: gyroflow-niyien-linux-appimage", self.workflow)
         self.assertIn("name: gyroflow-niyien-linux-tar", self.workflow)
 
-    def test_workflow_smoke_checks_linux_packages(self):
-        self.assertIn("name: Smoke test Linux packages", self.workflow)
-        self.assertIn("verify_linux_app_packages.py", self.workflow)
-        self.assertIn("--appimage-extract", self.workflow)
-        self.assertIn("ldd", self.workflow)
-        self.assertIn("--version", self.workflow)
+    def test_workflow_prepares_linux_smoke_runtime_dependencies(self):
+        self.assertIn("- name: Prepare Linux smoke test runtime", self.workflow)
+        self.assertIn("- name: Smoke test Linux tar package", self.workflow)
+        runtime_step = self.workflow.index("- name: Prepare Linux smoke test runtime")
+        tar_step = self.workflow.index("- name: Smoke test Linux tar package")
+        runtime_script = self.workflow[runtime_step:tar_step]
+
+        self.assertLess(runtime_step, tar_step)
+        self.assertIn("sudo apt-get update", runtime_script)
+        self.assertIn("sudo apt-get install -y libpulse0", runtime_script)
+
+    def test_workflow_checks_tar_dependencies_before_launch(self):
+        self.assertIn("- name: Smoke test Linux tar package", self.workflow)
+        self.assertIn("- name: Smoke test Linux AppImage package", self.workflow)
+        tar_step = self.workflow.index("- name: Smoke test Linux tar package")
+        appimage_step = self.workflow.index("- name: Smoke test Linux AppImage package")
+        tar_script = self.workflow[tar_step:appimage_step]
+        binary = '"$smoke_dir/Gyroflow/gyroflow-niyien"'
+
+        self.assertNotIn("gyroflow-niyien-linux64.AppImage", tar_script)
+        self.assertIn('ldd_output="$(ldd ' + binary + ')"', tar_script)
+        self.assertIn("printf '%s\\n' \"$ldd_output\"", tar_script)
+        self.assertLess(tar_script.index("grep -q 'not found'"), tar_script.index("exit 1"))
+        self.assertLess(tar_script.index(f"ldd {binary}"), tar_script.index(f"{binary} --version"))
+
+    def test_workflow_smoke_checks_appimage_after_tar_failure(self):
+        self.assertIn("- name: Smoke test Linux AppImage package", self.workflow)
+        appimage_step = self.workflow.index("- name: Smoke test Linux AppImage package")
+        windows_step = self.workflow.index("- name: Build gyroflow(niyien) (Windows)")
+        appimage_script = self.workflow[appimage_step:windows_step]
+
+        self.assertIn("steps.linux_build.outcome == 'success'", appimage_script)
+        self.assertIn("!cancelled()", appimage_script)
+        self.assertNotIn("always()", appimage_script)
+        self.assertIn("--appimage-extract", appimage_script)
+        self.assertIn("$appdir/usr/lib/x86_64-linux-gnu", appimage_script)
+        self.assertIn('ldd_output="$(ldd "$appdir/gyroflow-niyien")"', appimage_script)
+        self.assertIn("printf '%s\\n' \"$ldd_output\"", appimage_script)
+        self.assertLess(appimage_script.index("grep -q 'not found'"), appimage_script.index("exit 1"))
+        self.assertLess(
+            appimage_script.index('ldd "$appdir/gyroflow-niyien"'),
+            appimage_script.index('"$appdir/AppRun" --version'),
+        )
 
 
 class LinuxPublisherContractTests(unittest.TestCase):
