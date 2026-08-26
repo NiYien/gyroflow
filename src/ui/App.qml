@@ -9,6 +9,7 @@ import QtQuick.Dialogs
 import "."
 import "components/"
 import "menu/" as Menu
+import "Util.js" as Util
 import "menu/device_timezones.js" as DeviceTimezones
 
 Rectangle {
@@ -1786,9 +1787,11 @@ Rectangle {
                         enabled: !_selectionDrivenBatch;
                         ItemLoader {
                             id: simpleDevice;
-                            active: controller.device_connected
-                                || controller.ota_state !== "none"
-                                || ["requesting_permission", "permission_denied", "unsupported", "error"].indexOf(controller.device_connection_status) >= 0;
+                            active: Util.shouldShowA1RealtimeDevice(
+                                Qt.platform.os,
+                                controller.device_connected,
+                                controller.ota_state,
+                                controller.device_connection_status);
                             x: 8 * dpiScale;
                             y: 8 * dpiScale;
                             width: parent.width - 16 * dpiScale;

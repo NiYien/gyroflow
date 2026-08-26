@@ -44,3 +44,10 @@ function setComboValue(c, text) {
         i++;
     }
 }
+
+function shouldShowA1RealtimeDevice(platformOs, connected, otaState, connectionStatus) {
+    if (platformOs === "ios") return false;
+    return connected
+        || otaState !== "none"
+        || ["requesting_permission", "permission_denied", "unsupported", "error"].indexOf(connectionStatus) >= 0;
+}
