@@ -34,7 +34,7 @@
 - [x] 4.4 Add failing metadata tests for Linux `package_*` AppImage fields and `archive_*` tar fields
 - [x] 4.5 Emit both Linux metadata sets, artifact URLs, 123 uploads, pre-warms, and finalize-summary values
 - [x] 4.6 Extend release-center policy normalization, inventory, version details, and manifest preview to preserve/display `archive_*`
-- [ ] 4.7 Run publisher, release-center backend, and release-automation Rust wrapper tests
+- [x] 4.7 Run publisher, release-center backend, and release-automation Rust wrapper tests
 
 ## 5. Template and production manifest (`gyroflow` + `docs`)
 
@@ -72,10 +72,10 @@
 ## 8. Documentation and cross-repository verification
 
 - [x] 8.1 Update deployment/build documentation with Linux x86_64 scope, both application formats, update behavior, Resolve paths, driver-dependent hardware encoding, and explicit exclusions
-- [ ] 8.2 Run the full relevant `gyroflow` Rust, Python, Node, release-center, workflow, and formatting checks
-- [ ] 8.3 Run the relevant `docs` manifest/API tests and formatting checks
-- [ ] 8.4 Run the relevant `gyroflow-plugins` Cargo, packaging, workflow, and formatting checks
+- [x] 8.2 Run the full relevant `gyroflow` Rust, Python, Node, release-center, workflow, and formatting checks
+- [x] 8.3 Run the relevant `docs` manifest/API tests and formatting checks
+- [x] 8.4 Run the relevant `gyroflow-plugins` Cargo, packaging, workflow, and formatting checks
 - [ ] 8.5 Run `just check`, tests, and `just deploy docker` in Linux x86_64; inspect both application packages and execute the packaged `--version`
-- [ ] 8.6 Validate `restore-linux-x86-64-support` with OpenSpec strict validation and run whitespace/diff checks in all three repositories
+- [x] 8.6 Validate `restore-linux-x86-64-support` with OpenSpec strict validation and run whitespace/diff checks in all three repositories
 - [ ] 8.7 On a real Linux x86_64 workstation, launch both package formats, exercise a representative software/GPU export, and confirm updater folder handoff
 - [ ] 8.8 On a real Linux x86_64 DaVinci Resolve installation, install/update OpenFX, restart Resolve, verify the effect version, and confirm exactly two Gyroflow NiYien Utility menu entries

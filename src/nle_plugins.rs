@@ -84,9 +84,7 @@ pub fn get_path(typ: &str) -> &'static str {
 fn plugin_available_on_platform(typ: &str, platform: PluginPlatform) -> bool {
     match platform {
         PluginPlatform::Linux => typ == "openfx",
-        PluginPlatform::Windows | PluginPlatform::Macos => {
-            typ == "openfx" || typ == "adobe"
-        }
+        PluginPlatform::Windows | PluginPlatform::Macos => typ == "openfx" || typ == "adobe",
     }
 }
 
@@ -98,15 +96,11 @@ fn get_path_for_platform(typ: &str, platform: PluginPlatform) -> &'static str {
         ("adobe", PluginPlatform::Windows) => {
             "C:/Program Files/Adobe/Common/Plug-ins/7.0/MediaCore/GyroflowNiyien-Adobe-windows.aex"
         }
-        ("openfx", PluginPlatform::Macos) => {
-            "/Library/OFX/Plugins/GyroflowNiyien.ofx.bundle"
-        }
+        ("openfx", PluginPlatform::Macos) => "/Library/OFX/Plugins/GyroflowNiyien.ofx.bundle",
         ("adobe", PluginPlatform::Macos) => {
             "/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/GyroflowNiyien.plugin"
         }
-        ("openfx", PluginPlatform::Linux) => {
-            "/usr/OFX/Plugins/GyroflowNiyien.ofx.bundle"
-        }
+        ("openfx", PluginPlatform::Linux) => "/usr/OFX/Plugins/GyroflowNiyien.ofx.bundle",
         _ => "",
     }
 }
@@ -634,10 +628,9 @@ fn plugin_package_for_platform(
             "GyroflowNiyien-OpenFX-windows.zip",
             "C:/Program Files/Common Files/OFX/Plugins/",
         )),
-        ("openfx", PluginPlatform::Macos) => Some((
-            "GyroflowNiyien-OpenFX-macos.zip",
-            "/Library/OFX/Plugins/",
-        )),
+        ("openfx", PluginPlatform::Macos) => {
+            Some(("GyroflowNiyien-OpenFX-macos.zip", "/Library/OFX/Plugins/"))
+        }
         ("openfx", PluginPlatform::Linux) => {
             Some(("GyroflowNiyien-OpenFX-linux.zip", LINUX_OPENFX_INSTALL_ROOT))
         }
@@ -1235,8 +1228,14 @@ mod tests {
 
     #[test]
     fn linux_platform_exposes_only_resolve_openfx_contract() {
-        assert!(plugin_available_on_platform("openfx", PluginPlatform::Linux));
-        assert!(!plugin_available_on_platform("adobe", PluginPlatform::Linux));
+        assert!(plugin_available_on_platform(
+            "openfx",
+            PluginPlatform::Linux
+        ));
+        assert!(!plugin_available_on_platform(
+            "adobe",
+            PluginPlatform::Linux
+        ));
         assert_eq!(
             get_path_for_platform("openfx", PluginPlatform::Linux),
             "/usr/OFX/Plugins/GyroflowNiyien.ofx.bundle"
@@ -1261,10 +1260,14 @@ mod tests {
     fn linux_resolve_detection_uses_standard_host_and_ofx_paths() {
         assert_eq!(
             nle_detection_paths_for_platform("openfx", PluginPlatform::Linux, "tester"),
-            vec![PathBuf::from("/opt/resolve"), PathBuf::from("/usr/OFX/Plugins")]
+            vec![
+                PathBuf::from("/opt/resolve"),
+                PathBuf::from("/usr/OFX/Plugins")
+            ]
         );
-        assert!(nle_detection_paths_for_platform("adobe", PluginPlatform::Linux, "tester")
-            .is_empty());
+        assert!(
+            nle_detection_paths_for_platform("adobe", PluginPlatform::Linux, "tester").is_empty()
+        );
     }
 
     #[test]
@@ -1367,8 +1370,12 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
-        assert!(error.to_string().starts_with(LINUX_PLUGIN_MANUAL_INSTALL_REQUIRED));
-        assert!(error.to_string().contains(&source.to_string_lossy().into_owned()));
+        assert!(error
+            .to_string()
+            .starts_with(LINUX_PLUGIN_MANUAL_INSTALL_REQUIRED));
+        assert!(error
+            .to_string()
+            .contains(&source.to_string_lossy().into_owned()));
         assert!(error.to_string().contains("/usr/OFX/Plugins/"));
     }
 

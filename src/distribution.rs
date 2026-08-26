@@ -2096,6 +2096,7 @@ fn default_app_update_filename(platform: &str) -> &'static str {
     }
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn linux_appimage_mode(mode: u32) -> u32 {
     mode | 0o100
 }
@@ -2143,6 +2144,7 @@ fn open_linux_update_directory(path: &Path) -> Result<(), String> {
     }
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn open_linux_update_directory_with<F>(path: &Path, mut run: F) -> Result<(), String>
 where
     F: FnMut(&str, &[&std::ffi::OsStr]) -> Result<bool, String>,
@@ -2714,7 +2716,10 @@ mod app_update_tests {
 
         prepare_linux_appimage(&path).unwrap();
 
-        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o740);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o740
+        );
         fs::remove_file(path).unwrap();
     }
 
@@ -2780,11 +2785,11 @@ mod app_update_tests {
             .join("gyroflow-linux-opener-fail")
             .join("gyroflow-niyien-linux64.AppImage");
 
-        let error = open_linux_update_directory_with(
-            &appimage,
-            |_program, _args: &[&std::ffi::OsStr]| Ok(false),
-        )
-        .unwrap_err();
+        let error =
+            open_linux_update_directory_with(&appimage, |_program, _args: &[&std::ffi::OsStr]| {
+                Ok(false)
+            })
+            .unwrap_err();
 
         assert!(appimage.is_absolute());
         assert!(error.contains(&appimage.to_string_lossy().into_owned()));
