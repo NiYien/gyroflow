@@ -1259,7 +1259,11 @@ Item {
                     window.showCanonCrmProjectOnlyMessage();
                     return;
                 }
-                render_queue[statuses[status][3]]();
+                if (status === "stopped") {
+                    window.runQueueOutputAction(function() { render_queue.start(); });
+                } else {
+                    render_queue[statuses[status][3]]();
+                }
             }
         }
     }

@@ -1610,7 +1610,7 @@ pub struct RenderQueue {
     pub add_skipped: qt_signal!(job_id: u32, filename: QString, reason: QString),
     pub processing_done: qt_signal!(job_id: u32, by_preset: bool),
     pub processing_progress: qt_signal!(job_id: u32, progress: f64),
-    pub output_folder_required: qt_signal!(job_id: u32),
+    pub output_folder_required: qt_signal!(intent: QString, job_id: u32),
 
     get_prev_item_id: qt_method!(fn(&self, job_id: u32) -> u32),
     get_next_item_id: qt_method!(fn(&self, job_id: u32) -> u32),
@@ -1630,8 +1630,14 @@ pub struct RenderQueue {
     // from QML into queue_output_mode / queue_fixed_output_path. Called on every
     // setting change and at panel init; consumed by reapply_queue_output_path.
     set_queue_output_path: qt_method!(fn(&mut self, mode: u32, fixed_path: QString)),
+    ios_photo_jobs_need_output_folder: qt_method!(fn(&self) -> bool),
+    finish_output_folder_request: qt_method!(fn(&mut self, accepted: bool)),
+    clear_output_folder_block: qt_method!(fn(&mut self)),
 
     pause_flag: Arc<AtomicBool>,
+    output_folder_request_pending: bool,
+    output_folder_blocked: bool,
+    output_folder_request_was_active: bool,
 
     pub default_suffix: qt_property!(QString),
 
@@ -2353,6 +2359,84 @@ impl RenderQueue {
             .filter(|item| item.status == JobStatus::Queued)
             .any(|item| self.ios_photo_import_job_needs_output_folder(item.job_id, is_ios))
             .then_some(0)
+    }
+
+    fn ios_photo_jobs_need_output_folder_with_platform(&self, is_ios: bool) -> bool {
+        let Ok(queue) = self.queue.try_borrow() else {
+            return false;
+        };
+        queue.iter().any(|item| {
+            matches!(item.status, JobStatus::Queued | JobStatus::Finished)
+                && self.ios_photo_import_job_needs_output_folder(item.job_id, is_ios)
+        })
+    }
+
+    pub fn ios_photo_jobs_need_output_folder(&self) -> bool {
+        self.ios_photo_jobs_need_output_folder_with_platform(cfg!(target_os = "ios"))
+    }
+
+    fn settle_blocked_output_request_if_idle(&mut self) {
+        if !self.output_folder_blocked
+            || self.status.to_string() != "active"
+            || self.get_active_render_count() > 0
+        {
+            return;
+        }
+
+        self.start_frame = 0;
+        self.start_queue_work_units = 0.0;
+        self.start_timestamp = 0;
+        self.status = QString::from("stopped");
+        self.status_changed();
+        self.progress_changed();
+    }
+
+    fn request_photo_output_folder(
+        &mut self,
+        requested_job: Option<u32>,
+        is_ios: bool,
+        intent: &str,
+    ) -> bool {
+        let Some(job_id) = self.ios_photo_output_request(requested_job, is_ios) else {
+            return false;
+        };
+        if self.output_folder_blocked {
+            self.settle_blocked_output_request_if_idle();
+            return true;
+        }
+        if self.output_folder_request_pending {
+            return true;
+        }
+
+        self.output_folder_request_pending = true;
+        self.output_folder_request_was_active = self.status.to_string() == "active";
+        self.output_folder_required(QString::from(intent), job_id);
+        true
+    }
+
+    pub fn finish_output_folder_request(&mut self, accepted: bool) {
+        if !self.output_folder_request_pending {
+            return;
+        }
+
+        self.output_folder_request_pending = false;
+        if accepted {
+            self.output_folder_blocked = false;
+        } else if self.output_folder_request_was_active {
+            // An internal completion callback may ask for the next Photos job
+            // while the queue still says Active. Cancelling that picker must
+            // leave a stable stopped queue, and must not let another callback
+            // immediately reopen it.
+            self.output_folder_blocked = true;
+        }
+        self.output_folder_request_was_active = false;
+        self.settle_blocked_output_request_if_idle();
+    }
+
+    pub fn clear_output_folder_block(&mut self) {
+        self.output_folder_request_pending = false;
+        self.output_folder_request_was_active = false;
+        self.output_folder_blocked = false;
     }
 
     // Re-derive every Queued job's output_folder from the current output-path
@@ -4611,8 +4695,7 @@ impl RenderQueue {
         // without a restart. Single choke point for every batch entry
         // (start_batch_autosync, video export, re-export, match-then-sync).
         self.reapply_queue_output_path();
-        if let Some(job_id) = self.ios_photo_output_request(None, cfg!(target_os = "ios")) {
-            self.output_folder_required(job_id);
+        if self.request_photo_output_folder(None, cfg!(target_os = "ios"), "start") {
             return;
         }
 
@@ -4831,9 +4914,17 @@ impl RenderQueue {
     }
 
     pub fn resume(&mut self) {
+        self.resume_with_platform(cfg!(target_os = "ios"));
+    }
+
+    fn resume_with_platform(&mut self, is_ios: bool) {
         // Explicit Resume: clear pause_flag, adjust timestamps, reset each
         // job's cancel_flag, then let start() schedule pending jobs normally.
         if !self.pause_flag.load(SeqCst) {
+            return;
+        }
+        self.reapply_queue_output_path();
+        if self.request_photo_output_folder(None, is_ios, "resume") {
             return;
         }
         for (_id, job) in self.jobs.iter() {
@@ -6407,10 +6498,11 @@ impl RenderQueue {
                 .op(format!("render@item{job_id}")),
         );
         self.reapply_queue_output_path();
-        if let Some(job_id) =
-            self.ios_photo_output_request(Some(job_id), cfg!(target_os = "ios"))
-        {
-            self.output_folder_required(job_id);
+        if self.request_photo_output_folder(
+            Some(job_id),
+            cfg!(target_os = "ios"),
+            "render_job",
+        ) {
             return;
         }
         // plugin-only-export-gate: refuse to enter a video encode for sources
@@ -24283,6 +24375,48 @@ mod tests {
 
         assert_eq!(queue.ios_photo_output_request(None, false), None);
         assert_eq!(queue.ios_photo_output_request(Some(1), false), None);
+    }
+
+    #[test]
+    fn resume_photo_output_request_preserves_paused_state_until_acceptance() {
+        let mut queue = queue_with_input_job(
+            1,
+            "file:///private/var/mobile/Containers/Data/Application/ABC/Library/Caches/NiYien/GyroflowNiYien/ios-photo-imports/session/item/IMG_0001.mov",
+        );
+        queue.pause_flag.store(true, SeqCst);
+        queue.status = QString::from("paused");
+
+        queue.resume_with_platform(true);
+
+        assert!(queue.pause_flag.load(SeqCst));
+        assert_eq!(queue.status.to_string(), "paused");
+        assert!(queue.output_folder_request_pending);
+    }
+
+    #[test]
+    fn rejecting_idle_active_request_stops_and_suppresses_internal_retry() {
+        let mut queue = queue_with_input_job(
+            1,
+            "file:///private/var/mobile/Containers/Data/Application/ABC/Library/Caches/NiYien/GyroflowNiYien/ios-photo-imports/session/item/IMG_0001.mov",
+        );
+        queue.status = QString::from("active");
+
+        assert!(queue.request_photo_output_folder(None, true, "start"));
+        queue.finish_output_folder_request(false);
+
+        assert_eq!(queue.status.to_string(), "stopped");
+        assert!(queue.output_folder_blocked);
+        assert!(!queue.output_folder_request_pending);
+        assert!(queue.request_photo_output_folder(None, true, "start"));
+        assert!(!queue.output_folder_request_pending);
+    }
+
+    #[test]
+    fn stale_photo_output_block_does_not_block_an_ordinary_file() {
+        let mut queue = queue_with_input_job(1, "file:///Users/example/Videos/clip.mov");
+        queue.output_folder_blocked = true;
+
+        assert!(!queue.request_photo_output_folder(Some(1), true, "render_job"));
     }
 
     // Issue 1: stabilize/batch-sync .gyroflow lands next to the source video,

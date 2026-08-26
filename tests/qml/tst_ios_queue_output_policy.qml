@@ -9,6 +9,7 @@ TestCase {
     when: windowShown
 
     property var filesystemObject: null
+    property var renderQueueObject: null
     property var outputFileObject: null
     property var exportSettingsObject: null
     property var policy: null
@@ -19,6 +20,20 @@ TestCase {
         QtObject {
             function is_ios_photo_import(url): bool {
                 return url.toString().indexOf("/ios-photo-imports/") >= 0
+            }
+        }
+    }
+
+    Component {
+        id: renderQueueFactory
+        QtObject {
+            property bool needsOutputFolder: false
+            property int clearBlockCalls: 0
+            function ios_photo_jobs_need_output_folder(): bool {
+                return needsOutputFolder
+            }
+            function clear_output_folder_block(): void {
+                clearBlockCalls++
             }
         }
     }
@@ -51,6 +66,7 @@ TestCase {
 
     function init(): void {
         filesystemObject = filesystemFactory.createObject(testCase)
+        renderQueueObject = renderQueueFactory.createObject(testCase)
         outputFileObject = outputFileFactory.createObject(testCase)
         exportSettingsObject = exportSettingsFactory.createObject(testCase)
 
@@ -59,6 +75,7 @@ TestCase {
         policy = component.createObject(testCase, {
             platformOs: "ios",
             filesystemObject: filesystemObject,
+            renderQueueObject: renderQueueObject,
             outputFileObject: outputFileObject,
             exportSettingsObject: exportSettingsObject
         })
@@ -69,10 +86,12 @@ TestCase {
         if (policy) policy.destroy()
         if (exportSettingsObject) exportSettingsObject.destroy()
         if (outputFileObject) outputFileObject.destroy()
+        if (renderQueueObject) renderQueueObject.destroy()
         if (filesystemObject) filesystemObject.destroy()
         policy = null
         exportSettingsObject = null
         outputFileObject = null
+        renderQueueObject = null
         filesystemObject = null
         callbackCalls = 0
     }
@@ -124,5 +143,29 @@ TestCase {
         compare(callbackCalls, 0)
         policy.resolveOutputFolder(countCallback)
         compare(outputFileObject.selectFolderCalls, 2)
+    }
+
+    function test_preflightCancelDoesNotRunStatefulAction(): void {
+        renderQueueObject.needsOutputFolder = true
+
+        policy.runBeforeAction(countCallback)
+        compare(callbackCalls, 0)
+        outputFileObject.rejectedCallback()
+
+        compare(callbackCalls, 0)
+        compare(renderQueueObject.clearBlockCalls, 0)
+
+        policy.runBeforeAction(countCallback)
+        outputFileObject.selectedCallback("file:///On My iPhone/Gyroflow/")
+        tryCompare(testCase, "callbackCalls", 1)
+        compare(renderQueueObject.clearBlockCalls, 1)
+    }
+
+    function test_preflightWithoutMissingOutputRunsImmediately(): void {
+        policy.runBeforeAction(countCallback)
+
+        compare(callbackCalls, 1)
+        compare(renderQueueObject.clearBlockCalls, 1)
+        compare(outputFileObject.selectFolderCalls, 0)
     }
 }

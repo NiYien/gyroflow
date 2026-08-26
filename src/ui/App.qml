@@ -529,10 +529,14 @@ Rectangle {
                 window.exportSettings.resetToSourceDefaults();
             }
         }
-        function onOutput_folder_required(job_id: real): void {
+        function onOutput_folder_required(intent: string, job_id: real): void {
             iosQueueOutputPolicy.resolveOutputFolder(function() {
-                if (job_id > 0) render_queue.render_job(job_id);
+                render_queue.finish_output_folder_request(true);
+                if (intent === "render_job") render_queue.render_job(job_id);
+                else if (intent === "resume") render_queue.resume();
                 else render_queue.start();
+            }, function() {
+                render_queue.finish_output_folder_request(false);
             });
         }
     }
@@ -715,6 +719,7 @@ Rectangle {
         id: iosQueueOutputPolicy
         platformOs: Qt.platform.os
         filesystemObject: filesystem
+        renderQueueObject: render_queue
         outputFileObject: outputFile
         exportSettingsObject: window.exportSettings
     }
@@ -2128,6 +2133,9 @@ Rectangle {
             } catch (e) { }
         });
     }
+    function runQueueOutputAction(callback: var): void {
+        iosQueueOutputPolicy.runBeforeAction(callback);
+    }
     function runSimpleBatchSync(): void {
         if (!lensDataGatePasses()) return;
         // queue-stuck-state-recovery: the batch-sync entry point returns without
@@ -2141,13 +2149,17 @@ Rectangle {
             messageBox(Modal.Question, qsTranslate("RenderQueue", "%1 video(s) will use Anamorphic lens").arg(anamorphicCount), [
                 { text: qsTr("Cancel") },
                 { text: qsTr("Continue"), accent: true, clicked: function() {
-                    if (videoArea.queue) videoArea.queue.notifyBatchSyncStarted();
-                    render_queue.start_batch_autosync();
+                    window.runQueueOutputAction(function() {
+                        if (videoArea.queue) videoArea.queue.notifyBatchSyncStarted();
+                        render_queue.start_batch_autosync();
+                    });
                 } }
             ]);
         } else {
-            if (videoArea.queue) videoArea.queue.notifyBatchSyncStarted();
-            render_queue.start_batch_autosync();
+            window.runQueueOutputAction(function() {
+                if (videoArea.queue) videoArea.queue.notifyBatchSyncStarted();
+                render_queue.start_batch_autosync();
+            });
         }
     }
     // Simple-mode batch export dispatch (queue mode). Shared by simpleExportStabilizedBtn and
@@ -2158,9 +2170,11 @@ Rectangle {
             window.showCanonCrmProjectOnlyMessage();
             return;
         }
-        render_queue.export_project = 4;
-        render_queue.prepare_finished_jobs_for_video_export();
-        render_queue.start();
+        window.runQueueOutputAction(function() {
+            render_queue.export_project = 4;
+            render_queue.prepare_finished_jobs_for_video_export();
+            render_queue.start();
+        });
     }
     // simple-mode-reexport: when all of a Simple-mode batch button's work is
     // already done, ask before re-running it instead of a silent no-op / bare
@@ -2180,9 +2194,11 @@ Rectangle {
                         window.showCanonCrmProjectOnlyMessage();
                         return;
                     }
-                    render_queue.export_project = 4;
-                    render_queue.prepare_video_exports_for_rerender();
-                    render_queue.start();
+                    window.runQueueOutputAction(function() {
+                        render_queue.export_project = 4;
+                        render_queue.prepare_video_exports_for_rerender();
+                        render_queue.start();
+                    });
                 } else if (kind === "plugins") {
                     window.runSimpleBatchSync();
                 }
