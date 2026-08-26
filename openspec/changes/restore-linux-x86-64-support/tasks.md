@@ -5,7 +5,7 @@
 - [x] 1.3 Update the root Justfile so Linux deploy runs OpenFX and existing frei0r only while Windows/macOS behavior remains unchanged
 - [x] 1.4 Add the explicit Linux version file to `GyroflowNiyien-OpenFX-linux.zip` and make the packaging check fail when any required member is missing
 - [x] 1.5 Update the plugin release workflow to upload the Linux OpenFX artifact without a Linux Adobe artifact
-- [ ] 1.6 Run the focused plugin contract tests and a Linux container deploy; inspect the produced ZIP and dynamic dependencies
+- [x] 1.6 Run the focused plugin contract tests and a Linux container deploy; inspect the produced ZIP and dynamic dependencies
 
 ## 2. Linux application build contract (`gyroflow`)
 
