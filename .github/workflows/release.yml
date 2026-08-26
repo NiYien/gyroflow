@@ -129,7 +129,7 @@ jobs:
         if: ${{ matrix.targets.type == 'linux' }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y libpulse0
+          sudo apt-get install -y libegl1 libpulse0
 
       - name: Smoke test Linux tar package
         if: ${{ matrix.targets.type == 'linux' }}
@@ -140,6 +140,7 @@ jobs:
           trap 'rm -rf "$smoke_dir"' EXIT
           tar -xzf "$packages/gyroflow-niyien-linux64.tar.gz" -C "$smoke_dir"
           export LD_LIBRARY_PATH="$smoke_dir/Gyroflow/lib"
+          export QT_QPA_PLATFORM=offscreen
           ldd_output="$(ldd "$smoke_dir/Gyroflow/gyroflow-niyien")"
           printf '%s\n' "$ldd_output"
           if grep -q 'not found' <<<"$ldd_output"; then
@@ -158,6 +159,7 @@ jobs:
           "$packages/gyroflow-niyien-linux64.AppImage" --appimage-extract
           appdir="$smoke_dir/squashfs-root"
           export LD_LIBRARY_PATH="$appdir/lib:$appdir/lib/x86_64-linux-gnu:$appdir/lib/x86_64-linux-gnu/security:$appdir/usr/lib/x86_64-linux-gnu:$appdir/usr/lib/llvm-7/lib:$appdir/lib/x86_64"
+          export QT_QPA_PLATFORM=offscreen
           ldd_output="$(ldd "$appdir/gyroflow-niyien")"
           printf '%s\n' "$ldd_output"
           if grep -q 'not found' <<<"$ldd_output"; then

@@ -270,7 +270,7 @@ class LinuxWorkflowContractTests(unittest.TestCase):
 
         self.assertLess(runtime_step, tar_step)
         self.assertIn("sudo apt-get update", runtime_script)
-        self.assertIn("sudo apt-get install -y libpulse0", runtime_script)
+        self.assertIn("sudo apt-get install -y libegl1 libpulse0", runtime_script)
 
     def test_workflow_checks_tar_dependencies_before_launch(self):
         self.assertIn("- name: Smoke test Linux tar package", self.workflow)
@@ -284,6 +284,7 @@ class LinuxWorkflowContractTests(unittest.TestCase):
         self.assertIn('ldd_output="$(ldd ' + binary + ')"', tar_script)
         self.assertIn("printf '%s\\n' \"$ldd_output\"", tar_script)
         self.assertLess(tar_script.index("grep -q 'not found'"), tar_script.index("exit 1"))
+        self.assertIn("export QT_QPA_PLATFORM=offscreen", tar_script)
         self.assertLess(tar_script.index(f"ldd {binary}"), tar_script.index(f"{binary} --version"))
 
     def test_workflow_smoke_checks_appimage_after_tar_failure(self):
@@ -300,6 +301,7 @@ class LinuxWorkflowContractTests(unittest.TestCase):
         self.assertIn('ldd_output="$(ldd "$appdir/gyroflow-niyien")"', appimage_script)
         self.assertIn("printf '%s\\n' \"$ldd_output\"", appimage_script)
         self.assertLess(appimage_script.index("grep -q 'not found'"), appimage_script.index("exit 1"))
+        self.assertIn("export QT_QPA_PLATFORM=offscreen", appimage_script)
         self.assertLess(
             appimage_script.index('ldd "$appdir/gyroflow-niyien"'),
             appimage_script.index('"$appdir/AppRun" --version'),
