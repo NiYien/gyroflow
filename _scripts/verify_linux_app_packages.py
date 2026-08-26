@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import os
 import stat
@@ -16,6 +18,10 @@ REQUIRED_TAR_FILES = (
     TAR_BINARY,
     "Gyroflow/camera_presets/profiles.cbor.gz",
 )
+
+
+def normalize_tar_member_name(name: str) -> str:
+    return name[2:] if name.startswith("./") else name
 
 
 def verify_packages(
@@ -42,8 +48,8 @@ def verify_packages(
 
     with tarfile.open(archive, "r:gz") as package:
         members = package.getmembers()
-        names = [member.name.removeprefix("./") for member in members]
-        by_name = {member.name.removeprefix("./"): member for member in members}
+        names = [normalize_tar_member_name(member.name) for member in members]
+        by_name = {normalize_tar_member_name(member.name): member for member in members}
         for required in REQUIRED_TAR_FILES:
             member = by_name.get(required)
             if member is None or not member.isfile() or member.size == 0:

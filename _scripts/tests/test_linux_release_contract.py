@@ -1,3 +1,4 @@
+import builtins
 import hashlib
 import importlib.util
 import os
@@ -8,6 +9,7 @@ import tarfile
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from _scripts import publish_pan123_release as publish
@@ -104,6 +106,27 @@ class BootstrapPythonCompatibilityTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "gyroflow-niyien")
+
+    def test_linux_package_verifier_imports_with_python37_collection_builtins(self):
+        class LegacyCollectionBuiltin:
+            pass
+
+        legacy_builtins = dict(vars(builtins))
+        legacy_builtins["dict"] = LegacyCollectionBuiltin
+        legacy_builtins["list"] = LegacyCollectionBuiltin
+        namespace = {
+            "__builtins__": legacy_builtins,
+            "__file__": str(VERIFY_SCRIPT),
+            "__name__": "verify_linux_app_packages_python37",
+        }
+
+        try:
+            exec(
+                compile(VERIFY_SCRIPT.read_text(encoding="utf-8"), str(VERIFY_SCRIPT), "exec"),
+                namespace,
+            )
+        except TypeError as error:
+            self.fail(f"Linux package verifier evaluates modern collection annotations: {error}")
 
 
 class LinuxLibClangVerifierTests(unittest.TestCase):
@@ -336,6 +359,43 @@ class LinuxPackageProducerTests(unittest.TestCase):
             metadata = self.verifier.verify_packages(appimage, archive, require_host_executable=False)
 
         self.assertGreater(metadata["appimage_size"], 0)
+        self.assertIn("Gyroflow/gyroflow-niyien", metadata["tar_members"])
+
+    def test_package_verifier_does_not_require_str_removeprefix(self):
+        class Python37MemberName(str):
+            def removeprefix(self, prefix):
+                return "python39-removeprefix-was-used"
+
+        real_tar_open = tarfile.open
+
+        class Python37TarFile:
+            def __init__(self, *args, **kwargs):
+                self.inner = real_tar_open(*args, **kwargs)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                self.inner.close()
+
+            def getmembers(self):
+                members = self.inner.getmembers()
+                for member in members:
+                    member.name = Python37MemberName(member.name)
+                return members
+
+        with tempfile.TemporaryDirectory() as directory:
+            appimage, archive = self.create_package_pair(Path(directory))
+            with mock.patch.object(self.verifier.tarfile, "open", Python37TarFile):
+                try:
+                    metadata = self.verifier.verify_packages(
+                        appimage,
+                        archive,
+                        require_host_executable=False,
+                    )
+                except ValueError as error:
+                    self.fail(f"Linux package verifier requires str.removeprefix: {error}")
+
         self.assertIn("Gyroflow/gyroflow-niyien", metadata["tar_members"])
 
     def test_missing_required_tar_member_is_rejected(self):
