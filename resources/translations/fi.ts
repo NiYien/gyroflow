@@ -901,6 +901,16 @@ Järjestelmän videoenkooderien rajoitusten vuoksi taustalla hahmontamista ei tu
         <translation>Avaa DMG ja sulje</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2705"/>
+        <source>The AppImage is ready. Open its folder, exit Gyroflow, replace your previous AppImage, then start the new file. Gyroflow will stay open until you close it.</source>
+        <translation>AppImage on valmis. Avaa sen kansio, sulje Gyroflow, korvaa aiempi AppImage ja käynnistä sitten uusi tiedosto. Gyroflow pysyy avoinna, kunnes suljet sen.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2712"/>
+        <source>Open containing folder</source>
+        <translation>Avaa sisältävä kansio</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2425"/>
         <source>Install and quit</source>
         <translation>Asenna ja sulje</translation>
@@ -3042,6 +3052,11 @@ Muista valita %1.</translation>
 Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation>Laajennusta ei voi kopioida hiekkalaatikon rajoitusten vuoksi.
 Avaa &lt;b&gt;Terminal&lt;/b&gt; ja kirjoita seuraava komento:</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="102"/>
+        <source>Automatic installation could not be completed. Open Terminal and run the following command:</source>
+        <translation>Automaattista asennusta ei voitu suorittaa loppuun. Avaa Pääte ja suorita seuraava komento:</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="266"/>

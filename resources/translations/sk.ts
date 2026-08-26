@@ -902,6 +902,16 @@ Kôli limitácii video enkodéra, renderovanie na pozadí nieje podporované.</t
         <translation>Otvoriť DMG a ukončiť</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2705"/>
+        <source>The AppImage is ready. Open its folder, exit Gyroflow, replace your previous AppImage, then start the new file. Gyroflow will stay open until you close it.</source>
+        <translation>Súbor AppImage je pripravený. Otvorte jeho priečinok, ukončite Gyroflow, nahraďte predchádzajúci AppImage a potom spustite nový súbor. Gyroflow zostane otvorený, kým ho nezavriete.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2712"/>
+        <source>Open containing folder</source>
+        <translation>Otvoriť priečinok</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2425"/>
         <source>Install and quit</source>
         <translation>Nainštalovať a ukončiť</translation>
@@ -3043,6 +3053,11 @@ Uistite sa, že ste vybrali %1.</translation>
 Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation>Nie je možné skopírovať plugin z dôvodu obmedzení sandboxu.
 Otvorte &lt;b&gt;Terminál&lt;/b&gt; a zadajte nasledujúci príkaz:</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="102"/>
+        <source>Automatic installation could not be completed. Open Terminal and run the following command:</source>
+        <translation>Automatickú inštaláciu sa nepodarilo dokončiť. Otvorte Terminál a spustite nasledujúci príkaz:</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="266"/>

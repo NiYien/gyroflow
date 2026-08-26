@@ -901,6 +901,16 @@ Due to limitations of the system video encoders, rendering in the background is 
         <translation>DMG 열고 종료</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2705"/>
+        <source>The AppImage is ready. Open its folder, exit Gyroflow, replace your previous AppImage, then start the new file. Gyroflow will stay open until you close it.</source>
+        <translation>AppImage가 준비되었습니다. 폴더를 열고 Gyroflow를 종료한 다음 이전 AppImage를 교체하고 새 파일을 실행하세요. Gyroflow는 사용자가 닫을 때까지 열린 상태로 유지됩니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2712"/>
+        <source>Open containing folder</source>
+        <translation>포함된 폴더 열기</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2425"/>
         <source>Install and quit</source>
         <translation>설치하고 종료</translation>
@@ -3042,6 +3052,11 @@ Make sure to select %1.</source>
 Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation>샌드박스 제한으로 인해 플러그인을 복사할 수 없습니다.
 &lt;b&gt;터미널&lt;/b&gt;을 열고 다음 명령을 입력하세요:</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="102"/>
+        <source>Automatic installation could not be completed. Open Terminal and run the following command:</source>
+        <translation>자동 설치를 완료할 수 없습니다. 터미널을 열고 다음 명령을 실행하세요:</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="266"/>

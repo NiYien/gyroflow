@@ -902,6 +902,16 @@ En raison des limitations du système d&apos;encodage vidéo, le rendu en arriè
         <translation>Ouvrir le DMG et quitter</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2705"/>
+        <source>The AppImage is ready. Open its folder, exit Gyroflow, replace your previous AppImage, then start the new file. Gyroflow will stay open until you close it.</source>
+        <translation>L’AppImage est prête. Ouvrez son dossier, quittez Gyroflow, remplacez votre ancienne AppImage, puis lancez le nouveau fichier. Gyroflow restera ouvert jusqu’à ce que vous le fermiez.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2712"/>
+        <source>Open containing folder</source>
+        <translation>Ouvrir le dossier contenant</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2425"/>
         <source>Install and quit</source>
         <translation>Installer et quitter</translation>
@@ -3042,6 +3052,11 @@ Assurez-vous de sélectionner %1.</translation>
 Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation>Impossible de copier le plugin en raison des limitations du bac à sable.
 Ouvrez &lt;b&gt;Terminal&lt;/b&gt; et entrez la commande suivante&#xa0;:</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="102"/>
+        <source>Automatic installation could not be completed. Open Terminal and run the following command:</source>
+        <translation>L’installation automatique n’a pas pu être terminée. Ouvrez le Terminal et exécutez la commande suivante :</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="266"/>

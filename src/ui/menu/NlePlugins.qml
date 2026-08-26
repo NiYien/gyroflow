@@ -13,13 +13,14 @@ MenuItem {
 
     property var openfx_status: ({});
     property var adobe_status: ({});
+    readonly property bool adobeSupported: Qt.platform.os !== "linux";
 
     Component.onCompleted: {
         refreshStatuses();
     }
     function refreshStatuses() {
         controller.nle_plugins("status", "openfx");
-        controller.nle_plugins("status", "adobe");
+        if (root.adobeSupported) controller.nle_plugins("status", "adobe");
     }
     function parseStatus(result: string): var {
         try {
@@ -96,7 +97,14 @@ MenuItem {
                 // initiated the install (loader=true) shows dialogs; the other one
                 // just refreshes its status below.
                 if (root.loader && result.startsWith("An error occured")) {
-                    if (result.includes("PLUGIN_COPY_BLOCKED:")) {
+                    if (result.includes("PLUGIN_MANUAL_INSTALL_REQUIRED:")) {
+                        const source = result.split("PLUGIN_MANUAL_INSTALL_REQUIRED:").pop().split("|")[0];
+                        const mb = messageBox(Modal.Error, qsTr("Automatic installation could not be completed. Open Terminal and run the following command:"), [ { text: qsTr("Ok"), accent: true } ]);
+                        mb.isWide = true;
+                        const tf = Qt.createComponent("../components/TextField.qml").createObject(mb.mainColumn, { readOnly: true });
+                        tf.text = 'sudo cp -a -- "' + source + '" /usr/OFX/Plugins/';
+                        tf.width = mb.mainColumn.width;
+                    } else if (result.includes("PLUGIN_COPY_BLOCKED:")) {
                         // Sentinel from nle_plugins.rs copy_files: the elevated copy failed,
                         // most likely because the host editor has the plugin file loaded.
                         // Host app names are static per plugin type by design (no process detection).
@@ -126,6 +134,7 @@ MenuItem {
     }
 
     Row {
+        visible: root.adobeSupported;
         BasicText {
             text: 'Adobe: <b><font color="%1">%2</font></b> %3'.arg(statusColor("adobe")).arg(installedVersion("adobe")? installedVersion("adobe") : "---").arg(latestSuffix("adobe")).trim();
             textFormat: Text.StyledText;

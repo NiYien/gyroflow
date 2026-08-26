@@ -21,7 +21,9 @@
 ### `gyroflow` 仓库负责
 
 - Windows / macOS / Android 安装包
-- Linux 发布产物当前仍暂停，不在本次 Android APK 恢复范围内
+- Linux x86_64 双产物
+  - `gyroflow-niyien-linux64.AppImage`：主下载与应用内更新包
+  - `gyroflow-niyien-linux64.tar.gz`：手动下载的便携归档
 - `lens` 数据包
   - 内含 `lens/`
   - 内含 `camera_db/`
@@ -90,6 +92,9 @@ https://download.niyien.com/releases/<tag>/...
 - `app.url`
 - `app.changelog`
 - `app.manual_versions[]`
+- `app.packages.<platform>`
+  - Linux 的 `package_*` 固定描述 AppImage
+  - Linux 的可选 `archive_*` 描述 tar.gz
 - `lens`
 - `sdk_base`
 - `plugins_base`
@@ -233,6 +238,8 @@ v1.6.3
 - `gyroflow-niyien-windows64.zip`
 - `gyroflow-niyien-mac-universal.dmg`
 - `gyroflow-niyien.apk`
+- `gyroflow-niyien-linux64.AppImage`
+- `gyroflow-niyien-linux64.tar.gz`
 
 其中 Android APK 来源于 release workflow 的 Android target，并由
 `just android deploy` 生成到：
@@ -241,7 +248,43 @@ v1.6.3
 _deployment/_binaries/gyroflow-niyien.apk
 ```
 
-Linux 产物仍暂停；如果后续恢复 Linux，应单独更新 workflow、发布清单和验收步骤。
+#### Linux x86_64 发布与验收
+
+Linux 只支持 x86_64。`_scripts/linux.just` 会在下载依赖或编译之前拒绝
+`FORCE_ARCH=aarch64` 以及任何其它架构。发布前必须完成：
+
+```bash
+just check
+just test
+just clippy
+just deploy docker
+just bundle
+```
+
+`just deploy docker` 和 workflow 必须同时生成并验证 AppImage 与 tar.gz；任一文件缺失、
+为空、缺少应用/运行库/相机数据、应用不可执行或存在必需动态库 `not found` 时均不得上传。
+workflow-dispatch 使用两个独立的单文件 artifact：
+
+- `gyroflow-niyien-linux-appimage`
+- `gyroflow-niyien-linux-tar`
+
+发布元数据中 `packages.linux.kind` 为 `appimage`，`package_*` 对应 AppImage，
+`archive_*` 对应 tar.gz。应用内更新只选择 AppImage；下载校验后仅补 owner 执行位，
+再通过 `xdg-open`（失败时 `gio open`）打开所在目录。客户端不会自行替换 AppImage、
+请求 root 或自动退出。
+
+Linux NLE 只开放 DaVinci Resolve/OpenFX。客户端资产固定为
+`GyroflowNiyien-OpenFX-linux.zip`，安装位置为
+`/usr/OFX/Plugins/GyroflowNiyien.ofx.bundle`，版本检测要求
+`Contents/Linux-x86-64/GyroflowNiyien.ofx` 与 `Contents/version.txt` 同时存在。
+Resolve Utility 脚本写入
+`~/.local/share/DaVinciResolve/Fusion/Scripts/Utility`，不使用提权；OFX 系统目录
+先尝试直接复制，权限不足时才以无 shell、固定目标的 `pkexec` 复制，失败则保留临时目录
+并向用户显示手动命令。Linux 不构建或展示 Adobe 插件。
+
+硬件编码是否可用取决于发行版上的 FFmpeg 兼容驱动与编解码器能力，软件编码仍是回退。
+本次 Linux 契约不包括 ARM64、NeuFlow 改动、VAAPI/Vulkan/DMA-BUF 零拷贝、
+自动 AppImage 替换或包管理器集成。
 
 ### 步骤 6：发布数据版本
 

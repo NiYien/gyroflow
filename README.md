@@ -124,14 +124,17 @@ Gyroflow is an application that can stabilize your video by using motion data fr
 - You can also install using brew: `brew install gyroflow`. To upgrade Gyroflow, run `brew update` then `brew upgrade gyroflow`
 
 ### Linux
-- Download `Gyroflow-linux64.tar.gz` from the [Releases](https://github.com/gyroflow/gyroflow/releases) page, extract the files somewhere and run `./Gyroflow` in the terminal.
-- If that doesn't work, you can try the `Gyroflow-linux64.AppImage`, but the .tar.gz one is preferred.
+- Linux releases support **x86_64 only**. ARM64 packages are not produced.
+- Download `gyroflow-niyien-linux64.AppImage` from the [Releases](https://github.com/NiYien/gyroflow/releases) page, make it executable with `chmod u+x gyroflow-niyien-linux64.AppImage`, and launch it.
+- The alternate `gyroflow-niyien-linux64.tar.gz` contains the portable `Gyroflow/` directory. Extract it and run `Gyroflow/gyroflow-niyien`.
+- In-app updates download and verify the AppImage, add the owner executable bit, and open its containing folder. Gyroflow does not replace itself: exit the current app, replace the previous AppImage, and start the new file.
 - Make sure you have latest graphics drivers installed
 - Possibly needed packages: `sudo apt install libva2 libvdpau1 libasound2 libxkbcommon0 libpulse0 libc++-dev libvulkan1`
 - GPU specific packages:
     - NVIDIA: `nvidia-opencl-icd nvidia-vaapi-driver nvidia-vdpau-driver nvidia-egl-icd nvidia-vulkan-icd libnvcuvid1 libnvidia-encode1`
     - Intel: `intel-media-va-driver i965-va-driver beignet-opencl-icd intel-opencl-icd`
     - AMD: `mesa-vdpau-drivers mesa-va-drivers mesa-opencl-icd libegl-mesa0 mesa-vulkan-drivers`
+- Hardware encoding availability depends on the installed FFmpeg-compatible GPU driver and codec support. Software rendering remains the fallback; this release does not add Linux VAAPI/Vulkan/DMA-BUF zero-copy stabilization.
 
 ### Android
 - [Google Play](https://play.google.com/store/apps/details?id=xyz.gyroflow)
@@ -147,8 +150,9 @@ Latest development version is always available here: https://gyroflow.xyz/devbui
     - If you have Windows "N" install, go to `Settings` -> `Apps` -> `Optional features` -> `Add a feature` -> enable `Media Feature Pack`
 - macOS 10.15 or later (both Intel and Apple Silicon are supported natively)
 - Linux:
+    - x86_64 only; Linux ARM64 is not supported by the release pipeline
     - `.tar.gz` package (recommended): Debian 10+, Ubuntu 18.10+, CentOS 8.2+, openSUSE 15.3+. Other distros require glibc 2.28+ (`ldd --version` to check)
-    - `.AppImage` should work everywhere
+    - `.AppImage` is the primary in-app update package; compatibility still depends on the distribution, FUSE/runtime setup and graphics drivers
 - Android 6+
 - iOS 14+
 
@@ -168,7 +172,11 @@ There's also a ton of TODO comments throughout the code.
 ### Video editor plugins
 Gyroflow OpenFX plugin is available [here](https://github.com/gyroflow/gyroflow-plugins). OpenFX plugin was tested in DaVinci Resolve
 
+On Linux x86_64, the in-app plugin manager exposes DaVinci Resolve/OpenFX only and downloads `GyroflowNiyien-OpenFX-linux.zip`. It installs the bundle at `/usr/OFX/Plugins/GyroflowNiyien.ofx.bundle` and the Resolve Utility scripts at `~/.local/share/DaVinciResolve/Fusion/Scripts/Utility`. A writable OFX directory is used directly; otherwise Gyroflow invokes shell-free `pkexec` for the fixed system copy and shows a manual command if PolicyKit is unavailable or canceled.
+
 Adobe Premiere and After Effects plugin is available [here](https://github.com/gyroflow/gyroflow-plugins)
+
+Adobe plugins are not built, advertised or installed on Linux.
 
 Final Cut Pro plugin is available as [Gyroflow Toolbox](https://gyroflowtoolbox.io).
 
@@ -261,13 +269,22 @@ On Windows, use the `just` commands for full-application builds and checks inste
     - The first time you run it won't work, run `just deploy` once and then `just run` will work
 
 ### Building on Linux
-0. Prerequisites: `git`, `7z`, `python`, `apt` package manager (or adjust commands inside scripts if on different distro)
-1. Get latest stable Rust language from: https://rustup.rs/
-2. Install `Just` by running `cargo install --force just`
-3. Clone the repo: `git clone https://github.com/gyroflow/gyroflow.git`
-4. Enter the project directory and:
+0. Supported build target: Linux x86_64 only. `FORCE_ARCH=aarch64` and every other architecture are rejected before dependency installation or compilation.
+1. Prerequisites: `git`, `7z`, `python3`, `apt` package manager (or adjust commands inside scripts if on different distro)
+2. Get latest stable Rust language from: https://rustup.rs/
+3. Install `Just` by running `cargo install --force just`
+4. Clone the repo: `git clone https://github.com/NiYien/gyroflow.git`
+5. Enter the project directory and:
     - Install dependencies: `just install-deps`
-    - Compile and run: `just run`
+    - Check or test: `just check`, `just test`, `just test-core`
+    - Compile and run: `just build`, `just run`
+    - Run linting or profiling: `just clippy`, `just profile`
+    - Build release packages: `just deploy` (or `just deploy docker` for the release-compatible container)
+    - Validate the finished package pair: `just bundle`
+
+`just deploy` must produce both `_deployment/_binaries/gyroflow-niyien-linux64.AppImage` and `_deployment/_binaries/gyroflow-niyien-linux64.tar.gz`. The deploy/bundle checks reject empty artifacts, missing runtime/data members, a non-executable payload, or an unresolved required dynamic library before upload.
+
+Linux ARM64, Linux Adobe plugins, automatic AppImage self-replacement, package-manager integration, NeuFlow changes, and VAAPI/Vulkan/DMA-BUF zero-copy work are outside this build contract.
 
 ### Building for Android
 0. Prerequisites: `git`, `7z`, working `powershell`, Android SDK and NDK. Android is not well supported yet, but the app can be built and somewhat works. Building is supported only on Windows

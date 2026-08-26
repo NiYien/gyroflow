@@ -338,6 +338,10 @@ function appInstallerAssetName(platform) {
   return normalizePlatform(platform) === "windows" ? "gyroflow-niyien-windows64-setup.exe" : "";
 }
 
+function appArchiveAssetName(platform) {
+  return normalizePlatform(platform) === "linux" ? "gyroflow-niyien-linux64.tar.gz" : "";
+}
+
 function buildAppUrl(sourceBase, tag, platform) {
   return buildReleaseAssetUrl(sourceBase, tag, appAssetName(platform));
 }
@@ -366,10 +370,12 @@ function normalizeAppUrls(value) {
     if (rawValue && typeof rawValue === "object") {
       const installerUrl = String(rawValue.installer_url || "").trim();
       const packageUrl = String(rawValue.package_url || rawValue.url || "").trim();
-      if (installerUrl || packageUrl) {
+      const archiveUrl = String(rawValue.archive_url || "").trim();
+      if (installerUrl || packageUrl || archiveUrl) {
         result[key] = {};
         if (installerUrl) result[key].installer_url = installerUrl;
         if (packageUrl) result[key].package_url = packageUrl;
+        if (archiveUrl) result[key].archive_url = archiveUrl;
       }
     }
   }
@@ -394,6 +400,9 @@ function normalizePackages(value) {
       package_filename: String(rawValue.package_filename || "").trim(),
       package_sha256: String(rawValue.package_sha256 || "").trim().toLowerCase(),
       package_size: coercePositiveInteger(rawValue.package_size),
+      archive_filename: String(rawValue.archive_filename || "").trim(),
+      archive_sha256: String(rawValue.archive_sha256 || "").trim().toLowerCase(),
+      archive_size: coercePositiveInteger(rawValue.archive_size),
     };
   }
   return result;
@@ -420,12 +429,24 @@ function buildPlatformPackage(req, entry, source, platform) {
     });
   }
 
-  return withAbsolutePackageUrls(req, {
+  const platformPackage = {
     kind: metadata.kind || defaultPackageKind(key),
     package_url: urls.package_url || "",
     package_sha256: metadata.package_sha256 || "",
     package_size: metadata.package_size || 0,
-  });
+  };
+  if (key === "linux") {
+    platformPackage.archive_url = urls.archive_url || "";
+    platformPackage.archive_sha256 = metadata.archive_sha256 || "";
+    platformPackage.archive_size = metadata.archive_size || 0;
+  }
+  return withAbsolutePackageUrls(req, platformPackage);
+}
+
+function hasArchiveMetadata(metadata) {
+  return Boolean(
+    metadata?.archive_filename || metadata?.archive_sha256 || coercePositiveInteger(metadata?.archive_size)
+  );
 }
 
 function resolvePlatformPackageUrls(req, entry, source, platform, metadata) {
@@ -444,6 +465,14 @@ function resolvePlatformPackageUrls(req, entry, source, platform, metadata) {
         entry.tag,
         metadata.package_filename || appPackageAssetName(platform)
       ),
+      archive_url: appArchiveAssetName(platform) && hasArchiveMetadata(metadata)
+        ? buildDownloadApiUrl(
+            req,
+            "app",
+            entry.tag,
+            metadata.archive_filename || appArchiveAssetName(platform)
+          )
+        : "",
     };
   }
 
@@ -452,11 +481,13 @@ function resolvePlatformPackageUrls(req, entry, source, platform, metadata) {
     return {
       installer_url: artifactUrls.installer_url || "",
       package_url: artifactUrls.package_url || "",
+      archive_url: artifactUrls.archive_url || "",
     };
   }
 
   const releaseInstallerFilename = appInstallerAssetName(platform);
   const releasePackageFilename = appPackageAssetName(platform);
+  const releaseArchiveFilename = hasArchiveMetadata(metadata) ? appArchiveAssetName(platform) : "";
   return {
     installer_url: releaseInstallerFilename
       ? buildReleaseAssetUrl(source.base, entry.tag, releaseInstallerFilename)
@@ -466,6 +497,9 @@ function resolvePlatformPackageUrls(req, entry, source, platform, metadata) {
       entry.tag,
       releasePackageFilename
     ),
+    archive_url: releaseArchiveFilename
+      ? buildReleaseAssetUrl(source.base, entry.tag, releaseArchiveFilename)
+      : "",
   };
 }
 
@@ -479,6 +513,9 @@ function withAbsolutePackageUrls(req, platformPackage) {
   }
   if ("package_url" in result) {
     result.package_url = toAbsoluteManifestUrl(req, result.package_url || "");
+  }
+  if ("archive_url" in result) {
+    result.archive_url = toAbsoluteManifestUrl(req, result.archive_url || "");
   }
   return result;
 }
@@ -500,7 +537,17 @@ function buildManualVersionEntry(item, manualPackage, manualPackages = {}) {
 }
 
 function defaultPackageKind(platform) {
-  return normalizePlatform(platform) === "windows" ? "web_installer_zip" : "dmg";
+  switch (normalizePlatform(platform)) {
+    case "windows":
+      return "web_installer_zip";
+    case "linux":
+      return "appimage";
+    case "android":
+      return "apk";
+    case "macos":
+    default:
+      return "dmg";
+  }
 }
 
 function coercePositiveInteger(value) {
@@ -580,6 +627,7 @@ function buildDownloadApiUrl(req, scope, tag, relativePath) {
 }
 
 module.exports = {
+  appArchiveAssetName,
   appInstallerAssetName,
   appAssetName,
   appPackageAssetName,

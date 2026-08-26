@@ -73,6 +73,12 @@ pub struct AppPackageRelease {
     pub package_sha256: String,
     #[serde(default)]
     pub package_size: u64,
+    #[serde(default)]
+    pub archive_url: String,
+    #[serde(default)]
+    pub archive_sha256: String,
+    #[serde(default)]
+    pub archive_size: u64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1300,7 +1306,7 @@ fn app_update_selection_from_package(
             version: version.to_owned(),
             platform: platform.to_owned(),
             kind: if package.kind.trim().is_empty() {
-                "dmg".to_owned()
+                default_app_update_kind(platform).to_owned()
             } else {
                 package.kind.trim().to_owned()
             },
@@ -1314,11 +1320,7 @@ fn app_update_selection_from_package(
         _ if !fallback_url.is_empty() => AppUpdateSelection {
             version: version.to_owned(),
             platform: platform.to_owned(),
-            kind: if platform == "windows" {
-                "web_installer_zip".to_owned()
-            } else {
-                "dmg".to_owned()
-            },
+            kind: default_app_update_kind(platform).to_owned(),
             download_url: fallback_url.to_owned(),
             ..Default::default()
         },
@@ -1383,6 +1385,10 @@ where
         } else {
             None
         };
+
+    if selection.platform == "linux" {
+        prepare_linux_appimage(&path)?;
+    }
 
     let ready_size = package_path
         .as_deref()
@@ -1970,6 +1976,9 @@ pub fn open_downloaded_update(prepared: &PreparedAppUpdate) -> Result<(), String
     if prepared.selection.platform == "android" {
         return open_android_update(&prepared.path);
     }
+    if prepared.selection.platform == "linux" {
+        return open_linux_update_directory(&prepared.path);
+    }
     Err(format!(
         "app update handoff is not supported on {}",
         prepared.selection.platform
@@ -2031,6 +2040,16 @@ fn normalize_app_update_platform(platform: &str) -> &'static str {
     }
 }
 
+fn default_app_update_kind(platform: &str) -> &'static str {
+    if platform == "windows" {
+        "web_installer_zip"
+    } else if platform == "linux" {
+        "appimage"
+    } else {
+        "dmg"
+    }
+}
+
 fn app_update_cache_dir() -> Result<PathBuf, String> {
     let mut dir = std::env::temp_dir();
     dir.push("gyroflow-niyien");
@@ -2070,9 +2089,100 @@ fn default_app_update_filename(platform: &str) -> &'static str {
         "gyroflow-niyien-windows64-setup.exe"
     } else if platform == "android" {
         "gyroflow-niyien.apk"
+    } else if platform == "linux" {
+        "gyroflow-niyien-linux64.AppImage"
     } else {
         "gyroflow-niyien-mac-universal.dmg"
     }
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn linux_appimage_mode(mode: u32) -> u32 {
+    mode | 0o100
+}
+
+#[cfg(unix)]
+fn prepare_linux_appimage(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = std::fs::metadata(path)
+        .map_err(|err| format!("read downloaded Linux AppImage metadata failed: {err}"))?;
+    let current_mode = metadata.permissions().mode();
+    let updated_mode = linux_appimage_mode(current_mode);
+    if updated_mode == current_mode {
+        return Ok(());
+    }
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(updated_mode))
+        .map_err(|err| format!("mark downloaded Linux AppImage executable failed: {err}"))
+}
+
+#[cfg(not(unix))]
+fn prepare_linux_appimage(path: &Path) -> Result<(), String> {
+    let _ = path;
+    Err("Linux AppImage preparation is only available on Unix".to_owned())
+}
+
+pub fn app_update_handoff_should_quit(platform: &str) -> bool {
+    normalize_app_update_platform(platform) != "linux"
+}
+
+fn open_linux_update_directory(path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        open_linux_update_directory_with(path, |program, args| {
+            std::process::Command::new(program)
+                .args(args.iter().copied())
+                .status()
+                .map(|status| status.success())
+                .map_err(|err| err.to_string())
+        })
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = path;
+        Err("Linux update folder handoff is only available on Linux".to_owned())
+    }
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn open_linux_update_directory_with<F>(path: &Path, mut run: F) -> Result<(), String>
+where
+    F: FnMut(&str, &[&std::ffi::OsStr]) -> Result<bool, String>,
+{
+    let absolute_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|err| format!("resolve downloaded Linux AppImage path failed: {err}"))?
+            .join(path)
+    };
+    let directory = absolute_path.parent().ok_or_else(|| {
+        format!(
+            "downloaded Linux AppImage has no containing directory: {}",
+            absolute_path.display()
+        )
+    })?;
+
+    let xdg_error = match run("xdg-open", &[directory.as_os_str()]) {
+        Ok(true) => return Ok(()),
+        Ok(false) => "command returned a failure status".to_owned(),
+        Err(err) => err,
+    };
+    let gio_error = match run(
+        "gio",
+        &[std::ffi::OsStr::new("open"), directory.as_os_str()],
+    ) {
+        Ok(true) => return Ok(()),
+        Ok(false) => "command returned a failure status".to_owned(),
+        Err(err) => err,
+    };
+
+    Err(format!(
+        "Unable to open the folder containing Linux AppImage {}. xdg-open failed: {}; gio open failed: {}",
+        absolute_path.display(),
+        xdg_error,
+        gio_error
+    ))
 }
 
 fn default_windows_package_filename() -> &'static str {
@@ -2523,6 +2633,175 @@ mod app_update_tests {
             "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
         );
         assert_eq!(selected.download_size, 56);
+    }
+
+    #[test]
+    fn linux_manifest_defaults_to_appimage_and_ignores_archive_for_updates() {
+        let manifest: Manifest = serde_json::from_str(
+            r#"{
+                "app": {
+                    "version": "9.9.9",
+                    "url": "https://example.test/gyroflow-niyien-linux64.AppImage",
+                    "packages": {
+                        "linux": {
+                            "package_url": "https://example.test/gyroflow-niyien-linux64.AppImage",
+                            "package_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                            "package_size": 78,
+                            "archive_url": "https://example.test/gyroflow-niyien-linux64.tar.gz",
+                            "archive_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                            "archive_size": 90
+                        }
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let package = manifest.app.packages.get("linux").unwrap();
+        assert_eq!(
+            package.archive_url,
+            "https://example.test/gyroflow-niyien-linux64.tar.gz"
+        );
+        assert_eq!(package.archive_sha256, "e".repeat(64));
+        assert_eq!(package.archive_size, 90);
+
+        let selected = app_update_package_for_platform(&manifest, "linux").unwrap();
+        assert_eq!(selected.kind, "appimage");
+        assert_eq!(
+            selected.download_url,
+            "https://example.test/gyroflow-niyien-linux64.AppImage"
+        );
+        assert_eq!(selected.download_sha256, "d".repeat(64));
+        assert_eq!(selected.download_size, 78);
+    }
+
+    #[test]
+    fn linux_update_uses_appimage_filename_for_direct_and_wrapped_urls() {
+        assert_eq!(
+            default_app_update_filename("linux"),
+            "gyroflow-niyien-linux64.AppImage"
+        );
+        let wrapped = AppUpdateSelection {
+            platform: "linux".to_owned(),
+            download_url: "https://nightly.link/NiYien/gyroflow/actions/runs/123/gyroflow-niyien-linux-appimage.zip".to_owned(),
+            ..Default::default()
+        };
+        assert_eq!(
+            app_update_filename(&wrapped),
+            "gyroflow-niyien-linux64.AppImage"
+        );
+    }
+
+    #[test]
+    fn linux_appimage_mode_adds_only_owner_execute_permission() {
+        assert_eq!(linux_appimage_mode(0o640), 0o740);
+        assert_eq!(linux_appimage_mode(0o755), 0o755);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepare_linux_appimage_preserves_mode_except_owner_execute() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = std::env::temp_dir().join(format!(
+            "gyroflow-linux-appimage-mode-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(&path, b"appimage").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+
+        prepare_linux_appimage(&path).unwrap();
+
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o740
+        );
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn linux_update_opener_prefers_xdg_open_for_the_containing_directory() {
+        let appimage = std::env::temp_dir()
+            .join("gyroflow-linux-opener-xdg")
+            .join("gyroflow-niyien-linux64.AppImage");
+        let expected_dir = appimage.parent().unwrap().to_path_buf();
+        let mut calls = Vec::new();
+
+        open_linux_update_directory_with(&appimage, |program, args: &[&std::ffi::OsStr]| {
+            calls.push((
+                program.to_owned(),
+                args.iter()
+                    .map(|arg| arg.to_string_lossy().into_owned())
+                    .collect::<Vec<_>>(),
+            ));
+            Ok(true)
+        })
+        .unwrap();
+
+        assert_eq!(
+            calls,
+            vec![(
+                "xdg-open".to_owned(),
+                vec![expected_dir.to_string_lossy().into_owned()]
+            )]
+        );
+    }
+
+    #[test]
+    fn linux_update_opener_falls_back_to_gio_open() {
+        let appimage = std::env::temp_dir()
+            .join("gyroflow-linux-opener-gio")
+            .join("gyroflow-niyien-linux64.AppImage");
+        let expected_dir = appimage.parent().unwrap().to_string_lossy().into_owned();
+        let mut calls = Vec::new();
+
+        open_linux_update_directory_with(&appimage, |program, args: &[&std::ffi::OsStr]| {
+            calls.push((
+                program.to_owned(),
+                args.iter()
+                    .map(|arg| arg.to_string_lossy().into_owned())
+                    .collect::<Vec<_>>(),
+            ));
+            Ok(program == "gio")
+        })
+        .unwrap();
+
+        assert_eq!(
+            calls,
+            vec![
+                ("xdg-open".to_owned(), vec![expected_dir.clone()]),
+                ("gio".to_owned(), vec!["open".to_owned(), expected_dir]),
+            ]
+        );
+    }
+
+    #[test]
+    fn linux_update_opener_reports_absolute_appimage_path_when_all_openers_fail() {
+        let appimage = std::env::temp_dir()
+            .join("gyroflow-linux-opener-fail")
+            .join("gyroflow-niyien-linux64.AppImage");
+
+        let error =
+            open_linux_update_directory_with(&appimage, |_program, _args: &[&std::ffi::OsStr]| {
+                Ok(false)
+            })
+            .unwrap_err();
+
+        assert!(appimage.is_absolute());
+        assert!(error.contains(&appimage.to_string_lossy().into_owned()));
+        assert!(error.contains("xdg-open"));
+        assert!(error.contains("gio open"));
+    }
+
+    #[test]
+    fn linux_update_handoff_never_requests_application_quit() {
+        assert!(!app_update_handoff_should_quit("linux"));
+        assert!(app_update_handoff_should_quit("windows"));
+        assert!(app_update_handoff_should_quit("macos"));
     }
 
     #[test]
@@ -3463,7 +3742,12 @@ mod release_automation_tests {
 
     fn run_script(program: &str, script: &str) {
         let eval_arg = if program == "node" { "-e" } else { "-c" };
-        let output = Command::new(program)
+        let executable = if program == "python" && !cfg!(windows) {
+            "python3"
+        } else {
+            program
+        };
+        let output = Command::new(executable)
             .arg(eval_arg)
             .arg(script)
             .current_dir(repo_root())
@@ -3556,7 +3840,7 @@ import hashlib
 from pathlib import Path
 from _scripts import publish_pan123_release as publish
 
-apk_content_source = Path("openspec/changes/distribution-restore-linux-android-ci/proposal.md")
+apk_content_source = Path("_scripts/publish_pan123_release.py")
 payload = apk_content_source.read_bytes()
 packages = publish.build_app_packages_metadata({"gyroflow-niyien.apk": apk_content_source})
 

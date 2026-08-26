@@ -2708,7 +2708,7 @@ class Api:
         without the user having to re-pick the run.
 
         `app_source_mode` ("artifact" or "release") + `app_urls`
-        ({platform: {installer_url?, package_url?}}) tell the docs
+        ({platform: {installer_url?, package_url?, archive_url?}}) tell the docs
         manifest API how to build global-region URLs. Without these,
         artifact-mode synthetic tags (run-<id>) leak into the
         release-mode GitHub URL builder and produce a 404.

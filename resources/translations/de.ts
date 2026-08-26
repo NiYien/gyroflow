@@ -901,6 +901,16 @@ Aufgrund von Einschränkungen der Systemvideo-Encoder wird das Rendern im Hinter
         <translation>DMG öffnen und beenden</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2705"/>
+        <source>The AppImage is ready. Open its folder, exit Gyroflow, replace your previous AppImage, then start the new file. Gyroflow will stay open until you close it.</source>
+        <translation>Das AppImage ist bereit. Öffne den Ordner, beende Gyroflow, ersetze dein bisheriges AppImage und starte anschließend die neue Datei. Gyroflow bleibt geöffnet, bis du es schließt.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2712"/>
+        <source>Open containing folder</source>
+        <translation>Enthaltenden Ordner öffnen</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2425"/>
         <source>Install and quit</source>
         <translation>Installieren und beenden</translation>
@@ -3042,6 +3052,11 @@ Stellen Sie sicher, dass Sie %1 auswählen.</translation>
 Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation>Das Plugin kann aufgrund von Sandbox-Einschränkungen nicht kopiert werden.
 Öffnen Sie &lt;b&gt;Terminal&lt;/b&gt; und geben Sie den folgenden Befehl ein:</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="102"/>
+        <source>Automatic installation could not be completed. Open Terminal and run the following command:</source>
+        <translation>Die automatische Installation konnte nicht abgeschlossen werden. Öffne das Terminal und führe den folgenden Befehl aus:</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="266"/>

@@ -25,6 +25,7 @@ APP_ASSET_NAMES = (
     "gyroflow-niyien-windows64.zip",
     "gyroflow-niyien-mac-universal.dmg",
     "gyroflow-niyien-linux64.AppImage",
+    "gyroflow-niyien-linux64.tar.gz",
     "gyroflow-niyien.apk",
 )
 APP_ASSET_PLATFORM_BY_NAME = {
@@ -32,6 +33,7 @@ APP_ASSET_PLATFORM_BY_NAME = {
     "gyroflow-niyien-windows64.zip": "windows",
     "gyroflow-niyien-mac-universal.dmg": "macos",
     "gyroflow-niyien-linux64.AppImage": "linux",
+    "gyroflow-niyien-linux64.tar.gz": "linux",
     "gyroflow-niyien.apk": "android",
 }
 APP_ASSET_ROLE_BY_NAME = {
@@ -39,6 +41,7 @@ APP_ASSET_ROLE_BY_NAME = {
     "gyroflow-niyien-windows64.zip": "package",
     "gyroflow-niyien-mac-universal.dmg": "package",
     "gyroflow-niyien-linux64.AppImage": "package",
+    "gyroflow-niyien-linux64.tar.gz": "archive",
     "gyroflow-niyien.apk": "package",
 }
 APP_ASSET_NAMES_BY_PLATFORM = {
@@ -47,7 +50,7 @@ APP_ASSET_NAMES_BY_PLATFORM = {
         "gyroflow-niyien-windows64.zip",
     ),
     "macos": ("gyroflow-niyien-mac-universal.dmg",),
-    "linux": ("gyroflow-niyien-linux64.AppImage",),
+    "linux": ("gyroflow-niyien-linux64.AppImage", "gyroflow-niyien-linux64.tar.gz"),
     "android": ("gyroflow-niyien.apk",),
 }
 
@@ -60,6 +63,8 @@ APP_ARTIFACT_NAMES_BY_FILE = {
     "gyroflow-niyien-windows":   "gyroflow-niyien-windows64.zip",
     "gyroflow-niyien-win-setup": "gyroflow-niyien-windows64-setup.exe",
     "gyroflow-niyien-mac":       "gyroflow-niyien-mac-universal.dmg",
+    "gyroflow-niyien-linux-appimage": "gyroflow-niyien-linux64.AppImage",
+    "gyroflow-niyien-linux-tar": "gyroflow-niyien-linux64.tar.gz",
     # 123 disk renames .exe / .apk uploads with a .bak suffix; the publish
     # pipeline wraps these into a one-level zip whose short name reuses this
     # nightly-style mapping (see build_pan123_wrapper / pan123_wrapper_short_name).
@@ -103,6 +108,7 @@ PLUGIN_ASSET_NAMES = (
     "GyroflowNiyien-Adobe-windows.aex",
     "GyroflowNiyien-OpenFX-macos.zip",
     "GyroflowNiyien-Adobe-macos.zip",
+    "GyroflowNiyien-OpenFX-linux.zip",
 )
 
 SDK_FILENAMES = (
@@ -1408,7 +1414,10 @@ def build_global_artifact_app_urls(
                 f"/actions/runs/{run_id}/{artifact_name}.zip"
             )
         role = APP_ASSET_ROLE_BY_NAME.get(asset_name, "package")
-        key = "installer_url" if role == "installer" else "package_url"
+        key = {
+            "installer": "installer_url",
+            "archive": "archive_url",
+        }.get(role, "package_url")
         urls.setdefault(platform, {})[key] = url
     return urls
 
@@ -2094,14 +2103,23 @@ def build_app_packages_metadata(app_assets: dict[str, Path]) -> dict[str, dict[s
         packages["macos"] = macos
 
     linux_appimage = app_assets.get("gyroflow-niyien-linux64.AppImage")
-    if linux_appimage:
+    linux_archive = app_assets.get("gyroflow-niyien-linux64.tar.gz")
+    if linux_appimage or linux_archive:
         linux: dict[str, Any] = {"kind": "appimage"}
-        add_asset_metadata(
-            linux,
-            prefix="package",
-            asset_name="gyroflow-niyien-linux64.AppImage",
-            asset_path=linux_appimage,
-        )
+        if linux_appimage:
+            add_asset_metadata(
+                linux,
+                prefix="package",
+                asset_name="gyroflow-niyien-linux64.AppImage",
+                asset_path=linux_appimage,
+            )
+        if linux_archive:
+            add_asset_metadata(
+                linux,
+                prefix="archive",
+                asset_name="gyroflow-niyien-linux64.tar.gz",
+                asset_path=linux_archive,
+            )
         packages["linux"] = linux
 
     android_apk = app_assets.get("gyroflow-niyien.apk")
