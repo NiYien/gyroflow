@@ -3856,14 +3856,14 @@ Wybór zostanie zastosowany do wszystkich pozostałych zadań w tej partii.</tra
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="651"/>
         <source>No match found. Possible reasons:
-1. Not enough camera motion in the video.
+1. Not enough camera motion in the video; try another video.
 2. The gyro data does not cover the video&apos;s recording time.
 3. In-camera or lens stabilization was not turned off.
 4. The mounting position is incorrect.
 
 Please check and try again.</source>
         <translation>Nie znaleziono dopasowania. Możliwe przyczyny:
-1. W filmie jest za mało ruchu kamery.
+1. W filmie jest za mało ruchu kamery; spróbuj innego filmu.
 2. Dane żyroskopu nie obejmują czasu nagrania filmu.
 3. Stabilizacja w aparacie lub obiektywie nie została wyłączona.
 4. Pozycja montażu jest nieprawidłowa.

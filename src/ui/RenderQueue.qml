@@ -648,7 +648,7 @@ Item {
                         // The verdict remains available in logs, but neither
                         // branch can prove which recording/setup issue caused
                         // the miss. Keep one stable troubleshooting order.
-                        messageBox(Modal.Warning, qsTr("No match found. Possible reasons:\n1. Not enough camera motion in the video.\n2. The gyro data does not cover the video's recording time.\n3. In-camera or lens stabilization was not turned off.\n4. The mounting position is incorrect.\n\nPlease check and try again."), [{ text: qsTr("Ok") }]);
+                        messageBox(Modal.Warning, qsTr("No match found. Possible reasons:\n1. Not enough camera motion in the video; try another video.\n2. The gyro data does not cover the video's recording time.\n3. In-camera or lens stabilization was not turned off.\n4. The mounting position is incorrect.\n\nPlease check and try again."), [{ text: qsTr("Ok") }]);
                     } else if (error_kind === "probe_not_run") {
                         messageBox(Modal.Warning, qsTr("Deep match could not run."), [{ text: qsTr("Ok") }]);
                     } else {

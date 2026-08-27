@@ -3855,14 +3855,14 @@ Valinta koskee kaikkia jäljellä olevia tämän erän töitä.</translation>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="651"/>
         <source>No match found. Possible reasons:
-1. Not enough camera motion in the video.
+1. Not enough camera motion in the video; try another video.
 2. The gyro data does not cover the video&apos;s recording time.
 3. In-camera or lens stabilization was not turned off.
 4. The mounting position is incorrect.
 
 Please check and try again.</source>
         <translation>Vastaavuutta ei löytynyt. Mahdolliset syyt:
-1. Videossa ei ole riittävästi kameran liikettä.
+1. Videossa ei ole riittävästi kameran liikettä; kokeile toista videota.
 2. Gyrodata ei kata videon tallennusajankohtaa.
 3. Kameran tai objektiivin vakautusta ei poistettu käytöstä.
 4. Asennusasento on virheellinen.

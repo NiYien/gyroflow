@@ -3856,14 +3856,14 @@ Volba se použije na všechny zbývající úlohy v této dávce.</translation>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="651"/>
         <source>No match found. Possible reasons:
-1. Not enough camera motion in the video.
+1. Not enough camera motion in the video; try another video.
 2. The gyro data does not cover the video&apos;s recording time.
 3. In-camera or lens stabilization was not turned off.
 4. The mounting position is incorrect.
 
 Please check and try again.</source>
         <translation>Nebyla nalezena shoda. Možné příčiny:
-1. Ve videu není dostatečný pohyb kamery.
+1. Ve videu není dostatečný pohyb kamery; zkuste jiné video.
 2. Data gyroskopu nepokrývají dobu záznamu videa.
 3. Stabilizace v těle fotoaparátu nebo objektivu nebyla vypnuta.
 4. Poloha uchycení je nesprávná.

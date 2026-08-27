@@ -3856,14 +3856,14 @@ This choice applies to all remaining jobs in this batch.</source>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="651"/>
         <source>No match found. Possible reasons:
-1. Not enough camera motion in the video.
+1. Not enough camera motion in the video; try another video.
 2. The gyro data does not cover the video&apos;s recording time.
 3. In-camera or lens stabilization was not turned off.
 4. The mounting position is incorrect.
 
 Please check and try again.</source>
         <translation>未找到匹配，可能原因：
-1. 视频中的相机运动不足
+1. 视频中的相机运动不足，可更换其他视频尝试
 2. 陀螺仪数据未覆盖视频录制时间
 3. 相机机身或镜头防抖未关闭
 4. 安装位置选择不正确

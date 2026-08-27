@@ -3856,14 +3856,14 @@ Esta escolha aplica-se a todas as tarefas restantes deste lote.</translation>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="651"/>
         <source>No match found. Possible reasons:
-1. Not enough camera motion in the video.
+1. Not enough camera motion in the video; try another video.
 2. The gyro data does not cover the video&apos;s recording time.
 3. In-camera or lens stabilization was not turned off.
 4. The mounting position is incorrect.
 
 Please check and try again.</source>
         <translation>Nenhuma correspondência encontrada. Possíveis causas:
-1. Não há movimento de câmara suficiente no vídeo.
+1. Não há movimento de câmara suficiente no vídeo; experimente outro vídeo.
 2. Os dados do giroscópio não abrangem o momento da gravação do vídeo.
 3. A estabilização da câmara ou da objetiva não foi desativada.
 4. A posição de montagem está incorreta.

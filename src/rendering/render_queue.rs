@@ -26731,7 +26731,7 @@ mod tests {
             .find("else if (error_kind === \"probe_not_run\")")
             .expect("probe-not-run handling must remain separate");
         let branch = &branch_rest[..branch_end];
-        let guidance = "No match found. Possible reasons:\\n1. Not enough camera motion in the video.\\n2. The gyro data does not cover the video's recording time.\\n3. In-camera or lens stabilization was not turned off.\\n4. The mounting position is incorrect.\\n\\nPlease check and try again.";
+        let guidance = "No match found. Possible reasons:\\n1. Not enough camera motion in the video; try another video.\\n2. The gyro data does not cover the video's recording time.\\n3. In-camera or lens stabilization was not turned off.\\n4. The mounting position is incorrect.\\n\\nPlease check and try again.";
 
         assert!(
             branch.contains(&format!("qsTr(\"{guidance}\")")),

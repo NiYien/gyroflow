@@ -3855,14 +3855,14 @@ This choice applies to all remaining jobs in this batch.</source>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="651"/>
         <source>No match found. Possible reasons:
-1. Not enough camera motion in the video.
+1. Not enough camera motion in the video; try another video.
 2. The gyro data does not cover the video&apos;s recording time.
 3. In-camera or lens stabilization was not turned off.
 4. The mounting position is incorrect.
 
 Please check and try again.</source>
         <translation>일치 항목을 찾지 못했습니다. 가능한 원인:
-1. 영상에 카메라 움직임이 충분하지 않습니다.
+1. 영상에 카메라 움직임이 충분하지 않습니다. 다른 영상을 사용해 보세요.
 2. 자이로 데이터가 영상 촬영 시간을 포함하지 않습니다.
 3. 카메라 또는 렌즈 손떨림 보정이 꺼져 있지 않습니다.
 4. 장착 위치가 올바르지 않습니다.

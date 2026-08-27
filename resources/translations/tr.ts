@@ -3850,14 +3850,14 @@ Bu seçim bu toplu işteki tüm kalan işlere uygulanır.</translation>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="651"/>
         <source>No match found. Possible reasons:
-1. Not enough camera motion in the video.
+1. Not enough camera motion in the video; try another video.
 2. The gyro data does not cover the video&apos;s recording time.
 3. In-camera or lens stabilization was not turned off.
 4. The mounting position is incorrect.
 
 Please check and try again.</source>
         <translation>Eşleşme bulunamadı. Olası nedenler:
-1. Videoda yeterli kamera hareketi yok.
+1. Videoda yeterli kamera hareketi yok; başka bir video deneyin.
 2. Jiroskop verileri videonun kayıt zamanını kapsamıyor.
 3. Kamera içi veya lens sabitleme kapatılmamış.
 4. Montaj konumu yanlış.
