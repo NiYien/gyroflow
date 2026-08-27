@@ -19576,8 +19576,8 @@ mod tests {
         let section = &tail[..end];
 
         assert!(section.contains("visible: !!root.manualCameraState.eligible"));
-        assert!(section.contains("qsTr(\"Camera brand\")"));
-        assert!(section.contains("qsTr(\"Camera model\")"));
+        assert!(section.contains("qsTranslate(\"LensCalibrate\", \"Camera brand\")"));
+        assert!(section.contains("qsTranslate(\"LensCalibrate\", \"Camera model\")"));
         assert_eq!(section.matches("ComboBox {").count(), 2);
         assert!(!section.contains("Switch {"));
         assert!(!section.contains("Readout"));

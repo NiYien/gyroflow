@@ -736,7 +736,7 @@ MenuItem {
 
                 Label {
                     position: Label.LeftPosition
-                    text: qsTr("Camera brand")
+                    text: qsTranslate("LensCalibrate", "Camera brand")
                     width: parent.width
 
                     ComboBox {
@@ -759,7 +759,7 @@ MenuItem {
 
                 Label {
                     position: Label.LeftPosition
-                    text: qsTr("Camera model")
+                    text: qsTranslate("LensCalibrate", "Camera model")
                     width: parent.width
 
                     ComboBox {
