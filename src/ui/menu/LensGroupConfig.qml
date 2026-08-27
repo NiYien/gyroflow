@@ -22,6 +22,13 @@ MenuItem {
     // into `configs` and is never written back — `configs` is the global L1-L6
     // table, and the panel reads and writes exactly that one source.
     property var projectLens: null
+    property var manualCameraState: ({
+        eligible: false,
+        brand: "",
+        model: "",
+        selection_valid: false,
+        brands: []
+    })
     property int selectedLensIndex: 0
     property bool syncing: false
     // `selectedLensIndex` doubles as the real lens index (0..5), so `Now` needs a
@@ -133,6 +140,55 @@ MenuItem {
             console.warn("LensGroupConfig parse error:", e, text)
             return fallback
         }
+    }
+    function loadManualCameraState(): void {
+        if (typeof render_queue === "undefined") return
+        const parsed = parseJson(render_queue.get_manual_camera_state_json() + "", null)
+        manualCameraState = parsed && Array.isArray(parsed.brands)
+            ? parsed
+            : { eligible: false, brand: "", model: "", selection_valid: false, brands: [] }
+    }
+    function manualCameraBrandOptions(): var {
+        let result = []
+        const brands = manualCameraState.brands || []
+        for (let i = 0; i < brands.length; ++i) {
+            result.push({
+                value: brands[i].id,
+                label: brands[i].label || brands[i].id,
+                enabled: true
+            })
+        }
+        const saved = manualCameraState.brand || ""
+        if (saved.length > 0 && !result.some(item => item.value === saved))
+            result.push({ value: saved, label: saved, enabled: false })
+        return result
+    }
+    function manualCameraModelOptions(): var {
+        let result = []
+        const savedBrand = manualCameraState.brand || ""
+        const brands = manualCameraState.brands || []
+        for (let i = 0; i < brands.length; ++i) {
+            if (brands[i].id !== savedBrand) continue
+            const models = brands[i].models || []
+            for (let j = 0; j < models.length; ++j) {
+                result.push({
+                    value: models[j].id,
+                    label: models[j].label || models[j].id,
+                    enabled: !!models[j].enabled
+                })
+            }
+            break
+        }
+        const saved = manualCameraState.model || ""
+        if (saved.length > 0 && !result.some(item => item.value === saved))
+            result.push({ value: saved, label: saved, enabled: false })
+        return result
+    }
+    function manualCameraOptionIndex(options: var, value: string): int {
+        for (let i = 0; i < options.length; ++i) {
+            if (options[i].value === value) return i
+        }
+        return -1
     }
     function loadStatuses(): void {
         syncing = true
@@ -560,6 +616,9 @@ MenuItem {
         // so newly published presets appear without an app restart.
         function onLens_presets_updated(): void {
             root.loadPresets()
+            if (typeof render_queue !== "undefined")
+                render_queue.reload_manual_camera_catalog()
+            root.loadManualCameraState()
             root.refreshUiFromSelection()
         }
         // Fires when a project is imported, when a new video clears it, and after a
@@ -578,6 +637,9 @@ MenuItem {
             root.loadStatuses()
             root.loadConfigs()
         }
+        function onManual_camera_changed(): void {
+            root.loadManualCameraState()
+        }
     }
     Connections {
         target: window.videoArea && window.videoArea.queue ? window.videoArea.queue : null
@@ -591,6 +653,7 @@ MenuItem {
 
     Component.onCompleted: {
         loadPresets()
+        loadManualCameraState()
         // Before the two loads below: they call updateSelection(), which needs to
         // know whether a `Now` entry exists.
         loadProjectLens()
@@ -665,6 +728,60 @@ MenuItem {
                 }
             }
 
+            Column {
+                id: manualCameraColumn
+                width: parent.width
+                spacing: 10 * dpiScale
+                visible: !!root.manualCameraState.eligible
+
+                Label {
+                    position: Label.LeftPosition
+                    text: qsTr("Camera brand")
+                    width: parent.width
+
+                    ComboBox {
+                        id: manualCameraBrandCombo
+                        objectName: "manual-camera-brand"
+                        width: parent.width
+                        textRole: "label"
+                        model: root.manualCameraBrandOptions()
+                        currentIndex: root.manualCameraOptionIndex(model, root.manualCameraState.brand || "")
+                        enabled: model.length > 0
+                        opacity: enabled ? 1.0 : 0.5
+                        onActivated: {
+                            const option = model[currentIndex]
+                            if (!option || !option.enabled || option.value === root.manualCameraState.brand)
+                                return
+                            render_queue.set_manual_camera_selection(option.value, "")
+                        }
+                    }
+                }
+
+                Label {
+                    position: Label.LeftPosition
+                    text: qsTr("Camera model")
+                    width: parent.width
+
+                    ComboBox {
+                        id: manualCameraModelCombo
+                        objectName: "manual-camera-model"
+                        width: parent.width
+                        textRole: "label"
+                        model: root.manualCameraModelOptions()
+                        currentIndex: root.manualCameraOptionIndex(model, root.manualCameraState.model || "")
+                        enabled: (root.manualCameraState.brand || "").length > 0 && model.length > 0
+                        opacity: enabled ? 1.0 : 0.5
+                        onActivated: {
+                            const option = model[currentIndex]
+                            if (!option || !option.enabled || option.value === root.manualCameraState.model)
+                                return
+                            render_queue.set_manual_camera_selection(root.manualCameraState.brand, option.value)
+                        }
+                    }
+                }
+            }
+
+            // Lens group selector follows
             // Deliberately OUTSIDE editorColumn: the dropdown is what tells the user
             // which group is in use and what lens the loaded project carries, so it
             // must not be folded away by the manual-edit switch. Only the editing

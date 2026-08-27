@@ -304,6 +304,15 @@ struct Job {
     // it no longer matches Job.render_epoch, killing stale cross-thread callbacks that would
     // otherwise mark the job Finished/Error during a fast Stop→Start restart.
     render_epoch: Arc<AtomicU64>,
+    // Serializes lens/camera rebuilds that target this job's shared stabilizer.
+    // Different jobs remain parallel; stale manual-camera generations are
+    // rejected after acquiring this guard.
+    lens_apply_guard: Arc<ParkingMutex<()>>,
+    // Manual-camera context generation represented by project_data/live stab.
+    // A released job whose snapshot predates the current generation is rebuilt
+    // before reset_job exposes it as Queued again.
+    manual_camera_project_generation: u64,
+    pending_reset_requeue: bool,
     project_data: Option<String>,
     last_finished_export_project: Option<u32>,
     // Snapshot of stab.gyro.get_offsets() at the most recent .gyroflow write
@@ -365,9 +374,29 @@ struct JobLensMetadataBackup {
     detected_source: Option<String>,
     frame_readout_time: Option<f64>,
     frame_readout_direction: ReadoutDirection,
+    // Immutable source-video camera facts used by the queue-wide manual-camera
+    // eligibility gate and per-job crop/readout hints. Effective overrides are
+    // never written back here.
+    source_camera_identifier: Option<CameraIdentifier>,
+    source_camera_additional_data: serde_json::Value,
 }
 impl JobLensMetadataBackup {
     fn from_metadata(md: &core::gyro_source::FileMetadata) -> Self {
+        let stored_source = md
+            .additional_data
+            .get("queue_manual_camera")
+            .and_then(|value| value.get("source"));
+        let source_camera_identifier = match stored_source
+            .and_then(|value| value.get("camera_identifier"))
+        {
+            Some(value) => serde_json::from_value::<Option<CameraIdentifier>>(value.clone())
+                .unwrap_or_else(|_| md.camera_identifier.clone()),
+            None => md.camera_identifier.clone(),
+        };
+        let source_camera_additional_data = stored_source
+            .and_then(|value| value.get("additional_data"))
+            .cloned()
+            .unwrap_or_else(|| md.additional_data.clone());
         Self {
             lens_params: md.lens_params.clone(),
             lens_positions: md.lens_positions.clone(),
@@ -378,6 +407,8 @@ impl JobLensMetadataBackup {
             detected_source: md.detected_source.clone(),
             frame_readout_time: md.frame_readout_time,
             frame_readout_direction: md.frame_readout_direction,
+            source_camera_identifier,
+            source_camera_additional_data,
         }
     }
 
@@ -392,6 +423,19 @@ impl JobLensMetadataBackup {
 
     fn clean_lens_profile(&self) -> Option<&core::lens_profile::LensProfile> {
         self.clean_lens_profile.as_ref()
+    }
+
+    fn source_camera_identifier(&self) -> Option<&CameraIdentifier> {
+        self.source_camera_identifier.as_ref()
+    }
+
+    fn source_camera_additional_data(&self) -> &serde_json::Value {
+        &self.source_camera_additional_data
+    }
+
+    fn preserve_source_camera_from(&mut self, previous: &Self) {
+        self.source_camera_identifier = previous.source_camera_identifier.clone();
+        self.source_camera_additional_data = previous.source_camera_additional_data.clone();
     }
 
     fn apply_missing_to_metadata(&self, md: &mut core::gyro_source::FileMetadata) {
@@ -452,6 +496,161 @@ impl JobLensMetadataBackup {
         self.overwrite_metadata(&mut md);
         md
     }
+}
+
+fn apply_manual_camera_resolution(
+    metadata: &mut core::gyro_source::FileMetadata,
+    resolution: &core::manual_camera::ManualCameraResolution,
+) {
+    // A source identifier can be incomplete only in its camera identity while
+    // still carrying valid lens/focal facts. Manual queue selection owns the
+    // camera geometry fields, not those independent source-video lens fields.
+    let mut effective_identifier = metadata.camera_identifier.clone().unwrap_or_default();
+    effective_identifier.brand = resolution.camera_identifier.brand.clone();
+    effective_identifier.model = resolution.camera_identifier.model.clone();
+    effective_identifier.camera_setting = resolution.camera_identifier.camera_setting.clone();
+    effective_identifier.fps = resolution.camera_identifier.fps;
+    effective_identifier.video_width = resolution.camera_identifier.video_width;
+    effective_identifier.video_height = resolution.camera_identifier.video_height;
+    metadata.camera_identifier = Some(effective_identifier);
+    metadata.unit_pixel_focal_length = Some(resolution.unit_pixel_focal_length);
+    metadata.frame_readout_time = Some(resolution.frame_readout_time);
+    metadata.frame_readout_direction = resolution.frame_readout_direction;
+    if let Some(additional_data) = metadata.additional_data.as_object_mut() {
+        additional_data.insert(
+            "crop_factor".to_owned(),
+            serde_json::Value::from(resolution.crop_factor),
+        );
+        additional_data.insert(
+            "queue_manual_camera".to_owned(),
+            serde_json::json!({
+                "brand": resolution.camera_identifier.brand,
+                "model": resolution.camera_identifier.model,
+                "readout_estimated": resolution.readout_estimated,
+            }),
+        );
+    }
+}
+
+fn apply_manual_camera_resolution_with_source(
+    metadata: &mut core::gyro_source::FileMetadata,
+    resolution: &core::manual_camera::ManualCameraResolution,
+    source: &JobLensMetadataBackup,
+) {
+    apply_manual_camera_resolution(metadata, resolution);
+    let Some(manual_camera) = metadata
+        .additional_data
+        .get_mut("queue_manual_camera")
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+    manual_camera.insert(
+        "source".to_owned(),
+        serde_json::json!({
+            "camera_identifier": source.source_camera_identifier(),
+            "additional_data": source.source_camera_additional_data(),
+        }),
+    );
+}
+
+fn apply_manual_camera_resolution_to_lens_profile(
+    lens: &mut core::lens_profile::LensProfile,
+    resolution: &core::manual_camera::ManualCameraResolution,
+) {
+    lens.camera_brand = resolution.camera_identifier.brand.clone();
+    lens.camera_model = resolution.camera_identifier.model.clone();
+    lens.camera_setting = resolution.camera_identifier.camera_setting.clone();
+    lens.crop_factor = Some(resolution.crop_factor);
+    lens.frame_readout_time = Some(resolution.frame_readout_time);
+    lens.frame_readout_direction = Some(resolution.frame_readout_direction);
+    lens.global_shutter = resolution.frame_readout_time == 0.0;
+}
+
+fn restore_source_camera_additional_data(
+    metadata: &mut core::gyro_source::FileMetadata,
+    source: &JobLensMetadataBackup,
+) {
+    let Some(effective) = metadata.additional_data.as_object_mut() else {
+        return;
+    };
+    let source_object = source.source_camera_additional_data().as_object();
+    for key in ["crop_factor", "queue_manual_camera"] {
+        if let Some(value) = source_object.and_then(|object| object.get(key)) {
+            effective.insert(key.to_owned(), value.clone());
+        } else {
+            effective.remove(key);
+        }
+    }
+}
+
+fn manual_camera_generation_is_current(generation: &AtomicU64, expected: u64) -> bool {
+    generation.load(SeqCst) == expected
+}
+
+fn full_lens_reapply_epoch_is_current(epoch: &AtomicU64, expected: u64) -> bool {
+    epoch.load(SeqCst) == expected
+}
+
+#[derive(Clone)]
+struct ManualCameraContext {
+    catalog: Arc<core::manual_camera::ManualCameraCatalog>,
+    selection: core::manual_camera::ManualCameraSelection,
+    video_job_ids: Arc<HashSet<u32>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ManualCameraReapplyScope {
+    None,
+    All,
+    Job(u32),
+}
+
+fn manual_camera_reapply_scope(
+    previous_eligible: bool,
+    eligible: bool,
+    added_job_id: Option<u32>,
+) -> ManualCameraReapplyScope {
+    if previous_eligible != eligible {
+        ManualCameraReapplyScope::All
+    } else if eligible {
+        added_job_id
+            .map(ManualCameraReapplyScope::Job)
+            .unwrap_or(ManualCameraReapplyScope::None)
+    } else {
+        ManualCameraReapplyScope::None
+    }
+}
+
+fn resolve_manual_camera_for_job(
+    job_id: u32,
+    job: &Job,
+    context: &ManualCameraContext,
+    lens_index: Option<usize>,
+    size: (usize, usize),
+    fps: f64,
+) -> Option<core::manual_camera::ManualCameraResolution> {
+    context.video_job_ids.contains(&job_id).then_some(())?;
+    lens_index.filter(|index| *index < niyien_lens_presets::LENS_GROUP_COUNT)?;
+    let source = job.base_lens_metadata.as_ref()?;
+    resolve_manual_camera_from_source(source, context, size, fps)
+}
+
+fn resolve_manual_camera_from_source(
+    source: &JobLensMetadataBackup,
+    context: &ManualCameraContext,
+    size: (usize, usize),
+    fps: f64,
+) -> Option<core::manual_camera::ManualCameraResolution> {
+    context.catalog.resolve(
+        &context.selection,
+        &core::manual_camera::ManualCameraInput {
+            size,
+            fps,
+            additional_data: source.source_camera_additional_data().clone(),
+            existing_direction: source.frame_readout_direction,
+        },
+    )
 }
 
 #[derive(Default, Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -1173,11 +1372,13 @@ fn build_reapply_base_metadata(
     let keep = md.keep_video_gyro;
     let video_upfl = md.unit_pixel_focal_length;
     base_lens_metadata.overwrite_metadata(md);
+    restore_source_camera_additional_data(md, base_lens_metadata);
     if keep && md.unit_pixel_focal_length.is_none() {
         md.unit_pixel_focal_length = video_upfl;
     }
     let mut snapshot = md.thin();
     base_lens_metadata.overwrite_metadata(&mut snapshot);
+    restore_source_camera_additional_data(&mut snapshot, base_lens_metadata);
     if keep && snapshot.unit_pixel_focal_length.is_none() {
         snapshot.unit_pixel_focal_length = video_upfl;
     }
@@ -1475,6 +1676,41 @@ fn metadata_snapshot_for_job(job: &Job) -> Option<core::gyro_source::FileMetadat
         .map(JobLensMetadataBackup::to_metadata)
 }
 
+fn effective_metadata_snapshot_for_job(
+    job_id: u32,
+    job: &Job,
+    manual_camera_context: Option<&ManualCameraContext>,
+    lens_index: Option<usize>,
+) -> Option<core::gyro_source::FileMetadata> {
+    let mut metadata = metadata_snapshot_for_job(job)?;
+    let Some(context) = manual_camera_context else {
+        return Some(metadata);
+    };
+    let (size, fps) = job
+        .stab
+        .as_ref()
+        .map(|stab| {
+            let params = stab.params.read();
+            (params.size, params.get_scaled_fps())
+        })
+        .or_else(|| {
+            let identifier = job
+                .base_lens_metadata
+                .as_ref()?
+                .source_camera_identifier()?;
+            Some((
+                (identifier.video_width, identifier.video_height),
+                identifier.fps as f64 / 1000.0,
+            ))
+        })?;
+    if let Some(resolution) =
+        resolve_manual_camera_for_job(job_id, job, context, lens_index, size, fps)
+    {
+        apply_manual_camera_resolution(&mut metadata, &resolution);
+    }
+    Some(metadata)
+}
+
 fn build_job_lens_group_override(
     requested_configs: &[niyien_lens_presets::LensGroupConfig],
     global_configs: &[niyien_lens_presets::LensGroupConfig],
@@ -1596,6 +1832,7 @@ pub struct RenderQueue {
 
     pub progress_changed: qt_signal!(),
     pub queue_changed: qt_signal!(),
+    pub manual_camera_changed: qt_signal!(),
     pub status_changed: qt_signal!(),
     pub auto_rotate_changed: qt_signal!(),
     pub simple_mode_changed: qt_signal!(),
@@ -1674,6 +1911,20 @@ pub struct RenderQueue {
     eta_model: QueueEtaEstimateModel,
 
     stabilizer: Arc<StabilizationManager>,
+
+    manual_camera_catalog: Option<Arc<core::manual_camera::ManualCameraCatalog>>,
+    manual_camera_selection: core::manual_camera::ManualCameraSelection,
+    // Bumped whenever the effective manual-camera context changes. Background
+    // lens workers capture a generation and reject stale writes/callbacks.
+    manual_camera_generation: Arc<AtomicU64>,
+    // A match-result eligibility transition must rebuild only after match apply
+    // has committed its new gyro/base metadata, never concurrently before it.
+    manual_camera_reapply_after_match: bool,
+    lens_reapply_epoch: Arc<AtomicU64>,
+    match_apply_finished_after_reapply_epoch: Option<u64>,
+    start_after_pending_reset: bool,
+    batch_autosync_after_pending_reset: bool,
+    render_jobs_after_pending_reset: HashSet<u32>,
 
     processing_resolution: i32,
 
@@ -1813,6 +2064,10 @@ pub struct RenderQueue {
     reapply_selected_lens_group_config: qt_method!(fn(&mut self, job_ids_json: String)),
     get_selected_lens_group_status_json: qt_method!(fn(&self, job_ids_json: String) -> QString),
     get_selected_lens_group_config_json: qt_method!(fn(&self, job_ids_json: String) -> QString),
+    get_manual_camera_state_json: qt_method!(fn(&self) -> QString),
+    set_manual_camera_selection:
+        qt_method!(fn(&mut self, brand: String, model: String)),
+    reload_manual_camera_catalog: qt_method!(fn(&mut self)),
     set_selected_lens_group_config:
         qt_method!(fn(&mut self, job_ids_json: String, config_json: String)),
     clear_selected_lens_group_config:
@@ -1944,11 +2199,24 @@ macro_rules! update_model {
 
 impl RenderQueue {
     pub fn new(stabilizer: Arc<StabilizationManager>) -> Self {
+        let manual_camera_catalog = match core::manual_camera::ManualCameraCatalog::load_active() {
+            Ok(catalog) => Some(Arc::new(catalog)),
+            Err(err) => {
+                ::log::warn!(
+                    target: "lens.camera",
+                    "Failed to load active manual camera catalog: {err}"
+                );
+                None
+            }
+        };
         Self {
             status: QString::from("stopped"),
             default_suffix: QString::from("_stabilized"),
             processing_resolution: 1080,
             stabilizer,
+            manual_camera_catalog,
+            manual_camera_selection:
+                core::manual_camera::ManualCameraSelection::load_persisted(),
             ..Default::default()
         }
     }
@@ -1958,6 +2226,188 @@ impl RenderQueue {
     }
     pub fn get_stab_for_job(&self, job_id: u32) -> Option<Arc<StabilizationManager>> {
         self.jobs.get(&job_id)?.stab.clone()
+    }
+
+    fn manual_camera_eligible_impl(&self) -> bool {
+        let video_job_ids = self.collect_video_job_ids();
+        core::manual_camera::all_video_source_cameras_incomplete(
+            video_job_ids.iter().map(|job_id| {
+                self.jobs
+                    .get(job_id)
+                    .and_then(|job| job.base_lens_metadata.as_ref())
+                    .and_then(JobLensMetadataBackup::source_camera_identifier)
+            }),
+        )
+    }
+
+    fn manual_camera_context(&self) -> Option<ManualCameraContext> {
+        if !self.manual_camera_eligible_impl() {
+            return None;
+        }
+        let catalog = self.manual_camera_catalog.as_ref()?.clone();
+        if !catalog.is_selectable(&self.manual_camera_selection) {
+            return None;
+        }
+        Some(ManualCameraContext {
+            catalog,
+            selection: self.manual_camera_selection.clone(),
+            video_job_ids: Arc::new(self.collect_video_job_ids().into_iter().collect()),
+        })
+    }
+
+    fn bump_manual_camera_generation(&self) {
+        self.manual_camera_generation.fetch_add(1, SeqCst);
+    }
+
+    fn has_pending_reset_requeue(&self) -> bool {
+        self.jobs.values().any(|job| job.pending_reset_requeue)
+    }
+
+    fn complete_match_apply_reapply_barrier(&mut self, reapply_epoch: u64) -> bool {
+        if self.match_apply_finished_after_reapply_epoch == Some(reapply_epoch) {
+            self.match_apply_finished_after_reapply_epoch = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn take_ready_reset_continuations(&mut self) -> Option<(bool, bool, Vec<u32>)> {
+        if self.has_pending_reset_requeue() {
+            return None;
+        }
+        let start = std::mem::take(&mut self.start_after_pending_reset);
+        let batch_autosync = std::mem::take(&mut self.batch_autosync_after_pending_reset);
+        let render_jobs = self.render_jobs_after_pending_reset.drain().collect();
+        Some((start, batch_autosync, render_jobs))
+    }
+
+    fn resume_ready_reset_continuations(&mut self) {
+        let Some((start, batch_autosync, render_jobs)) = self.take_ready_reset_continuations()
+        else {
+            return;
+        };
+        if batch_autosync {
+            self.start_batch_autosync();
+        } else if start {
+            self.start();
+        }
+        for job_id in render_jobs {
+            self.render_job(job_id);
+        }
+    }
+
+    fn cancel_pending_reset_continuations(&mut self) {
+        self.start_after_pending_reset = false;
+        self.batch_autosync_after_pending_reset = false;
+        self.render_jobs_after_pending_reset.clear();
+    }
+
+    fn cancel_pending_manual_camera_operations(&mut self) -> bool {
+        self.cancel_pending_reset_continuations();
+        self
+            .match_apply_finished_after_reapply_epoch
+            .take()
+            .is_some()
+    }
+
+    fn replace_match_results_with_manual_camera_refresh(
+        &mut self,
+        results: Option<core::gyro_match::BatchMatchResult>,
+    ) {
+        let previous_eligible = self.manual_camera_eligible_impl();
+        self.match_results = results;
+        self.handle_manual_camera_queue_change(previous_eligible, None);
+    }
+
+    fn replace_match_results_with_deferred_manual_camera_reapply(
+        &mut self,
+        results: core::gyro_match::BatchMatchResult,
+    ) {
+        let previous_eligible = self.manual_camera_eligible_impl();
+        self.match_results = Some(results);
+        let eligible = self.manual_camera_eligible_impl();
+        self.manual_camera_changed();
+        if previous_eligible != eligible {
+            self.bump_manual_camera_generation();
+            self.manual_camera_reapply_after_match = true;
+        }
+    }
+
+    fn get_manual_camera_state_json(&self) -> QString {
+        let selection_valid = self
+            .manual_camera_catalog
+            .as_ref()
+            .is_some_and(|catalog| catalog.is_selectable(&self.manual_camera_selection));
+        let brands = self
+            .manual_camera_catalog
+            .as_ref()
+            .map(|catalog| catalog.brands())
+            .unwrap_or_default();
+        QString::from(
+            serde_json::json!({
+                "eligible": self.manual_camera_eligible_impl(),
+                "brand": self.manual_camera_selection.brand,
+                "model": self.manual_camera_selection.model,
+                "selection_valid": selection_valid,
+                "brands": brands,
+            })
+            .to_string(),
+        )
+    }
+
+    fn set_manual_camera_selection(&mut self, brand: String, model: String) {
+        let selection = core::manual_camera::ManualCameraSelection::new(
+            brand.trim().to_owned(),
+            model.trim().to_owned(),
+        );
+        if selection == self.manual_camera_selection {
+            return;
+        }
+        self.manual_camera_selection = selection;
+        self.manual_camera_selection.persist();
+        self.bump_manual_camera_generation();
+        self.manual_camera_changed();
+        if !self.collect_video_job_ids().is_empty() {
+            self.reapply_lens_group_config();
+        }
+    }
+
+    fn reload_manual_camera_catalog(&mut self) {
+        self.manual_camera_catalog = match core::manual_camera::ManualCameraCatalog::load_active() {
+            Ok(catalog) => Some(Arc::new(catalog)),
+            Err(err) => {
+                ::log::warn!(
+                    target: "lens.camera",
+                    "Failed to reload active manual camera catalog: {err}"
+                );
+                None
+            }
+        };
+        self.bump_manual_camera_generation();
+        self.manual_camera_changed();
+        if !self.collect_video_job_ids().is_empty() {
+            self.reapply_lens_group_config();
+        }
+    }
+
+    fn handle_manual_camera_queue_change(
+        &mut self,
+        previous_eligible: bool,
+        added_job_id: Option<u32>,
+    ) {
+        let eligible = self.manual_camera_eligible_impl();
+        self.manual_camera_changed();
+        match manual_camera_reapply_scope(previous_eligible, eligible, added_job_id) {
+            ManualCameraReapplyScope::None => {}
+            ManualCameraReapplyScope::All => {
+                self.bump_manual_camera_generation();
+                self.reapply_lens_group_config();
+            }
+            ManualCameraReapplyScope::Job(job_id) => {
+                let _ = self.reapply_lens_group_config_filtered(Some(HashSet::from([job_id])));
+            }
+        }
     }
 
     pub fn get_total_frames(&self) -> u64 {
@@ -2489,6 +2939,10 @@ impl RenderQueue {
     }
 
     pub fn start_batch_autosync(&mut self) {
+        if self.has_pending_reset_requeue() {
+            self.batch_autosync_after_pending_reset = true;
+            return;
+        }
         let sync_only_finished_job_ids = {
             let Ok(queue) = self.queue.try_borrow() else {
                 return;
@@ -2505,6 +2959,10 @@ impl RenderQueue {
         };
         for job_id in sync_only_finished_job_ids {
             self.reset_job(job_id);
+        }
+        if self.has_pending_reset_requeue() {
+            self.batch_autosync_after_pending_reset = true;
+            return;
         }
 
         let job_ids = {
@@ -4408,6 +4866,7 @@ impl RenderQueue {
         } else {
             None
         };
+        let manual_camera_eligible_before = self.manual_camera_eligible_impl();
 
         if editing {
             update_model!(self, job_id, itm {
@@ -4539,6 +4998,11 @@ impl RenderQueue {
             (render_options.output_width, render_options.output_height),
             original_video_rotation,
         );
+        let lens_apply_guard = self
+            .jobs
+            .get(&job_id)
+            .map(|job| job.lens_apply_guard.clone())
+            .unwrap_or_default();
         self.jobs.insert(
             job_id,
             Job {
@@ -4549,6 +5013,9 @@ impl RenderQueue {
                 additional_data,
                 cancel_flag: Default::default(),
                 render_epoch: Default::default(),
+                lens_apply_guard,
+                manual_camera_project_generation: self.manual_camera_generation.load(SeqCst),
+                pending_reset_requeue: false,
                 project_data,
                 // Preserved across an edit write-back so the video-export
                 // dispatch still recognizes the row as a re-queueable
@@ -4570,6 +5037,7 @@ impl RenderQueue {
         self.update_queue_indices();
 
         self.queue_changed();
+        self.handle_manual_camera_queue_change(manual_camera_eligible_before, Some(job_id));
         ::log::info!(
             "[queue_signal] added job_id={} source=add_internal input='{}'",
             job_id,
@@ -4600,6 +5068,11 @@ impl RenderQueue {
         QString::default()
     }
     pub fn remove(&mut self, job_id: u32) {
+        let manual_camera_eligible_before = self.manual_camera_eligible_impl();
+        let removed_pending_reset = self
+            .jobs
+            .get(&job_id)
+            .is_some_and(|job| job.pending_reset_requeue);
         if let Some(job) = self.jobs.get(&job_id) {
             job.cancel_flag.store(true, SeqCst);
             self.queue.borrow_mut().remove(job.queue_index);
@@ -4609,6 +5082,7 @@ impl RenderQueue {
             self.queue_changed();
         }
         self.jobs.remove(&job_id);
+        self.render_jobs_after_pending_reset.remove(&job_id);
         self.batch_sync_job_ids.remove(&job_id);
         self.expected_batch_sync_job_ids.remove(&job_id);
         self.completed_batch_sync_job_ids.remove(&job_id);
@@ -4621,6 +5095,14 @@ impl RenderQueue {
         self.batch_sync_recut_pending.remove(&job_id);
         self.batch_sync_recut_done.remove(&job_id);
         self.update_queue_indices();
+        self.handle_manual_camera_queue_change(manual_camera_eligible_before, None);
+        if self.jobs.is_empty() {
+            if self.cancel_pending_manual_camera_operations() {
+                self.match_apply_finished();
+            }
+        } else if removed_pending_reset {
+            self.cancel_pending_reset_continuations();
+        }
 
         if self.status.to_string() == "active" {
             self.start_frame = 0;
@@ -4637,10 +5119,20 @@ impl RenderQueue {
                 to_delete.push(v.job_id);
             }
         }
+        let will_be_empty = self.queue.borrow().row_count() as usize == to_delete.len();
+        let release_match_apply_barrier = if will_be_empty {
+            self.cancel_pending_manual_camera_operations()
+        } else {
+            self.cancel_pending_reset_continuations();
+            false
+        };
         for job_id in to_delete {
             self.remove(job_id);
         }
         if self.queue.borrow().row_count() == 0 {
+            if release_match_apply_barrier {
+                self.match_apply_finished();
+            }
             self.clear_all_batch_sync_state();
             // Clearing the whole queue is an explicit "fresh start": the session
             // learned clock shift (and its same-day deep-match soft-intercept)
@@ -4687,6 +5179,10 @@ impl RenderQueue {
         // off the next job — the user-visible "pause stopped the current one but
         // others started anyway" bug. Explicit Resume goes through `resume()`.
         if self.pause_flag.load(SeqCst) {
+            return;
+        }
+        if self.has_pending_reset_requeue() {
+            self.start_after_pending_reset = true;
             return;
         }
 
@@ -5137,7 +5633,31 @@ impl RenderQueue {
             job.cancel_flag.store(true, SeqCst);
         }
     }
+
+    fn finish_reset_job(&mut self, job_id: u32) {
+        update_model!(self, job_id, itm {
+            itm.error_string = QString::default();
+            itm.skip_reason = QString::default();
+            itm.sync_status = QString::default();
+            itm.processing_progress = 0.0;
+            itm.current_frame = 0;
+            itm.start_timestamp = 0;
+            itm.start_timestamp2 = 0;
+            itm.start_timestamp_frame = 0;
+            itm.end_timestamp = 0;
+            itm.frame_times.clear();
+            itm.status = JobStatus::Queued;
+        });
+    }
+
     pub fn reset_job(&mut self, job_id: u32) {
+        if self
+            .jobs
+            .get(&job_id)
+            .is_some_and(|job| job.pending_reset_requeue)
+        {
+            return;
+        }
         if let Some(job) = self.jobs.get_mut(&job_id) {
             job.cancel_flag.store(false, SeqCst);
             job.last_finished_export_project = None;
@@ -5147,7 +5667,13 @@ impl RenderQueue {
         }
 
         // Recreate StabilizationManager from project_data if it was released after rendering
-        if self.jobs.get(&job_id).map_or(false, |j| j.stab.is_none()) {
+        let recreating_released_stab = self.jobs.get(&job_id).is_some_and(|job| job.stab.is_none());
+        let released_snapshot_is_stale = self.jobs.get(&job_id).is_some_and(|job| {
+            recreating_released_stab
+                && job.manual_camera_project_generation
+                    != self.manual_camera_generation.load(SeqCst)
+        });
+        if recreating_released_stab {
             let project_data = self.jobs.get(&job_id).and_then(|j| j.project_data.clone());
             let render_options = self.jobs.get(&job_id).map(|j| j.render_options.clone());
             let lens_profile_db = self.stabilizer.lens_profile_db.clone();
@@ -5214,19 +5740,17 @@ impl RenderQueue {
             }
         }
 
-        update_model!(self, job_id, itm {
-            itm.error_string = QString::default();
-            itm.skip_reason = QString::default();
-            itm.sync_status = QString::default();
-            itm.processing_progress = 0.0;
-            itm.current_frame = 0;
-            itm.start_timestamp = 0;
-            itm.start_timestamp2 = 0;
-            itm.start_timestamp_frame = 0;
-            itm.end_timestamp = 0;
-            itm.frame_times.clear();
-            itm.status = JobStatus::Queued;
-        });
+        if released_snapshot_is_stale
+            && self.jobs.get(&job_id).is_some_and(|job| job.stab.is_some())
+        {
+            if let Some(job) = self.jobs.get_mut(&job_id) {
+                job.pending_reset_requeue = true;
+            }
+            let _ = self.reapply_lens_group_config_filtered(Some(HashSet::from([job_id])));
+            return;
+        }
+
+        self.finish_reset_job(job_id);
     }
     /// An `Error` row that is really a pending user question (overwrite? convert
     /// format?) rather than a failure. Such a row still shows live buttons, so
@@ -6168,7 +6692,7 @@ impl RenderQueue {
         if job_ids.is_empty() {
             return;
         }
-        self.reapply_lens_group_config_filtered(Some(job_ids));
+        let _ = self.reapply_lens_group_config_filtered(Some(job_ids));
     }
 
     // simple-mode-ux-overhaul: writes Job.lens_index_override and mirrors the value
@@ -6291,7 +6815,8 @@ impl RenderQueue {
             }
         }
         if !affected.is_empty() && self.has_match_results() {
-            self.reapply_lens_group_config_filtered(Some(affected.into_iter().collect()));
+            let _ =
+                self.reapply_lens_group_config_filtered(Some(affected.into_iter().collect()));
         } else {
             self.match_results_changed();
         }
@@ -6492,6 +7017,14 @@ impl RenderQueue {
     }
 
     pub fn render_job(&mut self, job_id: u32) {
+        if self
+            .jobs
+            .get(&job_id)
+            .is_some_and(|job| job.pending_reset_requeue)
+        {
+            self.render_jobs_after_pending_reset.insert(job_id);
+            return;
+        }
         // Logging context for this queue item. RAII guard restores on return.
         let _log_ctx = crate::log_context::LogContext::enter(
             crate::log_context::LogContextUpdate::default()
@@ -10718,7 +11251,7 @@ impl RenderQueue {
     fn remove_gyro_file(&mut self, index: usize) {
         if index < self.gyro_files.len() {
             self.gyro_files.remove(index);
-            self.match_results = None;
+            self.replace_match_results_with_manual_camera_refresh(None);
             self.gyro_files_changed();
             self.match_results_changed();
         }
@@ -10755,7 +11288,7 @@ impl RenderQueue {
             self.gyro_files.len()
         );
         self.gyro_files.clear();
-        self.match_results = None;
+        self.replace_match_results_with_manual_camera_refresh(None);
         self.same_gyro_cache.clear();
         self.stabilizer.clear_lens_group_status();
         self.manual_pairs.clear();
@@ -11132,7 +11665,7 @@ impl RenderQueue {
         for r in &mut result.results {
             r.job_id = job_ids.get(r.video_index).copied();
         }
-        self.match_results = Some(result);
+        self.replace_match_results_with_deferred_manual_camera_reapply(result);
         self.match_results_changed();
 
         let t2 = std::time::Instant::now();
@@ -11240,15 +11773,24 @@ impl RenderQueue {
     }
 
     fn reapply_lens_group_config(&mut self) {
-        self.reapply_lens_group_config_filtered(None);
+        let _ = self.reapply_lens_group_config_filtered(None);
     }
 
-    fn reapply_lens_group_config_filtered(&mut self, filter_job_ids: Option<HashSet<u32>>) {
+    fn reapply_lens_group_config_filtered(
+        &mut self,
+        filter_job_ids: Option<HashSet<u32>>,
+    ) -> Option<u64> {
+        let is_full_reapply = filter_job_ids.is_none();
         let global_configs = self.stabilizer.lens_group_config.read().clone();
+        let manual_camera_context = self.manual_camera_context();
+        let manual_camera_generation = self.manual_camera_generation.clone();
+        let expected_manual_camera_generation = manual_camera_generation.load(SeqCst);
+        let lens_reapply_epoch = self.lens_reapply_epoch.clone();
 
         let items: Vec<(
             u32,
             Arc<StabilizationManager>,
+            Arc<ParkingMutex<()>>,
             String,
             RenderOptions,
             (usize, usize),
@@ -11281,6 +11823,7 @@ impl RenderQueue {
                 Some((
                     *job_id,
                     stab,
+                    job.lens_apply_guard.clone(),
                     job.additional_data.clone(),
                     job.render_options.clone(),
                     job.base_render_output_size.unwrap_or((
@@ -11297,7 +11840,16 @@ impl RenderQueue {
             .collect();
 
         if items.is_empty() {
-            return;
+            return None;
+        }
+
+        let reapply_epoch = if is_full_reapply {
+            lens_reapply_epoch.fetch_add(1, SeqCst).wrapping_add(1)
+        } else {
+            lens_reapply_epoch.load(SeqCst)
+        };
+        if is_full_reapply && self.match_apply_finished_after_reapply_epoch.is_some() {
+            self.match_apply_finished_after_reapply_epoch = Some(reapply_epoch);
         }
 
         ::log::info!(
@@ -11305,6 +11857,8 @@ impl RenderQueue {
             items.len()
         );
 
+        let generation_for_done = manual_camera_generation.clone();
+        let epoch_for_done = lens_reapply_epoch.clone();
         let on_done = util::qt_queued_callback_mut(
             QPointer::from(self as &Self),
             move |this,
@@ -11315,23 +11869,67 @@ impl RenderQueue {
                 (usize, usize),
                 Option<usize>,
             )>| {
+                if is_full_reapply
+                    && !full_lens_reapply_epoch_is_current(
+                        epoch_for_done.as_ref(),
+                        reapply_epoch,
+                    )
+                {
+                    ::log::info!(
+                        target: "lens.camera",
+                        "Discarded stale full lens reapply callback epoch={} current={}",
+                        reapply_epoch,
+                        epoch_for_done.load(SeqCst)
+                    );
+                    return;
+                }
+                if !manual_camera_generation_is_current(
+                    generation_for_done.as_ref(),
+                    expected_manual_camera_generation,
+                ) {
+                    ::log::info!(
+                        target: "lens.camera",
+                        "Discarded stale manual-camera reapply callback generation={} current={}",
+                        expected_manual_camera_generation,
+                        generation_for_done.load(SeqCst)
+                    );
+                    return;
+                }
                 let updated_count = job_updates
                     .iter()
                     .filter(|(_, data, _, _, _)| data.is_some())
                     .count();
+                let mut reset_requeue_job_ids = Vec::new();
                 for (job_id, project_data, render_options, base_output_size, lens_group_index) in
                     job_updates
                 {
                     if let Some(job) = this.jobs.get_mut(&job_id) {
                         if let Some(data) = project_data {
                             job.project_data = Some(data);
+                            job.manual_camera_project_generation =
+                                expected_manual_camera_generation;
                         }
                         job.render_options = render_options;
                         job.base_render_output_size = Some(base_output_size);
                         job.lens_group_index = lens_group_index;
+                        if job.pending_reset_requeue {
+                            job.pending_reset_requeue = false;
+                            reset_requeue_job_ids.push(job_id);
+                        }
                     }
                 }
+                let reset_requeued = !reset_requeue_job_ids.is_empty();
+                for job_id in reset_requeue_job_ids {
+                    this.finish_reset_job(job_id);
+                }
+                if reset_requeued && this.status == QString::from("active") {
+                    this.start();
+                }
                 this.match_results_changed();
+                if is_full_reapply && this.complete_match_apply_reapply_barrier(reapply_epoch) {
+                    this.match_apply_finished();
+                }
+                this.resume_ready_reset_continuations();
                 ::log::info!(
                     "[reapply_lens_group_config] done, updated {} jobs",
                     updated_count
@@ -11347,6 +11945,7 @@ impl RenderQueue {
                         |(
                             job_id,
                             stab,
+                            lens_apply_guard,
                             additional_data,
                             render_options,
                             base_output_size,
@@ -11356,15 +11955,44 @@ impl RenderQueue {
                             lens_index_override,
                             focal_length_override,
                         )| {
-                            let (lens_index, size) = {
+                            if is_full_reapply
+                                && !full_lens_reapply_epoch_is_current(
+                                    lens_reapply_epoch.as_ref(),
+                                    reapply_epoch,
+                                )
+                            {
+                                return None;
+                            }
+                            if !manual_camera_generation_is_current(
+                                manual_camera_generation.as_ref(),
+                                expected_manual_camera_generation,
+                            ) {
+                                return None;
+                            }
+                            let _lens_apply_guard = lens_apply_guard.lock();
+                            if is_full_reapply
+                                && !full_lens_reapply_epoch_is_current(
+                                    lens_reapply_epoch.as_ref(),
+                                    reapply_epoch,
+                                )
+                            {
+                                return None;
+                            }
+                            if !manual_camera_generation_is_current(
+                                manual_camera_generation.as_ref(),
+                                expected_manual_camera_generation,
+                            ) {
+                                return None;
+                            }
+                            let (lens_index, size, fps) = {
                                 let gyro = stab.gyro.read();
                                 let md = gyro.file_metadata.read();
                                 // simple-mode-ux-overhaul: per-job lens_index_override wins
                                 // over telemetry-derived lens_index when set.
                                 let li = lens_index_override
                                     .or_else(|| niyien_lens_presets::extract_lens_index(&md.additional_data));
-                                let sz = stab.params.read().size;
-                                (li, sz)
+                                let params = stab.params.read();
+                                (li, params.size, params.get_scaled_fps())
                             };
 
                             let mut updated_render_options = render_options.clone();
@@ -11396,6 +12024,50 @@ impl RenderQueue {
                                     "[reapply_lens_group_config] job[{}] autoload lens profile failed: {}",
                                     job_id,
                                     err
+                                );
+                            }
+                            let manual_camera_resolution = manual_camera_context
+                                .as_ref()
+                                .and_then(|context| {
+                                    context.video_job_ids.contains(job_id).then(|| ())?;
+                                    lens_index.and_then(|_| {
+                                        resolve_manual_camera_from_source(
+                                            base_lens_metadata,
+                                            context,
+                                            size,
+                                            fps,
+                                        )
+                                    })
+                                });
+                            if let Some(resolution) = manual_camera_resolution.as_ref() {
+                                apply_manual_camera_resolution_with_source(
+                                    &mut base_metadata,
+                                    resolution,
+                                    base_lens_metadata,
+                                );
+                                {
+                                    let gyro = stab.gyro.read();
+                                    let mut metadata = gyro.file_metadata.write();
+                                    apply_manual_camera_resolution_with_source(
+                                        &mut metadata,
+                                        resolution,
+                                        base_lens_metadata,
+                                    );
+                                }
+                                *stab.camera_id.write() = base_metadata.camera_identifier.clone();
+                                ::log::info!(
+                                    target: "lens.camera",
+                                    "Applied manual camera to queue job {}: {} {} {}x{} {:.3}fps crop={:.6} upfl={:.6} readout_ms={:.6} estimated={}",
+                                    job_id,
+                                    resolution.camera_identifier.brand,
+                                    resolution.camera_identifier.model,
+                                    size.0,
+                                    size.1,
+                                    fps,
+                                    resolution.crop_factor,
+                                    resolution.unit_pixel_focal_length,
+                                    resolution.frame_readout_time,
+                                    resolution.readout_estimated,
                                 );
                             }
                             sync_readout_params_from_lens(stab.as_ref());
@@ -11479,6 +12151,13 @@ impl RenderQueue {
                                 }
                             }
 
+                            if let Some(resolution) = manual_camera_resolution.as_ref() {
+                                apply_manual_camera_resolution_to_lens_profile(
+                                    &mut stab.lens.write(),
+                                    resolution,
+                                );
+                            }
+
                             // Restore sync_settings that the lens replacements above
                             // (apply_main_video_telemetry_without_lens_group, autoload_lens_from_camera_id,
                             // build_lens_profile -> *stab.lens.write() = profile) repeatedly clear.
@@ -11521,6 +12200,7 @@ impl RenderQueue {
 
             on_done(job_updates);
         });
+        Some(reapply_epoch)
     }
 
     fn apply_match_results_filtered(&mut self, filter_job_ids: Option<HashSet<u32>>) {
@@ -11528,9 +12208,17 @@ impl RenderQueue {
             Some(r) => r.results.clone(),
             None => return,
         };
+        let reapply_manual_camera_after_match = if filter_job_ids.is_none() {
+            std::mem::take(&mut self.manual_camera_reapply_after_match)
+        } else {
+            false
+        };
         let queue_auto_rotate = filter_job_ids.is_none() && self.auto_rotate;
 
         let global_lens_group_config = self.stabilizer.lens_group_config.read().clone();
+        let manual_camera_context = self.manual_camera_context();
+        let manual_camera_generation = self.manual_camera_generation.clone();
+        let expected_manual_camera_generation = manual_camera_generation.load(SeqCst);
         // Build a mapping from parsed gyro index back to gyro_files index.
         let parsed_gyro_indices: Vec<usize> = self
             .gyro_files
@@ -11565,6 +12253,7 @@ impl RenderQueue {
             lens_index_override: Option<usize>,
             focal_length_override: Option<f64>,
             stab: Arc<StabilizationManager>,
+            lens_apply_guard: Arc<ParkingMutex<()>>,
         }
         #[derive(Clone)]
         struct GyroParseInfo {
@@ -11618,6 +12307,7 @@ impl RenderQueue {
                 effective_lens_group_configs,
                 lens_index_override,
                 focal_length_override,
+                lens_apply_guard,
             ) = match self.jobs.get(&job_id) {
                 Some(job) => match (&job.stab, self.gyro_files.get(gyro_files_idx)) {
                     (Some(stab), Some(gyro_info)) => (
@@ -11641,6 +12331,7 @@ impl RenderQueue {
                         effective_lens_group_configs(job, &global_lens_group_config),
                         job.lens_index_override,
                         job.focal_length_override,
+                        job.lens_apply_guard.clone(),
                     ),
                     _ => continue,
                 },
@@ -11697,6 +12388,7 @@ impl RenderQueue {
                 lens_index_override,
                 focal_length_override,
                 stab,
+                lens_apply_guard,
             });
         }
 
@@ -11712,6 +12404,7 @@ impl RenderQueue {
             .collect();
 
         // Run heavy work on background thread
+        let generation_for_done = manual_camera_generation.clone();
         let on_done = util::qt_queued_callback_mut(
             QPointer::from(self as &Self),
             move |this,
@@ -11734,6 +12427,10 @@ impl RenderQueue {
                 Vec<niyien_lens_presets::LensGroupStatus>,
                 std::time::Instant,
             )| {
+                let manual_camera_stale = !manual_camera_generation_is_current(
+                    generation_for_done.as_ref(),
+                    expected_manual_camera_generation,
+                );
                 let t_cb = std::time::Instant::now();
                 ::log::info!(
                     "[apply_match] bg->main callback delay: {:.1}ms",
@@ -11784,8 +12481,10 @@ impl RenderQueue {
                 {
                     let mut export_settings = None;
                     if let Some(job) = this.jobs.get_mut(&job_id) {
-                        if let Some(data) = project_data {
+                        if let Some(data) = project_data.filter(|_| !manual_camera_stale) {
                             job.project_data = Some(data);
+                            job.manual_camera_project_generation =
+                                expected_manual_camera_generation;
                         }
                         job.render_options = render_options;
                         job.additional_data = additional_data;
@@ -11810,6 +12509,22 @@ impl RenderQueue {
                     t_project.elapsed().as_secs_f64() * 1000.0,
                     applied_job_ids.len()
                 );
+                let mut delay_match_apply_finished = false;
+                if manual_camera_stale || reapply_manual_camera_after_match {
+                    ::log::info!(
+                        target: "lens.camera",
+                        "Rebuilding manual-camera state after match apply: generation={} stale={} eligibility_transition={}",
+                        generation_for_done.load(SeqCst),
+                        manual_camera_stale,
+                        reapply_manual_camera_after_match
+                    );
+                    this.match_apply_finished_after_reapply_epoch = Some(0);
+                    delay_match_apply_finished =
+                        this.reapply_lens_group_config_filtered(None).is_some();
+                    if !delay_match_apply_finished {
+                        this.match_apply_finished_after_reapply_epoch = None;
+                    }
+                }
 
                 let t_sort = std::time::Instant::now();
                 this.sort_jobs_by_created_at();
@@ -11907,7 +12622,9 @@ impl RenderQueue {
 
                 this.match_results_changed();
                 // [T22] 数据加载全部完成，触发专用信号（遮罩在此关闭）
-                this.match_apply_finished();
+                if !delay_match_apply_finished {
+                    this.match_apply_finished();
+                }
                 ::log::info!(
                     "[apply_match] on_done callback total: {:.1}ms",
                     t_cb.elapsed().as_secs_f64() * 1000.0
@@ -12210,6 +12927,8 @@ impl RenderQueue {
             }
             let auto_rotation_results = Arc::new(auto_rotation_results);
             apply_items.par_iter_mut().enumerate().for_each(|(idx, item)| {
+                let lens_apply_guard = item.lens_apply_guard.clone();
+                let _lens_apply_guard = lens_apply_guard.lock();
                 // A main video with a trusted built-in gyro (RED Komodo or a Sony
                 // body with embedded gyro) keeps its own internal gyro + camera
                 // identity. We still run the niyien lens flow (index detection,
@@ -12315,7 +13034,7 @@ impl RenderQueue {
                             true,
                         );
                         let camera_id = md.camera_identifier.clone();
-                        let lens_profile_metadata = lens_profile_metadata_for_group_build(&md);
+                        let mut lens_profile_metadata = lens_profile_metadata_for_group_build(&md);
 
                         let metadata_raw_rotation =
                             denormalize_video_rotation_metadata(item.original_video_rotation);
@@ -12538,8 +13257,48 @@ impl RenderQueue {
                             }
                         }
                         let clean_lens = item.stab.lens.read().clone();
-                        item.base_lens_metadata =
-                            Some(JobLensMetadataBackup::from_metadata_and_lens(&md, &clean_lens));
+                        let mut next_base_lens_metadata =
+                            JobLensMetadataBackup::from_metadata_and_lens(&md, &clean_lens);
+                        if let Some(previous) = item.base_lens_metadata.as_ref() {
+                            next_base_lens_metadata.preserve_source_camera_from(previous);
+                        }
+                        item.base_lens_metadata = Some(next_base_lens_metadata);
+
+                        let manual_camera_resolution = manual_camera_generation_is_current(
+                            manual_camera_generation.as_ref(),
+                            expected_manual_camera_generation,
+                        )
+                        .then(|| manual_camera_context.as_ref())
+                        .flatten()
+                        .and_then(|context| {
+                            context.video_job_ids.contains(&item.job_id).then(|| ())?;
+                            lens_index.and_then(|_| {
+                                let fps = item.stab.params.read().get_scaled_fps();
+                                resolve_manual_camera_from_source(
+                                    item.base_lens_metadata.as_ref()?,
+                                    context,
+                                    size,
+                                    fps,
+                                )
+                            })
+                        });
+                        if let Some(resolution) = manual_camera_resolution.as_ref() {
+                            let effective_camera_identifier = {
+                                let gyro = item.stab.gyro.read();
+                                let mut metadata = gyro.file_metadata.write();
+                                apply_manual_camera_resolution_with_source(
+                                    &mut metadata,
+                                    resolution,
+                                    item.base_lens_metadata.as_ref().unwrap(),
+                                );
+                                metadata.camera_identifier.clone()
+                            };
+                            apply_manual_camera_resolution(
+                                &mut lens_profile_metadata,
+                                resolution,
+                            );
+                            *item.stab.camera_id.write() = effective_camera_identifier;
+                        }
 
                         // a3818466 moved the lens-group calibration build out of this
                         // batch apply (apply_main_video_telemetry_without_lens_group skips
@@ -12714,6 +13473,14 @@ impl RenderQueue {
                             item.stab.set_lens_correction_amount(1.0);
                         }
 
+                        if let Some(resolution) = manual_camera_resolution.as_ref() {
+                            apply_manual_camera_resolution_to_lens_profile(
+                                &mut item.stab.lens.write(),
+                                resolution,
+                            );
+                            sync_readout_params_from_lens(item.stab.as_ref());
+                        }
+
                         item.stab.invalidate_smoothing();
                         item.stab.invalidate_zooming();
                         ::log::info!(
@@ -12743,6 +13510,8 @@ impl RenderQueue {
 
             let t_sync = std::time::Instant::now();
             apply_items.par_iter().for_each(|item| {
+                let lens_apply_guard = item.lens_apply_guard.clone();
+                let _lens_apply_guard = lens_apply_guard.lock();
                 let (duration_s, playback_fps, effective_fps, fps_scale, every_nth_frame) = {
                     let params = item.stab.params.read();
                     (
@@ -12857,6 +13626,8 @@ impl RenderQueue {
                 apply_items
                     .into_par_iter()
                     .map(|mut item| {
+                    let lens_apply_guard = item.lens_apply_guard.clone();
+                    let _lens_apply_guard = lens_apply_guard.lock();
                     item.stab.gyro.write().file_url = item.gyro_path.clone();
 
                     // Patch additional_data["synchronization"] so the exported
@@ -14795,18 +15566,26 @@ impl RenderQueue {
             return serde_json::json!({ "jobs": jobs_json });
         }
         let global_configs = self.stabilizer.lens_group_config.read().clone();
+        let manual_camera_context = self.manual_camera_context();
         for job_id in self.collect_video_job_ids() {
             let Some(job) = self.jobs.get(&job_id) else {
                 continue;
             };
-            let metadata = metadata_snapshot_for_job(job);
+            let baseline_metadata = metadata_snapshot_for_job(job);
             let Some(lens_index) = job.lens_index_override.or(job.lens_group_index).or_else(|| {
-                metadata
+                baseline_metadata
                     .as_ref()
                     .and_then(|md| niyien_lens_presets::extract_lens_index(&md.additional_data))
             }) else {
                 continue;
             };
+            let metadata = effective_metadata_snapshot_for_job(
+                job_id,
+                job,
+                manual_camera_context.as_ref(),
+                Some(lens_index),
+            )
+            .or(baseline_metadata);
             let effective_configs = effective_lens_group_configs(job, &global_configs);
             let Some(config) = effective_configs.get(lens_index) else {
                 continue;
@@ -14903,6 +15682,7 @@ impl RenderQueue {
 
     // T7: Unpair a video job, clearing its external gyro data.
     fn unpair_video(&mut self, job_id: u32) {
+        let manual_camera_eligible_before = self.manual_camera_eligible_impl();
         self.clear_learned_clock_shift("unpair");
         // Clear gyro data from the job
         if let Some(job) = self.jobs.get(&job_id) {
@@ -14938,6 +15718,7 @@ impl RenderQueue {
                 results.results[i].gyro_end_ms = None;
             }
         }
+        self.handle_manual_camera_queue_change(manual_camera_eligible_before, None);
         self.match_results_changed();
     }
 
@@ -14963,7 +15744,7 @@ impl RenderQueue {
         // files and each job's embedded (in-video) gyro are untouched.
         self.manual_pairs.clear();
         self.deep_match_results.clear();
-        self.match_results = None;
+        self.replace_match_results_with_manual_camera_refresh(None);
         self.match_results_changed();
     }
 
@@ -17145,6 +17926,140 @@ mod tests {
     use super::*;
 
     #[test]
+    fn manual_camera_metadata_overlay_does_not_mutate_source_identity() {
+        let source_identifier = CameraIdentifier {
+            brand: String::new(),
+            model: String::new(),
+            lens_model: "Detected lens".to_owned(),
+            lens_info: "Wide".to_owned(),
+            focal_length: Some(35.0),
+            additional: "source-extra".to_owned(),
+            identifier: "source-id".to_owned(),
+            ..Default::default()
+        };
+        let source_metadata = FileMetadata {
+            camera_identifier: Some(source_identifier),
+            additional_data: serde_json::json!({ "crop_mode": 2 }),
+            ..Default::default()
+        };
+        let backup = JobLensMetadataBackup::from_metadata(&source_metadata);
+        let resolution = core::manual_camera::ManualCameraResolution {
+            camera_identifier: CameraIdentifier {
+                brand: "Lumix".to_owned(),
+                model: "S5II".to_owned(),
+                ..Default::default()
+            },
+            crop_factor: 1.5,
+            unit_pixel_focal_length: 160.0,
+            frame_readout_time: 8.333333333333334,
+            frame_readout_direction: ReadoutDirection::TopToBottom,
+            readout_estimated: true,
+        };
+
+        let mut effective = backup.to_metadata();
+        apply_manual_camera_resolution(&mut effective, &resolution);
+
+        assert_eq!(
+            backup
+                .source_camera_identifier()
+                .map(|identifier| (identifier.brand.as_str(), identifier.model.as_str())),
+            Some(("", ""))
+        );
+        assert_eq!(
+            backup
+                .source_camera_additional_data()
+                .get("crop_mode")
+                .and_then(|value| value.as_u64()),
+            Some(2)
+        );
+        assert_eq!(effective.camera_identifier.as_ref().unwrap().brand, "Lumix");
+        assert_eq!(effective.camera_identifier.as_ref().unwrap().model, "S5II");
+        assert_eq!(
+            effective.camera_identifier.as_ref().unwrap().lens_model,
+            "Detected lens"
+        );
+        assert_eq!(
+            effective.camera_identifier.as_ref().unwrap().lens_info,
+            "Wide"
+        );
+        assert_eq!(
+            effective.camera_identifier.as_ref().unwrap().focal_length,
+            Some(35.0)
+        );
+        assert_eq!(
+            effective.camera_identifier.as_ref().unwrap().additional,
+            "source-extra"
+        );
+        assert_eq!(
+            effective.camera_identifier.as_ref().unwrap().identifier,
+            "source-id"
+        );
+        assert_eq!(
+            niyien_lens_presets::extract_video_focus_length_mm(&effective),
+            Some(35.0)
+        );
+        assert_eq!(effective.unit_pixel_focal_length, Some(160.0));
+        assert_eq!(
+            effective.frame_readout_time,
+            Some(8.333333333333334)
+        );
+
+        let raw_again = backup.to_metadata();
+        assert_eq!(
+            raw_again.camera_identifier.as_ref().unwrap().brand,
+            ""
+        );
+        assert_eq!(raw_again.unit_pixel_focal_length, None);
+        assert_eq!(raw_again.frame_readout_time, None);
+
+        restore_source_camera_additional_data(&mut effective, &backup);
+        assert_eq!(
+            effective
+                .additional_data
+                .get("crop_factor")
+                .and_then(serde_json::Value::as_f64),
+            None
+        );
+        assert!(effective.additional_data.get("queue_manual_camera").is_none());
+
+        let mut project_round_trip = source_metadata;
+        apply_manual_camera_resolution_with_source(
+            &mut project_round_trip,
+            &resolution,
+            &backup,
+        );
+        let restored_backup = JobLensMetadataBackup::from_metadata(&project_round_trip);
+        assert_eq!(
+            restored_backup
+                .source_camera_identifier()
+                .map(|identifier| (identifier.brand.as_str(), identifier.model.as_str())),
+            Some(("", ""))
+        );
+        assert_eq!(
+            restored_backup
+                .source_camera_additional_data()
+                .get("crop_mode")
+                .and_then(|value| value.as_u64()),
+            Some(2)
+        );
+
+        let source_without_identifier = FileMetadata {
+            camera_identifier: None,
+            additional_data: serde_json::json!({ "crop_mode": 2 }),
+            ..Default::default()
+        };
+        let missing_backup = JobLensMetadataBackup::from_metadata(&source_without_identifier);
+        let mut missing_round_trip = source_without_identifier;
+        apply_manual_camera_resolution_with_source(
+            &mut missing_round_trip,
+            &resolution,
+            &missing_backup,
+        );
+        let restored_missing = JobLensMetadataBackup::from_metadata(&missing_round_trip);
+        assert!(restored_missing.source_camera_identifier().is_none());
+    }
+
+    #[test]
     fn empty_senseflow_metadata_keeps_video_lens_metadata() {
         let mut video = FileMetadata {
             detected_source: Some("Sony".into()),
@@ -18259,6 +19174,9 @@ mod tests {
                 additional_data: String::new(),
                 cancel_flag: Default::default(),
                 render_epoch: Default::default(),
+                lens_apply_guard: Default::default(),
+                manual_camera_project_generation: 0,
+                pending_reset_requeue: false,
                 project_data: None,
                 last_finished_export_project: None,
                 last_written_offsets: None,
@@ -18323,6 +19241,9 @@ mod tests {
             additional_data: String::new(),
             cancel_flag: Default::default(),
             render_epoch: Default::default(),
+            lens_apply_guard: Default::default(),
+            manual_camera_project_generation: 0,
+            pending_reset_requeue: false,
             project_data: None,
             last_finished_export_project: None,
             last_written_offsets: None,
@@ -18336,6 +19257,441 @@ mod tests {
             plugin_only: false,
             original_video_rotation: 0.0,
         }
+    }
+
+    fn manual_camera_eligibility_job(brand: &str, model: &str) -> Job {
+        let mut job = minimal_lens_job(Some(0), None);
+        let metadata = FileMetadata {
+            camera_identifier: Some(CameraIdentifier {
+                brand: brand.to_owned(),
+                model: model.to_owned(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        job.base_lens_metadata = Some(JobLensMetadataBackup::from_metadata(&metadata));
+        job
+    }
+
+    #[test]
+    fn manual_camera_queue_eligibility_is_strictly_nonempty_and_all_incomplete() {
+        let mut queue = RenderQueue::default();
+        assert!(!queue.manual_camera_eligible_impl());
+
+        queue.queue.borrow_mut().push(RenderQueueItem {
+            job_id: 1,
+            status: JobStatus::Queued,
+            ..Default::default()
+        });
+        queue
+            .jobs
+            .insert(1, manual_camera_eligibility_job("Sony", ""));
+        assert!(queue.manual_camera_eligible_impl());
+
+        queue.queue.borrow_mut().push(RenderQueueItem {
+            job_id: 2,
+            status: JobStatus::Queued,
+            ..Default::default()
+        });
+        queue
+            .jobs
+            .insert(2, manual_camera_eligibility_job("Sony", "FX3"));
+        assert!(!queue.manual_camera_eligible_impl());
+
+        queue.jobs.get_mut(&2).unwrap().base_lens_metadata = Some(
+            JobLensMetadataBackup::from_metadata(&FileMetadata {
+                camera_identifier: Some(CameraIdentifier {
+                    brand: String::new(),
+                    model: "FX3".to_owned(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        );
+        assert!(queue.manual_camera_eligible_impl());
+    }
+
+    #[test]
+    fn manual_camera_lifecycle_reapply_scope_handles_eligibility_transitions() {
+        assert_eq!(
+            manual_camera_reapply_scope(false, true, Some(7)),
+            ManualCameraReapplyScope::All
+        );
+        assert_eq!(
+            manual_camera_reapply_scope(true, false, Some(8)),
+            ManualCameraReapplyScope::All
+        );
+        assert_eq!(
+            manual_camera_reapply_scope(true, true, Some(9)),
+            ManualCameraReapplyScope::Job(9)
+        );
+        assert_eq!(
+            manual_camera_reapply_scope(false, false, Some(10)),
+            ManualCameraReapplyScope::None
+        );
+        assert_eq!(
+            manual_camera_reapply_scope(true, true, None),
+            ManualCameraReapplyScope::None
+        );
+    }
+
+    #[test]
+    fn manual_camera_generation_rejects_older_brand_only_request() {
+        let generation = AtomicU64::new(4);
+        let brand_only_generation = generation.load(SeqCst);
+        assert!(manual_camera_generation_is_current(
+            &generation,
+            brand_only_generation
+        ));
+
+        generation.fetch_add(1, SeqCst);
+        let complete_model_generation = generation.load(SeqCst);
+        assert!(!manual_camera_generation_is_current(
+            &generation,
+            brand_only_generation
+        ));
+        assert!(manual_camera_generation_is_current(
+            &generation,
+            complete_model_generation
+        ));
+    }
+
+    #[test]
+    fn manual_camera_match_finished_barrier_accepts_only_target_reapply_epoch() {
+        let mut queue = RenderQueue::default();
+        queue.match_apply_finished_after_reapply_epoch = Some(9);
+
+        assert!(!queue.complete_match_apply_reapply_barrier(8));
+        assert_eq!(queue.match_apply_finished_after_reapply_epoch, Some(9));
+        assert!(queue.complete_match_apply_reapply_barrier(9));
+        assert_eq!(queue.match_apply_finished_after_reapply_epoch, None);
+
+        let epoch = AtomicU64::new(0);
+        let older = epoch.fetch_add(1, SeqCst) + 1;
+        let newer = epoch.fetch_add(1, SeqCst) + 1;
+        assert!(!full_lens_reapply_epoch_is_current(&epoch, older));
+        assert!(full_lens_reapply_epoch_is_current(&epoch, newer));
+    }
+
+    #[test]
+    fn manual_camera_remove_and_clear_cancel_pending_async_operations() {
+        let mut queue = RenderQueue::default();
+        for job_id in [1, 2] {
+            queue.queue.borrow_mut().push(RenderQueueItem {
+                job_id,
+                status: JobStatus::Finished,
+                ..Default::default()
+            });
+            queue
+                .jobs
+                .insert(job_id, manual_camera_eligibility_job("", ""));
+        }
+        queue.jobs.get_mut(&1).unwrap().pending_reset_requeue = true;
+        queue.start_after_pending_reset = true;
+        queue.batch_autosync_after_pending_reset = true;
+        queue.render_jobs_after_pending_reset.insert(1);
+        queue.match_apply_finished_after_reapply_epoch = Some(7);
+
+        queue.remove(1);
+
+        assert!(!queue.start_after_pending_reset);
+        assert!(!queue.batch_autosync_after_pending_reset);
+        assert!(queue.render_jobs_after_pending_reset.is_empty());
+        assert_eq!(queue.match_apply_finished_after_reapply_epoch, Some(7));
+
+        queue.clear();
+
+        assert!(queue.jobs.is_empty());
+        assert_eq!(queue.match_apply_finished_after_reapply_epoch, None);
+        assert!(!queue.start_after_pending_reset);
+        assert!(!queue.batch_autosync_after_pending_reset);
+        assert!(queue.render_jobs_after_pending_reset.is_empty());
+    }
+
+    #[test]
+    fn calibration_pair_match_lifecycle_refreshes_manual_camera_eligibility() {
+        let mut queue = RenderQueue::default();
+        for (job_id, brand, model) in [(1, "", ""), (2, "Sony", "FX3")] {
+            queue.queue.borrow_mut().push(RenderQueueItem {
+                job_id,
+                status: JobStatus::Queued,
+                ..Default::default()
+            });
+            queue
+                .jobs
+                .insert(job_id, manual_camera_eligibility_job(brand, model));
+        }
+        assert!(!queue.manual_camera_eligible_impl());
+        let initial_generation = queue.manual_camera_generation.load(SeqCst);
+
+        queue.replace_match_results_with_deferred_manual_camera_reapply(
+            core::gyro_match::BatchMatchResult {
+                results: vec![core::gyro_match::MatchResult {
+                    video_index: 1,
+                    job_id: Some(2),
+                    gyro_index: Some(0),
+                    status: core::gyro_match::MatchStatus::CalibrationPair,
+                    global_offset_ms: None,
+                    gyro_start_ms: None,
+                    gyro_end_ms: None,
+                    init_offset_ms: None,
+                }],
+                global_offset_ms: None,
+                error: None,
+            },
+        );
+        assert!(queue.manual_camera_eligible_impl());
+        assert!(queue.manual_camera_reapply_after_match);
+        assert_eq!(
+            queue.manual_camera_generation.load(SeqCst),
+            initial_generation + 1
+        );
+        assert!(std::mem::take(
+            &mut queue.manual_camera_reapply_after_match
+        ));
+
+        queue.replace_match_results_with_manual_camera_refresh(None);
+        assert!(!queue.manual_camera_eligible_impl());
+        assert_eq!(
+            queue.manual_camera_generation.load(SeqCst),
+            initial_generation + 2
+        );
+    }
+
+    #[test]
+    fn manual_camera_released_job_waits_for_current_generation_before_requeue() {
+        let mut queue = queue_with_eta_job(JobStatus::Finished);
+        let project_data = {
+            let job = queue.jobs.get(&1).unwrap();
+            RenderQueue::get_gyroflow_data_internal(
+                job.stab.as_ref().unwrap(),
+                &job.additional_data,
+                &job.render_options,
+            )
+            .unwrap()
+        };
+        {
+            let job = queue.jobs.get_mut(&1).unwrap();
+            job.project_data = Some(project_data);
+            job.stab = None;
+            job.manual_camera_project_generation = 0;
+        }
+        queue.manual_camera_generation.store(1, SeqCst);
+
+        queue.reset_job(1);
+
+        let job = queue.jobs.get(&1).unwrap();
+        assert!(job.stab.is_some(), "released stabilizer must be restored");
+        assert!(
+            job.pending_reset_requeue,
+            "stale project snapshot must wait for async clean-baseline rebuild"
+        );
+        assert_eq!(
+            queue.queue.borrow()[0].status,
+            JobStatus::Finished,
+            "job must not become renderable before the current generation is committed"
+        );
+
+        // Repeated reset is idempotent, and all existing immediate dispatch
+        // entry points preserve their continuation until the rebuild callback.
+        queue.reset_job(1);
+        queue.start();
+        queue.start_batch_autosync();
+        queue.render_job(1);
+        assert!(queue.jobs[&1].pending_reset_requeue);
+        assert!(queue.start_after_pending_reset);
+        assert!(queue.batch_autosync_after_pending_reset);
+        assert!(queue.render_jobs_after_pending_reset.contains(&1));
+        assert!(queue.take_ready_reset_continuations().is_none());
+
+        queue.jobs.get_mut(&1).unwrap().pending_reset_requeue = false;
+        let (start, batch_autosync, render_jobs) =
+            queue.take_ready_reset_continuations().unwrap();
+        assert!(start);
+        assert!(batch_autosync);
+        assert_eq!(render_jobs, vec![1]);
+    }
+
+    #[test]
+    fn manual_camera_state_json_preserves_selection_and_model_availability() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fixture = serde_json::json!({
+            "version": 1,
+            "models": {
+                "Ready": { "sw": 36.0 },
+                "Unavailable": { "sw": 36.0 }
+            },
+            "readout": {
+                "columns": ["4K60"],
+                "data": {
+                    "Ready": [10.0],
+                    "Unavailable": [null]
+                }
+            }
+        });
+        std::fs::write(
+            tmp.path().join("testbrand.json"),
+            serde_json::to_vec_pretty(&fixture).unwrap(),
+        )
+        .unwrap();
+
+        let mut queue = RenderQueue::default();
+        queue.manual_camera_catalog = Some(Arc::new(
+            core::manual_camera::ManualCameraCatalog::load(tmp.path().to_str().unwrap()).unwrap(),
+        ));
+        queue.manual_camera_selection =
+            core::manual_camera::ManualCameraSelection::new("TESTBRAND", "Unavailable");
+        queue.queue.borrow_mut().push(RenderQueueItem {
+            job_id: 1,
+            status: JobStatus::Queued,
+            ..Default::default()
+        });
+        queue
+            .jobs
+            .insert(1, manual_camera_eligibility_job("", ""));
+
+        let state: serde_json::Value =
+            serde_json::from_str(&queue.get_manual_camera_state_json().to_string()).unwrap();
+        assert_eq!(state["eligible"], true);
+        assert_eq!(state["brand"], "TESTBRAND");
+        assert_eq!(state["model"], "Unavailable");
+        assert_eq!(state["selection_valid"], false);
+        assert_eq!(state["brands"][0]["id"], "TESTBRAND");
+        assert_eq!(state["brands"][0]["models"][0]["id"], "Ready");
+        assert_eq!(state["brands"][0]["models"][0]["enabled"], true);
+        assert_eq!(state["brands"][0]["models"][1]["id"], "Unavailable");
+        assert_eq!(state["brands"][0]["models"][1]["enabled"], false);
+    }
+
+    #[test]
+    fn manual_camera_ui_contains_only_the_two_conditional_selectors() {
+        let qml = include_str!("../ui/menu/LensGroupConfig.qml");
+        let start = qml
+            .find("id: manualCameraColumn")
+            .expect("manual camera section must exist");
+        let tail = &qml[start..];
+        let end = tail
+            .find("// Lens group selector follows")
+            .expect("manual camera section must have a stable end marker");
+        let section = &tail[..end];
+
+        assert!(section.contains("visible: !!root.manualCameraState.eligible"));
+        assert!(section.contains("qsTr(\"Camera brand\")"));
+        assert!(section.contains("qsTr(\"Camera model\")"));
+        assert_eq!(section.matches("ComboBox {").count(), 2);
+        assert!(!section.contains("Switch {"));
+        assert!(!section.contains("Readout"));
+        assert!(!section.contains("fallback"));
+        assert!(!section.contains("video count"));
+    }
+
+    #[test]
+    fn manual_camera_job_resolution_requires_lens_index_and_uses_job_video_parameters() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fixture = serde_json::json!({
+            "version": 1,
+            "models": { "Measured": { "sw": 36.0 } },
+            "crop": [{ "m": ["Measured"], "w": [6000], "c": 1.5 }],
+            "readout": {
+                "columns": ["4K60"],
+                "data": { "Measured": [12.5] }
+            }
+        });
+        std::fs::write(
+            tmp.path().join("testbrand.json"),
+            serde_json::to_vec_pretty(&fixture).unwrap(),
+        )
+        .unwrap();
+        let context = ManualCameraContext {
+            catalog: Arc::new(
+                core::manual_camera::ManualCameraCatalog::load(tmp.path().to_str().unwrap())
+                    .unwrap(),
+            ),
+            selection: core::manual_camera::ManualCameraSelection::new(
+                "TESTBRAND",
+                "Measured",
+            ),
+            video_job_ids: Arc::new(HashSet::from([1])),
+        };
+        let job = manual_camera_eligibility_job("", "");
+
+        assert!(
+            resolve_manual_camera_for_job(1, &job, &context, None, (6000, 4000), 59.94)
+                .is_none()
+        );
+        assert!(
+            resolve_manual_camera_for_job(2, &job, &context, Some(0), (6000, 4000), 59.94)
+                .is_none()
+        );
+
+        let full = resolve_manual_camera_for_job(
+            1,
+            &job,
+            &context,
+            Some(0),
+            (6000, 4000),
+            59.94,
+        )
+        .unwrap();
+        let uhd = resolve_manual_camera_for_job(
+            1,
+            &job,
+            &context,
+            Some(0),
+            (3840, 2160),
+            29.97,
+        )
+        .unwrap();
+
+        assert_eq!(full.unit_pixel_focal_length, 250.0);
+        assert!((uhd.unit_pixel_focal_length - 106.66666666666667).abs() < 1e-9);
+        assert_eq!(full.camera_identifier.video_width, 6000);
+        assert_eq!(uhd.camera_identifier.video_width, 3840);
+        assert_eq!(full.camera_identifier.fps, 59940);
+        assert_eq!(uhd.camera_identifier.fps, 29970);
+
+        let mut effective_metadata = FileMetadata::default();
+        apply_manual_camera_resolution(&mut effective_metadata, &full);
+        let mut config = niyien_lens_presets::default_lens_group_configs()[0].clone();
+        config.focal_length_mm = Some(50.0);
+        let profile = niyien_lens_presets::build_lens_profile(
+            &effective_metadata,
+            (6000, 4000),
+            Some(&config),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(profile.fisheye_params.camera_matrix[0][0], 12_500.0);
+        assert_eq!(profile.fisheye_params.camera_matrix[1][1], 12_500.0);
+
+        let mut stale_profile = profile;
+        stale_profile.camera_brand = "Detected".to_owned();
+        stale_profile.camera_model = "Old model".to_owned();
+        stale_profile.camera_setting = "Old mode".to_owned();
+        stale_profile.crop_factor = Some(9.0);
+        stale_profile.frame_readout_time = Some(99.0);
+        stale_profile.frame_readout_direction = Some(ReadoutDirection::RightToLeft);
+        apply_manual_camera_resolution_to_lens_profile(&mut stale_profile, &full);
+        assert_eq!(stale_profile.camera_brand, "Testbrand");
+        assert_eq!(stale_profile.camera_model, "Measured");
+        assert_eq!(stale_profile.camera_setting, "");
+        assert_eq!(stale_profile.crop_factor, Some(1.5));
+        assert_eq!(stale_profile.frame_readout_time, Some(12.5));
+        assert_eq!(
+            stale_profile.frame_readout_direction,
+            Some(ReadoutDirection::TopToBottom)
+        );
+        assert!(!stale_profile.global_shutter);
+
+        let mut global_shutter_resolution = full.clone();
+        global_shutter_resolution.frame_readout_time = 0.0;
+        apply_manual_camera_resolution_to_lens_profile(
+            &mut stale_profile,
+            &global_shutter_resolution,
+        );
+        assert_eq!(stale_profile.frame_readout_time, Some(0.0));
+        assert!(stale_profile.global_shutter);
     }
 
     fn queue_with_global_configs(
@@ -18434,6 +19790,9 @@ mod tests {
                 additional_data: String::new(),
                 cancel_flag: Default::default(),
                 render_epoch: Default::default(),
+                lens_apply_guard: Default::default(),
+                manual_camera_project_generation: 0,
+                pending_reset_requeue: false,
                 project_data: None,
                 last_finished_export_project: None,
                 last_written_offsets: None,
@@ -18489,6 +19848,9 @@ mod tests {
                 additional_data: String::new(),
                 cancel_flag: Default::default(),
                 render_epoch: Default::default(),
+                lens_apply_guard: Default::default(),
+                manual_camera_project_generation: 0,
+                pending_reset_requeue: false,
                 project_data: None,
                 last_finished_export_project: None,
                 last_written_offsets: None,
@@ -21053,6 +22415,65 @@ mod tests {
             .is_empty());
     }
 
+    #[test]
+    fn manual_camera_missing_data_gate_accepts_geometry_but_not_readout_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fixture = serde_json::json!({
+            "version": 1,
+            "models": {
+                "Ready": { "sw": 36.0 },
+                "Broken sensor": { "sw": 0.0 }
+            },
+            "readout": {
+                "columns": ["4K60"],
+                "data": {
+                    "Ready": [10.0],
+                    "Broken sensor": [10.0]
+                }
+            }
+        });
+        std::fs::write(
+            tmp.path().join("testbrand.json"),
+            serde_json::to_vec_pretty(&fixture).unwrap(),
+        )
+        .unwrap();
+
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        *queue.stabilizer.lens_group_config.write() =
+            niyien_lens_presets::default_lens_group_configs();
+        queue.stabilizer.lens_group_config.write()[2].focal_length_mm = Some(50.0);
+        queue.jobs.get_mut(&1).unwrap().lens_index_override = Some(2);
+        let source = FileMetadata {
+            camera_identifier: Some(CameraIdentifier::default()),
+            ..Default::default()
+        };
+        queue.jobs.get_mut(&1).unwrap().base_lens_metadata =
+            Some(JobLensMetadataBackup::from_metadata(&source));
+        {
+            let stab = queue.jobs.get(&1).unwrap().stab.as_ref().unwrap();
+            let mut params = stab.params.write();
+            params.size = (3840, 2160);
+            params.fps = 59.94;
+        }
+        queue.manual_camera_catalog = Some(Arc::new(
+            core::manual_camera::ManualCameraCatalog::load(tmp.path().to_str().unwrap()).unwrap(),
+        ));
+
+        queue.manual_camera_selection =
+            core::manual_camera::ManualCameraSelection::new("TESTBRAND", "Ready");
+        assert!(queue.lens_groups_missing_data_impl(true)["jobs"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+
+        queue.manual_camera_selection =
+            core::manual_camera::ManualCameraSelection::new("TESTBRAND", "Broken sensor");
+        assert_eq!(
+            queue.lens_groups_missing_data_impl(true)["jobs"][0]["reasons"],
+            serde_json::json!(["sensor"])
+        );
+    }
+
     // focal-length-user-override: the focal override writes ONLY the job-level
     // field + its additional_data mirror. It must not touch lens group configs
     // and must not set lens_index_override — an explicit focal edit is not an
@@ -22322,6 +23743,9 @@ mod tests {
                     additional_data: String::new(),
                     cancel_flag: Default::default(),
                     render_epoch: Default::default(),
+                    lens_apply_guard: Default::default(),
+                    manual_camera_project_generation: 0,
+                    pending_reset_requeue: false,
                     project_data: None,
                     last_finished_export_project: None,
                     last_written_offsets: None,
@@ -22695,6 +24119,9 @@ mod tests {
                 additional_data: String::new(),
                 cancel_flag: Default::default(),
                 render_epoch: Default::default(),
+                lens_apply_guard: Default::default(),
+                manual_camera_project_generation: 0,
+                pending_reset_requeue: false,
                 project_data: None,
                 last_finished_export_project: None,
                 last_written_offsets: None,
@@ -22811,6 +24238,9 @@ mod tests {
                 additional_data: String::new(),
                 cancel_flag: Default::default(),
                 render_epoch: Default::default(),
+                lens_apply_guard: Default::default(),
+                manual_camera_project_generation: 0,
+                pending_reset_requeue: false,
                 project_data: None,
                 last_finished_export_project: None,
                 last_written_offsets: None,
@@ -23075,6 +24505,9 @@ mod tests {
                 additional_data: String::new(),
                 cancel_flag: Default::default(),
                 render_epoch: render_epoch.clone(),
+                lens_apply_guard: Default::default(),
+                manual_camera_project_generation: 0,
+                pending_reset_requeue: false,
                 project_data: None,
                 last_finished_export_project: None,
                 last_written_offsets: None,
@@ -23690,6 +25123,9 @@ mod tests {
             additional_data: String::new(),
             cancel_flag: Default::default(),
             render_epoch: Default::default(),
+            lens_apply_guard: Default::default(),
+            manual_camera_project_generation: 0,
+            pending_reset_requeue: false,
             project_data: None,
             last_finished_export_project: None,
             last_written_offsets: None,
@@ -23798,6 +25234,9 @@ mod tests {
             additional_data: String::new(),
             cancel_flag: Default::default(),
             render_epoch: Default::default(),
+            lens_apply_guard: Default::default(),
+            manual_camera_project_generation: 0,
+            pending_reset_requeue: false,
             project_data: None,
             last_finished_export_project: None,
             last_written_offsets: None,
@@ -23992,6 +25431,9 @@ mod tests {
             additional_data: String::new(),
             cancel_flag: Default::default(),
             render_epoch: Default::default(),
+            lens_apply_guard: Default::default(),
+            manual_camera_project_generation: 0,
+            pending_reset_requeue: false,
             project_data: None,
             last_finished_export_project: None,
             last_written_offsets: None,
@@ -24049,6 +25491,9 @@ mod tests {
                 additional_data: String::new(),
                 cancel_flag: Default::default(),
                 render_epoch: Default::default(),
+                lens_apply_guard: Default::default(),
+                manual_camera_project_generation: 0,
+                pending_reset_requeue: false,
                 project_data: None,
                 last_finished_export_project: None,
                 last_written_offsets: None,
@@ -24315,6 +25760,9 @@ mod tests {
                 additional_data: String::new(),
                 cancel_flag: Default::default(),
                 render_epoch: Default::default(),
+                lens_apply_guard: Default::default(),
+                manual_camera_project_generation: 0,
+                pending_reset_requeue: false,
                 project_data: None,
                 last_finished_export_project: None,
                 last_written_offsets: None,
@@ -27844,6 +29292,9 @@ mod tests {
                 additional_data: String::new(),
                 cancel_flag: Default::default(),
                 render_epoch: Default::default(),
+                lens_apply_guard: Default::default(),
+                manual_camera_project_generation: 0,
+                pending_reset_requeue: false,
                 project_data,
                 last_finished_export_project: Some(4),
                 last_written_offsets: None,

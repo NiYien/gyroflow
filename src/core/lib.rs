@@ -12,6 +12,7 @@ pub mod imu_integration;
 pub mod keyframes;
 pub mod lens_profile;
 pub mod lens_profile_database;
+pub mod manual_camera;
 pub mod niyien_lens_presets;
 pub mod stabilization;
 pub mod stmap;
