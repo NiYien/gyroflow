@@ -9,7 +9,14 @@ import QtQuick.Controls.Material.impl as QQCMI
 QQC.Popup {
     id: popup;
     width: parent.width;
-    implicitHeight: Math.min((lv.count * itemHeight) + 4 * dpiScale, 400 * dpiScale);
+    margins: 8 * dpiScale;
+    implicitHeight: Math.min(
+        (lv.count * itemHeight) + 4 * dpiScale,
+        400 * dpiScale,
+        popup.Window.height > 0
+            ? Math.max(0, popup.Window.height - popup.topMargin - popup.bottomMargin)
+            : 400 * dpiScale
+    );
     padding: 2 * dpiScale;
     property alias model: lv.model;
     property alias currentIndex: lv.currentIndex;
