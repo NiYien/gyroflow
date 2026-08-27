@@ -1837,7 +1837,6 @@ Rectangle {
                         border.color: styleHrColor;
                         border.width: Math.max(1, 1 * dpiScale);
                         radius: 10 * dpiScale;
-                        opacity: _selectionDrivenBatch ? 0.4 : 1.0;
                         ItemLoader {
                             id: simpleMounting;
                             active: true;
@@ -1847,7 +1846,6 @@ Rectangle {
                             sourceComponent: Component {
                                 Menu.MountingPresetSelector {
                                     locked: true;
-                                    innerItem.enabled: !_selectionDrivenBatch;
                                 }
                             }
                         }
