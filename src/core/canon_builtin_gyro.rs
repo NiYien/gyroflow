@@ -4,30 +4,32 @@
 //! Canon built-in gyro time-offset classification.
 //!
 //! Canon bodies that record a CNDM gyro track keep that gyro as their motion
-//! source (`FileMetadata::keep_video_gyro`). Whether such a video still needs an
-//! auto-sync pass depends on the body: some are frame-aligned, some lead their
-//! own video by exactly one frame, and the rest have simply never been measured.
+//! source (`FileMetadata::keep_video_gyro`). Their intrinsic frame-time series is
+//! inferred directly from telemetry and activated by batch assignment. This table
+//! records only additional model-specific residual corrections.
 //!
 //! The classification lives in camera_db's `canon.json` under the top-level
 //! `builtin_gyro_offset` field and is the **single source of truth** — there is
 //! deliberately no built-in fallback table. A missing / unreadable / malformed
-//! table degrades to an empty table, which makes every Canon body `Unknown`, and
-//! `Unknown` bodies run a normal auto-sync. That is the safe direction: an
-//! unclassified body costs a few seconds of sync instead of silently shipping an
-//! uncorrected offset.
+//! table degrades to an empty table, which makes every Canon body `Unknown`.
+//! Existing `none` / `frame_compensation` values remain readable for lens-package
+//! compatibility but do not control intrinsic timing activation.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-/// Time offset of a Canon body's built-in gyro relative to its own frames.
+/// Additional residual correction after Canon intrinsic frame timing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CanonGyroOffset {
-    /// The gyro leads its own video by one frame. Skip auto-sync and apply a
-    /// fixed `-(1000/fps)` ms offset instead.
+    /// The gyro still leads its own video by one frame after intrinsic timing;
+    /// apply a fixed `-(1000/fps)` ms residual.
     OneFrame,
-    /// The gyro is aligned with the frames. Skip auto-sync, apply no offset.
+    /// Legacy data value: no additional fixed residual.
     NoOffset,
-    /// Never classified. Run a normal auto-sync and adopt whatever it computes.
+    /// Legacy data value: no additional fixed residual. Intrinsic timing is now
+    /// detected from telemetry for every Canon body with trusted built-in gyro.
+    FrameCompensation,
+    /// No model-specific residual is listed.
     Unknown,
 }
 
@@ -37,13 +39,9 @@ impl CanonGyroOffset {
         match self {
             Self::OneFrame => "one_frame",
             Self::NoOffset => "none",
+            Self::FrameCompensation => "frame_compensation",
             Self::Unknown => "unknown",
         }
-    }
-
-    /// Whether a body with this classification skips auto-sync entirely.
-    pub fn skips_autosync(self) -> bool {
-        !matches!(self, Self::Unknown)
     }
 }
 
@@ -86,10 +84,8 @@ pub fn classify(detected_source: &str, table: &OffsetTable) -> CanonGyroOffset {
 
 /// Classify against the table loaded from the active camera_db.
 ///
-/// Deliberately silent: this is called per job from several gates (including the
-/// per-frame-ish sync-frame estimator), so the log lines belong at the decision
-/// points in `render_queue`, not here. Table loading itself logs once per
-/// camera_db path.
+/// Deliberately silent: log lines belong at the residual-application decision in
+/// `render_queue`, not here. Table loading itself logs once per camera_db path.
 pub fn classify_detected_source(detected_source: &str) -> CanonGyroOffset {
     classify(detected_source, &offset_table())
 }
@@ -105,7 +101,7 @@ pub fn parse_table(canon_json: &str) -> OffsetTable {
         return OffsetTable::default();
     };
     let Some(map) = root.get("builtin_gyro_offset").and_then(|v| v.as_object()) else {
-        ::log::warn!(target: "lens", "[canon_arbitration] canon.json has no builtin_gyro_offset object; all Canon bodies will be treated as unknown (lens package too old?)");
+        ::log::warn!(target: "lens", "[canon_arbitration] canon.json has no builtin_gyro_offset object; no Canon model-specific residual will be applied (lens package too old?)");
         return OffsetTable::default();
     };
 
@@ -114,6 +110,7 @@ pub fn parse_table(canon_json: &str) -> OffsetTable {
         let class = match value.as_str() {
             Some("one_frame") => CanonGyroOffset::OneFrame,
             Some("none") => CanonGyroOffset::NoOffset,
+            Some("frame_compensation") => CanonGyroOffset::FrameCompensation,
             other => {
                 ::log::warn!(
                     target: "lens",
@@ -160,7 +157,7 @@ pub fn offset_table() -> Arc<OffsetTable> {
 
 fn load_table(camera_db_dir: Option<&str>) -> OffsetTable {
     let Some(dir) = camera_db_dir else {
-        ::log::warn!(target: "lens", "[canon_arbitration] camera_db path not found; builtin_gyro_offset table empty, all Canon bodies treated as unknown");
+        ::log::warn!(target: "lens", "[canon_arbitration] camera_db path not found; builtin_gyro_offset table empty, no Canon model-specific residual will be applied");
         return OffsetTable::default();
     };
     let path = std::path::Path::new(dir).join("canon.json");
@@ -193,24 +190,19 @@ mod tests {
     }
 
     fn full_table() -> OffsetTable {
-        table(&[
-            ("R5 Mark II", CanonGyroOffset::OneFrame),
-            ("C50", CanonGyroOffset::NoOffset),
-            ("C80", CanonGyroOffset::NoOffset),
-            ("C400", CanonGyroOffset::NoOffset),
-            ("R6 Mark III", CanonGyroOffset::NoOffset),
-        ])
+        table(&[("R5 Mark II", CanonGyroOffset::OneFrame)])
     }
 
     // 5.1
     #[test]
-    fn classify_hits_one_frame_and_none() {
+    fn classify_hits_one_frame_residual() {
         let t = full_table();
         assert_eq!(
             classify("Canon R5 Mark II", &t),
             CanonGyroOffset::OneFrame
         );
-        assert_eq!(classify("Canon C50", &t), CanonGyroOffset::NoOffset);
+        assert_eq!(classify("Canon R50 V", &t), CanonGyroOffset::Unknown);
+        assert_eq!(classify("Canon C50", &t), CanonGyroOffset::Unknown);
     }
 
     // 5.2
@@ -225,21 +217,21 @@ mod tests {
             classify("Canon EOS R5 Mark II", &t),
             CanonGyroOffset::OneFrame
         );
-        assert_eq!(classify("Canon EOS C50", &t), CanonGyroOffset::NoOffset);
+        assert_eq!(classify("Canon EOS C50", &t), CanonGyroOffset::Unknown);
     }
 
     // 5.3 — R50 and R50 V are two different bodies; neither may inherit the
     // other's classification via substring matching.
     #[test]
     fn classify_never_confuses_r50_with_r50_v() {
-        let only_r50_v = table(&[("R50 V", CanonGyroOffset::NoOffset)]);
+        let only_r50_v = table(&[("R50 V", CanonGyroOffset::FrameCompensation)]);
         assert_eq!(
             classify("Canon R50", &only_r50_v),
             CanonGyroOffset::Unknown
         );
         assert_eq!(
             classify("Canon R50 V", &only_r50_v),
-            CanonGyroOffset::NoOffset
+            CanonGyroOffset::FrameCompensation
         );
 
         let only_r50 = table(&[("R50", CanonGyroOffset::NoOffset)]);
@@ -254,12 +246,11 @@ mod tests {
     #[test]
     fn classify_unlisted_model_is_unknown() {
         let t = full_table();
-        assert_eq!(classify("Canon R50 V", &t), CanonGyroOffset::Unknown);
+        assert_eq!(classify("Canon R50 X", &t), CanonGyroOffset::Unknown);
         assert_eq!(
-            classify("Canon EOS R50 V", &t),
+            classify("Canon EOS R50 X", &t),
             CanonGyroOffset::Unknown
         );
-        assert!(!classify("Canon R50 V", &t).skips_autosync());
     }
 
     // 5.5
@@ -319,14 +310,22 @@ mod tests {
     fn parse_table_reads_the_shipped_shape() {
         let t = parse_table(
             r#"{"builtin_gyro_offset":{
-                "R5 Mark II":"one_frame",
-                "C50":"none",
-                "C80":"none",
-                "C400":"none",
-                "R6 Mark III":"none"
+                "R5 Mark II":"one_frame"
             }}"#,
         );
         assert_eq!(t, full_table());
+    }
+
+    #[test]
+    fn parse_table_keeps_legacy_values_readable() {
+        let t = parse_table(
+            r#"{"builtin_gyro_offset":{
+                "R50 V":"frame_compensation",
+                "C50":"none"
+            }}"#,
+        );
+        assert_eq!(classify("Canon R50 V", &t), CanonGyroOffset::FrameCompensation);
+        assert_eq!(classify("Canon C50", &t), CanonGyroOffset::NoOffset);
     }
 
     // 5.7 — non-Canon sources never reach the table.
@@ -354,12 +353,5 @@ mod tests {
         assert_eq!(model_key("Canon EOS R5 Mark II"), Some("R5 Mark II"));
         assert_eq!(model_key("Canon EOS C500 Mark II"), Some("C500 Mark II"));
         assert_eq!(model_key("Canon R50 V"), Some("R50 V"));
-    }
-
-    #[test]
-    fn skips_autosync_only_for_classified_bodies() {
-        assert!(CanonGyroOffset::OneFrame.skips_autosync());
-        assert!(CanonGyroOffset::NoOffset.skips_autosync());
-        assert!(!CanonGyroOffset::Unknown.skips_autosync());
     }
 }

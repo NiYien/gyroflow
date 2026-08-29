@@ -124,11 +124,44 @@ pub fn get_time_offset(
     sample_rate: f64,
     fps: f64,
 ) -> Option<f64> {
-    let exposure = (tag_map.get(&GroupId::Imager)?.get_t(TagId::ExposureTime) as Option<&f64>)?;
+    let exposure = exposure_time_ms(tag_map)?;
     let frame_time = 1000.0 / md.frame_rate.unwrap_or(fps);
     let frame_readout_time = md.frame_readout_time.unwrap_or(14.0); // better approx than nothing
     let dt = 1000.0 / sample_rate.max(1.0);
-    Some(frame_time + frame_readout_time / 2.0 - (*exposure) / 2.0 - dt / 2.0)
+    Some(frame_time + frame_readout_time / 2.0 - exposure / 2.0 - dt / 2.0)
+}
+
+fn exposure_time_ms(tag_map: &GroupedTagMap) -> Option<f64> {
+    if let Some(exposure_ms) = tag_map
+        .get(&GroupId::Imager)
+        .and_then(|map| map.get_t(TagId::ExposureTime) as Option<&f64>)
+        .copied()
+        .filter(|value| value.is_finite() && *value > 0.0)
+    {
+        return Some(exposure_ms);
+    }
+    if let Some(exposure_s) = tag_map
+        .get(&GroupId::Exposure)
+        .and_then(|map| map.get_t(TagId::ExposureTime) as Option<&f64>)
+        .copied()
+        .filter(|value| value.is_finite() && *value > 0.0)
+    {
+        return Some(exposure_s * 1000.0);
+    }
+
+    let exposure = tag_map.get(&GroupId::Exposure)?;
+    let (numerator, denominator) = (exposure.get_t(TagId::ShutterSpeed)
+        as Option<&(u32, u32)>)
+        .or_else(|| {
+            exposure.get_t(TagId::Custom("ShutterSpeed2".into())) as Option<&(u32, u32)>
+        })
+        .copied()?;
+    shutter_speed_ms(numerator, denominator)
+}
+
+fn shutter_speed_ms(numerator: u32, denominator: u32) -> Option<f64> {
+    (numerator > 0 && denominator > 0)
+        .then_some(numerator as f64 / denominator as f64 * 1000.0)
 }
 
 /// Pure builder for the synthetic Canon opencv_standard lens JSON. Split out of
@@ -190,7 +223,15 @@ fn build_canon_lens_json(
 
 #[cfg(test)]
 mod tests {
-    use super::build_canon_lens_json;
+    use super::{build_canon_lens_json, shutter_speed_ms};
+
+    #[test]
+    fn shutter_speed_ratio_is_converted_to_milliseconds() {
+        assert_eq!(shutter_speed_ms(1, 200), Some(5.0));
+        assert_eq!(shutter_speed_ms(1, 125), Some(8.0));
+        assert_eq!(shutter_speed_ms(0, 200), None);
+        assert_eq!(shutter_speed_ms(1, 0), None);
+    }
 
     #[test]
     fn canon_lens_json_is_opencv_standard() {

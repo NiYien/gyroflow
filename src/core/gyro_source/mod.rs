@@ -1287,6 +1287,7 @@ impl GyroSource {
             timecode,
             additional_data,
             per_frame_time_offsets: Vec::new(),
+            canon_deferred_frame_time_offsets: Vec::new(),
             unit_pixel_focal_length,
             digital_zoom,
             camera_stab_data: Vec::new(),
@@ -1357,6 +1358,12 @@ impl GyroSource {
 
         let sample_rate = Self::get_sample_rate(&md);
         let mut original_sample_rate = sample_rate;
+        // Canon frame timing is intrinsic to the built-in CNDM gyro timeline.
+        // Keep it inactive on plain load and activate it only after a batch
+        // assignment confirms the external-gyro workflow. Canon clips without
+        // built-in motion keep the normal active-series behavior.
+        let canon_defer_intrinsic_time_offsets = input.camera_type() == "Canon"
+            && (!md.raw_imu.is_empty() || !md.quaternions.is_empty());
         let mut is_temp = sony::ISTemp::default();
         // Sticky across all samples: one sentinel anywhere in the clip means the
         // mounted lens never reports its OSS compensation.
@@ -1415,7 +1422,11 @@ impl GyroSource {
                         if let Some(offset) =
                             canon::get_time_offset(&md, &input, tag_map, sample_rate, fps)
                         {
-                            md.per_frame_time_offsets.push(offset);
+                            if canon_defer_intrinsic_time_offsets {
+                                md.canon_deferred_frame_time_offsets.push(offset);
+                            } else {
+                                md.per_frame_time_offsets.push(offset);
+                            }
                         }
                         canon::init_lens_profile(&mut md, &input, tag_map, size, info);
                     }
@@ -1626,13 +1637,15 @@ impl GyroSource {
         }
 
         log::info!(
-            "[parse_telemetry] end path='{}' elapsed_ms={:.1} raw_imu={} quats={} lens_params={} lens_positions={} duration_ms={:.3} creation_date_utc={:?} accurate_ts={} detected={:?} is_komodo={}",
+            "[parse_telemetry] end path='{}' elapsed_ms={:.1} raw_imu={} quats={} lens_params={} lens_positions={} per_frame_offsets={} canon_deferred_offsets={} duration_ms={:.3} creation_date_utc={:?} accurate_ts={} detected={:?} is_komodo={}",
             native_path,
             t_total.elapsed().as_secs_f64() * 1000.0,
             md.raw_imu.len(),
             md.quaternions.len(),
             md.lens_params.len(),
             md.lens_positions.len(),
+            md.per_frame_time_offsets.len(),
+            md.canon_deferred_frame_time_offsets.len(),
             md.duration_ms,
             md.creation_date_utc,
             md.has_accurate_timestamps,

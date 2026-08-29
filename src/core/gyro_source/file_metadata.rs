@@ -82,6 +82,10 @@ pub struct FileMetadata {
     pub timecode: Option<String>,
     pub additional_data: serde_json::Value,
     pub per_frame_time_offsets: Vec<f64>,
+    /// Canon intrinsic frame-time series held inactive when the video carries
+    /// trusted built-in gyro data. A batch assignment with external gyro metadata
+    /// copies it into `per_frame_time_offsets`.
+    pub canon_deferred_frame_time_offsets: Vec<f64>,
     pub camera_stab_data: Vec<CameraStabData>,
     pub mesh_correction: Vec<(Vec<f64>, Vec<f32>)>,
     pub duration_ms: f64,
@@ -115,6 +119,7 @@ impl FileMetadata {
             timecode: self.timecode.clone(),
             additional_data: self.additional_data.clone(),
             per_frame_time_offsets: Default::default(),
+            canon_deferred_frame_time_offsets: Default::default(),
             camera_stab_data: Default::default(),
             mesh_correction: Default::default(),
             duration_ms: self.duration_ms,
