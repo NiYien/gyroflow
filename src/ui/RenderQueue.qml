@@ -143,6 +143,22 @@ Item {
         root.pendingAction = action;
         root.runAutoMatch();
     }
+    function dispatchMatchedAction(action): void {
+        if (action === "review") {
+            messageBox(Modal.Info, qsTr("Check the lens number on each video in the queue. Right-click to change it, then stabilize."), [ { text: qsTr("Ok") } ]);
+        } else if (action === "sync") {
+            window.runSimpleBatchSync();
+        } else if (action === "export") {
+            window.runSimpleBatchExport();
+        }
+    }
+    function deepMatchLensMismatchLines(): var {
+        let mismatches = [];
+        try { mismatches = JSON.parse(render_queue.get_deep_match_lens_mismatches_json()); } catch (e) { }
+        return mismatches.map(function(item) {
+            return item.filename + ": L" + (item.probe_lens_index + 1) + " → L" + (item.assigned_lens_index + 1);
+        });
+    }
     // Run the batch gyro match. Moved from the removed standalone "Auto match" button
     // (beginMatch) so beginMatchThenSync can drive it directly from the queue root.
     function runAutoMatch(): void {
@@ -746,19 +762,23 @@ Item {
                 }
                 // A fresh match invalidates any prior sync.
                 window.syncDirty = true;
-                // manual-lens-pending-match-review: the match pass just assigned
-                // lens numbers to the queue rows — prompt the user to verify them
-                // (right-click to change) and stabilize when satisfied. No
-                // sync/export dispatch on this path.
-                if (action === "review") {
-                    messageBox(Modal.Info, qsTr("Check the lens number on each video in the queue. Right-click to change it, then stabilize."), [ { text: qsTr("Ok") } ]);
+                // A deep-match lens choice only controls the probe matrix. When
+                // automatic assignment later picks a visually different group,
+                // stop before sync/export so the user sees the exact transition.
+                const mismatchLines = root.deepMatchLensMismatchLines();
+                if (mismatchLines.length > 0) {
+                    const text = mismatchLines.join("\n") + "\n\n"
+                        + qsTr("Check the lens number on each video in the queue. Right-click to change it, then stabilize.");
+                    const buttons = action === "review"
+                        ? [ { text: qsTr("Ok") } ]
+                        : [
+                            { text: qsTr("Review lens numbers"), accent: true },
+                            { text: qsTranslate("App", "Continue"), clicked: function() { root.dispatchMatchedAction(action); } }
+                        ];
+                    messageBox(Modal.Warning, text, buttons);
                     return;
                 }
-                if (action === "sync") {
-                    window.runSimpleBatchSync();
-                } else if (action === "export") {
-                    window.runSimpleBatchExport();
-                }
+                root.dispatchMatchedAction(action);
             }
         }
         function onBatch_sync_status_changed(): void {

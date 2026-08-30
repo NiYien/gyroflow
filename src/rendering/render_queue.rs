@@ -928,6 +928,10 @@ struct DeepMatchVerify {
 struct DeepMatchResult {
     gyro_index: usize,
     offset_ms: f64,
+    // Lens group confirmed for the accepted probe. This remains probe-only
+    // for rendering; it is retained solely to warn when automatic assignment
+    // later chooses a visually different group.
+    probe_lens_index: Option<usize>,
 }
 
 // Bootstrap auto-probe (batch-sync-frontier-recovery): one focused deep-match
@@ -1671,6 +1675,63 @@ fn metadata_snapshot_for_job(job: &Job) -> Option<core::gyro_source::FileMetadat
         .map(JobLensMetadataBackup::to_metadata)
 }
 
+fn lens_group_configs_effectively_equal_for_job(
+    job: &Job,
+    metadata: &core::gyro_source::FileMetadata,
+    manual_edit: bool,
+    first: &niyien_lens_presets::LensGroupConfig,
+    second: &niyien_lens_presets::LensGroupConfig,
+) -> bool {
+    let first = niyien_lens_presets::effective_lens_group_config_for_build(
+        manual_edit,
+        false,
+        first,
+        metadata,
+    );
+    let second = niyien_lens_presets::effective_lens_group_config_for_build(
+        manual_edit,
+        false,
+        second,
+        metadata,
+    );
+    let auto_focal = niyien_lens_presets::extract_video_focus_length_mm(metadata);
+    let first_focal = niyien_lens_presets::select_focal_length(
+        job.focal_length_override,
+        auto_focal,
+        first.as_ref(),
+    )
+    .map(|(value, _)| value);
+    let second_focal = niyien_lens_presets::select_focal_length(
+        job.focal_length_override,
+        auto_focal,
+        second.as_ref(),
+    )
+    .map(|(value, _)| value);
+    if first_focal != second_focal {
+        return false;
+    }
+
+    let first_anamorphic = niyien_lens_presets::resolve_anamorphic_config(first.as_ref());
+    let second_anamorphic = niyien_lens_presets::resolve_anamorphic_config(second.as_ref());
+    if first_anamorphic != second_anamorphic {
+        return false;
+    }
+
+    let first_correction = first.as_ref().map_or(100.0, |config| {
+        niyien_lens_presets::effective_lens_correction_amount_percent(
+            config,
+            first_anamorphic.is_some(),
+        )
+    });
+    let second_correction = second.as_ref().map_or(100.0, |config| {
+        niyien_lens_presets::effective_lens_correction_amount_percent(
+            config,
+            second_anamorphic.is_some(),
+        )
+    });
+    first_correction == second_correction
+}
+
 fn effective_metadata_snapshot_for_job(
     job_id: u32,
     job: &Job,
@@ -2107,6 +2168,9 @@ pub struct RenderQueue {
     // "no_groups" (bare job, nothing configured yet).
     deep_match_needs_lens_choice: qt_method!(fn(&self, job_id: u32) -> QString),
     get_deep_match_gyro_index: qt_method!(fn(&self, job_id: u32) -> i32),
+    // Post-assignment warning payload. Entries are emitted only when the
+    // accepted probe group and automatic final group differ in visible effect.
+    get_deep_match_lens_mismatches_json: qt_method!(fn(&self) -> QString),
     // Same-day redundancy hint: true when this job's video creation date
     // falls on the same local day as the accepted deep match that taught
     // the current clock shift. Missing timestamps on either side => false
@@ -15411,6 +15475,7 @@ impl RenderQueue {
                     DeepMatchResult {
                         gyro_index: state.gyro_index,
                         offset_ms,
+                        probe_lens_index: state.probe_lens_index,
                     },
                 );
                 self.match_results_changed();
@@ -15445,6 +15510,89 @@ impl RenderQueue {
             .get(&job_id)
             .map(|r| r.gyro_index as i32)
             .unwrap_or(-1)
+    }
+
+    fn get_deep_match_lens_mismatches_json(&self) -> QString {
+        let manual_edit = core::settings::get_bool("lens_group_manual_edit", false);
+        let global_configs = self.stabilizer.lens_group_config.read().clone();
+        let mut mismatches = Vec::new();
+
+        for (job_id, deep_result) in &self.deep_match_results {
+            let Some(probe_lens_index) = deep_result.probe_lens_index else {
+                continue;
+            };
+            let Some(job) = self.jobs.get(job_id) else {
+                continue;
+            };
+            // An explicit queue-row assignment already reflects a deliberate
+            // user choice, so the automatic-assignment reminder does not apply.
+            if job.lens_index_override.is_some() {
+                continue;
+            }
+            let Some(assigned_lens_index) = job.lens_group_index else {
+                continue;
+            };
+            if probe_lens_index == assigned_lens_index {
+                continue;
+            }
+            let matched_to_deep_gyro = self.match_results.as_ref().map_or(false, |batch| {
+                batch.results.iter().any(|result| {
+                    result.job_id == Some(*job_id)
+                        && result.gyro_index == Some(deep_result.gyro_index)
+                        && matches!(
+                            &result.status,
+                            core::gyro_match::MatchStatus::Matched
+                                | core::gyro_match::MatchStatus::MatchedFallback
+                        )
+                })
+            });
+            if !matched_to_deep_gyro {
+                continue;
+            }
+
+            let configs = effective_lens_group_configs(job, &global_configs);
+            let (Some(probe_config), Some(assigned_config)) = (
+                configs.get(probe_lens_index),
+                configs.get(assigned_lens_index),
+            ) else {
+                continue;
+            };
+            let Some(metadata) = metadata_snapshot_for_job(job) else {
+                continue;
+            };
+            if lens_group_configs_effectively_equal_for_job(
+                job,
+                &metadata,
+                manual_edit,
+                probe_config,
+                assigned_config,
+            ) {
+                continue;
+            }
+
+            ::log::info!(
+                target: "lens",
+                "[deep-match] probe/final lens groups differ: job={} probe=L{} assigned=L{}",
+                job_id,
+                probe_lens_index + 1,
+                assigned_lens_index + 1
+            );
+            mismatches.push((
+                job.queue_index,
+                serde_json::json!({
+                    "job_id": job_id,
+                    "filename": job.render_options.input_filename.clone(),
+                    "probe_lens_index": probe_lens_index,
+                    "assigned_lens_index": assigned_lens_index,
+                }),
+            ));
+        }
+
+        mismatches.sort_by_key(|(queue_index, _)| *queue_index);
+        QString::from(
+            serde_json::Value::Array(mismatches.into_iter().map(|(_, value)| value).collect())
+                .to_string(),
+        )
     }
 
     // Pre-flight query for the deep-match lens-group confirmation dialog.
@@ -20110,9 +20258,14 @@ mod tests {
         assert_eq!(input.baseline_shift_ms, -5000);
 
         // Deep-pinned jobs never take a dynamic override (§6)…
-        queue
-            .deep_match_results
-            .insert(1, DeepMatchResult { gyro_index: 0, offset_ms: 0.0 });
+        queue.deep_match_results.insert(
+            1,
+            DeepMatchResult {
+                gyro_index: 0,
+                offset_ms: 0.0,
+                probe_lens_index: None,
+            },
+        );
         assert!(queue.batch_sync_dynamic_assignment_input(1).is_none());
 
         // …and repair rounds reuse their previous assignment context (§7).
@@ -23510,6 +23663,7 @@ mod tests {
             DeepMatchResult {
                 gyro_index: 0,
                 offset_ms: 12.0,
+                probe_lens_index: None,
             },
         );
         // One matched video entry plus a calibration-pair entry: the reset must
@@ -23918,6 +24072,7 @@ mod tests {
             DeepMatchResult {
                 gyro_index: 3,
                 offset_ms: -1234.0,
+                probe_lens_index: None,
             },
         );
         queue.match_results = Some(core::gyro_match::BatchMatchResult {
