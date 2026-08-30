@@ -27426,6 +27426,29 @@ mod tests {
     }
 
     #[test]
+    fn video_area_single_folder_with_gyro_routes_to_queue() {
+        let qml = include_str!("../ui/VideoArea.qml");
+        let folder_branch_idx = qml
+            .find("if (folderUrls.length === 1 && fileUrls.length === 0)")
+            .expect("VideoArea must keep the single-folder routing branch");
+        let branch = &qml[folder_branch_idx..];
+        let gyro_scan_idx = branch
+            .find("const gyroFilesFound = render_queue.add_gyro_folder(")
+            .expect("single-folder routing must inspect queue-managed gyro data");
+        let preview_idx = branch
+            .find("if (items.length === 1 && gyroFilesFound === 0)")
+            .expect("a single clip may use the preview only when the folder has no gyro data");
+        let queue_idx = branch
+            .find("if (items.length > 0 && queue.item)")
+            .expect("a folder containing gyro data and a video must route to the queue");
+
+        assert!(
+            gyro_scan_idx < preview_idx && preview_idx < queue_idx,
+            "single-folder routing must scan gyro data before choosing preview versus queue"
+        );
+    }
+
+    #[test]
     fn video_area_batch_filters_paired_gyroflow_before_routing() {
         let qml = include_str!("../ui/VideoArea.qml");
         let fn_idx = qml
