@@ -1536,6 +1536,14 @@ fn sync_window_for_policy(
     }
 }
 
+fn batch_sync_preparation_integration_method(policy: BuiltinGyroSyncPolicy) -> usize {
+    if policy == BuiltinGyroSyncPolicy::Skip {
+        2 // VQF: no sync run will exist to restore it later.
+    } else {
+        1 // Complementary: temporary integration used by the sync estimator.
+    }
+}
+
 /// Whether the pending stabilize step (batch senseflow apply + auto-sync) would
 /// actually change the currently loaded main-preview clip. This is the playback
 /// hint predicate for deep-match users who picked "Later" and pressed play
@@ -4436,10 +4444,37 @@ impl RenderQueue {
             let new_ts = ((point.timestamp_ms - point.offset_ms) * 1000.0) as i64;
             gyro.set_offset(new_ts, point.offset_ms);
         }
+        Self::switch_sync_gyro_to_vqf(&mut gyro);
+        stab.keyframes.write().update_gyro(&gyro);
+        drop(gyro);
+        stab.invalidate_smoothing();
+    }
+
+    /// Finish a sync run with VQF quaternions, not merely a VQF method label.
+    fn switch_sync_gyro_to_vqf(gyro: &mut core::gyro_source::GyroSource) -> bool {
+        let needs_reintegration = gyro.integration_method != 2;
         gyro.integration_method = 2;
         gyro.prevent_recompute = false;
         gyro.adjust_offsets();
+        if needs_reintegration {
+            gyro.integrate();
+        }
+        needs_reintegration
+    }
+
+    fn finalize_batch_sync_with_vqf(stab: &StabilizationManager) {
+        let mut gyro = stab.gyro.write();
+        let reintegrated = Self::switch_sync_gyro_to_vqf(&mut gyro);
+        let quaternion_count = gyro.quaternions.len();
         stab.keyframes.write().update_gyro(&gyro);
+        drop(gyro);
+        stab.invalidate_smoothing();
+        ::log::info!(
+            target: "video.render",
+            "[batch_sync] finalized integration method=VQF reintegrated={} quaternions={}",
+            reintegrated,
+            quaternion_count
+        );
     }
 
     fn batch_sync_rank_at_timestamp_ms(
@@ -7661,6 +7696,11 @@ impl RenderQueue {
                 // recompute_blocking can take seconds on long clips — which
                 // reads as "progress stuck at 100%" in the modal. Skip it.
                 if !job_is_deep_match {
+                    // apply_match intentionally integrated Complementary for sync. Restore and
+                    // actually reintegrate VQF before final stabilization and the T1 project write.
+                    if defer_batch_sync_confirmation {
+                        Self::finalize_batch_sync_with_vqf(&stab);
+                    }
                     stab.recompute_blocking();
                 }
 
@@ -9701,10 +9741,15 @@ impl RenderQueue {
                                     gyro.set_offset(new_ts, x.1);
                                 }
                                 *collected_points2.lock() = candidates;
-                                // Switch from Complementary to VQF after sync completes
-                                gyro.integration_method = 2; // VQF
-                                gyro.prevent_recompute = false;
-                                gyro.adjust_offsets();
+                                // Batch collection is finalized synchronously by the worker before
+                                // recompute/export. Non-batch sync finishes here.
+                                let reintegrated_vqf = if collect_batch_points {
+                                    gyro.prevent_recompute = false;
+                                    gyro.adjust_offsets();
+                                    false
+                                } else {
+                                    Self::switch_sync_gyro_to_vqf(&mut gyro)
+                                };
                                 let _diag_kf_acq =
                                     gyroflow_core::batch_sync_diag::LockAcquireSpan::new(
                                         "keyframes_write",
@@ -9720,8 +9765,11 @@ impl RenderQueue {
                                 kf.update_gyro(&gyro);
                                 drop(kf);
                                 drop(_diag_kf_hold);
-                                // Closure end: _diag_gyro_hold drops then gyro releases. hold_ms
-                                // undercounts by μs (Drop function call) — acceptable.
+                                drop(gyro);
+                                drop(_diag_gyro_hold);
+                                if reintegrated_vqf {
+                                    stab2.invalidate_smoothing();
+                                }
                             }
                         });
 
@@ -13622,7 +13670,10 @@ impl RenderQueue {
                     2
                 };
 
-                item.stab.gyro.write().integration_method = 1; // Complementary
+                let policy =
+                    builtin_gyro_sync_policy(&item.stab.gyro.read().file_metadata.read());
+                let integration_method = batch_sync_preparation_integration_method(policy);
+                item.stab.gyro.write().integration_method = integration_method;
 
                 // sync_settings stores seconds; SyncParams parser at
                 // render_queue.rs:3015 multiplies by 1000 to ms. The init_offset/
@@ -13640,13 +13691,11 @@ impl RenderQueue {
                 // the search starts at 0 with a tight radius. `offset_is_anchor`
                 // stays false: that flag selects the σ=1500ms anchor-tier prior,
                 // which is far wider than this window's real uncertainty.
-                let policy =
-                    builtin_gyro_sync_policy(&item.stab.gyro.read().file_metadata.read());
                 let requires_builtin_gyro_sync = policy == BuiltinGyroSyncPolicy::Require;
                 let (init_offset_s, search_size_s, offset_is_anchor) =
                     sync_window_for_policy(policy, item.init_offset_ms);
                 ::log::info!(
-                    "[batch_match_diag] sync_override job_id={} video='{}' gyro_file='{}' raw_range_ms={:?} normalized_range_ms={:?} init_offset_ms={:?} initial_offset_s={:.3} search_size_s={:.3} window={} duration_s={:.3} playback_fps={:.3} effective_fps={:.3} fps_scale={:?} max_sync_points={} every_nth_frame={}",
+                    "[batch_match_diag] sync_override job_id={} video='{}' gyro_file='{}' raw_range_ms={:?} normalized_range_ms={:?} init_offset_ms={:?} initial_offset_s={:.3} search_size_s={:.3} window={} integration_method={} policy={:?} duration_s={:.3} playback_fps={:.3} effective_fps={:.3} fps_scale={:?} max_sync_points={} every_nth_frame={}",
                     item.job_id,
                     item.render_options.input_filename,
                     filesystem::get_filename(&item.gyro_path),
@@ -13656,6 +13705,8 @@ impl RenderQueue {
                     init_offset_s,
                     search_size_s,
                     if requires_builtin_gyro_sync { "builtin_gyro" } else { "match" },
+                    integration_method,
+                    policy,
                     duration_s,
                     playback_fps,
                     effective_fps,
@@ -24574,6 +24625,44 @@ mod tests {
     }
 
     #[test]
+    fn finalize_batch_sync_reintegrates_vqf_and_persists_method() {
+        let stab = StabilizationManager::default();
+        {
+            let mut gyro = stab.gyro.write();
+            gyro.duration_ms = 1000.0;
+            gyro.integration_method = 1;
+            gyro.prevent_recompute = true;
+            gyro.quaternions
+                .insert(0, core::gyro_source::Quat64::identity());
+            gyro.file_metadata.write().raw_imu = (0..100)
+                .map(|i| core::gyro_source::TimeIMU {
+                    timestamp_ms: i as f64 * 10.0,
+                    gyro: Some([0.1, 0.2, 0.3]),
+                    accl: Some([0.0, 0.0, 1.0]),
+                    magn: None,
+                })
+                .collect();
+        }
+
+        RenderQueue::finalize_batch_sync_with_vqf(&stab);
+
+        let gyro = stab.gyro.read();
+        assert_eq!(gyro.integration_method, 2);
+        assert!(!gyro.prevent_recompute);
+        assert!(
+            gyro.quaternions.len() > 1,
+            "the VQF switch must replace the one-entry Complementary sentinel"
+        );
+        drop(gyro);
+
+        let project = stab
+            .export_gyroflow_data(core::GyroflowProjectType::WithGyroData, "{}", None)
+            .expect("project export");
+        let project: serde_json::Value = serde_json::from_str(&project).expect("valid project");
+        assert_eq!(project["gyro_source"]["integration_method"].as_u64(), Some(2));
+    }
+
+    #[test]
     fn write_gyroflow_with_offsets_override_pretty_prints_and_overrides_offsets() {
         // Helper used by T1 (inject sync_stats.points) and T2 yellow (clear).
         // Verify: file written, offsets replaced verbatim, pretty-printed (line breaks).
@@ -30100,6 +30189,22 @@ mod tests {
                 assert!(anchor, "{policy:?} must stay an anchor");
             }
         }
+    }
+
+    #[test]
+    fn batch_sync_preparation_keeps_vqf_when_policy_skips_sync() {
+        assert_eq!(
+            batch_sync_preparation_integration_method(BuiltinGyroSyncPolicy::Skip),
+            2
+        );
+        assert_eq!(
+            batch_sync_preparation_integration_method(BuiltinGyroSyncPolicy::Require),
+            1
+        );
+        assert_eq!(
+            batch_sync_preparation_integration_method(BuiltinGyroSyncPolicy::NotApplicable),
+            1
+        );
     }
 
     // The window has to cover the physical range it was sized for, otherwise the

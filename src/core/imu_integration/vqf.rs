@@ -1282,6 +1282,13 @@ fn acc_correction(quat3d: &[f64], acc_i: &[f64], n: usize, quat6d: &mut Vec<f64>
 
 fn calculate_delta(quat6d: &[f64], mag: &[f64], n: usize, delta: &mut Vec<f64>) {
     for i in 0..n {
+        // Ignore [0 0 0] samples, as VQF::update_mag() does. Otherwise signed
+        // zeros can create a large, wandering heading offset through atan2().
+        if mag[3 * i].abs() == 0.0 && mag[3 * i + 1].abs() == 0.0 && mag[3 * i + 2].abs() == 0.0 {
+            delta[i] = NAN;
+            continue;
+        }
+
         // bring magnetometer measurement into 6D earth frame
         let mag_earth = VQF::quat_rotate(&quat6d[4 * i..4 * i + 4], &mag[3 * i..3 * i + 3]);
 
@@ -1299,12 +1306,20 @@ fn filter_delta(
     delta: &mut Vec<f64>,
 ) {
     let mut d = if backward { delta[n - 1] } else { delta[0] };
+    if d.is_nan() {
+        d = 0.0;
+    }
     let k_mag = VQF::gain_from_tau(params.tau_mag, ts);
     let mut k_mag_init: f64 = 1.0;
     let mut mag_reject_t: f64 = 0.0;
 
     for i in 0..n {
         let j = if backward { n - i - 1 } else { i };
+        if delta[j].is_nan() {
+            // No magnetometer measurement: keep the previous heading offset.
+            delta[j] = d;
+            continue;
+        }
         let mut dis_angle = delta[j] - d;
 
         // make sure the disagreement angle is in the range [-pi, pi]
