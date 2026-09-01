@@ -184,12 +184,13 @@ fn format_line(record: &Record) -> String {
     if record.level() <= Level::Warn {
         // Append context only on warn/error for diagnostic self-containment.
         let ctx = LogContext::snapshot();
-        let mut suffix = String::new();
-        if !ctx.session_id.is_empty() {
-            suffix.push_str(&format!("[sid={} ", ctx.session_id));
+        let sid = if ctx.session_id.is_empty() {
+            session_id()
         } else {
-            suffix.push_str("[sid=? ");
-        }
+            ctx.session_id.as_str()
+        };
+        let mut suffix = String::new();
+        suffix.push_str(&format!("[sid={sid} "));
         if let Some(v) = &ctx.video_path {
             suffix.push_str(&format!("vid={v} "));
         }

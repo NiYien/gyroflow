@@ -52,8 +52,8 @@ fn dedup_state() -> &'static Mutex<DedupLru> {
     DEDUP_STATE.get_or_init(|| Mutex::new(DedupLru::new()))
 }
 
-/// Install the panic hook. Idempotent; chains on top of the existing default
-/// hook so terminal backtraces remain visible to `cargo run` users.
+/// Install the panic hook. Idempotent; chains on top of the thread-agnostic
+/// logging hook installed during startup.
 pub fn register_panic_hook() {
     if PREVIOUS_HOOK.get().is_some() {
         return;
@@ -62,6 +62,17 @@ pub fn register_panic_hook() {
     let _ = PREVIOUS_HOOK.set(prev);
 
     std::panic::set_hook(Box::new(|info| {
+        // Qt and MDK can panic while tearing down a foreign render thread,
+        // after Rust has destroyed that thread's TLS. The full crash pipeline
+        // uses contextual state and backtrace machinery, so skip it here and
+        // delegate directly to the thread-agnostic logging hook.
+        if !LogContext::tls_available() {
+            if let Some(prev) = PREVIOUS_HOOK.get() {
+                prev(info);
+            }
+            return;
+        }
+
         // Skip the crash zip for known, fully-recoverable panics that the app
         // already handles (e.g. ocl-core's panic on the cl_*_d3d11_sharing
         // status codes, which the OpenCL-init firewall catches and falls back
@@ -285,6 +296,11 @@ fn format_panic(info: &PanicHookInfo<'_>) -> String {
 
 fn build_meta_json(now: &chrono::DateTime<chrono::Local>) -> String {
     let ctx = LogContext::snapshot();
+    let session_id = if ctx.session_id.is_empty() {
+        logger::session_id().to_owned()
+    } else {
+        ctx.session_id.clone()
+    };
     let video_path = ctx
         .video_path
         .as_deref()
@@ -296,7 +312,7 @@ fn build_meta_json(now: &chrono::DateTime<chrono::Local>) -> String {
         .map(|s| serde_json::Value::String(s.into()))
         .unwrap_or(serde_json::Value::Null);
     let value = serde_json::json!({
-        "session_id": ctx.session_id,
+        "session_id": session_id,
         "app_version": env!("CARGO_PKG_VERSION"),
         "os": std::env::consts::OS,
         "arch": std::env::consts::ARCH,

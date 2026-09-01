@@ -87,12 +87,15 @@ fn entry() {
     util::invalidate_qt_cache_if_version_changed();
     util::update_rlimit();
     util::set_android_context();
-    log_panics::init();
+    // Keep the base hook independent of Rust thread metadata. Qt and MDK can
+    // panic while destroying a foreign render thread after Rust TLS is gone.
+    std::panic::set_hook(Box::new(|info| {
+        ::log::error!(target: "panic", "{info}")
+    }));
 
-    // Rust-panic crash dump (Phase 1 of feedback system). Installed AFTER
-    // log_panics so this becomes the outermost wrapper: capture zip first,
-    // then delegate to log_panics (which logs via log::error!) and finally
-    // the default hook (terminal backtrace).
+    // Rust-panic crash dump (Phase 1 of feedback system). Installed after the
+    // thread-agnostic base hook so normal panics are packaged first and then
+    // logged. Late TLS-teardown panics bypass the contextual dump safely.
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         crash::register_panic_hook();

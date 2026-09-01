@@ -44,7 +44,8 @@ pub fn compute(
                         .abs();
                     window *= vid_speed;
                 }
-                let frames = get_frames_per_window(compute_params);
+                let frames =
+                    get_frames_per_window(window, compute_params.scaled_fps, timestamps.len());
                 if frames > max_window {
                     max_window = frames;
                 }
@@ -92,7 +93,8 @@ pub fn compute(
         match method {
             ZoomMethod::GaussianFilter => {
                 // Static window
-                let frames = get_frames_per_window(compute_params);
+                let frames =
+                    get_frames_per_window(window, compute_params.scaled_fps, fov_values.len());
 
                 super::zoom_diag::record_pad(
                     *fov_values.first().unwrap_or(&0.0),
@@ -124,9 +126,16 @@ pub fn compute(
     (fov_values, fov_minimal)
 }
 
-fn get_frames_per_window(compute_params: &ComputeParams) -> usize {
-    let mut frames =
-        (compute_params.adaptive_zoom_window * compute_params.scaled_fps).floor() as usize;
+fn get_frames_per_window(window: f64, fps: f64, max_frames: usize) -> usize {
+    let exact = window * fps;
+    let mut frames = if exact.is_finite() && exact > 0.0 {
+        (exact.floor() as usize).min(max_frames)
+    } else {
+        if !exact.is_finite() {
+            log::error!("Invalid zooming window: {window} s at {fps} fps");
+        }
+        0
+    };
     if frames % 2 == 0 {
         frames += 1;
     }
@@ -163,15 +172,10 @@ fn pad_edge(arr: &[f64], pad_to: (usize, usize)) -> Vec<f64> {
     let first = *arr.first().unwrap_or(&0.0);
     let last = *arr.last().unwrap_or(&0.0);
 
-    let mut new_arr = vec![0.0; arr.len() + pad_to.0 + pad_to.1];
-    new_arr[pad_to.0..pad_to.0 + arr.len()].copy_from_slice(arr);
-
-    for i in 0..pad_to.0 {
-        new_arr[i] = first;
-    }
-    for i in pad_to.0 + arr.len()..new_arr.len() {
-        new_arr[i] = last;
-    }
+    let mut new_arr = Vec::with_capacity(arr.len() + pad_to.0 + pad_to.1);
+    new_arr.resize(pad_to.0, first);
+    new_arr.extend_from_slice(arr);
+    new_arr.resize(new_arr.len() + pad_to.1, last);
 
     new_arr
 }
@@ -275,4 +279,22 @@ fn envelope_follower(
         .collect::<Vec<_>>();
 
     smoothed2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::get_frames_per_window;
+
+    #[test]
+    fn zoom_window_uses_current_value_and_stays_bounded() {
+        assert_eq!(get_frames_per_window(1.0, 25.0, 100), 25);
+        assert_eq!(get_frames_per_window(2.0, 25.0, 100), 51);
+        assert_eq!(get_frames_per_window(4.0, 25.0, 10), 11);
+    }
+
+    #[test]
+    fn invalid_zoom_window_uses_minimal_window() {
+        assert_eq!(get_frames_per_window(f64::NAN, 25.0, 100), 1);
+        assert_eq!(get_frames_per_window(4.0, f64::INFINITY, 100), 1);
+    }
 }

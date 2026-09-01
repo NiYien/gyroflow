@@ -241,16 +241,29 @@ impl StabilizationParams {
                 .fold(0.0, |acc, &x| acc + (x.1 - x.0))
         }
     }
+    /// `fps_scale` is a multiplier for `fps`, so only a finite, positive value is valid.
+    pub fn is_valid_fps_scale(scale: f64) -> bool {
+        scale.is_finite() && scale > 0.0
+    }
+    pub fn set_fps_scale(&mut self, scale: Option<f64>) {
+        self.fps_scale = match scale {
+            Some(v) if !Self::is_valid_fps_scale(v) => {
+                log::warn!("Ignoring invalid fps scale: {v}");
+                None
+            }
+            v => v,
+        };
+    }
     pub fn get_scaled_duration_ms(&self) -> f64 {
         match self.fps_scale {
-            Some(scale) => self.duration_ms / scale,
-            None => self.duration_ms,
+            Some(scale) if Self::is_valid_fps_scale(scale) => self.duration_ms / scale,
+            _ => self.duration_ms,
         }
     }
     pub fn get_scaled_fps(&self) -> f64 {
         match self.fps_scale {
-            Some(scale) => self.fps * scale,
-            None => self.fps,
+            Some(scale) if Self::is_valid_fps_scale(scale) => self.fps * scale,
+            _ => self.fps,
         }
     }
 
@@ -384,6 +397,26 @@ mod tests {
         p.size = size;
         p.output_size = output_size;
         p
+    }
+
+    #[test]
+    fn invalid_fps_scale_falls_back_to_source_timebase() {
+        let mut p = StabilizationParams::default();
+        p.fps = 25.0;
+        p.duration_ms = 4_000.0;
+
+        for scale in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            p.set_fps_scale(Some(scale));
+            assert_eq!(p.fps_scale, None);
+            assert_eq!(p.get_scaled_fps(), 25.0);
+            assert_eq!(p.get_scaled_duration_ms(), 4_000.0);
+        }
+
+        // Guard getters too, because serde can populate the public field
+        // without going through the setter.
+        p.fps_scale = Some(f64::NAN);
+        assert_eq!(p.get_scaled_fps(), 25.0);
+        assert_eq!(p.get_scaled_duration_ms(), 4_000.0);
     }
 
     #[test]

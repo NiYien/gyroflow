@@ -447,6 +447,9 @@ pub fn init_logging() {
                 cfg.add_filter_ignore_str(x);
                 cfg
             })
+            // Qt can log while tearing down a foreign render thread, after
+            // Rust's own thread-local `Thread` has already been destroyed.
+            .set_thread_level(LevelFilter::Off)
             .build();
         WriteLogger::init(
             LevelFilter::Debug,
