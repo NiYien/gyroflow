@@ -55,6 +55,8 @@ typedef struct {
     float post_rotation;             // 4
     float post_zoom;                 // 8
     float2 post_offset;              // 16
+    float2 post_scale;               // 8
+    float2 post_scale_reserved;      // 16
 } KernelParams;
 
 #if INTERPOLATION == 2 // Bilinear
@@ -499,16 +501,17 @@ float2 undistort_coord(float2 out_pos, __global KernelParams *params, __global c
     // sample so identity bypass is byte-equivalent (D4); inserted after translation2d and
     // before lens correction so the displayed pixel goes through the same distortion
     // model (D2); range-capped at the UI (D6) so the RS-refine below converges.
-    if (params->post_zoom != 1.0f || params->post_rotation != 0.0f || params->post_offset.x != 0.0f || params->post_offset.y != 0.0f) {
+    if (params->post_zoom != 1.0f || params->post_scale.x != 1.0f || params->post_scale.y != 1.0f || params->post_rotation != 0.0f || params->post_offset.x != 0.0f || params->post_offset.y != 0.0f) {
         float2 oc = (float2)((float)params->output_width * 0.5f, (float)params->output_height * 0.5f);
         float2 off_px = (float2)(params->post_offset.x * (float)params->output_width,
                                  params->post_offset.y * (float)params->output_height);
         out_pos -= oc;
-        out_pos /= params->post_zoom;
         float ang = -params->post_rotation * (M_PI_F / 180.0f);
         float cs = cos(ang);
         float sn = sin(ang);
         out_pos = (float2)(cs * out_pos.x - sn * out_pos.y, sn * out_pos.x + cs * out_pos.y);
+        out_pos /= (float2)(params->post_zoom * params->post_scale.x,
+                            params->post_zoom * params->post_scale.y);
         out_pos += oc;
         out_pos -= off_px;
     }

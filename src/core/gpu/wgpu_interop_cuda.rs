@@ -151,11 +151,19 @@ fn cuda_sync_resolved() -> (bool, bool) {
         let mode_raw = std::env::var("GYROFLOW_CUDA_SYNC_MODE").unwrap_or_default();
         let stream_mode = !matches!(mode_raw.trim().to_ascii_lowercase().as_str(), "ctx");
         let pad_raw = std::env::var("GYROFLOW_CUDA_INPUT_CTX_SYNC").unwrap_or_default();
-        let input_pad = !matches!(pad_raw.trim().to_ascii_lowercase().as_str(), "0" | "off" | "false" | "no");
-        let symbols = CUDA.as_ref().map(|c| {
-            c.cuStreamCreate.is_some() && c.cuStreamSynchronize.is_some()
-                && c.cuStreamDestroy.is_some() && c.cuMemcpy2DAsync_v2.is_some()
-        }).unwrap_or(false);
+        let input_pad = !matches!(
+            pad_raw.trim().to_ascii_lowercase().as_str(),
+            "0" | "off" | "false" | "no"
+        );
+        let symbols = CUDA
+            .as_ref()
+            .map(|c| {
+                c.cuStreamCreate.is_some()
+                    && c.cuStreamSynchronize.is_some()
+                    && c.cuStreamDestroy.is_some()
+                    && c.cuMemcpy2DAsync_v2.is_some()
+            })
+            .unwrap_or(false);
         log::info!(
             target: "gpu",
             "cuda sync resolved: mode={} source={} input_ctx_sync={} stream_symbols={symbols}",
@@ -181,7 +189,9 @@ impl Drop for ThreadCopyStream {
         if let Some(s) = self.0.get() {
             if let Ok(cuda) = CUDA.as_ref() {
                 if let Some(destroy) = &cuda.cuStreamDestroy {
-                    unsafe { (destroy)(s); }
+                    unsafe {
+                        (destroy)(s);
+                    }
                 }
             }
         }
@@ -256,7 +266,9 @@ pub fn cuda_2d_copy_and_sync(
     if let Ok(cuda) = CUDA.as_ref() {
         if let Some(stream) = get_copy_stream() {
             // Symbols guaranteed present by get_copy_stream's gate.
-            if let (Some(copy_async), Some(stream_sync)) = (&cuda.cuMemcpy2DAsync_v2, &cuda.cuStreamSynchronize) {
+            if let (Some(copy_async), Some(stream_sync)) =
+                (&cuda.cuMemcpy2DAsync_v2, &cuda.cuStreamSynchronize)
+            {
                 let err = unsafe { (copy_async)(&desc as *const _, stream) };
                 if err != CUresult::CUDA_SUCCESS {
                     log::error!("Call to cuMemcpy2DAsync_v2 failed: {err:?}");
@@ -1022,12 +1034,17 @@ pub struct CudaFunctions {
     // recent driver, but loaded as Option so a missing symbol degrades to the
     // legacy ctx-sync path instead of failing the whole CUDA binding.
     pub cuStreamCreate: Option<
-        dl::Symbol<unsafe extern "C" fn(phStream: *mut CUstream, flags: std::os::raw::c_uint) -> CUresult>,
+        dl::Symbol<
+            unsafe extern "C" fn(phStream: *mut CUstream, flags: std::os::raw::c_uint) -> CUresult,
+        >,
     >,
-    pub cuStreamSynchronize: Option<dl::Symbol<unsafe extern "C" fn(hStream: CUstream) -> CUresult>>,
+    pub cuStreamSynchronize:
+        Option<dl::Symbol<unsafe extern "C" fn(hStream: CUstream) -> CUresult>>,
     pub cuStreamDestroy: Option<dl::Symbol<unsafe extern "C" fn(hStream: CUstream) -> CUresult>>,
     pub cuMemcpy2DAsync_v2: Option<
-        dl::Symbol<unsafe extern "C" fn(pCopy: *const CUDA_MEMCPY2D_st, hStream: CUstream) -> CUresult>,
+        dl::Symbol<
+            unsafe extern "C" fn(pCopy: *const CUDA_MEMCPY2D_st, hStream: CUstream) -> CUresult,
+        >,
     >,
 }
 

@@ -1109,3 +1109,33 @@ pub fn is_buffer_supported(buffers: &Buffers) -> bool {
         BufferSource::Metal { .. } | BufferSource::MetalBuffer { .. } => true,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn post_affine_scale_wgsl_is_well_formed() {
+        let mut kernel = include_str!("wgpu_undistort.wgsl").to_string();
+        let mut lens_functions = DistortionModel::default().wgsl_functions().to_string();
+        lens_functions.push_str(
+            "fn digital_undistort_point(uv: vec2<f32>) -> vec2<f32> { return uv; }\n\
+             fn digital_distort_point(uv: vec2<f32>) -> vec2<f32> { return uv; }",
+        );
+        kernel = kernel.replace("LENS_MODEL_FUNCTIONS;", &lens_functions);
+        kernel = kernel.replace("SCALAR", "f32");
+        while let Some(start) = kernel.find("{buffer_input}") {
+            let end = kernel.find("{/buffer_input}").unwrap() + "{/buffer_input}".len();
+            kernel.replace_range(start..end, "");
+        }
+
+        let module = wgpu::naga::front::wgsl::parse_str(&kernel)
+            .unwrap_or_else(|error| panic!("{}", error.emit_to_string(&kernel)));
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .expect("assembled post-affine WGSL must validate");
+    }
+}

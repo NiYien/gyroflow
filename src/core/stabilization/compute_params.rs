@@ -157,8 +157,14 @@ impl ComputeParams {
         // untouched). Fall back to the mutating field for legacy lens profiles
         // / call sites that pre-date the raw mirror; this preserves the pre-§10
         // numerical result whenever the raw fields are unset.
-        let h_raw = self.lens.input_horizontal_stretch_raw.unwrap_or(self.lens.input_horizontal_stretch);
-        let v_raw = self.lens.input_vertical_stretch_raw.unwrap_or(self.lens.input_vertical_stretch);
+        let h_raw = self
+            .lens
+            .input_horizontal_stretch_raw
+            .unwrap_or(self.lens.input_horizontal_stretch);
+        let v_raw = self
+            .lens
+            .input_vertical_stretch_raw
+            .unwrap_or(self.lens.input_vertical_stretch);
         let h = if h_raw > 0.01 { h_raw } else { 1.0 };
         let v = if v_raw > 0.01 { v_raw } else { 1.0 };
         anamorphic_lens_correction_decay(h, v)

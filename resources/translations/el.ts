@@ -3092,6 +3092,64 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <source>Cancel</source>
         <translation>Ακύρωση</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="70"/>
+        <source>Installed</source>
+        <translation>Εγκαταστάθηκε</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="72"/>
+        <source>Update available</source>
+        <translation>Υπάρχει διαθέσιμη ενημέρωση</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="74"/>
+        <source>Template missing</source>
+        <translation>Λείπει το πρότυπο</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="76"/>
+        <source>Broken or untrusted</source>
+        <translation>Κατεστραμμένο ή μη αξιόπιστο</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="78"/>
+        <source>Not installed</source>
+        <translation>Δεν έχει εγκατασταθεί</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="89"/>
+        <source>Repair</source>
+        <translation>Επιδιόρθωση</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="146"/>
+        <source>Unable to replace the Final Cut integration while related apps may be using it.
+Close Final Cut Pro, Motion, and Gyroflow NiYien Final Cut, then click Repair or Install again.</source>
+        <translation>Δεν είναι δυνατή η αντικατάσταση της ενσωμάτωσης Final Cut ενώ μπορεί να χρησιμοποιείται από σχετικές εφαρμογές.
+Κλείστε τα Final Cut Pro, Motion και Gyroflow NiYien Final Cut και μετά πατήστε ξανά Επιδιόρθωση ή Εγκατάσταση.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="148"/>
+        <source>The Final Cut App was installed, but its Motion template could not be verified.
+Close Final Cut Pro and Motion, then click Repair again.</source>
+        <translation>Η εφαρμογή Final Cut εγκαταστάθηκε, αλλά δεν ήταν δυνατή η επαλήθευση του προτύπου Motion.
+Κλείστε τα Final Cut Pro και Motion και μετά πατήστε ξανά Επιδιόρθωση.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="150"/>
+        <source>The downloaded Final Cut integration could not be verified as trusted. No App was installed.
+Check your network connection and try again later.</source>
+        <translation>Δεν ήταν δυνατή η επαλήθευση της αξιοπιστίας της ληφθείσας ενσωμάτωσης Final Cut. Δεν εγκαταστάθηκε εφαρμογή.
+Ελέγξτε τη σύνδεση δικτύου και δοκιμάστε ξανά αργότερα.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="181"/>
+        <source>Final Cut integration installed.
+Close and reopen Final Cut Pro before using the effect.</source>
+        <translation>Η ενσωμάτωση Final Cut εγκαταστάθηκε.
+Κλείστε και ανοίξτε ξανά το Final Cut Pro πριν χρησιμοποιήσετε το εφέ.</translation>
+    </message>
 </context>
 <context>
     <name>NumberField</name>

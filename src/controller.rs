@@ -5589,6 +5589,7 @@ impl Controller {
         {
             crate::nle_plugins::is_nle_installed("openfx")
                 || crate::nle_plugins::is_nle_installed("adobe")
+                || crate::nle_plugins::is_final_cut_host_installed()
         }
         #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
         {

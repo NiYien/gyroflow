@@ -730,7 +730,8 @@ mod tests {
 
     #[test]
     fn readout_crop_scale_uses_captured_rows_for_sony() {
-        let scale = FrameTransform::readout_crop_scale(true, Some(CROPPED_CAPTURE_H), Some(SENSOR_H));
+        let scale =
+            FrameTransform::readout_crop_scale(true, Some(CROPPED_CAPTURE_H), Some(SENSOR_H));
         assert!(
             (scale - 0.666_727).abs() < 1e-6,
             "expected the 2/3-height crop ratio, got {scale}"
@@ -799,7 +800,9 @@ mod tests {
         assert!(FrameTransform::detected_source_is_sony(Some(
             "Sony ZV-E10M2"
         )));
-        assert!(FrameTransform::detected_source_is_sony(Some("Sony ILCE-6400")));
+        assert!(FrameTransform::detected_source_is_sony(Some(
+            "Sony ILCE-6400"
+        )));
 
         assert!(!FrameTransform::detected_source_is_sony(None));
         assert!(!FrameTransform::detected_source_is_sony(Some("Nikon ZR")));

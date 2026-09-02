@@ -13,7 +13,10 @@ MenuItem {
 
     property var openfx_status: ({});
     property var adobe_status: ({});
+    property var finalcut_status: ({});
+    property string initiatedInstallType: "";
     readonly property bool adobeSupported: Qt.platform.os !== "linux";
+    readonly property bool finalcutSupported: Qt.platform.os === "osx";
 
     Component.onCompleted: {
         refreshStatuses();
@@ -21,6 +24,7 @@ MenuItem {
     function refreshStatuses() {
         controller.nle_plugins("status", "openfx");
         if (root.adobeSupported) controller.nle_plugins("status", "adobe");
+        if (root.finalcutSupported) controller.nle_plugins("status", "finalcut");
     }
     function parseStatus(result: string): var {
         try {
@@ -30,7 +34,9 @@ MenuItem {
         }
     }
     function statusFor(type: string): var {
-        return type === "openfx" ? openfx_status : adobe_status;
+        if (type === "openfx") return openfx_status;
+        if (type === "adobe") return adobe_status;
+        return finalcut_status;
     }
     function installedVersion(type: string): string {
         const status = statusFor(type);
@@ -47,11 +53,46 @@ MenuItem {
         return Boolean(status.update_available);
     }
     function statusColor(type: string): string {
+        if (type === "finalcut") {
+            return statusFor(type).state === "installed" ? "#10ee14" : "red";
+        }
         const version = installedVersion(type);
         if (!version) {
             return "";
         }
         return isLatest(type)? "#10ee14" : "red";
+    }
+    function finalcutStatusText(): string {
+        const status = finalcut_status;
+        const version = status.installed_version || "---";
+        switch (status.state) {
+            case "installed":
+                return version + " — " + qsTr("Installed");
+            case "update_available":
+                return version + " — " + qsTr("Update available");
+            case "app_installed_template_missing":
+                return version + " — " + qsTr("Template missing");
+            case "broken_or_untrusted":
+                return version + " — " + qsTr("Broken or untrusted");
+            default:
+                return qsTr("Not installed");
+        }
+    }
+    function finalcutActionText(): string {
+        switch (finalcut_status.state) {
+            case "installed":
+                return "";
+            case "update_available":
+                return qsTr("Update");
+            case "app_installed_template_missing":
+            case "broken_or_untrusted":
+                return qsTr("Repair");
+            default:
+                return qsTr("Install");
+        }
+    }
+    function finalcutNeedsAction(): bool {
+        return finalcut_status.state !== "installed";
     }
     function latestSuffix(type: string): string {
         const status = statusFor(type);
@@ -68,6 +109,7 @@ MenuItem {
         dialog.accepted.connect(function() {
             if (Qt.resolvedUrl(dialog.selectedFolder) != Qt.resolvedUrl(initialFolder)) {
                 root.loader = false;
+                root.initiatedInstallType = "";
                 messageBox(Modal.Error, qsTr("You selected the wrong folder.\nMake sure to select %1.").arg("<b>" + folder + "</b>"), [ { text: qsTr("Ok"), accent: true } ]);
             } else {
                 filesystem.folder_access_granted(dialog.selectedFolder);
@@ -76,6 +118,7 @@ MenuItem {
         });
         dialog.rejected.connect(function() {
             root.loader = false;
+            root.initiatedInstallType = "";
         });
         dialog.open();
     }
@@ -89,6 +132,8 @@ MenuItem {
                     openfx_status = status;
                 } else if (status.typ === "adobe") {
                     adobe_status = status;
+                } else if (status.typ === "finalcut") {
+                    finalcut_status = status;
                 }
             }
             if (command == "install") {
@@ -97,7 +142,13 @@ MenuItem {
                 // initiated the install (loader=true) shows dialogs; the other one
                 // just refreshes its status below.
                 if (root.loader && result.startsWith("An error occured")) {
-                    if (result.includes("PLUGIN_MANUAL_INSTALL_REQUIRED:")) {
+                    if (result.includes("FINALCUT_APP_INSTALL_BLOCKED:")) {
+                        messageBox(Modal.Error, qsTr("Unable to replace the Final Cut integration while related apps may be using it.\nClose Final Cut Pro, Motion, and Gyroflow NiYien Final Cut, then click Repair or Install again."), [ { text: qsTr("Ok"), accent: true } ]);
+                    } else if (result.includes("FINALCUT_TEMPLATE_INSTALL_FAILED:") || result.includes("FINALCUT_INSTALL_VERIFICATION_FAILED:")) {
+                        messageBox(Modal.Error, qsTr("The Final Cut App was installed, but its Motion template could not be verified.\nClose Final Cut Pro and Motion, then click Repair again."), [ { text: qsTr("Ok"), accent: true } ]);
+                    } else if (root.initiatedInstallType === "finalcut" && (result.includes("code signature") || result.includes("Gatekeeper"))) {
+                        messageBox(Modal.Error, qsTr("The downloaded Final Cut integration could not be verified as trusted. No App was installed.\nCheck your network connection and try again later."), [ { text: qsTr("Ok"), accent: true } ]);
+                    } else if (result.includes("PLUGIN_MANUAL_INSTALL_REQUIRED:")) {
                         const source = result.split("PLUGIN_MANUAL_INSTALL_REQUIRED:").pop().split("|")[0];
                         const mb = messageBox(Modal.Error, qsTr("Automatic installation could not be completed. Open Terminal and run the following command:"), [ { text: qsTr("Ok"), accent: true } ]);
                         mb.isWide = true;
@@ -126,10 +177,36 @@ MenuItem {
                     } else {
                         messageBox(Modal.Error, result, [ { text: qsTr("Ok"), accent: true } ]);
                     }
+                } else if (root.loader && root.initiatedInstallType === "finalcut") {
+                    messageBox(Modal.Success, qsTr("Final Cut integration installed.\nClose and reopen Final Cut Pro before using the effect."), [ { text: qsTr("Ok"), accent: true } ]);
                 }
                 refreshStatuses();
                 root.loader = false;
+                root.initiatedInstallType = "";
             }
+        }
+    }
+
+    Row {
+        visible: root.finalcutSupported;
+        spacing: 4 * dpiScale;
+        BasicText {
+            text: 'Final Cut Pro: <b><font color="%1">%2</font></b>'.arg(statusColor("finalcut")).arg(finalcutStatusText());
+            textFormat: Text.StyledText;
+            anchors.verticalCenter: parent.verticalCenter;
+        }
+        LinkButton {
+            enabled: !root.loader;
+            visible: finalcutNeedsAction();
+            text: finalcutActionText();
+            leftPadding: 7 * dpiScale;
+            rightPadding: 7 * dpiScale;
+            onClicked: {
+                root.loader = true;
+                root.initiatedInstallType = "finalcut";
+                controller.nle_plugins("install", "finalcut");
+            }
+            anchors.verticalCenter: parent.verticalCenter;
         }
     }
 
@@ -148,6 +225,7 @@ MenuItem {
             rightPadding: 7 * dpiScale;
             onClicked: {
                 root.loader = true;
+                root.initiatedInstallType = "adobe";
                 if (Qt.platform.os == "osx" && isSandboxed) {
                     const folder = "/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore";
                     messageBox(Modal.Info, qsTr("At the next prompt, click <b>\"Open\"</b> to grant access to the %1 folder in order for Gyroflow to install the plugin.").arg("<b>\"" + folder + "\"</b>"), [ { text: qsTr("Ok"), accent: true, clicked: () => {
@@ -176,6 +254,7 @@ MenuItem {
             rightPadding: 7 * dpiScale;
             onClicked: {
                 root.loader = true;
+                root.initiatedInstallType = "openfx";
                 if (Qt.platform.os == "osx" && isSandboxed) {
                     const folder = "/Library/OFX/Plugins";
                     if (!filesystem.exists("file://" + folder)) {

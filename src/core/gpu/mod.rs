@@ -173,10 +173,31 @@ pub fn select_processing_device<'a>(
 pub struct PostAffine {
     pub rotation_deg: f32,
     pub zoom: f32,
+    pub scale_xy: [f32; 2],
     pub offset_norm: [f32; 2],
 }
 impl Default for PostAffine {
-    fn default() -> Self { Self { rotation_deg: 0.0, zoom: 1.0, offset_norm: [0.0, 0.0] } }
+    fn default() -> Self {
+        Self { rotation_deg: 0.0, zoom: 1.0, scale_xy: [1.0, 1.0], offset_norm: [0.0, 0.0] }
+    }
+}
+impl PostAffine {
+    #[inline]
+    pub fn inverse_map_point(self, point: [f32; 2], output_size: [f32; 2]) -> [f32; 2] {
+        let center = [output_size[0] * 0.5, output_size[1] * 0.5];
+        let angle = -self.rotation_deg * (std::f32::consts::PI / 180.0);
+        let cosine = angle.cos();
+        let sine = angle.sin();
+        let relative = [point[0] - center[0], point[1] - center[1]];
+        let unrotated = [
+            cosine * relative[0] - sine * relative[1],
+            sine * relative[0] + cosine * relative[1],
+        ];
+        [
+            unrotated[0] / (self.zoom * self.scale_xy[0]) + center[0] - self.offset_norm[0] * output_size[0],
+            unrotated[1] / (self.zoom * self.scale_xy[1]) + center[1] - self.offset_norm[1] * output_size[1],
+        ]
+    }
 }
 
 #[derive(Debug, Default)]
@@ -258,6 +279,8 @@ impl<'a> BufferDescription<'a> {
         let pa = self.post_affine.unwrap_or_default();
         hasher.write_u32(pa.rotation_deg.to_bits());
         hasher.write_u32(pa.zoom.to_bits());
+        hasher.write_u32(pa.scale_xy[0].to_bits());
+        hasher.write_u32(pa.scale_xy[1].to_bits());
         hasher.write_u32(pa.offset_norm[0].to_bits());
         hasher.write_u32(pa.offset_norm[1].to_bits());
         hasher.write_u8(self.flip_h as u8);
@@ -456,6 +479,45 @@ pub fn initialize_contexts() -> Option<(String, String)> {
 #[cfg(test)]
 mod processing_device_tests {
     use super::*;
+
+    #[test]
+    fn post_affine_inverse_maps_rotation_before_nonuniform_scale() {
+        let affine = PostAffine {
+            rotation_deg: 90.0,
+            zoom: 2.0,
+            scale_xy: [3.0, 0.5],
+            offset_norm: [0.1, -0.2],
+        };
+
+        let mapped = affine.inverse_map_point([100.0, 230.0], [200.0, 100.0]);
+
+        assert!((mapped[0] - 110.0).abs() < 1.0e-5, "{mapped:?}");
+        assert!((mapped[1] - 70.0).abs() < 1.0e-5, "{mapped:?}");
+    }
+
+    #[test]
+    fn post_affine_default_scale_preserves_uniform_zoom_mapping_and_checksum_identity() {
+        let affine = PostAffine {
+            rotation_deg: 90.0,
+            zoom: 2.0,
+            scale_xy: [1.0, 1.0],
+            offset_norm: [0.1, -0.2],
+        };
+        let mapped = affine.inverse_map_point([100.0, 110.0], [200.0, 100.0]);
+        assert!((mapped[0] - 110.0).abs() < 1.0e-5, "{mapped:?}");
+        assert!((mapped[1] - 70.0).abs() < 1.0e-5, "{mapped:?}");
+        assert_eq!(PostAffine::default().scale_xy, [1.0, 1.0]);
+
+        let identity = BufferDescription::default();
+        let scaled = BufferDescription {
+            post_affine: Some(PostAffine {
+                scale_xy: [1.25, 0.75],
+                ..PostAffine::default()
+            }),
+            ..BufferDescription::default()
+        };
+        assert_ne!(identity.get_checksum(), scaled.get_checksum());
+    }
 
     fn device(
         list_name: &str,

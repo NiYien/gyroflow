@@ -3091,6 +3091,64 @@ Avaa &lt;b&gt;Terminal&lt;/b&gt; ja kirjoita seuraava komento:</translation>
         <source>Cancel</source>
         <translation>Peruuta</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="70"/>
+        <source>Installed</source>
+        <translation>Asennettu</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="72"/>
+        <source>Update available</source>
+        <translation>Päivitys saatavilla</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="74"/>
+        <source>Template missing</source>
+        <translation>Malli puuttuu</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="76"/>
+        <source>Broken or untrusted</source>
+        <translation>Vioittunut tai epäluotettava</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="78"/>
+        <source>Not installed</source>
+        <translation>Ei asennettu</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="89"/>
+        <source>Repair</source>
+        <translation>Korjaa</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="146"/>
+        <source>Unable to replace the Final Cut integration while related apps may be using it.
+Close Final Cut Pro, Motion, and Gyroflow NiYien Final Cut, then click Repair or Install again.</source>
+        <translation>Final Cut -integraatiota ei voi korvata, kun siihen liittyvät sovellukset saattavat käyttää sitä.
+Sulje Final Cut Pro, Motion ja Gyroflow NiYien Final Cut ja valitse sitten uudelleen Korjaa tai Asenna.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="148"/>
+        <source>The Final Cut App was installed, but its Motion template could not be verified.
+Close Final Cut Pro and Motion, then click Repair again.</source>
+        <translation>Final Cut -appi asennettiin, mutta sen Motion-mallia ei voitu vahvistaa.
+Sulje Final Cut Pro ja Motion ja valitse sitten uudelleen Korjaa.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="150"/>
+        <source>The downloaded Final Cut integration could not be verified as trusted. No App was installed.
+Check your network connection and try again later.</source>
+        <translation>Ladattua Final Cut -integraatiota ei voitu vahvistaa luotetuksi. Appia ei asennettu.
+Tarkista verkkoyhteys ja yritä myöhemmin uudelleen.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="181"/>
+        <source>Final Cut integration installed.
+Close and reopen Final Cut Pro before using the effect.</source>
+        <translation>Final Cut -integraatio on asennettu.
+Sulje Final Cut Pro ja avaa se uudelleen ennen tehosteen käyttöä.</translation>
+    </message>
 </context>
 <context>
     <name>NumberField</name>

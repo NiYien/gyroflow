@@ -152,6 +152,8 @@ pub struct KernelParams {
     pub post_rotation: f32, // 4
     pub post_zoom: f32,     // 8
     pub post_offset: [f32; 2], // 16
+    pub post_scale: [f32; 2], // 8
+    pub post_scale_reserved: [f32; 2], // 16
 }
 unsafe impl bytemuck::Zeroable for KernelParams {}
 unsafe impl bytemuck::Pod for KernelParams {}
@@ -162,7 +164,36 @@ impl Default for KernelParams {
         // is identity when no PostAffine is supplied.
         let mut p: Self = bytemuck::Zeroable::zeroed();
         p.post_zoom = 1.0;
+        p.post_scale = [1.0, 1.0];
         p
+    }
+}
+
+#[cfg(test)]
+mod kernel_params_tests {
+    use super::KernelParams;
+
+    #[test]
+    fn post_affine_extension_preserves_offsets_and_defaults_to_identity_scale() {
+        assert_eq!(std::mem::offset_of!(KernelParams, post_rotation), 320);
+        assert_eq!(std::mem::offset_of!(KernelParams, post_zoom), 324);
+        assert_eq!(std::mem::offset_of!(KernelParams, post_offset), 328);
+        assert_eq!(std::mem::offset_of!(KernelParams, post_scale), 336);
+        assert_eq!(std::mem::offset_of!(KernelParams, post_scale_reserved), 344);
+        assert_eq!(std::mem::size_of::<KernelParams>(), 352);
+        assert_eq!(
+            std::mem::size_of::<KernelParams>(),
+            std::mem::size_of::<stabilize_spirv::KernelParams>()
+        );
+        assert_eq!(
+            std::mem::offset_of!(KernelParams, post_scale),
+            std::mem::offset_of!(stabilize_spirv::KernelParams, post_scale)
+        );
+
+        let params = KernelParams::default();
+        assert_eq!(params.post_zoom, 1.0);
+        assert_eq!(params.post_scale, [1.0, 1.0]);
+        assert_eq!(params.post_scale_reserved, [0.0, 0.0]);
     }
 }
 
@@ -557,6 +588,7 @@ impl Stabilization {
             transform.kernel_params.post_rotation = pa.rotation_deg;
             transform.kernel_params.post_zoom = pa.zoom;
             transform.kernel_params.post_offset = pa.offset_norm;
+            transform.kernel_params.post_scale = pa.scale_xy;
         }
 
         transform.kernel_params.source_rect = Self::get_rect(&buffers.input);
@@ -608,6 +640,7 @@ impl Stabilization {
                 || itm.kernel_params.post_rotation != pa.rotation_deg
                 || itm.kernel_params.post_zoom != pa.zoom
                 || itm.kernel_params.post_offset != pa.offset_norm
+                || itm.kernel_params.post_scale != pa.scale_xy
             {
                 log::warn!("Updating stab params at {timestamp_us}");
                 insert = true;

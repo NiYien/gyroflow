@@ -81,6 +81,8 @@ pub struct KernelParams {
     pub post_rotation: f32, // 4
     pub post_zoom: f32,     // 8
     pub post_offset: Vec2,  // 16
+    pub post_scale: Vec2,   // 8
+    pub post_scale_reserved: Vec2, // 16
 }
 
 // #[inline] pub fn fast_floor(x: f32) -> i32 { x as i32 }

@@ -3092,6 +3092,64 @@ Otvorte &lt;b&gt;Terminál&lt;/b&gt; a zadajte nasledujúci príkaz:</translatio
         <source>Cancel</source>
         <translation>Zrušiť</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="70"/>
+        <source>Installed</source>
+        <translation>Nainštalované</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="72"/>
+        <source>Update available</source>
+        <translation>K dispozícii je aktualizácia</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="74"/>
+        <source>Template missing</source>
+        <translation>Chýba šablóna</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="76"/>
+        <source>Broken or untrusted</source>
+        <translation>Poškodené alebo nedôveryhodné</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="78"/>
+        <source>Not installed</source>
+        <translation>Nenainštalované</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="89"/>
+        <source>Repair</source>
+        <translation>Opraviť</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="146"/>
+        <source>Unable to replace the Final Cut integration while related apps may be using it.
+Close Final Cut Pro, Motion, and Gyroflow NiYien Final Cut, then click Repair or Install again.</source>
+        <translation>Integráciu Final Cut nie je možné nahradiť, kým ju môžu používať súvisiace aplikácie.
+Zatvorte Final Cut Pro, Motion a Gyroflow NiYien Final Cut a potom znova kliknite na Opraviť alebo Nainštalovať.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="148"/>
+        <source>The Final Cut App was installed, but its Motion template could not be verified.
+Close Final Cut Pro and Motion, then click Repair again.</source>
+        <translation>Aplikácia Final Cut bola nainštalovaná, ale jej šablónu Motion sa nepodarilo overiť.
+Zatvorte Final Cut Pro a Motion a potom znova kliknite na Opraviť.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="150"/>
+        <source>The downloaded Final Cut integration could not be verified as trusted. No App was installed.
+Check your network connection and try again later.</source>
+        <translation>Stiahnutú integráciu Final Cut sa nepodarilo overiť ako dôveryhodnú. Nebola nainštalovaná žiadna aplikácia.
+Skontrolujte sieťové pripojenie a skúste to neskôr znova.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="181"/>
+        <source>Final Cut integration installed.
+Close and reopen Final Cut Pro before using the effect.</source>
+        <translation>Integrácia Final Cut bola nainštalovaná.
+Pred použitím efektu zatvorte a znova otvorte Final Cut Pro.</translation>
+    </message>
 </context>
 <context>
     <name>NumberField</name>

@@ -76,3 +76,7 @@ distribution/log_center/log_center.config.json
 /Gyroflow-macOS-*build-notes*.md
 /tmp
 *.pyc
+/local-qml-video-rs
+*.[mM][dD]
+openspec/
+/docs/

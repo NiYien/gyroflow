@@ -109,6 +109,7 @@ PLUGIN_ASSET_NAMES = (
     "GyroflowNiyien-OpenFX-macos.zip",
     "GyroflowNiyien-Adobe-macos.zip",
     "GyroflowNiyien-OpenFX-linux.zip",
+    "GyroflowNiyien-FinalCut-macos.zip",
 )
 
 SDK_FILENAMES = (
@@ -2048,6 +2049,23 @@ def build_lens_manifest(
 def build_plugin_manifest(
     *, plugin_source: PluginSource, downloaded_plugin: list[DownloadedFile]
 ) -> tuple[dict[str, Any], str]:
+    downloaded_names = [Path(item.logical_path).name for item in downloaded_plugin]
+    missing = [name for name in PLUGIN_ASSET_NAMES if name not in downloaded_names]
+    unexpected = [name for name in downloaded_names if name not in PLUGIN_ASSET_NAMES]
+    duplicates = sorted({name for name in downloaded_names if downloaded_names.count(name) > 1})
+    if missing or unexpected or duplicates:
+        problems: list[str] = []
+        if missing:
+            problems.append(f"missing: {', '.join(missing)}")
+        if unexpected:
+            problems.append(f"unexpected: {', '.join(unexpected)}")
+        if duplicates:
+            problems.append(f"duplicates: {', '.join(duplicates)}")
+        raise RuntimeError(
+            "Plugin manifest requires exactly the six expected assets ("
+            + "; ".join(problems)
+            + ")"
+        )
     file_entries, plugin_hash = _hash_file_entries(downloaded_plugin)
     plugin_tag = f"plugin-{plugin_hash[:12]}"
     manifest = {

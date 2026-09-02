@@ -127,6 +127,8 @@ features = [ "Win32_System_Com", "Win32_System_Console", "Win32_System_SystemSer
 
 [target.'cfg(target_os = "macos")'.dependencies]
 oslog = "0.2"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSWorkspace"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString", "NSURL"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 objc2 = "0.6"
