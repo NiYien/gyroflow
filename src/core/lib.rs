@@ -203,6 +203,16 @@ pub enum WaitOutcome {
     Timeout { remaining: usize },
 }
 
+/// Controls whether project import may resolve or open paths referenced by the
+/// project payload. Existing callers retain the historical allow behavior;
+/// sandboxed hosts can opt into a payload-only import with [`Deny`](Self::Deny).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ExternalIoPolicy {
+    #[default]
+    Allow,
+    Deny,
+}
+
 /// Reconcile a sensor-space (w, h) with the video's container-level rotation
 /// when the value is consumed as a render/output target. `LensProfile.output_dimension`
 /// is always stored in sensor space (the natural desqueezed shape of the recorded
@@ -3604,10 +3614,28 @@ impl StabilizationManager {
         cancel_flag: Arc<AtomicBool>,
         is_plugin: bool,
     ) -> std::result::Result<serde_json::Value, GyroflowCoreError> {
+        self.import_gyroflow_file_with_policy(
+            url,
+            blocking,
+            progress_cb,
+            cancel_flag,
+            is_plugin,
+            ExternalIoPolicy::Allow,
+        )
+    }
+    pub fn import_gyroflow_file_with_policy<F: Fn(f64)>(
+        &self,
+        url: &str,
+        blocking: bool,
+        progress_cb: F,
+        cancel_flag: Arc<AtomicBool>,
+        is_plugin: bool,
+        external_io_policy: ExternalIoPolicy,
+    ) -> std::result::Result<serde_json::Value, GyroflowCoreError> {
         let data = filesystem::read(url)?;
 
         let mut is_preset = false;
-        let result = self.import_gyroflow_data(
+        let result = self.import_gyroflow_data_with_policy(
             &data,
             blocking,
             Some(url),
@@ -3615,8 +3643,9 @@ impl StabilizationManager {
             cancel_flag,
             &mut is_preset,
             is_plugin,
+            external_io_policy,
         );
-        if !is_preset && result.is_ok() {
+        if external_io_policy == ExternalIoPolicy::Allow && !is_preset && result.is_ok() {
             self.input_file.write().project_file_url = Some(url.to_string());
         }
         result
@@ -3631,6 +3660,29 @@ impl StabilizationManager {
         is_preset: &mut bool,
         is_plugin: bool,
     ) -> std::result::Result<serde_json::Value, GyroflowCoreError> {
+        self.import_gyroflow_data_with_policy(
+            data,
+            blocking,
+            url,
+            progress_cb,
+            cancel_flag,
+            is_preset,
+            is_plugin,
+            ExternalIoPolicy::Allow,
+        )
+    }
+    pub fn import_gyroflow_data_with_policy<F: Fn(f64)>(
+        &self,
+        data: &[u8],
+        blocking: bool,
+        url: Option<&str>,
+        progress_cb: F,
+        cancel_flag: Arc<AtomicBool>,
+        is_preset: &mut bool,
+        is_plugin: bool,
+        external_io_policy: ExternalIoPolicy,
+    ) -> std::result::Result<serde_json::Value, GyroflowCoreError> {
+        let allow_external_io = external_io_policy == ExternalIoPolicy::Allow;
         let mut obj: serde_json::Value = serde_json::from_slice(&data)?;
         let mut load_options = gyro_source::FileLoadOptions::default();
         if let serde_json::Value::Object(ref mut obj) = obj {
@@ -3654,7 +3706,8 @@ impl StabilizationManager {
                 }
             }
             #[cfg(any(target_os = "macos", target_os = "ios"))]
-            if let Some(v) = obj
+            if allow_external_io
+                && let Some(v) = obj
                 .get("videofile_bookmark")
                 .and_then(|x| x.as_str())
                 .filter(|x| !x.is_empty())
@@ -3672,7 +3725,9 @@ impl StabilizationManager {
                 .and_then(|x| x.as_i64())
                 .unwrap_or_default() as u32;
 
-            let video_url = if full_data_included {
+            let video_url = if !allow_external_io {
+                String::new()
+            } else if full_data_included {
                 org_video_url.clone()
             } else {
                 Self::get_new_videofile_url(&org_video_url, url, sequence_start)
@@ -3735,7 +3790,8 @@ impl StabilizationManager {
                     }
                 }
                 #[cfg(any(target_os = "macos", target_os = "ios"))]
-                if let Some(v) = obj
+                if allow_external_io
+                    && let Some(v) = obj
                     .get("filepath_bookmark")
                     .and_then(|x| x.as_str())
                     .filter(|x| !x.is_empty())
@@ -3745,7 +3801,9 @@ impl StabilizationManager {
                         org_gyro_url = resolved;
                     }
                 }
-                let gyro_url = if full_data_included {
+                let gyro_url = if !allow_external_io {
+                    String::new()
+                } else if full_data_included {
                     org_gyro_url.clone()
                 } else {
                     Self::get_new_videofile_url(&org_gyro_url, url.clone(), sequence_start)
@@ -3768,6 +3826,8 @@ impl StabilizationManager {
                             .unwrap_or_default(),
                     );
 
+                let gyro_file_exists =
+                    allow_external_io && filesystem::exists(&gyro_url);
                 ::log::info!(
                     "[import_gyroflow] gyro_source: org_gyro_url='{}', gyro_url='{}', is_main_video={}, is_compressed={}, built_in_gyro_has_motion={}, has_raw_imu={}, has_quats={}, file_exists={}, blocking={}",
                     filesystem::get_filename(&org_gyro_url),
@@ -3780,7 +3840,7 @@ impl StabilizationManager {
                         .unwrap_or(false),
                     obj.contains_key("raw_imu"),
                     obj.contains_key("quaternions"),
-                    filesystem::exists(&gyro_url),
+                    gyro_file_exists,
                     blocking
                 );
 
@@ -3926,7 +3986,7 @@ impl StabilizationManager {
                                 gyro.raw_imu(&fm).len()
                             );
                         }
-                    } else if filesystem::exists(&gyro_url) && blocking {
+                    } else if gyro_file_exists && blocking {
                         ::log::info!(
                             "[import_gyroflow] → branch C: load from file '{}'",
                             filesystem::get_filename(&gyro_url)
@@ -3947,11 +4007,11 @@ impl StabilizationManager {
                     } else {
                         ::log::warn!(
                             "[import_gyroflow] → branch D: no gyro loaded! file_exists={} blocking={}",
-                            filesystem::exists(&gyro_url),
+                            gyro_file_exists,
                             blocking
                         );
                     }
-                } else if filesystem::exists(&gyro_url) && blocking {
+                } else if gyro_file_exists && blocking {
                     ::log::info!(
                         "[import_gyroflow] → branch E: is_main_video load from file '{}'",
                         filesystem::get_filename(&gyro_url)
@@ -3974,8 +4034,10 @@ impl StabilizationManager {
                 }
 
                 let mut gyro = self.gyro.write();
-                if !org_gyro_url.is_empty() {
+                if allow_external_io && !org_gyro_url.is_empty() {
                     gyro.file_url = gyro_url.clone();
+                } else if !allow_external_io {
+                    gyro.file_url.clear();
                 }
 
                 if let Some(v) = obj.get("lpf").and_then(|x| x.as_f64()) {
@@ -4264,7 +4326,8 @@ impl StabilizationManager {
                     }
                 }
                 #[cfg(any(target_os = "macos", target_os = "ios"))]
-                if let Some(v) = obj
+                if allow_external_io
+                    && let Some(v) = obj
                     .get("output_folder_bookmark")
                     .and_then(|x| x.as_str())
                     .filter(|x| !x.is_empty())
@@ -4403,12 +4466,15 @@ impl StabilizationManager {
                 if let Some(seq_fps) = obj.get("image_sequence_fps").and_then(|x| x.as_f64()) {
                     input_file.image_sequence_fps = seq_fps;
                 }
-                if !org_video_url.is_empty() {
+                if allow_external_io && !org_video_url.is_empty() {
                     if full_data_included {
                         input_file.url = org_video_url;
                     } else if filesystem::can_open_file(&video_url) {
                         input_file.url = video_url;
                     }
+                } else if !allow_external_io {
+                    input_file.url.clear();
+                    input_file.project_file_url = None;
                 }
             }
 
@@ -4889,6 +4955,78 @@ pub enum GyroflowCoreError {
 mod tests {
     use super::*;
     use serial_test::serial;
+
+    #[test]
+    fn plugin_external_io_deny_ignores_project_video_and_gyro_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let video_path = temp.path().join("readable-video-sentinel.mp4");
+        let gyro_path = temp.path().join("readable-gyro-sentinel.gcsv");
+        std::fs::write(&video_path, b"video sentinel must not be read").unwrap();
+        std::fs::write(&gyro_path, b"gyro sentinel must not be read").unwrap();
+
+        let project = serde_json::json!({
+            "title": "Gyroflow data file",
+            "version": 4,
+            "videofile": video_path,
+            "gyro_source": {
+                "filepath": gyro_path
+            }
+        });
+        let manager = StabilizationManager::default();
+        let mut is_preset = false;
+
+        manager
+            .import_gyroflow_data_with_policy(
+                project.to_string().as_bytes(),
+                true,
+                None,
+                |_| (),
+                Arc::new(AtomicBool::new(false)),
+                &mut is_preset,
+                true,
+                ExternalIoPolicy::Deny,
+            )
+            .unwrap();
+
+        assert!(!is_preset);
+        assert!(manager.input_file.read().url.is_empty());
+        assert!(manager.gyro.read().file_url.is_empty());
+    }
+
+    #[test]
+    fn existing_import_entry_retains_external_io_allow_default() {
+        let temp = tempfile::tempdir().unwrap();
+        let video_path = temp.path().join("readable-video-sentinel.mp4");
+        let gyro_path = temp.path().join("readable-gyro-sentinel.gcsv");
+        std::fs::write(&video_path, b"video sentinel").unwrap();
+        std::fs::write(&gyro_path, b"gyro sentinel").unwrap();
+        let project = serde_json::json!({
+            "title": "Gyroflow data file",
+            "version": 4,
+            "videofile": video_path,
+            "gyro_source": {
+                "filepath": gyro_path
+            }
+        });
+        let manager = StabilizationManager::default();
+        let mut is_preset = false;
+
+        manager
+            .import_gyroflow_data(
+                project.to_string().as_bytes(),
+                false,
+                None,
+                |_| (),
+                Arc::new(AtomicBool::new(false)),
+                &mut is_preset,
+                true,
+            )
+            .unwrap();
+
+        assert!(!is_preset);
+        assert!(!manager.input_file.read().url.is_empty());
+        assert!(!manager.gyro.read().file_url.is_empty());
+    }
 
     // smoothing-perf-recompute-gating: recompute_blocking checksum gate tests.
     // A sentinel entry planted into smoothed_quaternions detects whether the
