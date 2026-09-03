@@ -53,6 +53,7 @@ distribution/control_center/control_center.config.json
 test_block_question.pdb
 /_deployment/_publish_local
 /.superpowers
+/.worktrees
 /distribution/control_center/backend/__pycache__
 /distribution/control_center/__pycache__
 /distribution/control_center/_cache
