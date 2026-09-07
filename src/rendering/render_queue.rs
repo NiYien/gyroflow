@@ -145,6 +145,67 @@ struct QueueAutosyncStats {
     completed: bool,
     points: Vec<gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate>,
     attempted_timestamps_ms: Vec<f64>,
+    decode_used_gpu: bool,
+    decode_failure: Option<DeepMatchDecodeFailure>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum DeepMatchDecodeFailure {
+    OpenInput(String),
+    Decode(String),
+    FrameConversion(String),
+    NoFrames,
+}
+
+impl DeepMatchDecodeFailure {
+    fn reason(&self) -> &'static str {
+        match self {
+            Self::OpenInput(_) => "video_open_failed",
+            Self::Decode(_) => "video_decode_failed",
+            Self::FrameConversion(_) => "video_frame_conversion_failed",
+            Self::NoFrames => "video_no_frames",
+        }
+    }
+}
+
+// Only Android deep-match calls this runner. Each attempt owns a fresh sync
+// process and drains its frame tasks before returning, so reset cannot race
+// the previous attempt or retain its frames/collector output.
+fn run_deep_match_decode_attempts(
+    job_id: u32,
+    mut attempt: impl FnMut(bool) -> QueueAutosyncStats,
+    mut reset: impl FnMut(),
+    cancelled: impl Fn() -> bool,
+) -> QueueAutosyncStats {
+    if cancelled() {
+        return QueueAutosyncStats::default();
+    }
+    reset();
+    let first = attempt(false);
+    if first.decode_used_gpu && !cancelled() {
+        if let Some(failure) = &first.decode_failure {
+            // Software decoding cannot recover a denied or missing input URI.
+            if !matches!(failure, DeepMatchDecodeFailure::OpenInput(_)) {
+                ::log::warn!(target: "sync", "[deep-match] decode retry: job={job_id} frames={} failure={failure:?}; retrying once with software", first.frames);
+                reset();
+                if !cancelled() {
+                    return attempt(true);
+                }
+            }
+        }
+    }
+    first
+}
+
+fn reset_deep_match_decode_attempt(stab: &StabilizationManager) {
+    use gyroflow_core::synchronization::deep_match;
+    stab.pose_estimator.clear();
+    let scan_k = deep_match::scan_k_target();
+    let forward = deep_match::forward_armed();
+    deep_match::arm(scan_k);
+    if forward {
+        deep_match::arm_forward();
+    }
 }
 
 #[derive(Default, Clone, Copy, Debug, Eq, PartialEq)]
@@ -7668,12 +7729,13 @@ impl RenderQueue {
             // (job_is_deep_match is captured above, next to job_is_batch_sync.)
             let batch_sync_done = util::qt_queued_callback_mut(
                 QPointer::from(self as &Self),
-                move |this, (job_id, render_epoch, points, attempted_timestamps_ms, t1_snapshot): (
+                move |this, (job_id, render_epoch, points, attempted_timestamps_ms, t1_snapshot, decode_failure): (
                     u32,
                     u64,
                     Vec<gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate>,
                     Vec<f64>,
                     Option<BTreeMap<i64, f64>>,
+                    Option<DeepMatchDecodeFailure>,
                 )| {
                     let current_epoch = this
                         .jobs
@@ -7681,6 +7743,10 @@ impl RenderQueue {
                         .map(|j| j.render_epoch.load(SeqCst))
                         .unwrap_or(0);
                     if current_epoch != render_epoch {
+                        return;
+                    }
+                    if let Some(failure) = decode_failure {
+                        this.finish_deep_match_decode_failure(job_id, failure);
                         return;
                     }
                     if let Some(snapshot) = t1_snapshot {
@@ -7733,6 +7799,7 @@ impl RenderQueue {
                     sync_cancel_flag,
                     job_id,
                     defer_batch_sync_confirmation,
+                    cfg!(target_os = "android") && job_is_deep_match,
                 );
                 if sync_stats.completed && sync_stats.frames > 0 {
                     let mut sample = eta_sample.lock();
@@ -7820,6 +7887,7 @@ impl RenderQueue {
                         points,
                         attempted_timestamps_ms,
                         t1_snapshot,
+                        sync_stats.decode_failure,
                     ));
                     progress((1.0, 1, 1, true, false));
                     return;
@@ -9383,6 +9451,39 @@ impl RenderQueue {
         cancel_flag: Arc<AtomicBool>,
         job_id: u32,
         collect_batch_points: bool,
+        android_deep_match: bool,
+    ) -> QueueAutosyncStats {
+        let attempt = |force_software| Self::do_autosync_attempt(
+            stab.clone(), processing_cb.clone(), progress_latency_probe.clone(),
+            input_file, err.clone(), proc_height, cancel_flag.clone(), job_id,
+            collect_batch_points, android_deep_match, force_software,
+        );
+        if android_deep_match {
+            run_deep_match_decode_attempts(
+                job_id, attempt,
+                || reset_deep_match_decode_attempt(&stab),
+                || cancel_flag.load(SeqCst),
+            )
+        } else {
+            attempt(false)
+        }
+    }
+
+    fn do_autosync_attempt<
+        F: Fn(f64) + Send + Sync + Clone + 'static,
+        F2: Fn((String, String)) + Send + Sync + Clone + 'static,
+    >(
+        stab: Arc<StabilizationManager>,
+        processing_cb: F,
+        progress_latency_probe: Option<Arc<dyn Fn() + Send + Sync>>,
+        input_file: &gyroflow_core::InputFile,
+        err: F2,
+        proc_height: i32,
+        cancel_flag: Arc<AtomicBool>,
+        job_id: u32,
+        collect_batch_points: bool,
+        android_deep_match: bool,
+        force_software: bool,
     ) -> QueueAutosyncStats {
         // A video whose built-in gyro is the trusted motion source keeps that gyro
         // as its motion. Whether it still needs an auto-sync pass depends on the
@@ -9826,9 +9927,11 @@ impl RenderQueue {
                             proc_height as u32,
                         );
 
-                        let gpu_decoding = stab.gpu_decoding.load(SeqCst);
+                        let gpu_decoding = !force_software && stab.gpu_decoding.load(SeqCst);
 
                         let sync = Arc::new(sync);
+                        let accepted_frames = Arc::new(AtomicUsize::new(0));
+                        let conversion_failure = Arc::new(ParkingMutex::new(None));
 
                         // CinemaDNG decodes to scene-linear samples, which the GRAY8 /
                         // NV12 conversion below would collapse into ~10 distinct levels -
@@ -9914,10 +10017,13 @@ impl RenderQueue {
                                 0,
                                 Some(decoder_options),
                             )?;
+                            proc.set_strict_decode_errors(android_deep_match);
 
                             let err2 = err.clone();
                             let sync2 = sync.clone();
                             let sync_failed2 = sync_failed.clone();
+                            let accepted_frames2 = accepted_frames.clone();
+                            let conversion_failure2 = conversion_failure.clone();
                             let dng_curve2 = dng_curve.clone();
                             let frame_error_filename = filesystem::get_filename(&url);
                             proc.on_frame(
@@ -9982,17 +10088,23 @@ impl RenderQueue {
                                                         )
                                                     };
 
-                                                sync2.feed_frame(
+                                                if sync2.feed_frame(
                                                     timestamp_us,
                                                     frame_no,
                                                     width,
                                                     height,
                                                     stride,
                                                     &pixels,
-                                                );
+                                                ) {
+                                                    accepted_frames2.fetch_add(1, SeqCst);
+                                                }
                                             }
                                             Err(e) => {
                                                 sync_failed2.store(true, SeqCst);
+                                                if android_deep_match {
+                                                    conversion_failure2.lock().get_or_insert_with(|| e.to_string());
+                                                    return Err(e);
+                                                }
                                                 if collect_batch_points {
                                                     ::log::warn!(
                                                         "[batch_sync] frame conversion failed for '{}': {}",
@@ -10034,7 +10146,11 @@ impl RenderQueue {
                             (false, _) => false,
                         };
 
-                        let result = if try_gpu {
+                        let result = if android_deep_match {
+                            // The outer runner retries with a NEW AutosyncProcess.
+                            // Do not use the legacy retry that reuses partial frames.
+                            try_run(try_gpu, sync.get_ranges())
+                        } else if try_gpu {
                             match try_run(true, sync.get_ranges()) {
                                 Err(rendering::FFmpegError::GPUDecodingFailed) => {
                                     if let Some(sig) = codec_sig.clone() {
@@ -10057,6 +10173,36 @@ impl RenderQueue {
                         } else {
                             try_run(false, sync.get_ranges())
                         };
+
+                        if android_deep_match {
+                            // Detection completes before some tasks finish optical
+                            // flow. Drain their full lifetime before clearing state.
+                            sync.wait_for_frame_tasks();
+                            let frames = accepted_frames.load(SeqCst);
+                            let failure = if let Some(detail) = conversion_failure.lock().clone() {
+                                Some(DeepMatchDecodeFailure::FrameConversion(detail))
+                            } else if let Err(e) = &result {
+                                Some(match e {
+                                    rendering::FFmpegError::CannotOpenInputFile(_) => DeepMatchDecodeFailure::OpenInput(e.to_string()),
+                                    _ => DeepMatchDecodeFailure::Decode(e.to_string()),
+                                })
+                            } else if frames == 0 {
+                                Some(DeepMatchDecodeFailure::NoFrames)
+                            } else {
+                                None
+                            };
+                            ::log::info!(target: "sync", "[deep-match] decode attempt: job={job_id} backend={} frames={frames} cancelled={} failure={failure:?}", if try_gpu { "hardware" } else { "software" }, cancel_flag.load(SeqCst));
+                            if failure.is_some() || cancel_flag.load(SeqCst) {
+                                // Never scan or publish partially decoded windows.
+                                return QueueAutosyncStats {
+                                    frames,
+                                    attempted_timestamps_ms,
+                                    decode_used_gpu: try_gpu,
+                                    decode_failure: failure,
+                                    ..Default::default()
+                                };
+                            }
+                        }
 
                         if let Err(e) = result {
                             sync_failed.store(true, SeqCst);
@@ -10131,6 +10277,7 @@ impl RenderQueue {
                 completed: sync_frames > 0
                     && !sync_failed.load(SeqCst)
                     && !cancel_flag.load(SeqCst),
+                ..Default::default()
             };
         }
         QueueAutosyncStats::default()
@@ -14829,6 +14976,32 @@ impl RenderQueue {
             gyro.get_offsets().len(),
             fm.keep_video_gyro
         );
+    }
+
+    fn finish_deep_match_decode_failure(&mut self, job_id: u32, failure: DeepMatchDecodeFailure) {
+        let Some(state) = self.deep_match_pending.remove(&job_id) else {
+            return;
+        };
+        gyroflow_core::synchronization::deep_match::take();
+        let mut cancelled = false;
+        if let Some(job) = self.jobs.get_mut(&job_id) {
+            cancelled = job.cancel_flag.load(SeqCst);
+            job.additional_data = state.original_additional_data.clone();
+            if let Some(stab) = &job.stab {
+                {
+                    let mut lens = stab.lens.write();
+                    *lens = (*state.original_lens).clone();
+                    lens.sync_settings = state.original_sync_settings.clone();
+                }
+                Self::restore_deep_match_gyro(stab, &state);
+                stab.pose_estimator.clear();
+            }
+        }
+        let reason = if cancelled { "cancelled" } else { failure.reason() };
+        if !cancelled {
+            ::log::warn!(target: "sync", "[deep-match] decode failed: job={job_id} reason={reason} detail={failure:?}");
+        }
+        self.finish_deep_match_run(job_id, false, QString::from(reason), 0.0);
     }
 
     // Deep match finisher: called from the record_batch_sync_result divert.
@@ -21843,6 +22016,124 @@ mod tests {
     // The deep-match collector is a single global slot; serialize the tests
     // that arm/take it.
     static DEEP_MATCH_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn deep_match_decode_retry_clears_partial_results_and_preserves_scan_mode() {
+        use gyroflow_core::synchronization::deep_match;
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = setup_deep_match_job(&mut queue, true);
+        deep_match::arm(3);
+        deep_match::arm_forward();
+        let mut attempts = Vec::new();
+        let result = run_deep_match_decode_attempts(1, |software| {
+            attempts.push(software);
+            assert_eq!(deep_match::scan_k_target(), 3);
+            assert!(deep_match::forward_armed());
+            assert_eq!(deep_match::window_counts(), (0, 0));
+            assert!(deep_match::peek_curves().is_empty());
+            assert!(deep_match::take_forward().is_none());
+            assert!(stab.pose_estimator.estimated_gyro.read().is_empty());
+            if !software {
+                let sample = stab.gyro.read().file_metadata.read().raw_imu[0].clone();
+                stab.pose_estimator.estimated_gyro.write().insert(1000, sample);
+                deep_match::record_window_scanned();
+                deep_match::record(deep_match_stats(0.1));
+                deep_match::record_forward(deep_match::ForwardOutcome::Rejected { best_ratio: 0.9 });
+                QueueAutosyncStats {
+                    frames: 2,
+                    points: vec![sync_candidate(1, 1000.0, 9999.0, 0.9)],
+                    decode_used_gpu: true,
+                    decode_failure: Some(DeepMatchDecodeFailure::Decode("decoder open failed".into())),
+                    ..Default::default()
+                }
+            } else {
+                QueueAutosyncStats {
+                    frames: 30, completed: true,
+                    points: vec![sync_candidate(1, 1000.0, -500.0, 0.9)],
+                    ..Default::default()
+                }
+            }
+        }, || reset_deep_match_decode_attempt(&stab), || false);
+        assert_eq!(attempts, [false, true]);
+        assert!(result.completed);
+        assert!(result.decode_failure.is_none());
+        assert_eq!(result.points.len(), 1);
+        assert_eq!(result.points[0].offset_ms, -500.0);
+        assert!(deep_match::take().is_empty());
+    }
+
+    #[test]
+    fn deep_match_decode_retry_is_bounded_and_keeps_final_failure() {
+        for failure in [DeepMatchDecodeFailure::NoFrames, DeepMatchDecodeFailure::FrameConversion("bad pixel format".into())] {
+            let mut attempts = Vec::new();
+            let result = run_deep_match_decode_attempts(1, |software| {
+                attempts.push(software);
+                QueueAutosyncStats {
+                    decode_used_gpu: !software,
+                    decode_failure: Some(if software { DeepMatchDecodeFailure::Decode("software also failed".into()) } else { failure.clone() }),
+                    ..Default::default()
+                }
+            }, || {}, || false);
+            assert_eq!(attempts, [false, true]);
+            assert_eq!(result.decode_failure, Some(DeepMatchDecodeFailure::Decode("software also failed".into())));
+        }
+    }
+
+    #[test]
+    fn deep_match_decode_does_not_retry_healthy_software_or_unreadable_input() {
+        for (used_gpu, failure) in [
+            (true, None), // Decoded frames but no match is not a decode failure.
+            (false, Some(DeepMatchDecodeFailure::NoFrames)),
+            (true, Some(DeepMatchDecodeFailure::OpenInput("permission denied".into()))),
+        ] {
+            let mut attempts = 0;
+            run_deep_match_decode_attempts(1, |software| {
+                attempts += 1;
+                assert!(!software);
+                QueueAutosyncStats { decode_used_gpu: used_gpu, decode_failure: failure.clone(), ..Default::default() }
+            }, || {}, || false);
+            assert_eq!(attempts, 1);
+        }
+    }
+
+    #[test]
+    fn deep_match_decode_cancel_does_not_start_a_software_retry() {
+        let cancelled = AtomicBool::new(false);
+        let mut attempts = 0;
+        run_deep_match_decode_attempts(1, |_| {
+            attempts += 1;
+            cancelled.store(true, SeqCst);
+            QueueAutosyncStats { decode_used_gpu: true, decode_failure: Some(DeepMatchDecodeFailure::NoFrames), ..Default::default() }
+        }, || {}, || cancelled.load(SeqCst));
+        assert_eq!(attempts, 1);
+        run_deep_match_decode_attempts(1, |_| panic!("cancelled before starting"), || panic!("must not reset"), || true);
+    }
+
+    #[test]
+    fn deep_match_decode_failure_restores_snapshots_and_disarms_collector() {
+        use gyroflow_core::synchronization::deep_match;
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        for cancelled in [false, true] {
+            let mut queue = queue_with_eta_job(JobStatus::Queued);
+            let stab = setup_deep_match_job(&mut queue, true);
+            let original_sync_settings = stab.lens.read().sync_settings.clone();
+            simulate_deep_match_probe(&mut queue, &stab);
+            deep_match::arm(2);
+            deep_match::record(deep_match_stats(0.1));
+            queue.jobs[&1].cancel_flag.store(cancelled, SeqCst);
+            queue.finish_deep_match_decode_failure(1, DeepMatchDecodeFailure::NoFrames);
+            assert!(queue.deep_match_pending.is_empty());
+            assert!(queue.deep_match_results.is_empty());
+            assert!(!deep_match::is_armed());
+            assert_eq!(queue.jobs[&1].additional_data, r#"{"original":true}"#);
+            assert_eq!(stab.lens.read().name, "");
+            assert_eq!(stab.lens.read().sync_settings, original_sync_settings);
+            assert_eq!(stab.gyro.read().file_url, "file:///builtin-source.mp4");
+            assert!(stab.gyro.read().file_metadata.read().keep_video_gyro);
+            assert_eq!(stab.gyro.read().file_metadata.read().raw_imu.len(), 1);
+        }
+    }
 
     fn deep_match_stats(
         ratio: f64,
