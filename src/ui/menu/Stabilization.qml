@@ -43,7 +43,11 @@ MenuItem {
         property alias maxZoom: maxZoomSlider.value;
         property alias maxZoomIterations: maxZoomIterations.value;
 
-        Component.onCompleted: settings.init(sett);
+        Component.onCompleted: {
+            // A global preference is a default for new projects, not a saved project mode.
+            if (+settings.value("croppingMode", 1) === 0) settings.setValue("croppingMode", 1);
+            settings.init(sett);
+        }
         function propChanged() { settings.propChanged(sett); }
     }
 
@@ -637,12 +641,11 @@ MenuItem {
               + qsTr("Max zoom: %1").arg("<b>" + maxZoom.toFixed(1) + "%</b>");
     }
 
-    ComboBox {
+    ZoomModeSelector {
         id: croppingMode;
         currentIndex: 1;
         font.pixelSize: 12 * dpiScale;
         width: parent.width;
-        model: [QT_TRANSLATE_NOOP("Popup", "No zooming"), QT_TRANSLATE_NOOP("Popup", "Dynamic zooming"), QT_TRANSLATE_NOOP("Popup", "Static zoom")];
         Component.onCompleted: currentIndexChanged();
         onCurrentIndexChanged: {
             if (window.batchState && window.batchState.active) {

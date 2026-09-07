@@ -4195,6 +4195,9 @@ impl RenderQueue {
 
         for video in &result.videos {
             let job_id = video.job_id;
+            if self.skip_stabilization_blocked_job(job_id) {
+                continue;
+            }
             let repair_round = if video.repair_round == 0
                 && self.expected_batch_sync_job_ids.contains(&job_id)
             {
@@ -4762,6 +4765,38 @@ impl RenderQueue {
         true
     }
 
+    fn stabilization_blocks_processing(stab: &StabilizationManager) -> bool {
+        let gyro = stab.gyro.read();
+        let md = gyro.file_metadata.read();
+        md.additional_data
+            .get("stabilization_blocks_processing")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+
+    fn job_is_stabilization_blocked(&self, job_id: u32) -> bool {
+        self.queue.borrow().iter().any(|item| {
+            item.job_id == job_id && item.skip_reason.to_string() == "image_stabilization"
+        }) || self.jobs.get(&job_id).and_then(|job| job.stab.as_ref())
+            .is_some_and(|stab| Self::stabilization_blocks_processing(stab))
+    }
+
+    fn skip_stabilization_blocked_job(&mut self, job_id: u32) -> bool {
+        if !self.job_is_stabilization_blocked(job_id) {
+            return false;
+        }
+        update_model!(self, job_id, itm {
+            itm.status = JobStatus::Skipped;
+            itm.skip_reason = QString::from("image_stabilization");
+            itm.error_string = QString::default();
+        });
+        ::log::debug!(
+            target: "video.render",
+            "[queue-render-skip] job={job_id} reason=image_stabilization project_export=skipped"
+        );
+        true
+    }
+
     pub fn add(&mut self, additional_data: String, thumbnail_url: QString) -> u32 {
         let job_id = if self.editing_job_id > 0 {
             self.editing_job_id
@@ -4782,7 +4817,11 @@ impl RenderQueue {
                 {
                     render_options.update_from_json(out);
                     let project_url = self.stabilizer.input_file.read().project_file_url.clone();
-                    if let Some(project_url) = project_url {
+                    // An edit must not create or overwrite a project for a
+                    // clip the queue has already excluded from processing.
+                    let stabilization_blocked = self.job_is_stabilization_blocked(job_id)
+                        || Self::stabilization_blocks_processing(&self.stabilizer);
+                    if let Some(project_url) = project_url.filter(|_| !stabilization_blocked) {
                         // Save project file on disk
                         if let Err(e) = self.stabilizer.export_gyroflow_file(
                             &project_url,
@@ -4919,14 +4958,8 @@ impl RenderQueue {
         // in-camera-stabilization-gate: read the parse-time verdict. Absent key
         // (older parse path, or a source whose brand never emits the tag) reads
         // false, so the gate can only ever add skips, never remove them.
-        let stabilization_blocked = {
-            let gyro = stab.gyro.read();
-            let md = gyro.file_metadata.read();
-            md.additional_data
-                .get("stabilization_blocks_processing")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-        };
+        let stabilization_blocked = Self::stabilization_blocks_processing(&stab)
+            || self.job_is_stabilization_blocked(job_id);
 
         // queue-edit-writeback: an edit (trim, smoothing, output settings) does
         // NOT invalidate the job's sync results — the offsets ride along in the
@@ -5743,6 +5776,11 @@ impl RenderQueue {
     }
 
     pub fn reset_job(&mut self, job_id: u32) {
+        // Resetting progress does not make an excluded clip eligible to
+        // generate a project on the next batch or direct render.
+        if self.skip_stabilization_blocked_job(job_id) {
+            return;
+        }
         if self
             .jobs
             .get(&job_id)
@@ -7038,6 +7076,13 @@ impl RenderQueue {
         {
             let q = self.queue.borrow();
             for (job_id, params) in pending {
+                if self.job_is_stabilization_blocked(job_id) {
+                    ::log::debug!(
+                        target: "video.render",
+                        "[batch-params-writeback] skip job={job_id} reason=image_stabilization"
+                    );
+                    continue;
+                }
                 let Some(job) = self.jobs.get(&job_id) else {
                     continue;
                 };
@@ -7109,6 +7154,9 @@ impl RenderQueue {
     }
 
     pub fn render_job(&mut self, job_id: u32) {
+        if self.skip_stabilization_blocked_job(job_id) {
+            return;
+        }
         if self
             .jobs
             .get(&job_id)
@@ -24164,6 +24212,76 @@ mod tests {
                 "image_stabilization",
                 "intent={intent}"
             );
+        }
+    }
+
+    #[test]
+    fn image_stabilization_edit_does_not_create_or_overwrite_projects() {
+        for (already_skipped, parse_blocked, existing_project) in [
+            (false, true, false),
+            (false, true, true),
+            (true, false, false),
+            (true, false, true),
+            (false, false, false),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let project_path = dir.path().join("clip.gyroflow");
+            let project_url = filesystem::path_to_url(&project_path.to_string_lossy());
+            if existing_project {
+                std::fs::write(&project_path, b"existing project").unwrap();
+            }
+            let status = if already_skipped { JobStatus::Skipped } else { JobStatus::Queued };
+            let reason = if already_skipped { "image_stabilization" } else { "" };
+            let mut queue = recovery_queue(&[(1, status, reason, "", false)]);
+            queue.stabilizer = edited_preview_stab();
+            queue.stabilizer.input_file.write().project_file_url = Some(project_url);
+            queue.stabilizer.gyro.read().file_metadata.write().additional_data = serde_json::json!({
+                "image_stabilizer": true,
+                "stabilization_blocks_processing": parse_blocked,
+            });
+            queue.editing_job_id = 1;
+            queue.add(
+                serde_json::json!({ "output": RenderOptions::default() }).to_string(),
+                QString::default(),
+            );
+
+            if already_skipped || parse_blocked {
+                assert_eq!(row_status(&queue, 1), (JobStatus::Skipped, "image_stabilization".into()));
+                if existing_project {
+                    assert_eq!(std::fs::read(&project_path).unwrap(), b"existing project");
+                } else {
+                    assert!(!project_path.exists(), "a skipped edit must not create a project");
+                }
+            } else {
+                // A supported clip with compensation remains eligible even
+                // when its raw image-stabilizer flag reports on.
+                let project = std::fs::read_to_string(&project_path).unwrap();
+                assert!(serde_json::from_str::<serde_json::Value>(&project).is_ok());
+                assert_eq!(row_status(&queue, 1).0, JobStatus::Queued);
+            }
+        }
+    }
+
+    #[test]
+    fn image_stabilization_reset_and_direct_export_keep_the_job_skipped() {
+        for export_project in 0..=4 {
+            for already_skipped in [true, false] {
+                let status = if already_skipped { JobStatus::Skipped } else { JobStatus::Queued };
+                let reason = if already_skipped { "image_stabilization" } else { "" };
+                let mut queue = recovery_queue(&[(1, status, reason, "", false)]);
+                if !already_skipped {
+                    queue.jobs[&1].stab.as_ref().unwrap().gyro.read()
+                        .file_metadata.write().additional_data = serde_json::json!({
+                            "stabilization_blocks_processing": true,
+                        });
+                }
+                queue.export_project = export_project;
+                queue.reset_job(1);
+                assert_eq!(row_status(&queue, 1), (JobStatus::Skipped, "image_stabilization".into()));
+                queue.render_job(1);
+                assert_eq!(row_status(&queue, 1), (JobStatus::Skipped, "image_stabilization".into()));
+                assert_eq!(queue.jobs[&1].render_epoch.load(SeqCst), 0, "no export worker may start");
+            }
         }
     }
 

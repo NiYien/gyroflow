@@ -40,6 +40,7 @@ pub struct ManualCalibrationPair {
 
 /// Input: an accepted deep-match result acting as a session-offset anchor
 /// (render-queue-deep-gyro-match 7.2/7.3).
+#[derive(Clone)]
 pub struct DeepMatchAnchor {
     /// Index into the `gyros` array passed to `batch_match` (the caller maps
     /// its gyro-pool index to this filtered index).
@@ -2101,25 +2102,27 @@ fn compute_from_manual_pairs(
 /// coverage assign -> +/- 24h fallback.
 ///
 /// `deep_anchors` (render-queue-deep-gyro-match): deep-match-derived session
-/// anchors consumed by the auto path; an empty slice is a strict no-op. The
-/// legacy manual-pairs path ignores anchors (manual pairs already pin the
-/// single-session offset explicitly).
+/// anchors take priority over both automatic and manual calibration. An empty
+/// or invalid anchor set preserves the legacy calibration path.
 pub fn batch_match(
     videos: &[VideoMatchInfo],
     gyros: &[GyroMatchInfo],
     manual_pairs: Option<&[ManualCalibrationPair]>,
     deep_anchors: &[DeepMatchAnchor],
 ) -> BatchMatchResult {
+    let valid_anchors: Vec<_> = deep_anchors.iter().filter(|a| {
+        a.offset_ms.is_finite() && videos.get(a.video_index)
+            .is_some_and(|v| anchor_can_pin(a, v, gyros.len()))
+    }).cloned().collect();
+    if !valid_anchors.is_empty() {
+        log::info!(target: "sync",
+            "[deep-match] distributing from {} anchor(s); calibration detection and manual pairs bypassed",
+            valid_anchors.len());
+        return auto_match(videos, gyros, &valid_anchors);
+    }
     if let Some(pairs) = manual_pairs
         && !pairs.is_empty()
     {
-        if !deep_anchors.is_empty() {
-            log::info!(
-                target: "sync",
-                "[deep-match] {} anchor(s) ignored: manual calibration pairs take the legacy single-session path",
-                deep_anchors.len()
-            );
-        }
         return match compute_from_manual_pairs(videos, gyros, pairs) {
             Ok(or) => {
                 let results = assign_gyro_to_videos(
@@ -2138,7 +2141,7 @@ pub fn batch_match(
             Err(e) => unmatched_results(videos, e),
         };
     }
-    auto_match(videos, gyros, deep_anchors)
+    auto_match(videos, gyros, &[])
 }
 
 /// Build an "everything unmatched" result for failure cases.
@@ -2285,8 +2288,13 @@ fn auto_match(
     gyros: &[GyroMatchInfo],
     deep_anchors: &[DeepMatchAnchor],
 ) -> BatchMatchResult {
-    let v_clusters = find_calibration_videos(videos);
-    let g_clusters = find_calibration_gyros(gyros);
+    // Accepted motion matches already establish the clock relationship. Do not
+    // classify ordinary short clips as calibration recordings on this path.
+    let (v_clusters, g_clusters) = if deep_anchors.is_empty() {
+        (find_calibration_videos(videos), find_calibration_gyros(gyros))
+    } else {
+        (Vec::new(), Vec::new())
+    };
 
     for (i, c) in v_clusters.iter().enumerate() {
         let anchor = cluster_anchor(c, videos);
@@ -4820,11 +4828,9 @@ mod tests {
     }
 
     #[test]
-    fn deep_anchor_overrides_creation_time_session() {
-        // Spec scenario "Deep anchor outranks creation-time candidates": a
-        // calibration-pair session exists (offset 1100, +/-1.5s class), and a
-        // deep anchor on a long gyro of the same clock pair measures 1500.
-        // The anchor must override the session offset (no extra session).
+    fn deep_anchor_bypasses_short_clip_calibration_and_manual_pairs() {
+        // The short clips qualify for calibration without deep search. With an
+        // accepted anchor they are ordinary content and must not be skipped.
         let videos = vec![
             v(0, 5_000.0, Some(1_000)),   // cal pair
             v(1, 5_000.0, Some(31_000)),  // cal pair
@@ -4852,6 +4858,9 @@ mod tests {
             video_created_at_ms: videos[2].created_at_ms,
         }];
         let result = batch_match(&videos, &gyros, None, &anchors);
+        let without_anchor = batch_match(&videos, &gyros, None, &[]);
+        assert_eq!(without_anchor.results[0].status, MatchStatus::CalibrationPair);
+        assert_eq!(without_anchor.results[1].status, MatchStatus::CalibrationPair);
         assert_eq!(result.error, None);
         // Single session, overridden offset: global offset is the derived one.
         assert_eq!(
@@ -4859,8 +4868,8 @@ mod tests {
             Some(derived),
             "anchor must override the creation-time session offset (1100)"
         );
-        assert_eq!(result.results[0].status, MatchStatus::CalibrationPair);
-        assert_eq!(result.results[1].status, MatchStatus::CalibrationPair);
+        assert_eq!(result.results[0].status, MatchStatus::Matched);
+        assert_eq!(result.results[1].status, MatchStatus::Matched);
         let r2 = &result.results[2];
         assert_eq!(r2.status, MatchStatus::Matched);
         assert_eq!(r2.gyro_index, Some(2));
@@ -4871,6 +4880,57 @@ mod tests {
             "v2 content start {}ms must equal 50000ms under the overridden offset",
             content_start
         );
+        let manual = [ManualCalibrationPair { job_id: 0, video_index: 0, gyro_index: 0 }];
+        let with_manual = batch_match(&videos, &gyros, Some(&manual), &anchors);
+        assert_eq!(with_manual.global_offset_ms, Some(derived));
+        for (actual, expected) in with_manual.results.iter().zip(&result.results) {
+            assert_eq!(actual.status, expected.status);
+            assert_eq!(actual.gyro_index, expected.gyro_index);
+            assert_eq!(actual.gyro_start_ms, expected.gyro_start_ms);
+            assert_eq!(actual.init_offset_ms, expected.init_offset_ms);
+        }
+    }
+
+    #[test]
+    fn invalid_deep_anchors_preserve_automatic_and_manual_calibration() {
+        let videos = vec![v(0, 5_000.0, Some(1_000)), v(1, 5_000.0, Some(31_000))];
+        let gyros = vec![g(0, 5_500.0, 2_000), g(1, 5_500.0, 32_000)];
+        let manual = [ManualCalibrationPair { job_id: 0, video_index: 0, gyro_index: 0 }];
+        let invalid = [
+            DeepMatchAnchor { video_index: 99, gyro_index: 0, offset_ms: 0.0, video_created_at_ms: Some(1_000) },
+            DeepMatchAnchor { video_index: 0, gyro_index: 99, offset_ms: 0.0, video_created_at_ms: Some(1_000) },
+            DeepMatchAnchor { video_index: 0, gyro_index: 0, offset_ms: f64::NAN, video_created_at_ms: Some(1_000) },
+            DeepMatchAnchor { video_index: 0, gyro_index: 0, offset_ms: 0.0, video_created_at_ms: None },
+        ];
+        for pairs in [None, Some(manual.as_slice())] {
+            let before = batch_match(&videos, &gyros, pairs, &[]);
+            let after = batch_match(&videos, &gyros, pairs, &invalid);
+            assert_eq!(after.error, before.error);
+            assert_eq!(after.global_offset_ms, before.global_offset_ms);
+            for (a, b) in after.results.iter().zip(&before.results) {
+                assert_eq!(a.status, b.status);
+                assert_eq!(a.gyro_index, b.gyro_index);
+                assert_eq!(a.gyro_start_ms, b.gyro_start_ms);
+            }
+        }
+    }
+
+    #[test]
+    fn deep_distribution_ignores_invalid_anchors_beside_valid_sessions() {
+        let videos = vec![v(0, 60_000.0, Some(100_000)), v(1, 60_000.0, Some(500_000))];
+        let gyros = vec![g(0, 200_000.0, 80_000), g(1, 200_000.0, 480_000)];
+        let anchors = [
+            DeepMatchAnchor { video_index: 99, gyro_index: 0, offset_ms: 30_000.0, video_created_at_ms: Some(100_000) },
+            DeepMatchAnchor { video_index: 0, gyro_index: 0, offset_ms: -20_000.0, video_created_at_ms: Some(100_000) },
+            DeepMatchAnchor { video_index: 1, gyro_index: 1, offset_ms: -20_000.0, video_created_at_ms: Some(500_000) },
+        ];
+        let result = batch_match(&videos, &gyros, None, &anchors);
+        assert_eq!(result.error, None);
+        for (i, r) in result.results.iter().enumerate() {
+            assert_eq!(r.status, MatchStatus::Matched);
+            assert_eq!(r.gyro_index, Some(i));
+            assert!((r.gyro_start_ms.unwrap() - r.init_offset_ms.unwrap() - 20_000.0).abs() < 0.5);
+        }
     }
 
     #[test]
