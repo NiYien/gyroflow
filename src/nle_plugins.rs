@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2024 Adrian <adrian.eddy at gmail>
 
+mod finalcut_transaction;
+
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -23,11 +25,14 @@ const LINUX_OPENFX_INSTALL_ROOT: &str = "/usr/OFX/Plugins/";
 const LINUX_PLUGIN_MANUAL_INSTALL_REQUIRED: &str = "PLUGIN_MANUAL_INSTALL_REQUIRED:";
 const FINALCUT_ASSET_NAME: &str = "GyroflowNiyien-FinalCut-macos.zip";
 const FINALCUT_ARTIFACT_NAME: &str = "GyroflowNiyien-FinalCut-macos";
-const FINALCUT_APP_PATH: &str = "/Applications/GyroflowNiYien Final Cut.app";
-const FINALCUT_APP_NAME: &str = "GyroflowNiYien Final Cut.app";
+const FINALCUT_APP_PATH: &str = "/Applications/NiYien FCP.app";
+const FINALCUT_APP_NAME: &str = "NiYien FCP.app";
+const FINALCUT_LEGACY_APP_NAME: &str = "GyroflowNiYien Final Cut.app";
+const FINALCUT_APP_EXECUTABLE: &str = "GyroflowNiYien Final Cut";
 const FINALCUT_XPC_NAME: &str = "GyroflowNiYienFinalCutEffect.pluginkit";
 const FINALCUT_APP_BUNDLE_ID: &str = "com.niyien.gyroflow.finalcut";
 const FINALCUT_XPC_BUNDLE_ID: &str = "com.niyien.gyroflow.finalcut.effect";
+const FINALCUT_TEAM_ID: &str = "H59FJRN2AM";
 const FINALCUT_EFFECT_UUID: &str = "ABAD71F5-23F5-46F6-AB08-C11603168AA4";
 const FINALCUT_TEMPLATE_MARKER: &str = ".gyroflow-install.json";
 const FINALCUT_TEMPLATE_NAME: &str = "Gyroflow NiYien.moef";
@@ -760,18 +765,114 @@ fn finalcut_bundled_template_path(app: &Path) -> PathBuf {
         .join("Gyroflow")
 }
 
+fn finalcut_required_runtime_binaries(app: &Path) -> Vec<PathBuf> {
+    let xpc = finalcut_xpc_path(app);
+    vec![
+        app.join("Contents")
+            .join("MacOS")
+            .join(FINALCUT_APP_EXECUTABLE),
+        xpc.join("Contents")
+            .join("MacOS")
+            .join("GyroflowNiYienFinalCutEffect"),
+        xpc.join("Contents")
+            .join("Frameworks")
+            .join("FxPlug.framework")
+            .join("FxPlug"),
+        xpc.join("Contents")
+            .join("Frameworks")
+            .join("PluginManager.framework")
+            .join("PluginManager"),
+    ]
+}
+
+fn validate_finalcut_universal_binaries_with<F>(app: &Path, mut architectures: F) -> io::Result<()>
+where
+    F: FnMut(&Path) -> io::Result<Vec<String>>,
+{
+    for binary in finalcut_required_runtime_binaries(app) {
+        let slices = architectures(&binary)?;
+        if !slices.iter().any(|slice| slice == "arm64")
+            || !slices.iter().any(|slice| slice == "x86_64")
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Final Cut runtime binary is not universal arm64+x86_64: {} ({})",
+                    binary.display(),
+                    slices.join(", ")
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_finalcut_universal_binaries(app: &Path) -> io::Result<()> {
+    validate_finalcut_universal_binaries_with(app, |binary| {
+        let output = Command::new("/usr/bin/lipo")
+            .arg("-archs")
+            .arg(binary)
+            .output()?;
+        if !output.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Unable to inspect Final Cut runtime architectures for {}: {}",
+                    binary.display(),
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+            ));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect())
+    })
+}
+
+fn finalcut_supported_app_name(name: Option<&std::ffi::OsStr>) -> bool {
+    matches!(
+        name.and_then(|name| name.to_str()),
+        Some(FINALCUT_APP_NAME | FINALCUT_LEGACY_APP_NAME)
+    )
+}
+
+fn finalcut_selected_app(applications: &Path) -> PathBuf {
+    let current = applications.join(FINALCUT_APP_NAME);
+    if std::fs::symlink_metadata(&current).is_ok() {
+        current
+    } else {
+        let legacy = applications.join(FINALCUT_LEGACY_APP_NAME);
+        if std::fs::symlink_metadata(&legacy).is_ok() {
+            legacy
+        } else {
+            current
+        }
+    }
+}
+
 fn validate_finalcut_app_structure(app: &Path) -> io::Result<String> {
-    if !app.is_dir() || app.file_name().and_then(|name| name.to_str()) != Some(FINALCUT_APP_NAME) {
+    if !app.is_dir() || app.is_symlink() || !finalcut_supported_app_name(app.file_name()) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("Final Cut package must contain {FINALCUT_APP_NAME}"),
         ));
     }
+    validate_finalcut_app_contents(app)
+}
+
+fn validate_finalcut_app_contents(app: &Path) -> io::Result<String> {
     let app_info = app.join("Contents").join("Info.plist");
     let xpc = finalcut_xpc_path(app);
     let xpc_info = xpc.join("Contents").join("Info.plist");
     let app_identifier = plist_string(&app_info, "CFBundleIdentifier")?;
     let xpc_identifier = plist_string(&xpc_info, "CFBundleIdentifier")?;
+    if plist_string(&app_info, "CFBundleExecutable")? != FINALCUT_APP_EXECUTABLE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Final Cut App executable mismatch",
+        ));
+    }
     let app_version = plist_string(&app_info, "CFBundleShortVersionString")?;
     let xpc_version = plist_string(&xpc_info, "CFBundleShortVersionString")?;
     if app_identifier != FINALCUT_APP_BUNDLE_ID || xpc_identifier != FINALCUT_XPC_BUNDLE_ID {
@@ -786,21 +887,16 @@ fn validate_finalcut_app_structure(app: &Path) -> io::Result<String> {
             "Final Cut App and XPC versions do not match",
         ));
     }
-    if !app
-        .join("Contents")
-        .join("MacOS")
-        .join("GyroflowNiYien Final Cut")
-        .is_file()
-        || !xpc
-            .join("Contents")
-            .join("MacOS")
-            .join("GyroflowNiYienFinalCutEffect")
-            .is_file()
-    {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Final Cut App or XPC executable is missing",
-        ));
+    for binary in finalcut_required_runtime_binaries(app) {
+        if !binary.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Final Cut required runtime binary is missing: {}",
+                    binary.display()
+                ),
+            ));
+        }
     }
     let bundled_template = finalcut_bundled_template_path(app);
     let moef = bundled_template.join(FINALCUT_TEMPLATE_NAME);
@@ -841,7 +937,7 @@ fn validate_finalcut_app_structure(app: &Path) -> io::Result<String> {
 
 fn validate_finalcut_extracted_root(root: &Path) -> io::Result<PathBuf> {
     let entries: Vec<_> = std::fs::read_dir(root)?.collect::<Result<_, _>>()?;
-    if entries.len() != 1 || entries[0].file_name() != FINALCUT_APP_NAME {
+    if entries.len() != 1 || !finalcut_supported_app_name(Some(&entries[0].file_name())) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("Final Cut zip must contain exactly one top-level {FINALCUT_APP_NAME}"),
@@ -892,7 +988,30 @@ fn validate_finalcut_trust(app: &Path) -> io::Result<()> {
             .args(arguments)
             .status()
             .map(|status| status.success())
-    })
+    })?;
+    let details = Command::new("/usr/bin/codesign")
+        .args(["-dv", "--verbose=4"])
+        .arg(app)
+        .output()?;
+    if !details.status.success() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Unable to read Final Cut signing identity",
+        ));
+    }
+    let details = String::from_utf8_lossy(&details.stderr);
+    if !details
+        .lines()
+        .any(|line| line == format!("TeamIdentifier={FINALCUT_TEAM_ID}"))
+        || !details.contains("Authority=Developer ID Application:")
+        || !details.contains("runtime")
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Final Cut Developer ID, Team or Hardened Runtime mismatch",
+        ));
+    }
+    Ok(())
 }
 
 fn finalcut_template_install_path(home: &Path) -> PathBuf {
@@ -903,7 +1022,11 @@ fn finalcut_template_install_path(home: &Path) -> PathBuf {
         .join("Gyroflow")
 }
 
-fn validate_installed_finalcut_template(template: &Path, app_version: &str) -> io::Result<()> {
+fn validate_installed_finalcut_template(
+    template: &Path,
+    app: &Path,
+    app_version: &str,
+) -> io::Result<()> {
     if !template.join(FINALCUT_TEMPLATE_NAME).is_file()
         || !template.join("large.png").is_file()
         || !template.join("small.png").is_file()
@@ -927,26 +1050,46 @@ fn validate_installed_finalcut_template(template: &Path, app_version: &str) -> i
         ));
     }
     let template_bytes = std::fs::read(template.join(FINALCUT_TEMPLATE_NAME))?;
-    let actual_hash = format!("{:x}", Sha256::digest(template_bytes));
+    let actual_hash = format!("{:x}", Sha256::digest(&template_bytes));
     if actual_hash != marker.template_sha256 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "Final Cut installed template hash mismatch",
         ));
     }
+    let bundled_template = finalcut_bundled_template_path(app).join(FINALCUT_TEMPLATE_NAME);
+    let bundled_bytes = std::fs::read(&bundled_template).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "Final Cut bundled template is unreadable at {}: {error}",
+                bundled_template.display()
+            ),
+        )
+    })?;
+    let bundled_hash = format!("{:x}", Sha256::digest(&bundled_bytes));
+    if actual_hash != bundled_hash {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Final Cut installed template differs from the current App bundle",
+        ));
+    }
     Ok(())
 }
 
-fn detect_finalcut_at<F>(
+fn detect_finalcut_at<F, R>(
     app: &Path,
     template: &Path,
     latest_version: &str,
     mut trust: F,
+    mut registration: R,
 ) -> FinalCutDetection
 where
     F: FnMut(&Path) -> io::Result<()>,
+    R: FnMut(&Path) -> io::Result<()>,
 {
-    if !app.exists() {
+    if matches!(std::fs::symlink_metadata(app), Err(error) if error.kind() == io::ErrorKind::NotFound)
+    {
         return FinalCutDetection {
             state: FinalCutInstallState::NotInstalled,
             version: String::new(),
@@ -970,7 +1113,14 @@ where
             detail: error.to_string(),
         };
     }
-    if let Err(error) = validate_installed_finalcut_template(template, &version) {
+    if let Err(error) = registration(app) {
+        return FinalCutDetection {
+            state: FinalCutInstallState::BrokenOrUntrusted,
+            version,
+            detail: error.to_string(),
+        };
+    }
+    if let Err(error) = validate_installed_finalcut_template(template, app, &version) {
         return FinalCutDetection {
             state: FinalCutInstallState::AppInstalledTemplateMissing,
             version,
@@ -997,12 +1147,80 @@ fn detect_finalcut(latest_version: &str) -> io::Result<FinalCutDetection> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME is unavailable"))?;
-    Ok(detect_finalcut_at(
-        Path::new(FINALCUT_APP_PATH),
+    let mut detection = detect_finalcut_at(
+        &finalcut_selected_app(Path::new("/Applications")),
         &finalcut_template_install_path(&home),
         latest_version,
-        validate_finalcut_trust,
-    ))
+        |app| {
+            validate_finalcut_universal_binaries(app)?;
+            validate_finalcut_trust(app)
+        },
+        validate_finalcut_registration,
+    );
+    let parent = Path::new("/Applications");
+    if parent
+        .join(".niyien-fcp-install.json")
+        .symlink_metadata()
+        .is_ok()
+    {
+        detection.state = FinalCutInstallState::BrokenOrUntrusted;
+        detection.detail = "NiYien FCP installation was interrupted; repair is required".to_owned();
+    } else if parent.join(FINALCUT_APP_NAME).symlink_metadata().is_ok()
+        && parent
+            .join(FINALCUT_LEGACY_APP_NAME)
+            .symlink_metadata()
+            .is_ok()
+    {
+        detection.state = FinalCutInstallState::BrokenOrUntrusted;
+        detection.detail = "Duplicate NiYien FCP installations: /Applications/NiYien FCP.app and /Applications/GyroflowNiYien Final Cut.app".to_owned();
+    }
+    Ok(detection)
+}
+
+fn format_finalcut_component_states(
+    app: io::Result<String>,
+    template: io::Result<()>,
+    registration: io::Result<()>,
+) -> String {
+    let describe = |name: &str, result: io::Result<String>| match result {
+        Ok(detail) => format!("{name}=healthy({detail})"),
+        Err(error) => format!("{name}=failed({error})"),
+    };
+    [
+        describe("app", app),
+        describe("template", template.map(|_| "verified".to_owned())),
+        describe(
+            "registration",
+            registration.map(|_| "production-only".to_owned()),
+        ),
+    ]
+    .join("; ")
+}
+
+fn finalcut_component_state_summary(app: &Path) -> String {
+    let app_state = validate_finalcut_app_structure(app).and_then(|version| {
+        validate_finalcut_universal_binaries(app)?;
+        validate_finalcut_trust(app)?;
+        Ok(version)
+    });
+    let template_state = match &app_state {
+        Ok(version) => std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME is unavailable"))
+            .and_then(|home| {
+                validate_installed_finalcut_template(
+                    &finalcut_template_install_path(&home),
+                    app,
+                    version,
+                )
+            }),
+        Err(_) => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "not checked because the App is invalid",
+        )),
+    };
+    let registration_state = validate_finalcut_registration(app);
+    format_finalcut_component_states(app_state, template_state, registration_state)
 }
 
 fn finalcut_download_url(plugins_base: &str) -> String {
@@ -1075,39 +1293,353 @@ fn extract_finalcut_archive(archive: &Path, destination: &Path) -> io::Result<()
     })
 }
 
-fn finalcut_privileged_install_script() -> &'static str {
-    r#"on run argv
-set sourcePath to item 1 of argv
-set destinationPath to item 2 of argv
-set transactionID to item 3 of argv
-set stagingPath to destinationPath & ".staging-" & transactionID
-set backupPath to destinationPath & ".backup-" & transactionID
-set commandText to "/bin/rm -rf " & quoted form of stagingPath & " " & quoted form of backupPath & "; " & ¬
-    "/usr/bin/ditto " & quoted form of sourcePath & " " & quoted form of stagingPath & "; " & ¬
-    "if [ -e " & quoted form of destinationPath & " ]; then /bin/mv " & quoted form of destinationPath & " " & quoted form of backupPath & "; fi; " & ¬
-    "if /bin/mv " & quoted form of stagingPath & " " & quoted form of destinationPath & "; then /bin/rm -rf " & quoted form of backupPath & "; " & ¬
-    "else status=$?; if [ -e " & quoted form of backupPath & " ]; then /bin/mv " & quoted form of backupPath & " " & quoted form of destinationPath & "; fi; exit $status; fi"
-do shell script commandText with administrator privileges
-end run"#
-}
+type FinalCutAppInstallTransaction = finalcut_transaction::Transaction;
 
-fn install_finalcut_app_privileged(source: &Path, destination: &Path) -> io::Result<()> {
-    let transaction_id = uuid::Uuid::new_v4().simple().to_string();
+fn execute_finalcut_privileged_command(command: &str) -> io::Result<()> {
+    let script =
+        "on run argv\ndo shell script (item 1 of argv) with administrator privileges\nend run";
     let status = Command::new("/usr/bin/osascript")
-        .args([
-            "-e".as_ref(),
-            finalcut_privileged_install_script().as_ref(),
-            source.as_os_str(),
-            destination.as_os_str(),
-            transaction_id.as_ref(),
-        ])
+        .args(["-e", script, command])
         .status()?;
     if status.success() {
         Ok(())
     } else {
         Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            "FINALCUT_APP_INSTALL_BLOCKED: close Final Cut Pro, Motion, and the Gyroflow Final Cut App, then retry",
+            "FINALCUT_APP_INSTALL_BLOCKED: NiYien FCP installation transaction did not complete",
+        ))
+    }
+}
+
+fn finalcut_template_owner(path: &Path) -> io::Result<()> {
+    if path.ancestors().any(|ancestor| ancestor.is_symlink()) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Final Cut template path contains a symbolic link",
+        ));
+    }
+    let Some(metadata) = finalcut_existing_metadata(path)? else {
+        return Ok(());
+    };
+    if !metadata.is_dir() || path.join(FINALCUT_TEMPLATE_MARKER).is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Final Cut template path is not an owned directory",
+        ));
+    }
+    let marker: FinalCutTemplateMarker =
+        serde_json::from_slice(&std::fs::read(path.join(FINALCUT_TEMPLATE_MARKER))?)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    if marker.effect_bundle_identifier != FINALCUT_XPC_BUNDLE_ID
+        || marker.effect_uuid != FINALCUT_EFFECT_UUID
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Final Cut template ownership mismatch",
+        ));
+    }
+    Ok(())
+}
+
+fn finalcut_owned_existing_app(path: &Path, backup: bool) -> io::Result<()> {
+    let Some(metadata) = finalcut_existing_metadata(path)? else {
+        return Ok(());
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Final Cut installation path conflict",
+        ));
+    }
+    if backup {
+        validate_finalcut_app_contents(path)?;
+    } else {
+        validate_finalcut_app_structure(path)?;
+    }
+    validate_finalcut_trust(path)
+}
+
+fn finalcut_existing_metadata(path: &Path) -> io::Result<Option<std::fs::Metadata>> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(Some(metadata)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn install_finalcut_app_privileged(
+    source: &Path,
+    destination: &Path,
+) -> io::Result<FinalCutAppInstallTransaction> {
+    let parent = destination.parent().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "missing installation parent")
+    })?;
+    let companion = parent.join(
+        if destination.file_name() == Some(FINALCUT_APP_NAME.as_ref()) {
+            FINALCUT_LEGACY_APP_NAME
+        } else {
+            FINALCUT_APP_NAME
+        },
+    );
+    for path in [destination, companion.as_path()] {
+        finalcut_owned_existing_app(path, false)?;
+    }
+    let had_destination = destination.exists();
+    let had_companion = companion.exists();
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME is unavailable"))?;
+    let template = finalcut_template_install_path(&home);
+    for ancestor in template
+        .ancestors()
+        .take_while(|path| *path != home.as_path())
+    {
+        if ancestor.is_symlink() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Final Cut template ancestor is linked",
+            ));
+        }
+    }
+    finalcut_template_owner(&template)?;
+    let transaction = FinalCutAppInstallTransaction {
+        destination: destination.to_owned(),
+        companion: companion.clone(),
+        previous_destination: if had_destination || !had_companion {
+            destination.to_owned()
+        } else {
+            companion
+        },
+        transaction_id: uuid::Uuid::new_v4().simple().to_string(),
+        had_destination,
+        had_companion,
+        had_previous_app: had_destination || had_companion,
+        had_template: template.exists(),
+        template,
+        committed: false,
+    };
+    transaction.validate(parent, FINALCUT_APP_NAME, FINALCUT_LEGACY_APP_NAME)?;
+    execute_finalcut_privileged_command(&transaction.install_command(source))?;
+    Ok(transaction)
+}
+
+fn commit_finalcut_app_transaction(transaction: &FinalCutAppInstallTransaction) -> io::Result<()> {
+    execute_finalcut_privileged_command(&transaction.commit_command())
+}
+
+fn rollback_finalcut_app_transaction(
+    transaction: &FinalCutAppInstallTransaction,
+) -> io::Result<()> {
+    execute_finalcut_privileged_command(&transaction.rollback_command())
+}
+
+fn recover_pending_finalcut_transaction() -> io::Result<()> {
+    let parent = Path::new("/Applications");
+    let journal = parent.join(".niyien-fcp-install.json");
+    let metadata = match std::fs::symlink_metadata(&journal) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > 16384 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Invalid Final Cut recovery journal",
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.uid() != 0 || metadata.mode() & 0o022 != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Final Cut recovery journal must be owned and protected by the installer",
+            ));
+        }
+    }
+    let transaction: FinalCutAppInstallTransaction =
+        serde_json::from_slice(&std::fs::read(journal)?)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    transaction.validate(parent, FINALCUT_APP_NAME, FINALCUT_LEGACY_APP_NAME)?;
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME is unavailable"))?;
+    if transaction.template != finalcut_template_install_path(&home) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Final Cut recovery belongs to another user",
+        ));
+    }
+    for app in [&transaction.destination, &transaction.companion] {
+        finalcut_owned_existing_app(app, false)?;
+        finalcut_owned_existing_app(&transaction.backup(app), true)?;
+    }
+    finalcut_template_owner(&transaction.template)?;
+    finalcut_template_owner(&transaction.template_backup())?;
+    if transaction.committed {
+        validate_finalcut_app_structure(&transaction.destination)?;
+        commit_finalcut_app_transaction(&transaction)
+    } else {
+        recover_finalcut_install(&transaction, true)
+    }
+}
+
+fn parse_finalcut_registration_paths(output: &str) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for line in output.lines() {
+        let Some(index) = line.find('/') else {
+            continue;
+        };
+        let candidate = line[index..].trim();
+        if candidate.ends_with(FINALCUT_XPC_NAME) {
+            let path = PathBuf::from(candidate);
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+    }
+    paths
+}
+
+fn query_finalcut_registration_paths() -> io::Result<Vec<PathBuf>> {
+    let output = Command::new("/usr/bin/pluginkit")
+        .args(["-m", "-A", "-D", "-v", "-i", FINALCUT_XPC_BUNDLE_ID])
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!(
+                "FINALCUT_PLUGIN_REGISTRATION_FAILED: unable to query PlugInKit: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        ));
+    }
+    Ok(parse_finalcut_registration_paths(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
+}
+
+fn validate_finalcut_registration_paths(app: &Path, paths: &[PathBuf]) -> io::Result<()> {
+    let expected = finalcut_xpc_path(app);
+    if paths.len() == 1 && paths[0] == expected {
+        return Ok(());
+    }
+    let actual = if paths.is_empty() {
+        "none".to_owned()
+    } else {
+        paths
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
+    Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!(
+            "FINALCUT_PLUGIN_REGISTRATION_CONFLICT: expected sole production registration {} but found {actual}",
+            expected.display()
+        ),
+    ))
+}
+
+fn validate_finalcut_registration(app: &Path) -> io::Result<()> {
+    let paths = query_finalcut_registration_paths()?;
+    validate_finalcut_registration_paths(app, &paths)
+}
+
+fn finalcut_registration_candidate_is_trusted(path: &Path) -> bool {
+    let info = path.join("Contents").join("Info.plist");
+    match plist_string(&info, "CFBundleIdentifier") {
+        Ok(identifier) if identifier == FINALCUT_XPC_BUNDLE_ID => {}
+        _ => return false,
+    }
+    let verified = Command::new("/usr/bin/codesign")
+        .args(["--verify", "--deep", "--strict"])
+        .arg(path)
+        .status();
+    if !matches!(verified, Ok(status) if status.success()) {
+        return false;
+    }
+    let output = match Command::new("/usr/bin/codesign")
+        .args(["-dv", "--verbose=4"])
+        .arg(path)
+        .output()
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return false,
+    };
+    String::from_utf8_lossy(&output.stderr).contains(&format!("TeamIdentifier={FINALCUT_TEAM_ID}"))
+}
+
+fn repair_finalcut_registration_with<T, R>(
+    app: &Path,
+    paths: &[PathBuf],
+    mut trusted: T,
+    mut run: R,
+) -> io::Result<()>
+where
+    T: FnMut(&Path) -> bool,
+    R: FnMut(&Path, &[std::ffi::OsString]) -> io::Result<bool>,
+{
+    let expected = finalcut_xpc_path(app);
+    let non_production: Vec<_> = paths.iter().filter(|path| **path != expected).collect();
+    let untrusted: Vec<_> = non_production
+        .iter()
+        .filter(|path| !trusted(path))
+        .map(|path| path.display().to_string())
+        .collect();
+    if !untrusted.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "FINALCUT_PLUGIN_REGISTRATION_CONFLICT: refusing to unregister untrusted same-ID paths: {}",
+                untrusted.join(" | ")
+            ),
+        ));
+    }
+    for path in non_production {
+        let arguments = [std::ffi::OsString::from("-r"), path.as_os_str().to_owned()];
+        if !run(Path::new("/usr/bin/pluginkit"), &arguments)? {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "FINALCUT_PLUGIN_REGISTRATION_FAILED: unable to unregister {}",
+                    path.display()
+                ),
+            ));
+        }
+    }
+    let arguments = [
+        std::ffi::OsString::from("-a"),
+        expected.as_os_str().to_owned(),
+    ];
+    if !run(Path::new("/usr/bin/pluginkit"), &arguments)? {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "FINALCUT_PLUGIN_REGISTRATION_FAILED: PlugInKit rejected the installed FxPlug XPC",
+        ));
+    }
+    Ok(())
+}
+
+fn preflight_finalcut_registration_repair(app: &Path) -> io::Result<()> {
+    let paths = query_finalcut_registration_paths()?;
+    let expected = finalcut_xpc_path(app);
+    let untrusted: Vec<_> = paths
+        .iter()
+        .filter(|path| **path != expected)
+        .filter(|path| !finalcut_registration_candidate_is_trusted(path))
+        .map(|path| path.display().to_string())
+        .collect();
+    if untrusted.is_empty() {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "FINALCUT_PLUGIN_REGISTRATION_CONFLICT: untrusted same-ID paths require manual recovery before installation: {}",
+                untrusted.join(" | ")
+            ),
         ))
     }
 }
@@ -1134,20 +1666,31 @@ where
     }
 }
 
-fn register_finalcut_xpc(app: &Path) -> io::Result<()> {
-    register_finalcut_xpc_with(app, |program, arguments| {
-        Command::new(program)
-            .args(arguments)
-            .status()
-            .map(|status| status.success())
-    })
+fn register_finalcut_xpc_allow_retired(app: &Path, retired: &[PathBuf]) -> io::Result<()> {
+    let paths = query_finalcut_registration_paths()?;
+    repair_finalcut_registration_with(
+        app,
+        &paths,
+        |path| {
+            (retired.iter().any(|candidate| candidate == path)
+                && matches!(std::fs::symlink_metadata(path), Err(error) if error.kind() == io::ErrorKind::NotFound))
+                || finalcut_registration_candidate_is_trusted(path)
+        },
+        |program, arguments| {
+            Command::new(program)
+                .args(arguments)
+                .status()
+                .map(|status| status.success())
+        },
+    )?;
+    validate_finalcut_registration(app)
 }
 
 fn run_finalcut_template_installer(app: &Path) -> io::Result<()> {
     let executable = app
         .join("Contents")
         .join("MacOS")
-        .join("GyroflowNiYien Final Cut");
+        .join(FINALCUT_APP_EXECUTABLE);
     let status = Command::new(&executable)
         .arg("--install-template-and-quit")
         .status()?;
@@ -1158,6 +1701,27 @@ fn run_finalcut_template_installer(app: &Path) -> io::Result<()> {
             io::ErrorKind::Other,
             format!(
                 "FINALCUT_TEMPLATE_INSTALL_FAILED:{}",
+                status.code().unwrap_or(-1)
+            ),
+        ))
+    }
+}
+
+fn run_finalcut_template_preflight(app: &Path) -> io::Result<()> {
+    let executable = app
+        .join("Contents")
+        .join("MacOS")
+        .join(FINALCUT_APP_EXECUTABLE);
+    let status = Command::new(&executable)
+        .arg("--preflight-template-and-quit")
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "FINALCUT_TEMPLATE_PREFLIGHT_FAILED:{}",
                 status.code().unwrap_or(-1)
             ),
         ))
@@ -1177,7 +1741,90 @@ where
     register_xpc(app)
 }
 
+fn recover_finalcut_install_with<RM, RB, IT, RR>(
+    transaction: &FinalCutAppInstallTransaction,
+    template_was_updated: bool,
+    mut remove_template: RM,
+    mut rollback_app: RB,
+    mut install_template: IT,
+    mut register_xpc: RR,
+) -> io::Result<()>
+where
+    RM: FnMut(&Path) -> io::Result<()>,
+    RB: FnMut(&FinalCutAppInstallTransaction) -> io::Result<()>,
+    IT: FnMut(&Path) -> io::Result<()>,
+    RR: FnMut(&Path) -> io::Result<()>,
+{
+    let mut failures = Vec::new();
+    if !transaction.had_previous_app && template_was_updated {
+        if let Err(error) = remove_template(&transaction.destination) {
+            failures.push(error.to_string());
+        }
+    }
+    if let Err(error) = rollback_app(transaction) {
+        failures.push(error.to_string());
+    } else if transaction.had_previous_app {
+        if let Err(error) = install_template(&transaction.previous_destination) {
+            failures.push(format!("old template restore failed: {error}"));
+        }
+        if let Err(error) = register_xpc(&transaction.previous_destination) {
+            failures.push(format!("old registration restore failed: {error}"));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("Final Cut rollback incomplete: {}", failures.join("; ")),
+        ))
+    }
+}
+
+fn recover_finalcut_install(
+    transaction: &FinalCutAppInstallTransaction,
+    template_was_updated: bool,
+) -> io::Result<()> {
+    recover_finalcut_install_with(
+        transaction,
+        template_was_updated,
+        |_| Ok(()),
+        rollback_finalcut_app_transaction,
+        |_| Ok(()),
+        |app| {
+            register_finalcut_xpc_allow_retired(
+                app,
+                &[
+                    finalcut_xpc_path(&transaction.destination),
+                    finalcut_xpc_path(&transaction.companion),
+                ],
+            )
+        },
+    )?;
+    if !transaction.had_previous_app {
+        let xpc = finalcut_xpc_path(&transaction.destination);
+        if query_finalcut_registration_paths()?.contains(&xpc) {
+            let status = Command::new("/usr/bin/pluginkit")
+                .arg("-r")
+                .arg(&xpc)
+                .status()?;
+            if !status.success() {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "Final Cut registration rollback failed",
+                ));
+            }
+        }
+    }
+    execute_finalcut_privileged_command(&transaction.finish_recovery_command())
+}
+
 fn install_finalcut(plugins_base: String) -> io::Result<String> {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME is unavailable"))?;
+    let _installation_lock = FinalCutAppInstallTransaction::acquire_lock(&home)?;
+    recover_pending_finalcut_transaction()?;
     let download_url = finalcut_download_url(&plugins_base);
     crate::network::prewarm_url(&download_url);
     let mut response = crate::network::call_with_plugin_retry("plugin:finalcut", || {
@@ -1203,35 +1850,77 @@ fn install_finalcut(plugins_base: String) -> io::Result<String> {
     std::fs::write(&archive, delivery)?;
     extract_finalcut_archive(&archive, &extracted)?;
     let source_app = validate_finalcut_extracted_root(&extracted)?;
+    validate_finalcut_universal_binaries(&source_app)?;
     validate_finalcut_trust(&source_app)?;
-    install_finalcut_app_privileged(&source_app, Path::new(FINALCUT_APP_PATH))?;
-
-    let installed_app = Path::new(FINALCUT_APP_PATH);
+    run_finalcut_template_preflight(&source_app)?;
+    let destination = Path::new("/Applications").join(source_app.file_name().unwrap());
+    preflight_finalcut_registration_repair(&destination)?;
+    let transaction = match install_finalcut_app_privileged(&source_app, &destination) {
+        Ok(transaction) => transaction,
+        Err(error) => {
+            let recovery = recover_pending_finalcut_transaction();
+            return Err(io::Error::new(
+                error.kind(),
+                format!("{error}; recovery={recovery:?}"),
+            ));
+        }
+    };
+    let installed_app = destination.as_path();
     let latest = latest_plugin_info();
-    if let Err(error) = finalize_finalcut_install_with(
-        installed_app,
-        run_finalcut_template_installer,
-        register_finalcut_xpc,
-    ) {
-        let detection = detect_finalcut(&latest.version)?;
+    let mut template_was_updated = false;
+    let setup = (|| {
+        run_finalcut_template_installer(installed_app)?;
+        template_was_updated = true;
+        register_finalcut_xpc_allow_retired(
+            installed_app,
+            &[finalcut_xpc_path(&transaction.companion)],
+        )
+    })();
+    if let Err(error) = setup {
+        let recovery = recover_finalcut_install(&transaction, template_was_updated);
+        let actual_state = finalcut_component_state_summary(installed_app);
         return Err(io::Error::new(
             io::ErrorKind::Other,
             format!(
-                "{error}; Final Cut integration state after post-commit setup failure: {:?}: {}",
-                detection.state, detection.detail
+                "{error}; recovery={}; actual_state={}",
+                recovery
+                    .as_ref()
+                    .map(|_| "restored previous installation".to_owned())
+                    .unwrap_or_else(|failure| failure.to_string()),
+                actual_state
             ),
         ));
     }
-    let detection = detect_finalcut(&latest.version)?;
+    let detection = detect_finalcut_at(
+        installed_app,
+        &transaction.template,
+        &latest.version,
+        |app| {
+            validate_finalcut_universal_binaries(app)?;
+            validate_finalcut_trust(app)
+        },
+        validate_finalcut_registration,
+    );
     if !matches!(
         detection.state,
         FinalCutInstallState::Installed | FinalCutInstallState::UpdateAvailable
     ) {
+        let recovery = recover_finalcut_install(&transaction, template_was_updated);
+        let actual_state = finalcut_component_state_summary(installed_app);
         return Err(io::Error::new(
             io::ErrorKind::Other,
-            format!("FINALCUT_INSTALL_VERIFICATION_FAILED:{}", detection.detail),
+            format!(
+                "FINALCUT_INSTALL_VERIFICATION_FAILED:{}; recovery={}; actual_state={}",
+                detection.detail,
+                recovery
+                    .as_ref()
+                    .map(|_| "restored previous installation".to_owned())
+                    .unwrap_or_else(|failure| failure.to_string()),
+                actual_state
+            ),
         ));
     }
+    commit_finalcut_app_transaction(&transaction)?;
     remember_installed_plugin("finalcut", &detection.version, &latest);
     Ok(detection.version)
 }
@@ -1769,16 +2458,15 @@ fn latest_plugin_info() -> LatestPluginInfo {
     // removed because the deploy side (publish_pan123_release.py) now ships one
     // fixed release naming for both CI runs and tag releases, so the client
     // doesn't need a parallel nightly path.
-    let body = match crate::network::get(
-        "https://api.github.com/repos/NiYien/gyroflow-plugins/releases",
-    )
-    .call()
-    .ok()
-    .and_then(|response| response.into_body().read_to_string().ok())
-    {
-        Some(body) => body,
-        None => return LatestPluginInfo::default(),
-    };
+    let body =
+        match crate::network::get("https://api.github.com/repos/NiYien/gyroflow-plugins/releases")
+            .call()
+            .ok()
+            .and_then(|response| response.into_body().read_to_string().ok())
+        {
+            Some(body) => body,
+            None => return LatestPluginInfo::default(),
+        };
     let releases: Vec<serde_json::Value> = match serde_json::from_str(&body) {
         Ok(value) => value,
         Err(_) => return LatestPluginInfo::default(),
@@ -1949,12 +2637,18 @@ mod tests {
 
     fn write_test_plist(path: &Path, identifier: &str, version: &str) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let executable = if identifier == FINALCUT_APP_BUNDLE_ID {
+            format!("<key>CFBundleExecutable</key><string>{FINALCUT_APP_EXECUTABLE}</string>")
+        } else {
+            String::new()
+        };
         std::fs::write(
             path,
             format!(
                 "<?xml version=\"1.0\"?><plist><dict>\
                  <key>CFBundleIdentifier</key><string>{identifier}</string>\
                  <key>CFBundleShortVersionString</key><string>{version}</string>\
+                 {executable}\
                  </dict></plist>"
             ),
         )
@@ -2002,7 +2696,7 @@ mod tests {
         let app_binary = app
             .join("Contents")
             .join("MacOS")
-            .join("GyroflowNiYien Final Cut");
+            .join(FINALCUT_APP_EXECUTABLE);
         let xpc_binary = xpc
             .join("Contents")
             .join("MacOS")
@@ -2011,6 +2705,14 @@ mod tests {
         std::fs::create_dir_all(xpc_binary.parent().unwrap()).unwrap();
         std::fs::write(app_binary, b"app").unwrap();
         std::fs::write(xpc_binary, b"xpc").unwrap();
+        for framework in [
+            "FxPlug.framework/FxPlug",
+            "PluginManager.framework/PluginManager",
+        ] {
+            let binary = xpc.join("Contents").join("Frameworks").join(framework);
+            std::fs::create_dir_all(binary.parent().unwrap()).unwrap();
+            std::fs::write(binary, b"framework").unwrap();
+        }
         let template = finalcut_bundled_template_path(&app);
         std::fs::create_dir_all(&template).unwrap();
         std::fs::write(
@@ -2027,11 +2729,60 @@ mod tests {
         app
     }
 
-    fn write_installed_finalcut_template(root: &Path, version: &str) -> PathBuf {
+    #[test]
+    fn finalcut_accepts_legacy_root_but_rejects_unknown_or_multiple_roots() {
+        let root = tempfile::tempdir().unwrap();
+        let app = write_finalcut_test_app(root.path(), "2.1.2");
+        let legacy = root.path().join(FINALCUT_LEGACY_APP_NAME);
+        std::fs::rename(app, &legacy).unwrap();
+        assert_eq!(
+            validate_finalcut_extracted_root(root.path()).unwrap(),
+            legacy
+        );
+        let current = write_finalcut_test_app(root.path(), "2.1.3");
+        assert!(validate_finalcut_extracted_root(root.path()).is_err());
+        let unknown = root.path().join("Unrelated.app");
+        std::fs::rename(current, &unknown).unwrap();
+        assert!(validate_finalcut_app_structure(&unknown).is_err());
+    }
+
+    #[test]
+    fn finalcut_new_broken_root_is_not_hidden_by_legacy_installation() {
+        let root = tempfile::tempdir().unwrap();
+        let app = write_finalcut_test_app(root.path(), "2.1.2");
+        let legacy = root.path().join(FINALCUT_LEGACY_APP_NAME);
+        std::fs::rename(&app, &legacy).unwrap();
+        assert_eq!(finalcut_selected_app(root.path()), legacy);
+        std::fs::create_dir(&app).unwrap();
+        assert_eq!(finalcut_selected_app(root.path()), app);
+        assert!(validate_finalcut_app_structure(&app).is_err());
+    }
+
+    #[test]
+    fn finalcut_rejects_executable_path_traversal() {
+        let root = tempfile::tempdir().unwrap();
+        let app = write_finalcut_test_app(root.path(), "2.1.2");
+        let info = app.join("Contents/Info.plist");
+        let source = std::fs::read_to_string(&info).unwrap();
+        std::fs::write(
+            info,
+            source.replace(FINALCUT_APP_EXECUTABLE, "../../bin/sh"),
+        )
+        .unwrap();
+        assert!(
+            validate_finalcut_app_structure(&app)
+                .unwrap_err()
+                .to_string()
+                .contains("executable")
+        );
+    }
+
+    fn write_installed_finalcut_template(root: &Path, app: &Path, version: &str) -> PathBuf {
         let template = root.join("installed-template");
         std::fs::create_dir_all(&template).unwrap();
-        let moef = format!("<filter pluginUUID=\"{FINALCUT_EFFECT_UUID}\"/>");
-        std::fs::write(template.join(FINALCUT_TEMPLATE_NAME), moef.as_bytes()).unwrap();
+        let moef = std::fs::read(finalcut_bundled_template_path(app).join(FINALCUT_TEMPLATE_NAME))
+            .unwrap();
+        std::fs::write(template.join(FINALCUT_TEMPLATE_NAME), &moef).unwrap();
         std::fs::write(template.join("large.png"), b"large").unwrap();
         std::fs::write(template.join("small.png"), b"small").unwrap();
         let marker = serde_json::json!({
@@ -2039,7 +2790,7 @@ mod tests {
             "templateVersion": version,
             "effectBundleIdentifier": FINALCUT_XPC_BUNDLE_ID,
             "effectUUID": FINALCUT_EFFECT_UUID,
-            "templateSHA256": format!("{:x}", Sha256::digest(moef.as_bytes())),
+            "templateSHA256": format!("{:x}", Sha256::digest(&moef)),
         });
         std::fs::write(
             template.join(FINALCUT_TEMPLATE_MARKER),
@@ -2147,31 +2898,52 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let app = root.path().join(FINALCUT_APP_NAME);
         let template = root.path().join("template");
-        let missing = detect_finalcut_at(&app, &template, "2.1.2", |_| Ok(()));
+        let missing = detect_finalcut_at(&app, &template, "2.1.2", |_| Ok(()), |_| Ok(()));
         assert_eq!(missing.state, FinalCutInstallState::NotInstalled);
 
         let app = write_finalcut_test_app(root.path(), "2.1.2");
-        let template_missing = detect_finalcut_at(&app, &template, "2.1.2", |_| Ok(()));
+        let template_missing = detect_finalcut_at(&app, &template, "2.1.2", |_| Ok(()), |_| Ok(()));
         assert_eq!(
             template_missing.state,
             FinalCutInstallState::AppInstalledTemplateMissing
         );
 
-        let template = write_installed_finalcut_template(root.path(), "2.1.2");
-        let installed = detect_finalcut_at(&app, &template, "2.1.2", |_| Ok(()));
+        let template = write_installed_finalcut_template(root.path(), &app, "2.1.2");
+        let installed = detect_finalcut_at(&app, &template, "2.1.2", |_| Ok(()), |_| Ok(()));
         assert_eq!(installed.state, FinalCutInstallState::Installed);
+        let installed_moef = template.join(FINALCUT_TEMPLATE_NAME);
+        let mut drifted = std::fs::read(&installed_moef).unwrap();
+        drifted.extend_from_slice(b"\n");
+        std::fs::write(&installed_moef, &drifted).unwrap();
+        let marker_path = template.join(FINALCUT_TEMPLATE_MARKER);
+        let mut marker: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&marker_path).unwrap()).unwrap();
+        marker["templateSHA256"] =
+            serde_json::Value::String(format!("{:x}", Sha256::digest(&drifted)));
+        std::fs::write(&marker_path, serde_json::to_vec(&marker).unwrap()).unwrap();
+        let drift = detect_finalcut_at(&app, &template, "2.1.2", |_| Ok(()), |_| Ok(()));
+        assert_eq!(
+            drift.state,
+            FinalCutInstallState::AppInstalledTemplateMissing
+        );
+        std::fs::remove_dir_all(&template).unwrap();
+        let template = write_installed_finalcut_template(root.path(), &app, "2.1.2");
         std::fs::remove_file(template.join("small.png")).unwrap();
-        let preview_missing = detect_finalcut_at(&app, &template, "2.1.2", |_| Ok(()));
+        let preview_missing = detect_finalcut_at(&app, &template, "2.1.2", |_| Ok(()), |_| Ok(()));
         assert_eq!(
             preview_missing.state,
             FinalCutInstallState::AppInstalledTemplateMissing
         );
         std::fs::write(template.join("small.png"), b"small").unwrap();
-        let update = detect_finalcut_at(&app, &template, "2.1.3", |_| Ok(()));
+        let update = detect_finalcut_at(&app, &template, "2.1.3", |_| Ok(()), |_| Ok(()));
         assert_eq!(update.state, FinalCutInstallState::UpdateAvailable);
-        let untrusted = detect_finalcut_at(&app, &template, "2.1.2", |_| {
-            Err(io::Error::new(io::ErrorKind::PermissionDenied, "untrusted"))
-        });
+        let untrusted = detect_finalcut_at(
+            &app,
+            &template,
+            "2.1.2",
+            |_| Err(io::Error::new(io::ErrorKind::PermissionDenied, "untrusted")),
+            |_| Ok(()),
+        );
         assert_eq!(untrusted.state, FinalCutInstallState::BrokenOrUntrusted);
     }
 
@@ -2198,6 +2970,98 @@ mod tests {
                 .kind(),
             io::ErrorKind::InvalidData
         );
+
+        let root = tempfile::tempdir().unwrap();
+        let app = write_finalcut_test_app(root.path(), "2.1.2");
+        let missing_framework = finalcut_xpc_path(&app)
+            .join("Contents")
+            .join("Frameworks")
+            .join("FxPlug.framework")
+            .join("FxPlug");
+        std::fs::remove_file(&missing_framework).unwrap();
+        let error = validate_finalcut_app_structure(&app).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("FxPlug.framework"));
+    }
+
+    #[test]
+    fn finalcut_runtime_architecture_gate_reports_the_exact_component() {
+        let root = tempfile::tempdir().unwrap();
+        let app = write_finalcut_test_app(root.path(), "2.1.2");
+        let error = validate_finalcut_universal_binaries_with(&app, |binary| {
+            if binary.ends_with("PluginManager") {
+                Ok(vec!["x86_64".to_owned()])
+            } else {
+                Ok(vec!["arm64".to_owned(), "x86_64".to_owned()])
+            }
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("PluginManager.framework"));
+        assert!(error.to_string().contains("x86_64"));
+    }
+
+    #[test]
+    fn finalcut_registration_diagnostic_requires_one_production_path() {
+        let root = tempfile::tempdir().unwrap();
+        let app = write_finalcut_test_app(root.path(), "2.1.2");
+        let production = finalcut_xpc_path(&app);
+        let development =
+            PathBuf::from("/tmp/DerivedData/Debug/GyroflowNiYienFinalCutEffect.pluginkit");
+        let output = format!(
+            "com.niyien.gyroflow.finalcut.effect(1.1)\t{}\n\
+             com.niyien.gyroflow.finalcut.effect(1.1)\t{}\n",
+            production.display(),
+            development.display()
+        );
+        let paths = parse_finalcut_registration_paths(&output);
+        assert_eq!(paths, [production.clone(), development.clone()]);
+        assert!(
+            validate_finalcut_registration_paths(&app, &paths)
+                .unwrap_err()
+                .to_string()
+                .contains("DerivedData")
+        );
+        validate_finalcut_registration_paths(&app, &[production]).unwrap();
+    }
+
+    #[test]
+    fn finalcut_registration_repair_preflights_identity_and_never_deletes_bundles() {
+        let root = tempfile::tempdir().unwrap();
+        let app = write_finalcut_test_app(root.path(), "2.1.2");
+        let production = finalcut_xpc_path(&app);
+        let development =
+            PathBuf::from("/tmp/DerivedData/Debug/GyroflowNiYienFinalCutEffect.pluginkit");
+        let paths = vec![development.clone(), production.clone()];
+        let mut calls = Vec::new();
+        repair_finalcut_registration_with(
+            &app,
+            &paths,
+            |path| path == development,
+            |program, arguments| {
+                calls.push((program.to_owned(), arguments.to_vec()));
+                Ok(true)
+            },
+        )
+        .unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].1[0], "-r");
+        assert_eq!(calls[0].1[1], development.as_os_str());
+        assert_eq!(calls[1].1[0], "-a");
+        assert_eq!(calls[1].1[1], production.as_os_str());
+
+        calls.clear();
+        let error = repair_finalcut_registration_with(
+            &app,
+            &paths,
+            |_| false,
+            |program, arguments| {
+                calls.push((program.to_owned(), arguments.to_vec()));
+                Ok(true)
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(calls.is_empty());
     }
 
     #[test]
@@ -2279,6 +3143,106 @@ mod tests {
         .unwrap();
 
         assert_eq!(*calls.borrow(), ["template", "registration"]);
+    }
+
+    #[test]
+    fn finalcut_post_commit_recovery_restores_previous_components_in_order() {
+        let transaction = FinalCutAppInstallTransaction {
+            destination: PathBuf::from(FINALCUT_APP_PATH),
+            transaction_id: "fixture".to_owned(),
+            had_previous_app: true,
+            had_destination: true,
+            had_companion: false,
+            previous_destination: PathBuf::from(FINALCUT_APP_PATH),
+            companion: PathBuf::from("/Applications/GyroflowNiYien Final Cut.app"),
+            template: PathBuf::from("/unused-fixture-template"),
+            had_template: false,
+            committed: false,
+        };
+        let calls = std::cell::RefCell::new(Vec::new());
+        recover_finalcut_install_with(
+            &transaction,
+            true,
+            |_| {
+                calls.borrow_mut().push("remove-new-template");
+                Ok(())
+            },
+            |_| {
+                calls.borrow_mut().push("rollback-app");
+                Ok(())
+            },
+            |_| {
+                calls.borrow_mut().push("restore-old-template");
+                Ok(())
+            },
+            |_| {
+                calls.borrow_mut().push("restore-old-registration");
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            *calls.borrow(),
+            [
+                "rollback-app",
+                "restore-old-template",
+                "restore-old-registration"
+            ]
+        );
+    }
+
+    #[test]
+    fn finalcut_partial_failure_summary_reports_each_component() {
+        let summary = format_finalcut_component_states(
+            Ok("2.1.2".to_owned()),
+            Err(io::Error::new(io::ErrorKind::InvalidData, "template drift")),
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "duplicate registration",
+            )),
+        );
+        assert!(summary.contains("app=healthy(2.1.2)"));
+        assert!(summary.contains("template=failed(template drift)"));
+        assert!(summary.contains("registration=failed(duplicate registration)"));
+    }
+
+    #[test]
+    fn finalcut_first_install_failure_removes_new_template_before_app() {
+        let transaction = FinalCutAppInstallTransaction {
+            destination: PathBuf::from(FINALCUT_APP_PATH),
+            transaction_id: "fixture".to_owned(),
+            had_previous_app: false,
+            had_destination: false,
+            had_companion: false,
+            previous_destination: PathBuf::from(FINALCUT_APP_PATH),
+            companion: PathBuf::from("/Applications/GyroflowNiYien Final Cut.app"),
+            template: PathBuf::from("/unused-fixture-template"),
+            had_template: false,
+            committed: false,
+        };
+        let calls = std::cell::RefCell::new(Vec::new());
+        recover_finalcut_install_with(
+            &transaction,
+            true,
+            |_| {
+                calls.borrow_mut().push("remove-new-template");
+                Ok(())
+            },
+            |_| {
+                calls.borrow_mut().push("rollback-app");
+                Ok(())
+            },
+            |_| {
+                calls.borrow_mut().push("unexpected-template-restore");
+                Ok(())
+            },
+            |_| {
+                calls.borrow_mut().push("unexpected-registration-restore");
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(*calls.borrow(), ["remove-new-template", "rollback-app"]);
     }
 
     #[test]
@@ -2571,12 +3535,16 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
-        assert!(error
-            .to_string()
-            .starts_with(LINUX_PLUGIN_MANUAL_INSTALL_REQUIRED));
-        assert!(error
-            .to_string()
-            .contains(&source.to_string_lossy().into_owned()));
+        assert!(
+            error
+                .to_string()
+                .starts_with(LINUX_PLUGIN_MANUAL_INSTALL_REQUIRED)
+        );
+        assert!(
+            error
+                .to_string()
+                .contains(&source.to_string_lossy().into_owned())
+        );
         assert!(error.to_string().contains("/usr/OFX/Plugins/"));
     }
 
@@ -2665,10 +3633,12 @@ mod tests {
 
         let err = copy_resolve_scripts_to(source.path(), destination.path()).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        assert!(!destination
-            .path()
-            .join("gyroflow_autocut_common.inc")
-            .exists());
+        assert!(
+            !destination
+                .path()
+                .join("gyroflow_autocut_common.inc")
+                .exists()
+        );
     }
 
     #[test]
@@ -2727,10 +3697,12 @@ mod tests {
 
         copy_resolve_scripts_to(source.path(), destination.path()).unwrap();
 
-        assert!(!destination
-            .path()
-            .join("Gyroflow NiYien Auto Cut.lua")
-            .exists());
+        assert!(
+            !destination
+                .path()
+                .join("Gyroflow NiYien Auto Cut.lua")
+                .exists()
+        );
         assert!(destination.path().join("Other Utility.lua").exists());
     }
 

@@ -143,7 +143,8 @@ MenuItem {
                 // just refreshes its status below.
                 if (root.loader && result.startsWith("An error occured")) {
                     if (result.includes("FINALCUT_APP_INSTALL_BLOCKED:")) {
-                        messageBox(Modal.Error, qsTr("Unable to replace the Final Cut integration while related apps may be using it.\nClose Final Cut Pro, Motion, and Gyroflow NiYien Final Cut, then click Repair or Install again."), [ { text: qsTr("Ok"), accent: true } ]);
+                        // Keep the translation key compatible with already compiled catalogs.
+                        messageBox(Modal.Error, qsTr("Unable to replace the Final Cut integration while related apps may be using it.\nClose Final Cut Pro, Motion, and Gyroflow NiYien Final Cut, then click Repair or Install again.").replace("Gyroflow NiYien Final Cut", "NiYien FCP"), [ { text: qsTr("Ok"), accent: true } ]);
                     } else if (result.includes("FINALCUT_TEMPLATE_INSTALL_FAILED:") || result.includes("FINALCUT_INSTALL_VERIFICATION_FAILED:")) {
                         messageBox(Modal.Error, qsTr("The Final Cut App was installed, but its Motion template could not be verified.\nClose Final Cut Pro and Motion, then click Repair again."), [ { text: qsTr("Ok"), accent: true } ]);
                     } else if (root.initiatedInstallType === "finalcut" && (result.includes("code signature") || result.includes("Gatekeeper"))) {
@@ -188,14 +189,20 @@ MenuItem {
     }
 
     Row {
+        objectName: "finalcutPluginInstallRow";
         visible: root.finalcutSupported;
+        width: parent.width;
         spacing: 4 * dpiScale;
         BasicText {
-            text: 'Final Cut Pro: <b><font color="%1">%2</font></b>'.arg(statusColor("finalcut")).arg(finalcutStatusText());
+            width: Math.max(0, parent.width - (finalcutAction.visible ? finalcutAction.width + parent.spacing : 0));
+            text: 'Final Cut Pro (FCPX): <b><font color="%1">%2</font></b>'.arg(statusColor("finalcut")).arg(finalcutStatusText());
             textFormat: Text.StyledText;
+            wrapMode: Text.Wrap;
             anchors.verticalCenter: parent.verticalCenter;
         }
         LinkButton {
+            id: finalcutAction;
+            objectName: "finalcutPluginInstallButton";
             enabled: !root.loader;
             visible: finalcutNeedsAction();
             text: finalcutActionText();

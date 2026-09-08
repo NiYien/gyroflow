@@ -84,6 +84,7 @@ fn niyien_version_info(base_version: &str, build_time: Option<&str>) -> NiyienVe
 
 fn compile_qml(dir: &str, qt_include_path: &str, qt_library_path: &str) {
     let mut config = cc::Build::new();
+    config.cpp(true);
     config.include(qt_include_path);
     config.include(&format!("{}/QtCore", qt_include_path));
     config.include(&format!("{}/QtQml", qt_include_path));
