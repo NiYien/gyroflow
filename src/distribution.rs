@@ -222,7 +222,7 @@ fn manifest_request_url(country_hint: Option<&str>) -> Result<url::Url, String> 
         pairs
             .append_pair("platform", platform_name())
             .append_pair("arch", std::env::consts::ARCH)
-            .append_pair("app_version", env!("CARGO_PKG_VERSION"));
+            .append_pair("app_version", crate::util::get_canonical_version());
         if let Some(country) = country.as_deref() {
             pairs.append_pair("country", country);
         }
@@ -2528,10 +2528,14 @@ mod app_update_tests {
     }
 
     #[test]
-    fn manifest_url_includes_normalized_local_country() {
+    fn manifest_url_includes_canonical_version_and_normalized_local_country() {
         let url = manifest_request_url(Some(" cn ")).unwrap();
         let pairs: std::collections::BTreeMap<_, _> = url.query_pairs().into_owned().collect();
         assert_eq!(pairs.get("country"), Some(&"CN".to_owned()));
+        assert_eq!(
+            pairs.get("app_version").map(String::as_str),
+            Some(crate::util::get_canonical_version())
+        );
     }
 
     #[test]
