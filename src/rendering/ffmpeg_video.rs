@@ -156,6 +156,8 @@ pub struct VideoTranscoder<'a> {
     pub encoder_converter: Option<software::scaling::Context>,
 
     pub decode_only: bool,
+    // Opt-in for analysis attempts that must not accept a partial decode.
+    pub strict_decode_errors: bool,
     pub gpu_decoding: bool,
     pub gpu_encoding: bool,
     pub clone_frames: bool,
@@ -370,7 +372,16 @@ impl<'a> VideoTranscoder<'a> {
         let mut frame = frame::Video::empty();
         let mut sw_frame = &mut self.buffers.sw_frame;
 
-        while decoder.receive_frame(&mut frame).is_ok() {
+        loop {
+            if let Err(e) = decoder.receive_frame(&mut frame) {
+                if self.strict_decode_errors
+                    && e != ffmpeg_next::Error::Eof
+                    && e != (ffmpeg_next::Error::Other { errno: ffmpeg_next::util::error::EAGAIN })
+                {
+                    return Err(e.into());
+                }
+                break;
+            }
             let time_base = self.encoder_params.time_base.unwrap();
 
             if let Some(mut ts) = frame.timestamp() {

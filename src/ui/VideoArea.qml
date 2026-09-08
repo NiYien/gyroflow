@@ -1455,34 +1455,36 @@ Item {
                 // A single folder with no loose files = one clip's worth of media.
                 // Load it in the main preview area just like a single video (a DNG
                 // image sequence becomes one clip via detectImageSequence). Only
-                // fan out to the render queue when there is more than one clip.
+                // fan out to the render queue when there is more than one clip or
+                // the folder also contains queue-managed gyro data.
                 if (folderUrls.length === 1 && fileUrls.length === 0) {
                     try {
+                        const gyroFilesFound = render_queue.add_gyro_folder(folderUrls[0].toString());
                         const jsonStr = render_queue.list_video_files_in_folder(
                             folderUrls[0].toString(),
                             JSON.stringify(fileDialog.extensions)
                         );
                         const items = JSON.parse(jsonStr);
-                        if (items.length === 1) {
+                        if (items.length === 1 && gyroFilesFound === 0) {
                             // Exactly one clip/sequence → main preview area. For a
                             // sequence, load via the first frame so detectImageSequence
                             // collapses it (and resolves its frame rate) exactly like
                             // dropping a single frame.
-                            // Still register any _mix.bin gyro sources in the folder
-                            // (the multi-clip / queue paths get this via the queue's
-                            // loadFiles handler; this single-clip→main path bypasses
-                            // it, so call it here to preserve the prior behavior).
-                            render_queue.add_gyro_folder(folderUrls[0].toString());
                             const it = items[0];
                             const loadUrl = (it.is_sequence && it.first_frame_url) ? it.first_frame_url : it.url;
                             root.loadFile(loadUrl, false);
                             console.log("[main_drop:dispatch] folder=1 items=1 target=main");
                             return;
                         }
-                        if (items.length > 1 && queue.item) {
+                        if (items.length > 0 && queue.item) {
                             queue.item.shown = true;
                             Qt.callLater(function() { queue.item.dt.loadFiles(folderUrls); });
-                            console.log("[main_drop:dispatch] folder=1 items=" + items.length + " target=queue");
+                            console.log("[main_drop:dispatch] folder=1 items=" + items.length + " gyro=" + gyroFilesFound + " target=queue");
+                            return;
+                        }
+                        if (gyroFilesFound > 0 && queue.item) {
+                            queue.item.shown = true;
+                            console.log("[main_drop:dispatch] folder=1 items=0 gyro=" + gyroFilesFound + " target=queue_gyro");
                             return;
                         }
                         console.log("[main_drop:drop] reason=empty_folder");

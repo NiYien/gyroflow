@@ -324,12 +324,11 @@ Column {
     }
 
     // ── Zoom Mode ──
-    ComboBox {
+    ZoomModeSelector {
         id: croppingMode;
         currentIndex: 1;
         font.pixelSize: 12 * dpiScale;
         width: parent.width;
-        model: [QT_TRANSLATE_NOOP("Popup", "No zooming"), QT_TRANSLATE_NOOP("Popup", "Dynamic zooming"), QT_TRANSLATE_NOOP("Popup", "Static zoom")];
         onCurrentIndexChanged: {
             if (root._importing) return;
             if (window.batchState && window.batchState.active) {

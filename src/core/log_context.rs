@@ -38,7 +38,11 @@ pub struct CtxScope {
 impl Drop for CtxScope {
     fn drop(&mut self) {
         let restored = std::mem::take(&mut self.prev);
-        LOG_CTX.with(|c| *c.borrow_mut() = restored);
+        let _ = LOG_CTX.try_with(|c| {
+            if let Ok(mut current) = c.try_borrow_mut() {
+                *current = restored;
+            }
+        });
     }
 }
 
@@ -62,7 +66,21 @@ impl LogContext {
 
     /// Read the current thread's context.
     pub fn snapshot() -> LogContext {
-        LOG_CTX.with(|c| c.borrow().clone())
+        LOG_CTX
+            .try_with(|c| {
+                c.try_borrow()
+                    .map(|current| current.clone())
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Whether Rust TLS is still accessible on the calling thread.
+    ///
+    /// Qt and MDK can invoke callbacks while tearing down foreign render
+    /// threads, after Rust has already destroyed its thread-local state.
+    pub fn tls_available() -> bool {
+        LOG_CTX.try_with(|_| ()).is_ok()
     }
 }
 
@@ -141,6 +159,17 @@ mod tests {
         assert_eq!(LogContext::snapshot().video_path.as_deref(), Some("x.mp4"));
         let _g2 = LogContext::enter(LogContextUpdate::default().clear_video_path());
         assert_eq!(LogContext::snapshot().video_path, None);
+    }
+
+    #[test]
+    fn snapshot_falls_back_during_context_borrow_conflict() {
+        LOG_CTX.with(|ctx| {
+            let _borrow = ctx.borrow_mut();
+            let snapshot = LogContext::snapshot();
+            assert!(snapshot.session_id.is_empty());
+            assert_eq!(snapshot.video_path, None);
+            assert_eq!(snapshot.op, None);
+        });
     }
 
     #[test]

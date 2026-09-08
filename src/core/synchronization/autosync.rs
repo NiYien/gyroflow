@@ -39,6 +39,7 @@ pub struct AutosyncProcess {
     estimator: Arc<PoseEstimator>,
     total_read_frames: Arc<AtomicUsize>,
     total_detected_frames: Arc<AtomicUsize>,
+    frame_tasks: Arc<AtomicUsize>,
     compute_params: Arc<RwLock<ComputeParams>>,
     cancel_flag: Arc<AtomicBool>,
     progress_cb: Option<Arc<Box<dyn Fn(f64, usize, usize) + Send + Sync + 'static>>>,
@@ -352,6 +353,7 @@ impl AutosyncProcess {
             fps_scale,
             total_read_frames: Arc::new(AtomicUsize::new(1)), // Start with 1 to keep the loader active until `finished_feeding_frames` overrides it with final value
             total_detected_frames: Arc::new(AtomicUsize::new(0)),
+            frame_tasks: Arc::new(AtomicUsize::new(0)),
             compute_params: Arc::new(RwLock::new(comp_params)),
             finished_cb: None,
             progress_cb: None,
@@ -367,6 +369,7 @@ impl AutosyncProcess {
             .collect()
     }
 
+    /// Return whether a valid image was accepted inside an analysis window.
     pub fn feed_frame(
         &self,
         mut timestamp_us: i64,
@@ -375,7 +378,7 @@ impl AutosyncProcess {
         height: u32,
         stride: usize,
         pixels: &[u8],
-    ) {
+    ) -> bool {
         use crate::synchronization::sync_perf::{Stage, StageGuard};
         let _feed_guard = StageGuard::new(Stage::FeedFrame);
 
@@ -447,10 +450,13 @@ impl AutosyncProcess {
             .lazy_probe_scaled_range()
             .is_some_and(|(from, to)| (from..=to).contains(&timestamp_us));
         if in_user_ranges || in_probe {
+            let valid_image = img.is_some();
             self.total_read_frames.fetch_add(1, SeqCst);
 
             let spawn_at = std::time::Instant::now();
+            let frame_task = crate::OpGuard::enter(&self.frame_tasks);
             self.thread_pool.spawn(move || {
+                let _frame_task = frame_task;
                 let queued_ns = spawn_at.elapsed().as_nanos() as u64;
                 crate::synchronization::sync_perf::record_ns(
                     crate::synchronization::sync_perf::Stage::TaskQueueLatency,
@@ -500,6 +506,18 @@ impl AutosyncProcess {
                     log::warn!("Failed to get image {:?}", img);
                 }
             });
+            valid_image
+        } else {
+            false
+        }
+    }
+
+    /// Drain entire frame tasks, including optical flow and progress callbacks.
+    /// A failed decode must finish these writes before its estimator is cleared
+    /// for a fresh attempt. The detection counter alone advances too early.
+    pub fn wait_for_frame_tasks(&self) {
+        while self.frame_tasks.load(SeqCst) != 0 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
 
@@ -1075,6 +1093,49 @@ pub(crate) fn pick_probe_fraction(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deep_match_decode_drain_waits_for_entire_frame_task() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let stab = StabilizationManager::default();
+        {
+            let mut p = stab.params.write();
+            p.size = (64, 64);
+            p.fps = 30.0;
+            p.duration_ms = 1000.0;
+            p.frame_count = 30;
+        }
+        let mut sync = AutosyncProcess::from_manager(
+            &stab, &[0.5],
+            SyncParams { time_per_syncpoint: 500.0, search_size: 100.0, every_nth_frame: 1, ..Default::default() },
+            "guess_imu_orientation".into(), Arc::new(AtomicBool::new(false)),
+        ).unwrap();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let release_rx = std::sync::Mutex::new(release_rx);
+        sync.on_progress(move |_, _, _| {
+            entered_tx.send(()).unwrap();
+            release_rx.lock().unwrap().recv().unwrap();
+        });
+        assert!(!sync.feed_frame(0, 1, 64, 64, 64, &[128; 4096]));
+        assert!(sync.feed_frame(500_000, 1, 64, 64, 64, &[128; 4096]));
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(sync.total_detected_frames.load(SeqCst), 1);
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                sync.wait_for_frame_tasks();
+                done_tx.send(()).unwrap();
+            });
+            let early = done_rx.recv_timeout(Duration::from_millis(50));
+            // Release before asserting so a failing test cannot strand a worker.
+            release_tx.send(()).unwrap();
+            assert!(matches!(early, Err(mpsc::RecvTimeoutError::Timeout)));
+            done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        });
+        assert_eq!(sync.frame_tasks.load(SeqCst), 0);
+    }
 
     #[test]
     fn autosync_can_run_requires_motion_only_for_synchronize() {

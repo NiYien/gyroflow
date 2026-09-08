@@ -667,6 +667,14 @@ Item {
                         messageBox(Modal.Warning, qsTr("No match found. Possible reasons:\n1. Not enough camera motion in the video; try another video.\n2. The gyro data does not cover the video's recording time.\n3. In-camera or lens stabilization was not turned off.\n4. The mounting position is incorrect.\n\nPlease check and try again."), [{ text: qsTr("Ok") }]);
                     } else if (error_kind === "probe_not_run") {
                         messageBox(Modal.Warning, qsTr("Deep match could not run."), [{ text: qsTr("Ok") }]);
+                    } else if (error_kind === "video_open_failed") {
+                        messageBox(Modal.Error, qsTr("Unable to open the video for deep matching. Please select the video again."), [{ text: qsTr("Ok") }]);
+                    } else if (error_kind === "video_decode_failed") {
+                        messageBox(Modal.Error, qsTr("Unable to decode the video for deep matching. Please try another video."), [{ text: qsTr("Ok") }]);
+                    } else if (error_kind === "video_frame_conversion_failed") {
+                        messageBox(Modal.Error, qsTr("Unable to convert video frames for deep matching. Please try another video."), [{ text: qsTr("Ok") }]);
+                    } else if (error_kind === "video_no_frames") {
+                        messageBox(Modal.Warning, qsTr("No usable video frames were found in the deep-match analysis windows. Please try another video."), [{ text: qsTr("Ok") }]);
                     } else {
                         messageBox(Modal.Error, qsTr("Failed to load the gyro file."), [{ text: qsTr("Ok") }]);
                     }

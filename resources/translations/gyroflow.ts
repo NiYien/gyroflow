@@ -3587,6 +3587,22 @@ Please check and try again.</source>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="641"/>
         <source>Deep match could not run.</source>
+       <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Unable to open the video for deep matching. Please select the video again.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Unable to decode the video for deep matching. Please try another video.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Unable to convert video frames for deep matching. Please try another video.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No usable video frames were found in the deep-match analysis windows. Please try another video.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

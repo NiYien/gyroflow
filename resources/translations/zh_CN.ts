@@ -3934,6 +3934,22 @@ Please check and try again.</source>
         <translation>深度匹配无法运行。</translation>
     </message>
     <message>
+        <source>Unable to open the video for deep matching. Please select the video again.</source>
+        <translation>无法打开用于深度匹配的视频，请重新选择该视频。</translation>
+    </message>
+    <message>
+        <source>Unable to decode the video for deep matching. Please try another video.</source>
+        <translation>无法解码用于深度匹配的视频，请尝试其他视频。</translation>
+    </message>
+    <message>
+        <source>Unable to convert video frames for deep matching. Please try another video.</source>
+        <translation>无法转换用于深度匹配的视频帧，请尝试其他视频。</translation>
+    </message>
+    <message>
+        <source>No usable video frames were found in the deep-match analysis windows. Please try another video.</source>
+        <translation>深度匹配的分析窗口内没有可用视频帧，请尝试其他视频。</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1212"/>
         <source>GPU encoder doesn&apos;t support the pixel format %1.</source>
         <translation>GPU 编码器不支持像素格式 %1。</translation>

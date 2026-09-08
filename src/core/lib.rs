@@ -734,6 +734,7 @@ fn apply_effective_frame_rate(params: &mut StabilizationParams, effective_fps: f
         || !params.fps.is_finite()
         || params.fps <= 0.0
     {
+        params.set_fps_scale(None);
         return false;
     }
 
@@ -751,9 +752,9 @@ fn apply_effective_frame_rate(params: &mut StabilizationParams, effective_fps: f
     // stays below the threshold and is left unscaled.
     let scale = effective_fps / params.fps;
     if scale > 1.3 {
-        params.fps_scale = Some(scale);
+        params.set_fps_scale(Some(scale));
     } else {
-        params.fps_scale = None;
+        params.set_fps_scale(None);
     }
     true
 }
@@ -1232,12 +1233,6 @@ impl StabilizationManager {
             params.duration_ms = duration_ms;
             params.size = video_size;
         }
-        if duration_ms < 10000.0 {
-            // If the video is shorter than 10s, use Complementary
-            let mut gyro_source = self.gyro.write();
-            gyro_source.integration_method = 1; // Complementary
-        }
-
         self.pose_estimator.sync_results.write().clear();
         self.keyframes.write().clear();
     }
@@ -3707,7 +3702,7 @@ impl StabilizationManager {
                     params.duration_ms = v;
                 }
                 if let Some(v) = vid_info.get("fps_scale") {
-                    params.fps_scale = v.as_f64();
+                    params.set_fps_scale(v.as_f64());
                 }
                 if params.fps_scale.is_none() {
                     let record_fps = vid_info

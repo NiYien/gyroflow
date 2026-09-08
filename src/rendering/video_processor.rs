@@ -169,4 +169,10 @@ impl<'a> VideoProcessor<'a> {
             Processor::Mdk(x) => x.start_decoder_only(ranges, cancel_flag),
         }
     }
+
+    pub fn set_strict_decode_errors(&mut self, enabled: bool) {
+        if let Processor::Ffmpeg(proc) = &mut self.inner {
+            proc.video.strict_decode_errors = enabled;
+        }
+    }
 }

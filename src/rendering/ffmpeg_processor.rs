@@ -841,7 +841,7 @@ impl<'a> FfmpegProcessor<'a> {
                         if self.gpu_decoding && ffmpeg_log_indicates_gpu_decode_failure() {
                             return Err(FFmpegError::GPUDecodingFailed);
                         }
-                        if !any_encoded {
+                        if !any_encoded || self.video.strict_decode_errors {
                             return Err(err.into());
                         }
                     }
@@ -876,7 +876,7 @@ impl<'a> FfmpegProcessor<'a> {
                             {
                                 return Err(FFmpegError::GPUDecodingFailed);
                             }
-                            if !any_encoded {
+                            if !any_encoded || self.video.strict_decode_errors {
                                 return Err(e);
                             }
                         }
