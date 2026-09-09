@@ -1077,6 +1077,16 @@ fn validate_installed_finalcut_template(
     Ok(())
 }
 
+fn finalcut_display_version(app: &Path, version: &str) -> String {
+    let build = plist_string(&app.join("Contents").join("Info.plist"), "CFBundleVersion")
+        .unwrap_or_default();
+    if !build.is_empty() && build.bytes().all(|byte| byte.is_ascii_digit()) {
+        format!("{version}.{build}")
+    } else {
+        version.to_owned()
+    }
+}
+
 fn detect_finalcut_at<F, R>(
     app: &Path,
     template: &Path,
@@ -1096,7 +1106,7 @@ where
             detail: "Final Cut integration App is not installed".to_owned(),
         };
     }
-    let version = match validate_finalcut_app_structure(app) {
+    let template_version = match validate_finalcut_app_structure(app) {
         Ok(version) => version,
         Err(error) => {
             return FinalCutDetection {
@@ -1106,6 +1116,7 @@ where
             };
         }
     };
+    let version = finalcut_display_version(app, &template_version);
     if let Err(error) = trust(app) {
         return FinalCutDetection {
             state: FinalCutInstallState::BrokenOrUntrusted,
@@ -1120,7 +1131,8 @@ where
             detail: error.to_string(),
         };
     }
-    if let Err(error) = validate_installed_finalcut_template(template, app, &version) {
+    // Motion template markers use the marketing version without the build number.
+    if let Err(error) = validate_installed_finalcut_template(template, app, &template_version) {
         return FinalCutDetection {
             state: FinalCutInstallState::AppInstalledTemplateMissing,
             version,
@@ -2945,6 +2957,48 @@ mod tests {
             |_| Ok(()),
         );
         assert_eq!(untrusted.state, FinalCutInstallState::BrokenOrUntrusted);
+    }
+
+    #[test]
+    fn finalcut_detection_includes_build_number_and_preserves_template_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let app = write_finalcut_test_app(root.path(), "2.1.2");
+        let info = app.join("Contents").join("Info.plist");
+        let plist = std::fs::read_to_string(&info).unwrap().replace(
+            "</dict>",
+            "<key>CFBundleVersion</key><string>47</string></dict>",
+        );
+        std::fs::write(info, plist).unwrap();
+        let template = write_installed_finalcut_template(root.path(), &app, "2.1.2");
+
+        let installed = detect_finalcut_at(&app, &template, "2.1.2.47", |_| Ok(()), |_| Ok(()));
+        assert_eq!(installed.version, "2.1.2.47");
+        assert_eq!(installed.state, FinalCutInstallState::Installed);
+
+        let update = detect_finalcut_at(&app, &template, "2.1.2.48", |_| Ok(()), |_| Ok(()));
+        assert_eq!(update.version, "2.1.2.47");
+        assert_eq!(update.state, FinalCutInstallState::UpdateAvailable);
+    }
+
+    #[test]
+    fn finalcut_display_version_keeps_legacy_or_invalid_build_metadata_readable() {
+        let root = tempfile::tempdir().unwrap();
+        let app = write_finalcut_test_app(root.path(), "2.1.2");
+        let info = app.join("Contents").join("Info.plist");
+        let plist = std::fs::read_to_string(&info).unwrap();
+        assert_eq!(finalcut_display_version(&app, "2.1.2"), "2.1.2");
+
+        for build in ["", "2.1.2", "invalid"] {
+            std::fs::write(
+                &info,
+                plist.replace(
+                    "</dict>",
+                    &format!("<key>CFBundleVersion</key><string>{build}</string></dict>"),
+                ),
+            )
+            .unwrap();
+            assert_eq!(finalcut_display_version(&app, "2.1.2"), "2.1.2");
+        }
     }
 
     #[test]

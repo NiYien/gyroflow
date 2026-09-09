@@ -190,6 +190,8 @@ fn compile_qml(dir: &str, qt_include_path: &str, qt_library_path: &str) {
 }
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=GITHUB_REF");
+    println!("cargo:rerun-if-env-changed=GITHUB_RUN_NUMBER");
     let build_time = std::time::SystemTime::now()
         .duration_since(std::time::SystemTime::UNIX_EPOCH)
         .ok()

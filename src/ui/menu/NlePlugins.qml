@@ -53,9 +53,6 @@ MenuItem {
         return Boolean(status.update_available);
     }
     function statusColor(type: string): string {
-        if (type === "finalcut") {
-            return statusFor(type).state === "installed" ? "#10ee14" : "red";
-        }
         const version = installedVersion(type);
         if (!version) {
             return "";
@@ -94,12 +91,9 @@ MenuItem {
     function finalcutNeedsAction(): bool {
         return finalcut_status.state !== "installed";
     }
-    function latestSuffix(type: string): string {
-        const status = statusFor(type);
-        if (status.latest_source_mode === "artifact" || status.latest_source_mode === "nightly") {
-            return qsTr("(nightly)");
-        }
-        return "";
+    function pluginVersionText(type: string, label: string): string {
+        return '%1: <b><font color="%2">%3</font></b>'
+            .arg(label).arg(statusColor(type)).arg(installedVersion(type) || "---");
     }
     function selectFolder(type: string, folder: string) {
         const dialog = Qt.createQmlObject("import QtQuick.Dialogs; FolderDialog {}", root, "selectFolderNle");
@@ -192,10 +186,9 @@ MenuItem {
         objectName: "finalcutPluginInstallRow";
         visible: root.finalcutSupported;
         width: parent.width;
-        spacing: 4 * dpiScale;
         BasicText {
-            width: Math.max(0, parent.width - (finalcutAction.visible ? finalcutAction.width + parent.spacing : 0));
-            text: 'Final Cut Pro (FCPX): <b><font color="%1">%2</font></b>'.arg(statusColor("finalcut")).arg(finalcutStatusText());
+            width: Math.min(implicitWidth, Math.max(0, parent.width - (finalcutAction.visible ? finalcutAction.width : 0)));
+            text: pluginVersionText("finalcut", "FCPX");
             textFormat: Text.StyledText;
             wrapMode: Text.Wrap;
             anchors.verticalCenter: parent.verticalCenter;
@@ -206,6 +199,7 @@ MenuItem {
             enabled: !root.loader;
             visible: finalcutNeedsAction();
             text: finalcutActionText();
+            tooltip: finalcutStatusText();
             leftPadding: 7 * dpiScale;
             rightPadding: 7 * dpiScale;
             onClicked: {
@@ -220,7 +214,7 @@ MenuItem {
     Row {
         visible: root.adobeSupported;
         BasicText {
-            text: 'Adobe: <b><font color="%1">%2</font></b> %3'.arg(statusColor("adobe")).arg(installedVersion("adobe")? installedVersion("adobe") : "---").arg(latestSuffix("adobe")).trim();
+            text: pluginVersionText("adobe", "Adobe");
             textFormat: Text.StyledText;
             anchors.verticalCenter: parent.verticalCenter;
         }
@@ -248,7 +242,7 @@ MenuItem {
 
     Row {
         BasicText {
-            text: 'DaVinci: <b><font color="%1">%2</font></b> %3'.arg(statusColor("openfx")).arg(installedVersion("openfx")? installedVersion("openfx") : "---").arg(latestSuffix("openfx")).trim();
+            text: pluginVersionText("openfx", "DaVinci");
             textFormat: Text.StyledText;
             anchors.verticalCenter: parent.verticalCenter;
         }
