@@ -86,6 +86,7 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
                     params_ref,
                     1.0,
                     false,
+                    false,
                 );
                 let undistorted_points2 = stabilization::undistort_points_with_rolling_shutter(
                     &pts2,
@@ -93,6 +94,7 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
                     None,
                     params_ref,
                     1.0,
+                    false,
                     false,
                 );
 

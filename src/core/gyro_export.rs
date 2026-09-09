@@ -50,7 +50,6 @@ pub fn export_gyro_data(
     fields_json: &str,
     stab: &Arc<crate::StabilizationManager>,
 ) -> String {
-    use crate::util::MapClosest;
     use std::fmt::Write;
     const RAD2DEG: f64 = 180.0 / std::f64::consts::PI;
     enum TimestampType {
@@ -112,6 +111,10 @@ pub fn export_gyro_data(
         .get("focus_distances")
         .and_then(|x| x.as_bool())
         .unwrap_or_default();
+    let oiris = original
+        .get("iris")
+        .and_then(|x| x.as_bool())
+        .unwrap_or_default();
 
     let seulr = stabilized
         .get("euler_angles")
@@ -154,6 +157,9 @@ pub fn export_gyro_data(
         }
         if ofd {
             let _ = write!(output, ",focus_distance");
+        }
+        if oiris {
+            let _ = write!(output, ",iris_fstop,iris_tstop");
         }
         if seulr {
             let _ = write!(output, ",stab_pitch,stab_yaw,stab_roll");
@@ -292,6 +298,7 @@ pub fn export_gyro_data(
         ];
         let val_oquat = [quatv[3], quatv[0], quatv[1], quatv[2]];
         let mut val_ofd = 0.0_f32;
+        let mut val_iris = (0.0_f32, 0.0_f32); // (f-stop, T-stop)
 
         if format == Format::Jsx && !(seulr && !oeulr) {
             jsx.get_mut("orientations")
@@ -361,16 +368,27 @@ pub fn export_gyro_data(
             ));
         }
 
-        if let Some(val) = file_metadata
-            .lens_params
-            .get_closest(&((timestamp_ms * 1000.0).round() as i64), 100000)
+        let lens_ts_us = (timestamp_ms * 1000.0).round() as i64;
+        if let Some(val) =
+            file_metadata.lens_params_closest(lens_ts_us, 100000, |v| v.focal_length.is_some())
         {
             // closest within 100ms
             if let Some(fl) = val.focal_length {
                 focal_length_value = Some(fl as f64);
             }
+        }
+        if let Some(val) =
+            file_metadata.lens_params_closest(lens_ts_us, 100000, |v| v.has_descriptive_data())
+        {
+            // closest within 100ms
             if let Some(fd) = val.focus_distance {
                 val_ofd = fd;
+            }
+            if let Some(v) = val.iris_fstop {
+                val_iris.0 = v;
+            }
+            if let Some(v) = val.iris_tstop {
+                val_iris.1 = v;
             }
         }
         let val_fl = focal_length_value.unwrap_or(0.0);
@@ -409,6 +427,9 @@ pub fn export_gyro_data(
             }
             if ofd {
                 let _ = write!(output, ",{:.3}", val_ofd);
+            }
+            if oiris {
+                let _ = write!(output, ",{:.3},{:.3}", val_iris.0, val_iris.1);
             }
             if seulr {
                 if let Some(val_seulr) = val_seulr {
@@ -461,11 +482,21 @@ pub fn export_gyro_data(
             if ofd {
                 obj.insert("focus_distance", serde_json::to_value(val_ofd).unwrap());
             }
+            if oiris {
+                obj.insert("iris_fstop", serde_json::to_value(val_iris.0).unwrap());
+                obj.insert("iris_tstop", serde_json::to_value(val_iris.1).unwrap());
+            }
             if seulr && val_seulr.is_some() {
-                obj.insert("stab_euler", serde_json::to_value(val_seulr.unwrap()).unwrap());
+                obj.insert(
+                    "stab_euler",
+                    serde_json::to_value(val_seulr.unwrap()).unwrap(),
+                );
             }
             if squat && val_squat.is_some() {
-                obj.insert("stab_quat", serde_json::to_value(val_squat.unwrap()).unwrap());
+                obj.insert(
+                    "stab_quat",
+                    serde_json::to_value(val_squat.unwrap()).unwrap(),
+                );
             }
             if focal_length {
                 obj.insert("focal_length", val_fl.into());
@@ -485,7 +516,7 @@ pub fn export_gyro_data(
         output = output.trim_end_matches(",\n").to_string();
         output.push_str("]);\n");
 
-        let (camera_matrix, _, _, _, _, _) =
+        let (camera_matrix, _, _, _, _, _, _) =
             crate::stabilization::FrameTransform::get_lens_data_at_timestamp(
                 &comp_params,
                 0.0,
@@ -497,14 +528,13 @@ pub fn export_gyro_data(
             .read()
             .file_metadata
             .read()
-            .lens_params
-            .len()
+            .lens_geometry_count()
             > 1
         {
             jsx.insert("zooms", Vec::<serde_json::Value>::new().into());
             for f in 0..num_frames as i32 {
                 let timestamp = crate::timestamp_at_frame(f, fps);
-                let (camera_matrix, _, _, _, _, _) =
+                let (camera_matrix, _, _, _, _, _, _) =
                     crate::stabilization::FrameTransform::get_lens_data_at_timestamp(
                         &comp_params,
                         timestamp,

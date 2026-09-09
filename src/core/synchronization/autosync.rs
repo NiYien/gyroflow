@@ -1,22 +1,42 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
 
-use itertools::Either;
 use parking_lot::RwLock;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::AcqRel, Ordering::Relaxed, Ordering::SeqCst};
+use std::sync::atomic::{
+    AtomicBool, AtomicU64, AtomicUsize, Ordering::AcqRel, Ordering::Relaxed, Ordering::SeqCst,
+};
 
 use super::PoseEstimator;
 use super::SyncParams;
 use crate::StabilizationManager;
 use crate::stabilization::ComputeParams;
 
+/// What a finished process delivers, depending on its mode
+pub enum AutosyncResult {
+    /// (timestamp, offset, cost, confidence) per sync point.
+    Offsets(Vec<(f64, f64, f64, f64)>),
+    /// `guess_imu_orientation`
+    Orientation(Option<(String, f64)>),
+    /// `estimate_lens_delay`, see `lens_delay`
+    LensDelay(Option<super::lens_delay::LensDelayEstimate>),
+}
+
+/// Why a process could not be set up
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutosyncError {
+    /// Too short a video, or sync parameters that leave nothing to analyze
+    InvalidParameters,
+    /// `estimate_lens_delay`: the lens metadata records no zoom to measure the delay on
+    NoZoomInMetadata,
+}
+
 pub struct AutosyncProcess {
     frame_count: usize,
     scaled_fps: f64,
     org_fps: f64,
     fps_scale: Option<f64>,
-    mode: String, // synchronize, guess_imu_orientation, estimate_rolling_shutter
+    mode: String, // synchronize, guess_imu_orientation, estimate_rolling_shutter, estimate_lens_delay
     ranges_us: Vec<(i64, i64)>,
     scaled_ranges_us: Vec<(i64, i64)>,
     /// sync-likelihood-nuisance §3.2: scaled-µs range of the probe-only
@@ -43,18 +63,12 @@ pub struct AutosyncProcess {
     compute_params: Arc<RwLock<ComputeParams>>,
     cancel_flag: Arc<AtomicBool>,
     progress_cb: Option<Arc<Box<dyn Fn(f64, usize, usize) + Send + Sync + 'static>>>,
-    finished_cb: Option<
-        Arc<
-            Box<
-                dyn Fn(Either<Vec<(f64, f64, f64, f64)>, Option<(String, f64)>>)
-                    + Send
-                    + Sync
-                    + 'static,
-            >,
-        >,
-    >,
+    finished_cb: Option<Arc<Box<dyn Fn(AutosyncResult) + Send + Sync + 'static>>>,
 
     pub sync_params: SyncParams,
+    /// `estimate_lens_delay`: log focal length per frame of the metadata without any delay applied (`NaN` where
+    /// unknown), the curve the analyzed windows were picked on and the estimate is aligned against
+    lens_delay_meta_ln: Vec<f64>,
 
     thread_pool: rayon::ThreadPool,
 }
@@ -130,13 +144,15 @@ pub(crate) fn autosync_can_run(mode: &str, has_motion: bool) -> bool {
 }
 
 impl AutosyncProcess {
+    /// Sets the process up. For `estimate_lens_delay` this extracts the focal length curve of the whole clip to pick
+    /// the frames to analyze, so call it off the UI thread
     pub fn from_manager(
         stab: &StabilizationManager,
         timestamps_fract: &[f64],
         sync_params: SyncParams,
         mode: String,
         cancel_flag: Arc<AtomicBool>,
-    ) -> Result<Self, ()> {
+    ) -> Result<Self, AutosyncError> {
         let params = stab.params.read();
         let org_fps = params.fps;
         let scaled_fps = params.get_scaled_fps();
@@ -150,13 +166,13 @@ impl AutosyncProcess {
                 target: "sync",
                 "autosync rejected: synchronize mode requires motion data"
             );
-            return Err(());
+            return Err(AutosyncError::InvalidParameters);
         }
 
         let SyncParams {
             search_size,
             mut time_per_syncpoint,
-            every_nth_frame,
+            mut every_nth_frame,
             ..
         } = sync_params;
 
@@ -223,7 +239,7 @@ impl AutosyncProcess {
         }
         let timestamps_fract: &[f64] = &timestamps_fract;
 
-        let frame_count = ((timestamps_fract.len() as f64 * (time_per_syncpoint / 1000.0) * org_fps)
+        let mut frame_count = ((timestamps_fract.len() as f64 * (time_per_syncpoint / 1000.0) * org_fps)
             .ceil() as usize)
             .min(params.frame_count) / every_nth_frame as usize;
 
@@ -231,10 +247,10 @@ impl AutosyncProcess {
 
         if duration_ms < 10.0 || frame_count < 2 || time_per_syncpoint < 10.0 || search_size < 10.0
         {
-            return Err(());
+            return Err(AutosyncError::InvalidParameters);
         }
 
-        let ranges_us: Vec<(i64, i64)> = timestamps_fract
+        let mut ranges_us: Vec<(i64, i64)> = timestamps_fract
             .iter()
             .map(|x| {
                 let range = (
@@ -247,6 +263,50 @@ impl AutosyncProcess {
                 )
             })
             .collect();
+
+        let mut comp_params = ComputeParams::from_manager(stab);
+        comp_params.keyframes.clear();
+        // Make sure we apply full correction for autosync
+        comp_params.lens_correction_amount = 1.0;
+
+        let mut lens_delay_meta_ln = Vec::new();
+        if mode == "estimate_lens_delay" {
+            // The frames are picked by the lens metadata itself: the windows with the strongest zoom, every frame of
+            // them, so the estimate doesn't depend on the synchronization (which files with accurate timestamps skip).
+            // The curve is extracted once, from the process' own parameters without the delay under test and without
+            // the adaptive zoom, and kept for the estimate
+            comp_params.lens_metadata_delay_frames = 0;
+            comp_params.fovs.clear();
+            comp_params.minimal_fovs.clear();
+            lens_delay_meta_ln = crate::smoothing::focal_length::compute_base_curve(&comp_params)
+                .iter()
+                .map(|x| x.ln())
+                .collect();
+            let windows =
+                super::lens_delay::zoom_ranges(&lens_delay_meta_ln, scaled_fps, 1500.0, 3);
+            if windows.is_empty() {
+                log::warn!(
+                    "Lens metadata delay: the lens metadata holds no zoom to estimate it from"
+                );
+                return Err(AutosyncError::NoZoomInMetadata);
+            }
+            // The windows are in scaled time (frame index over the scaled fps), the ranges in the file's own time
+            ranges_us = windows
+                .iter()
+                .map(|(a, b)| {
+                    (
+                        (a * fps_scale.unwrap_or(1.0) * 1000.0).round() as i64,
+                        (b * fps_scale.unwrap_or(1.0) * 1000.0).round() as i64,
+                    )
+                })
+                .collect();
+            every_nth_frame = 1;
+            frame_count = windows
+                .iter()
+                .map(|(a, b)| ((b - a) / 1000.0 * scaled_fps).ceil() as usize)
+                .sum::<usize>()
+                .max(2);
+        }
 
         let scaled_ranges_us: Vec<(i64, i64)> = ranges_us
             .iter()
@@ -296,11 +356,6 @@ impl AutosyncProcess {
             .pose_method
             .store(sync_params.pose_method as u32, SeqCst);
 
-        let mut comp_params = ComputeParams::from_manager(stab);
-        comp_params.keyframes.clear();
-        // Make sure we apply full correction for autosync
-        comp_params.lens_correction_amount = 1.0;
-
         let thread_pool = rayon::ThreadPoolBuilder::new()
             .thread_name(move |i| format!("Sync {}", i))
             .stack_size(10 * 1024 * 1024) // 10 MB
@@ -340,6 +395,7 @@ impl AutosyncProcess {
             org_fps,
             scaled_fps,
             sync_params,
+            lens_delay_meta_ln,
             mode,
             ranges_us,
             scaled_ranges_us,
@@ -421,6 +477,7 @@ impl AutosyncProcess {
         let org_fps = self.org_fps;
         let compute_params = self.compute_params.clone();
         let cancel_flag = self.cancel_flag.clone();
+        let needs_poses = self.mode != "estimate_lens_delay";
         if let Some(scale) = self.fps_scale {
             timestamp_us = (timestamp_us as f64 / scale) as i64;
         }
@@ -479,7 +536,7 @@ impl AutosyncProcess {
                     );
                     total_detected_frames.fetch_add(1, SeqCst);
 
-                    if frame_no % 7 == 0 {
+                    if needs_poses && frame_no % 7 == 0 {
                         estimator.process_detected_frames(
                             org_fps,
                             scaled_fps,
@@ -605,6 +662,32 @@ impl AutosyncProcess {
         log::info!(
             "[autosync timing] finished_feeding_frames: calling final process_detected_frames"
         );
+        if self.mode == "estimate_lens_delay" {
+            // A cancelled analysis delivers no result, like `guess_imu_orientation`: `LensDelay(None)` means the
+            // clip couldn't be analyzed, which the controller reports to the user. The final progress call below
+            // is what ends the "in progress" state, so it's made either way
+            let cancelled = self.cancel_flag.load(SeqCst);
+            if !cancelled {
+                // Only the feature tracks between consecutive frames are needed
+                self.estimator.cache_optical_flow(1, self.cancel_flag.clone());
+            }
+            self.estimator.cleanup();
+            if !cancelled {
+                if let Some(cb) = &self.finished_cb {
+                    cb(AutosyncResult::LensDelay(super::lens_delay::estimate(
+                        &self.estimator,
+                        &self.compute_params.read(),
+                        &self.lens_delay_meta_ln,
+                    )));
+                }
+            }
+            if let Some(cb) = &progress_cb {
+                let len = self.total_detected_frames.load(SeqCst);
+                cb(1.0, len, len);
+            }
+            return;
+        }
+
         self.estimator.process_detected_frames(
             self.org_fps,
             self.scaled_fps,
@@ -640,8 +723,10 @@ impl AutosyncProcess {
             return;
         }
         let t_cache = std::time::Instant::now();
-        self.estimator
-            .cache_optical_flow(if offset_method == 1 { 2 } else { 1 }, self.cancel_flag.clone());
+        self.estimator.cache_optical_flow(
+            if offset_method == 1 { 2 } else { 1 },
+            self.cancel_flag.clone(),
+        );
         log::info!(
             "[autosync timing] finished_feeding_frames: cache_optical_flow done in {:.1}ms",
             t_cache.elapsed().as_secs_f64() * 1000.0
@@ -691,9 +776,7 @@ impl AutosyncProcess {
                         .compare_exchange_weak(prev, now_ns, AcqRel, Relaxed)
                         .is_ok()
                     {
-                        if is_first
-                            && !progress_throttle_init_logged.swap(true, Relaxed)
-                        {
+                        if is_first && !progress_throttle_init_logged.swap(true, Relaxed) {
                             log::info!(
                                 target: "lifecycle",
                                 "batch_sync.progress_throttle_init min_gap_ns={}",
@@ -722,7 +805,7 @@ impl AutosyncProcess {
             }
             if self.mode == "estimate_rolling_shutter" {
                 use super::find_offset::visual_features::find_offsets;
-                cb(Either::Left(find_offsets(
+                cb(AutosyncResult::Offsets(find_offsets(
                     &self.estimator,
                     scaled_ranges_us,
                     &self.sync_params,
@@ -747,7 +830,7 @@ impl AutosyncProcess {
                 )
                 .guess_orient();
                 if !self.cancel_flag.load(SeqCst) {
-                    cb(Either::Right(guessed));
+                    cb(AutosyncResult::Orientation(guessed));
                 }
             } else {
                 // An activated lazy probe joins the sync ranges; its OF was fed
@@ -786,14 +869,14 @@ impl AutosyncProcess {
                         self.cancel_flag.clone(),
                     ));
                     if offsets2.len() > offsets.len() {
-                        cb(Either::Left(offsets2));
+                        cb(AutosyncResult::Offsets(offsets2));
                     } else if offsets2.len() == offsets.len() {
                         let sum1: f64 = offsets.iter().map(|(_, _, cost, _)| *cost).sum();
                         let sum2: f64 = offsets2.iter().map(|(_, _, cost, _)| *cost).sum();
                         if sum1 < sum2 {
-                            cb(Either::Left(offsets));
+                            cb(AutosyncResult::Offsets(offsets));
                         } else {
-                            cb(Either::Left(offsets2));
+                            cb(AutosyncResult::Offsets(offsets2));
                         }
                     }
                 } else {
@@ -836,7 +919,7 @@ impl AutosyncProcess {
                             offsets.len()
                         );
                     }
-                    cb(Either::Left(offsets));
+                    cb(AutosyncResult::Offsets(offsets));
                 }
             }
         }
@@ -866,13 +949,17 @@ impl AutosyncProcess {
     /// The probe range to strip from results: eager probe (in the range
     /// list from construction) or an activated lazy probe.
     fn probe_strip_range(&self) -> Option<(i64, i64)> {
-        self.probe_range_us.or_else(|| self.lazy_probe_scaled_range())
+        self.probe_range_us
+            .or_else(|| self.lazy_probe_scaled_range())
     }
 
     /// sync-likelihood-nuisance §3.2: drop the probe-only window's offset row
     /// (it contributed likelihood evidence inside `find_offsets`; it must not
     /// become a user-visible sync point).
-    fn strip_probe_offsets(&self, mut offsets: Vec<(f64, f64, f64, f64)>) -> Vec<(f64, f64, f64, f64)> {
+    fn strip_probe_offsets(
+        &self,
+        mut offsets: Vec<(f64, f64, f64, f64)>,
+    ) -> Vec<(f64, f64, f64, f64)> {
         if let Some((pf, pt)) = self.probe_strip_range() {
             let before = offsets.len();
             offsets.retain(|(mid_ms, ..)| {
@@ -959,7 +1046,7 @@ impl AutosyncProcess {
     }
     pub fn on_finished<F>(&mut self, cb: F)
     where
-        F: Fn(Either<Vec<(f64, f64, f64, f64)>, Option<(String, f64)>>) + Send + Sync + 'static,
+        F: Fn(AutosyncResult) + Send + Sync + 'static,
     {
         self.finished_cb = Some(Arc::new(Box::new(cb)));
     }
@@ -1107,10 +1194,18 @@ mod tests {
             p.frame_count = 30;
         }
         let mut sync = AutosyncProcess::from_manager(
-            &stab, &[0.5],
-            SyncParams { time_per_syncpoint: 500.0, search_size: 100.0, every_nth_frame: 1, ..Default::default() },
-            "guess_imu_orientation".into(), Arc::new(AtomicBool::new(false)),
-        ).unwrap();
+            &stab,
+            &[0.5],
+            SyncParams {
+                time_per_syncpoint: 500.0,
+                search_size: 100.0,
+                every_nth_frame: 1,
+                ..Default::default()
+            },
+            "guess_imu_orientation".into(),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
         let (entered_tx, entered_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
         let release_rx = std::sync::Mutex::new(release_rx);
@@ -1161,7 +1256,10 @@ mod tests {
             .expect("autosync implementation precedes its tests");
 
         assert!(implementation.contains("if !autosync_can_run(&mode, has_motion)"));
-        assert!(!implementation.contains("ranges_us.push((0, (org_duration_ms * 1000.0).round() as i64));"));
+        assert!(
+            !implementation
+                .contains("ranges_us.push((0, (org_duration_ms * 1000.0).round() as i64));")
+        );
         assert!(!implementation.contains("gyro.file_metadata.set_raw_imu("));
     }
 
@@ -1188,7 +1286,10 @@ mod tests {
     #[test]
     fn probe_anchors_at_far_clip_extreme() {
         let approx = |a: Option<f64>, b: f64| {
-            assert!(a.is_some_and(|x| (x - b).abs() < 1e-6), "got {a:?}, want ~{b}");
+            assert!(
+                a.is_some_and(|x| (x - b).abs() < 1e-6),
+                "got {a:?}, want ~{b}"
+            );
         };
         // Long clip, narrow window: probe anchors at the extreme opposite the
         // existing point (window half-width in from the boundary), fully
@@ -1207,7 +1308,10 @@ mod tests {
         // a fully disjoint probe doesn't fit — but a start-anchored probe still
         // adds ~2.57s of new data (265ms overlap), above the 1s floor.
         let f = pick_probe_fraction(0.738, 5405.0, 2836.0).expect("overlap probe");
-        assert!((f - 1418.0 / 5405.0).abs() < 1e-3, "start-anchored, got {f}");
+        assert!(
+            (f - 1418.0 / 5405.0).abs() < 1e-3,
+            "start-anchored, got {f}"
+        );
         // 4s clip, 3s window centered: both extreme placements leave only
         // ~0.25s of new data -> below the 1s new-data floor -> no probe.
         assert_eq!(pick_probe_fraction(0.5, 4_000.0, 3_500.0), None);
@@ -1225,7 +1329,10 @@ mod tests {
         // above the 1s floor. Previously the `duration < window` early-out
         // rejected this outright and the single window was dropped.
         let f = pick_probe_fraction(0.003, 2400.0, 2500.0).expect("tail probe");
-        assert!((f - 1.0).abs() < 1e-6, "head point -> tail-anchored probe, got {f}");
+        assert!(
+            (f - 1.0).abs() < 1e-6,
+            "head point -> tail-anchored probe, got {f}"
+        );
         // Mirror: a sync point at the tail anchors the probe at the head.
         let f = pick_probe_fraction(0.997, 2400.0, 2500.0).expect("head probe");
         assert!(f.abs() < 1e-6, "tail point -> head-anchored probe, got {f}");

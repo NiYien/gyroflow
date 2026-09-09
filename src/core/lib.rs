@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
+#![recursion_limit = "256"]
 
 #[cfg(feature = "opencv")]
 pub mod calibration;
@@ -32,12 +33,12 @@ pub mod neuflow;
 #[cfg(neuflow_burn_enabled)]
 pub mod neuflow_burn;
 
-pub mod stabilization_params;
-pub mod util;
 pub mod batch_sync_diag;
 pub mod log_context;
 pub mod log_throttle;
 pub mod smooth_diag;
+pub mod stabilization_params;
+pub mod util;
 pub mod worker_priority;
 
 use camera_identifier::CameraIdentifier;
@@ -176,8 +177,7 @@ fn emit_max_zoom_load_snapshot(
         f64::INFINITY
     };
     let total = params.fovs.len();
-    let (mut min_fov, mut max_fov, mut above_count) =
-        (f64::INFINITY, f64::NEG_INFINITY, 0usize);
+    let (mut min_fov, mut max_fov, mut above_count) = (f64::INFINITY, f64::NEG_INFINITY, 0usize);
     for fov in &params.fovs {
         if *fov < min_fov {
             min_fov = *fov;
@@ -221,10 +221,7 @@ pub enum ExternalIoPolicy {
 /// render target from sensor-space dimensions must swap (w, h). 0° / 180° (or any
 /// other rotation) passes through unchanged. Rotations come from container metadata
 /// and are integer-valued, so exact equality on `abs()` is sufficient.
-pub fn rotated_output_dim(
-    sensor: (usize, usize),
-    video_rotation: f64,
-) -> (usize, usize) {
+pub fn rotated_output_dim(sensor: (usize, usize), video_rotation: f64) -> (usize, usize) {
     let r = video_rotation.abs();
     if r == 90.0 || r == 270.0 {
         (sensor.1, sensor.0)
@@ -690,8 +687,8 @@ fn populate_lens_metadata_fields(
         if lens.fisheye_params.camera_matrix.is_empty() {
             if let Some(pfl) = first_lp.pixel_focal_length {
                 lens.fisheye_params.camera_matrix = vec![
-                    [pfl as f64, 0.0, size.0 as f64 / 2.0],
-                    [0.0, pfl as f64, size.1 as f64 / 2.0],
+                    [pfl.0 as f64, 0.0, size.0 as f64 / 2.0],
+                    [0.0, pfl.1 as f64, size.1 as f64 / 2.0],
                     [0.0, 0.0, 1.0],
                 ];
             }
@@ -907,11 +904,7 @@ impl StabilizationManager {
     // The default timeout is 2000 ms; callers may override via env var
     // `GYROFLOW_WAIT_IDLE_TIMEOUT_MS` (parsed at call time; parse failure or
     // absent → use the timeout passed in).
-    pub fn wait_until_idle(
-        &self,
-        cancel_flag: &Arc<AtomicBool>,
-        timeout: Duration,
-    ) -> WaitOutcome {
+    pub fn wait_until_idle(&self, cancel_flag: &Arc<AtomicBool>, timeout: Duration) -> WaitOutcome {
         let effective_timeout = std::env::var("GYROFLOW_WAIT_IDLE_TIMEOUT_MS")
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
@@ -1097,16 +1090,14 @@ impl StabilizationManager {
                 // focal-length-user-override design doc). Manual edit ON is the
                 // main preview's forcing signal instead (design D10): the group
                 // manual focal then overrides the telemetry auto focal.
-                let cfg_for_build = group_cfg
-                    .as_ref()
-                    .and_then(|cfg| {
-                        niyien_lens_presets::effective_lens_group_config_for_build(
-                            manual_edit,
-                            manual_edit,
-                            cfg,
-                            md,
-                        )
-                    });
+                let cfg_for_build = group_cfg.as_ref().and_then(|cfg| {
+                    niyien_lens_presets::effective_lens_group_config_for_build(
+                        manual_edit,
+                        manual_edit,
+                        cfg,
+                        md,
+                    )
+                });
                 let baseline = self.lens.read().clone();
                 if let Some(profile) = niyien_lens_presets::build_lens_profile(
                     md,
@@ -1286,8 +1277,14 @@ impl StabilizationManager {
                 );
             }
             if fm.keep_video_gyro && !options.bypass_builtin_gyro_arbitration {
-                let is_canon = fm.detected_source.as_deref().map_or(false, |s| s.starts_with("Canon"));
-                let is_bmd = fm.detected_source.as_deref().map_or(false, |s| s.starts_with("Blackmagic"));
+                let is_canon = fm
+                    .detected_source
+                    .as_deref()
+                    .map_or(false, |s| s.starts_with("Canon"));
+                let is_bmd = fm
+                    .detected_source
+                    .as_deref()
+                    .map_or(false, |s| s.starts_with("Blackmagic"));
                 if fm.is_komodo {
                     log::info!(
                         "[red_arbitration] main video is RED Komodo, ignoring external IMU file: {url}"
@@ -1638,6 +1635,76 @@ impl StabilizationManager {
         false
     }
 
+    fn apply_focal_length_smoothing(
+        params: &mut ComputeParams,
+        stabilization_params: &RwLock<StabilizationParams>,
+    ) {
+        let (enabled, max_zoom_rate) = {
+            let sp = stabilization_params.read();
+            (
+                sp.focal_length_smoothing_enabled,
+                sp.focal_length_max_zoom_rate,
+            )
+        };
+        // The base curve evaluates the projection for every frame (a third of a second per minute of 60 fps footage),
+        // and a recompute is requested on every slider change, so it's reused while nothing it depends on changed:
+        // the file and its lens metadata, the lens profile and the video geometry. The settings (the delay, the rate
+        // limit, whether smoothing is on) and the trim only act on the curves derived from it, in O(frames), so
+        // none of them is part of the key and a change of theirs never repeats the sweep
+        use crate::smoothing::focal_length::{compute_base_curve, derive_curves};
+        let base_key = {
+            use std::hash::Hasher;
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            let gyro = params.gyro.read();
+            let md = gyro.file_metadata.read();
+            h.write(gyro.file_url.as_bytes());
+            h.write_usize(md.lens_params.len());
+            h.write_usize(md.lens_positions.len());
+            h.write_u64(md.digital_zoom.unwrap_or_default().to_bits());
+            h.write_u64(params.lens.get_checksum());
+            h.write_usize(params.width);
+            h.write_usize(params.height);
+            h.write_u64(params.scaled_fps.to_bits());
+            h.write_usize(params.frame_count);
+            h.finish()
+        };
+        let derive = |base: &[f64]| {
+            derive_curves(
+                base,
+                params.lens_metadata_delay_frames,
+                enabled,
+                max_zoom_rate,
+                params.scaled_fps,
+                &params.trim_ranges,
+            )
+        };
+        let cached = {
+            let sp = stabilization_params.read();
+            (sp.focal_length_base_key == base_key).then(|| derive(&sp.focal_length_base))
+        };
+        let (base, (focal_lengths, smoothed)) = match cached {
+            Some(curves) => (None, curves),
+            None => {
+                let base = compute_base_curve(params);
+                let curves = derive(&base);
+                (Some(base), curves)
+            }
+        };
+
+        params.focal_length_smoothing_enabled = enabled && !smoothed.is_empty();
+        params.focal_length_max_zoom_rate = max_zoom_rate;
+        params.focal_lengths = focal_lengths.clone();
+        params.smoothed_focal_lengths = smoothed.clone();
+
+        let mut sp = stabilization_params.write();
+        sp.focal_lengths = focal_lengths;
+        sp.smoothed_focal_lengths = smoothed;
+        if let Some(base) = base {
+            sp.focal_length_base = base;
+            sp.focal_length_base_key = base_key;
+        }
+    }
+
     pub fn recompute_adaptive_zoom_static(
         compute_params: &ComputeParams,
         params: &RwLock<StabilizationParams>,
@@ -1660,6 +1727,8 @@ impl StabilizationManager {
         let mut params = stabilization::ComputeParams::from_manager(self);
         params.calculate_camera_fovs();
 
+        Self::apply_focal_length_smoothing(&mut params, &self.params);
+
         let lens_fov_adjustment = params.lens.optimal_fov.unwrap_or(1.0);
         let (fovs, minimal_fovs, debug_points) =
             Self::recompute_adaptive_zoom_static(&params, &self.params);
@@ -1668,7 +1737,11 @@ impl StabilizationManager {
 
         let (max_zoom_param, max_zoom_max, max_zoom_iters, scaling_factor, size, output_size) = {
             let mut stab_params = self.params.write();
-            stab_params.set_fovs(params.fovs.clone(), lens_fov_adjustment, params.lens.horizontal_stretch_normalized());
+            stab_params.set_fovs(
+                params.fovs.clone(),
+                lens_fov_adjustment,
+                params.lens.horizontal_stretch_normalized(),
+            );
             stab_params.minimal_fovs = params.minimal_fovs.clone();
             stab_params.zooming_debug_points = debug_points;
             (
@@ -1686,7 +1759,8 @@ impl StabilizationManager {
                 stab_params.max_zoom_iterations,
                 // Effective input width: matches set_fovs above so the Max-Zoom
                 // limiter's fov_limit threshold tracks the same display crop.
-                (stab_params.size.0 as f64 * params.lens.horizontal_stretch_normalized().max(1.0)) / stab_params.output_size.0.max(1) as f64,
+                (stab_params.size.0 as f64 * params.lens.horizontal_stretch_normalized().max(1.0))
+                    / stab_params.output_size.0.max(1) as f64,
                 stab_params.size,
                 stab_params.output_size,
             )
@@ -1720,96 +1794,101 @@ impl StabilizationManager {
                 );
             }
             if do_max_zoom_loop {
-            params.smoothing_fov_limit_per_frame.clear();
-            for _ in params.fovs.iter() {
-                params.smoothing_fov_limit_per_frame.push(1.0);
-            }
-            let thresholds = [0.95, 0.9, 0.85, 0.8];
-            // §5 non-convergence stall detect: 3-iter ring of `above_count`.
-            // When the count stays strictly constant across 3 iterations and
-            // the loop hasn't converged (count > 0), the limiter is making
-            // zero progress — break out with one warn line so users get a
-            // hint to raise max_zoom. Note `any_above_limit = false` (line
-            // below) takes precedence so a converged loop never warns.
-            let mut above_count_ring: [u32; 3] = [u32::MAX, u32::MAX, u32::MAX];
-            for iter in 0..max_zoom_iters {
-                let mut any_above_limit = false;
-                let mut above_count: u32 = 0;
-                for (i, fov) in params.fovs.iter().enumerate() {
-                    let ts = crate::timestamp_at_frame(i as i32, params.scaled_fps);
-                    let mut zoom_limit = params
-                        .keyframes
-                        .value_at_video_timestamp(&KeyframeType::MaxZoom, ts)
-                        .unwrap_or(max_zoom_param)
-                        / 100.0;
-
-                    if params.video_speed_affects_zooming_limit
-                        && (params.video_speed != 1.0
-                            || params.keyframes.is_keyframed(&KeyframeType::VideoSpeed))
-                    {
-                        let vid_speed = params
+                params.smoothing_fov_limit_per_frame.clear();
+                for _ in params.fovs.iter() {
+                    params.smoothing_fov_limit_per_frame.push(1.0);
+                }
+                let thresholds = [0.95, 0.9, 0.85, 0.8];
+                // §5 non-convergence stall detect: 3-iter ring of `above_count`.
+                // When the count stays strictly constant across 3 iterations and
+                // the loop hasn't converged (count > 0), the limiter is making
+                // zero progress — break out with one warn line so users get a
+                // hint to raise max_zoom. Note `any_above_limit = false` (line
+                // below) takes precedence so a converged loop never warns.
+                let mut above_count_ring: [u32; 3] = [u32::MAX, u32::MAX, u32::MAX];
+                for iter in 0..max_zoom_iters {
+                    let mut any_above_limit = false;
+                    let mut above_count: u32 = 0;
+                    for (i, fov) in params.fovs.iter().enumerate() {
+                        let ts = crate::timestamp_at_frame(i as i32, params.scaled_fps);
+                        let mut zoom_limit = params
                             .keyframes
-                            .value_at_video_timestamp(&KeyframeType::VideoSpeed, ts)
-                            .unwrap_or(params.video_speed)
-                            .abs();
-                        zoom_limit *= (1.0 + ((vid_speed - 1.0) / 4.0)).min(1.8);
+                            .value_at_video_timestamp(&KeyframeType::MaxZoom, ts)
+                            .unwrap_or(max_zoom_param)
+                            / 100.0;
+
+                        if params.video_speed_affects_zooming_limit
+                            && (params.video_speed != 1.0
+                                || params.keyframes.is_keyframed(&KeyframeType::VideoSpeed))
+                        {
+                            let vid_speed = params
+                                .keyframes
+                                .value_at_video_timestamp(&KeyframeType::VideoSpeed, ts)
+                                .unwrap_or(params.video_speed)
+                                .abs();
+                            zoom_limit *= (1.0 + ((vid_speed - 1.0) / 4.0)).min(1.8);
+                        }
+
+                        let fov_limit = 1.0 / (zoom_limit * scaling_factor);
+                        if *fov < fov_limit {
+                            any_above_limit = true;
+                            above_count = above_count.saturating_add(1);
+                            params.smoothing_fov_limit_per_frame[i] *= (*fov / fov_limit)
+                                .min(*thresholds.get(iter).unwrap_or(thresholds.last().unwrap()));
+                        }
+                    }
+                    if !any_above_limit {
+                        if iter == 0 {
+                            params.smoothing_fov_limit_per_frame.clear();
+                        }
+                        break;
+                    }
+                    above_count_ring[iter % 3] = above_count;
+                    if iter >= 2
+                        && above_count > 0
+                        && above_count_ring.iter().min() == above_count_ring.iter().max()
+                    {
+                        log::warn!(
+                            target: "stab",
+                            "Max Zoom limit unreachable: {above_count} frames remain above limit after {} iterations; consider raising max_zoom",
+                            iter + 1
+                        );
+                        break;
                     }
 
-                    let fov_limit = 1.0 / (zoom_limit * scaling_factor);
-                    if *fov < fov_limit {
-                        any_above_limit = true;
-                        above_count = above_count.saturating_add(1);
-                        params.smoothing_fov_limit_per_frame[i] *= (*fov / fov_limit)
-                            .min(*thresholds.get(iter).unwrap_or(thresholds.last().unwrap()));
+                    // Smoothing
+                    {
+                        let smoothing = self.smoothing.read();
+                        let horizon_lock = smoothing.horizon_lock.clone();
+
+                        let (quats, max_angles) = self.gyro.read().recompute_smoothness(
+                            smoothing.current().as_ref(),
+                            horizon_lock,
+                            &params,
+                        );
+                        let mut gyro = self.gyro.write();
+                        gyro.max_angles = max_angles;
+                        gyro.smoothed_quaternions = quats;
+                    }
+
+                    Self::apply_focal_length_smoothing(&mut params, &self.params);
+                    // Zooming
+                    let lens_fov_adjustment = params.lens.optimal_fov.unwrap_or(1.0);
+                    let (fovs, minimal_fovs, debug_points) =
+                        Self::recompute_adaptive_zoom_static(&params, &self.params);
+                    params.fovs = fovs;
+                    params.minimal_fovs = minimal_fovs;
+                    {
+                        let mut stab_params = self.params.write();
+                        stab_params.set_fovs(
+                            params.fovs.clone(),
+                            lens_fov_adjustment,
+                            params.lens.horizontal_stretch_normalized(),
+                        );
+                        stab_params.minimal_fovs = params.minimal_fovs.clone();
+                        stab_params.zooming_debug_points = debug_points;
                     }
                 }
-                if !any_above_limit {
-                    if iter == 0 {
-                        params.smoothing_fov_limit_per_frame.clear();
-                    }
-                    break;
-                }
-                above_count_ring[iter % 3] = above_count;
-                if iter >= 2
-                    && above_count > 0
-                    && above_count_ring.iter().min() == above_count_ring.iter().max()
-                {
-                    log::warn!(
-                        target: "stab",
-                        "Max Zoom limit unreachable: {above_count} frames remain above limit after {} iterations; consider raising max_zoom",
-                        iter + 1
-                    );
-                    break;
-                }
-
-                // Smoothing
-                {
-                    let smoothing = self.smoothing.read();
-                    let horizon_lock = smoothing.horizon_lock.clone();
-
-                    let (quats, max_angles) = self.gyro.read().recompute_smoothness(
-                        smoothing.current().as_ref(),
-                        horizon_lock,
-                        &params,
-                    );
-                    let mut gyro = self.gyro.write();
-                    gyro.max_angles = max_angles;
-                    gyro.smoothed_quaternions = quats;
-                }
-
-                // Zooming
-                let lens_fov_adjustment = params.lens.optimal_fov.unwrap_or(1.0);
-                let (fovs, minimal_fovs, debug_points) =
-                    Self::recompute_adaptive_zoom_static(&params, &self.params);
-                params.fovs = fovs;
-                params.minimal_fovs = minimal_fovs;
-                {
-                    let mut stab_params = self.params.write();
-                    stab_params.set_fovs(params.fovs.clone(), lens_fov_adjustment, params.lens.horizontal_stretch_normalized());
-                    stab_params.minimal_fovs = params.minimal_fovs.clone();
-                    stab_params.zooming_debug_points = debug_points;
-                }
-            }
             } // end §4 pre-skip guard
         }
 
@@ -1848,7 +1927,11 @@ impl StabilizationManager {
                 q_raw_v.push((qr.w, qr.i, qr.j, qr.k));
                 q_smooth_v.push((qs.w, qs.i, qs.j, qs.k));
                 let fov_final = stab_params.fovs.get(i).copied().unwrap_or(1.0);
-                let fov_baseline = stab_params.minimal_fovs.get(i).copied().unwrap_or(fov_final);
+                let fov_baseline = stab_params
+                    .minimal_fovs
+                    .get(i)
+                    .copied()
+                    .unwrap_or(fov_final);
                 fovs_pairs.push((fov_baseline, fov_final));
             }
 
@@ -1934,8 +2017,11 @@ impl StabilizationManager {
         // when the corresponding leg actually runs). The ledger atomics are
         // shared with the threaded path so neither redoes the other's work.
         let gyro_checksum = self.gyro.read().get_checksum();
+        let mut compute_params = ComputeParams::from_manager(self);
+        compute_params.calculate_camera_fovs();
+        Self::apply_focal_length_smoothing(&mut compute_params, &self.params);
         let run_smoothing = self.smoothing_invalidated.load(SeqCst)
-            || self.smoothing.read().get_state_checksum(gyro_checksum)
+            || self.smoothing.read().get_state_checksum(gyro_checksum, &compute_params)
                 != self.smoothing_checksum.load(SeqCst);
         let mut smoothing_ms = 0.0f64;
         if run_smoothing {
@@ -1948,15 +2034,13 @@ impl StabilizationManager {
         // a mid-run mutation stores 0 so the next recompute can't skip.
         let gyro_checksum_after = self.gyro.read().get_checksum();
         let ledger = if gyro_checksum_after == gyro_checksum {
-            self.smoothing.read().get_state_checksum(gyro_checksum)
+            self.smoothing.read().get_state_checksum(gyro_checksum, &compute_params)
         } else {
             0
         };
         self.smoothing_checksum.store(ledger, SeqCst);
 
-        // Camera fovs aren't hashed, so skip calculate_camera_fovs here.
-        let zoom_checksum =
-            zooming::get_checksum(&stabilization::ComputeParams::from_manager(self));
+        let zoom_checksum = zooming::get_checksum(&compute_params, ledger);
         let run_zoom = run_smoothing
             || self.zooming_invalidated.load(SeqCst)
             || zoom_checksum != self.zooming_checksum.load(SeqCst);
@@ -2028,10 +2112,16 @@ impl StabilizationManager {
             if prevent_recompute.load(SeqCst) { return cb((compute_id, true)); } // we're still loading, don't recompute
             if current_compute_id.load(SeqCst) != compute_id { return cb((compute_id, true)); }
 
-            let mut smoothing_changed = false;
+            let commit = |checksum: &AtomicU64, value: u64| -> bool {
+                checksum.store(value, SeqCst);
+                if current_compute_id.load(SeqCst) != compute_id { checksum.store(0, SeqCst); return false; }
+                true
+            };
+
             let mut smoothing_ms = 0.0f64;
             let t_smoothing = std::time::Instant::now();
-            if smoothing.read().get_state_checksum(gyro_checksum) != smoothing_checksum.load(SeqCst) {
+            let mut smoothing_recomputed = false;
+            if smoothing.read().get_state_checksum(gyro_checksum, &params) != smoothing_checksum.load(SeqCst) {
                 let (mut smoothing, horizon_lock) = {
                     let lock = smoothing.read();
                     (lock.current().clone(), lock.horizon_lock.clone())
@@ -2042,21 +2132,31 @@ impl StabilizationManager {
                 if current_compute_id.load(SeqCst) != compute_id { return cb((compute_id, true)); }
                 if gyro_checksum != gyro.read().get_checksum() { return cb((compute_id, true)); }
 
-                let mut lib_gyro = gyro.write();
-                lib_gyro.max_angles = max_angles;
-                lib_gyro.smoothed_quaternions = quats;
-                lib_gyro.smoothing_status = smoothing.get_status_json();
-                gyro_checksum = lib_gyro.get_checksum();
-                smoothing_changed = true;
+                {
+                    let mut lib_gyro = gyro.write();
+                    lib_gyro.max_angles = max_angles;
+                    lib_gyro.smoothed_quaternions = quats;
+                    lib_gyro.smoothing_status = smoothing.get_status_json();
+                    gyro_checksum = lib_gyro.get_checksum();
+                }
+                smoothing_recomputed = true;
                 smoothing_ms = t_smoothing.elapsed().as_secs_f64() * 1000.0;
             }
-            smoothing_checksum.store(smoothing.read().get_state_checksum(gyro_checksum), SeqCst);
+            let smoothing_state = smoothing.read().get_state_checksum(gyro_checksum, &params);
+            if smoothing_recomputed && !commit(&*smoothing_checksum, smoothing_state) { return cb((compute_id, true)); }
+
+            // Before the zoom: it accounts for the focal length compensation
+            Self::apply_focal_length_smoothing(&mut params, &stabilization_params);
 
             if current_compute_id.load(SeqCst) != compute_id { return cb((compute_id, true)); }
 
+            let zoom_key = zooming::get_checksum(&params, smoothing_state);
+            // Freshly recomputed quaternions are the plain smoothing output, and the max zoom folds its limit back into
+            // them inside the zoom pass, so a smoothing recompute needs the zoom pass again even when the zoom key still
+            // matches the last commit: a run killed inside the max-zoom iterations leaves that key committed next to
+            // quaternions that no longer carry the limit
             let t_zoom = std::time::Instant::now();
-            let zoom_ran = smoothing_changed
-                || zooming::get_checksum(&params) != zooming_checksum.load(SeqCst);
+            let zoom_ran = smoothing_recomputed || zoom_key != zooming_checksum.load(SeqCst);
             if zoom_ran {
                 let (fovs, minimal_fovs, debug_points) = Self::recompute_adaptive_zoom_static(&params, &stabilization_params);
                 params.fovs = fovs;
@@ -2069,7 +2169,6 @@ impl StabilizationManager {
                     stab_params.set_fovs(params.fovs.clone(), params.lens.optimal_fov.unwrap_or(1.0), params.lens.horizontal_stretch_normalized());
                     stab_params.minimal_fovs = params.minimal_fovs.clone();
                     stab_params.zooming_debug_points = debug_points;
-                    zooming_checksum.store(zooming::get_checksum(&params), SeqCst);
                     (
                         stab_params.max_zoom.unwrap_or(0.0),
                         params.keyframes.get_keyframes(&KeyframeType::MaxZoom).map(|x| x.iter().map(|x| x.1.value).max_by(|a, b| a.total_cmp(b)).unwrap_or(stab_params.max_zoom.unwrap_or(0.0))).unwrap_or(stab_params.max_zoom.unwrap_or(0.0)),
@@ -2106,6 +2205,11 @@ impl StabilizationManager {
                         );
                     }
                     if do_max_zoom_loop {
+                    // The iterations rewrite the quaternions with the zoom limit folded in, and the fovs along with them.
+                    // Until they finish, neither is the state its key describes, so a run killed in here has to redo both
+                    smoothing_checksum.store(0, SeqCst);
+                    zooming_checksum.store(0, SeqCst);
+
                     params.smoothing_fov_limit_per_frame.clear();
                     for _ in params.fovs.iter() {
                         params.smoothing_fov_limit_per_frame.push(1.0);
@@ -2168,7 +2272,9 @@ impl StabilizationManager {
                             lib_gyro.smoothing_status = smoothing.get_status_json();
                         }
 
-                        // Zooming
+                        // The focal length curves don't change within max-zoom iterations:
+                        // settings and raw metadata are the same, so the outer apply is reused
+
                         let (fovs, minimal_fovs, debug_points) = Self::recompute_adaptive_zoom_static(&params, &stabilization_params);
                         params.fovs = fovs;
                         params.minimal_fovs = minimal_fovs;
@@ -2180,11 +2286,15 @@ impl StabilizationManager {
                             stab_params.set_fovs(params.fovs.clone(), params.lens.optimal_fov.unwrap_or(1.0), params.lens.horizontal_stretch_normalized());
                             stab_params.minimal_fovs = params.minimal_fovs.clone();
                             stab_params.zooming_debug_points = debug_points;
-                            zooming_checksum.store(zooming::get_checksum(&params), SeqCst);
                         }
                     }
                     } // end §4 pre-skip guard (async)
+
+                    // The quaternions are final again (zoom limit folded in), which is what the smoothing key describes
+                    if !commit(&*smoothing_checksum, smoothing_state) { return cb((compute_id, true)); }
                 }
+
+                if !commit(&*zooming_checksum, zoom_key) { return cb((compute_id, true)); }
             }
             ::log::info!(
                 target: "stab.timing",
@@ -2193,7 +2303,7 @@ impl StabilizationManager {
                 if zoom_ran { t_zoom.elapsed().as_secs_f64() * 1000.0 } else { 0.0 },
                 gyro.read().quaternions.len(),
                 params.frame_count,
-                if smoothing_changed { "run" } else { "skip" },
+                if smoothing_recomputed { "run" } else { "skip" },
                 if zoom_ran { "run" } else { "skip" },
             );
 
@@ -2337,10 +2447,17 @@ impl StabilizationManager {
                     p.zooming_debug_points.range(timestamp_us - 1000..).next()
                 {
                     for i in 0..points.len() {
+                        // Same total zoom as FrameTransform::at_timestamp: the polygon is measured at fov = 1
                         let mut fov = ((p.fov + if p.fov_overview { 1.0 } else { 0.0 })
                             * p.fovs.get(frame).unwrap_or(&1.0))
                         .max(0.0001);
                         fov *= p.size.0 as f64 / p.output_size.0.max(1) as f64;
+                        fov *= smoothing::focal_length::compensation(
+                            &p.focal_lengths,
+                            &p.smoothed_focal_lengths,
+                            p.focal_length_smoothing_enabled,
+                            frame,
+                        );
                         let mut pt = points[i];
                         let width_ratio = p.size.0 as f64 / p.output_size.0 as f64;
                         let height_ratio = p.size.1 as f64 / p.output_size.1 as f64;
@@ -2739,14 +2856,38 @@ impl StabilizationManager {
             && lens.fisheye_params.camera_matrix[2].len() == 3;
         let coeffs_ok = lens.fisheye_params.distortion_coeffs.len() >= 4;
         let applied = match param {
-            "fx" if matrix_ok => { lens.fisheye_params.camera_matrix[0][0] = value; true }
-            "fy" if matrix_ok => { lens.fisheye_params.camera_matrix[1][1] = value; true }
-            "cx" if matrix_ok => { lens.fisheye_params.camera_matrix[0][2] = value; true }
-            "cy" if matrix_ok => { lens.fisheye_params.camera_matrix[1][2] = value; true }
-            "k1" if coeffs_ok => { lens.fisheye_params.distortion_coeffs[0] = value; true }
-            "k2" if coeffs_ok => { lens.fisheye_params.distortion_coeffs[1] = value; true }
-            "k3" if coeffs_ok => { lens.fisheye_params.distortion_coeffs[2] = value; true }
-            "k4" if coeffs_ok => { lens.fisheye_params.distortion_coeffs[3] = value; true }
+            "fx" if matrix_ok => {
+                lens.fisheye_params.camera_matrix[0][0] = value;
+                true
+            }
+            "fy" if matrix_ok => {
+                lens.fisheye_params.camera_matrix[1][1] = value;
+                true
+            }
+            "cx" if matrix_ok => {
+                lens.fisheye_params.camera_matrix[0][2] = value;
+                true
+            }
+            "cy" if matrix_ok => {
+                lens.fisheye_params.camera_matrix[1][2] = value;
+                true
+            }
+            "k1" if coeffs_ok => {
+                lens.fisheye_params.distortion_coeffs[0] = value;
+                true
+            }
+            "k2" if coeffs_ok => {
+                lens.fisheye_params.distortion_coeffs[1] = value;
+                true
+            }
+            "k3" if coeffs_ok => {
+                lens.fisheye_params.distortion_coeffs[2] = value;
+                true
+            }
+            "k4" if coeffs_ok => {
+                lens.fisheye_params.distortion_coeffs[3] = value;
+                true
+            }
             _ => false,
         };
         if !applied {
@@ -2802,14 +2943,14 @@ impl StabilizationManager {
                     md.lens_params.insert(
                         timestamp_us,
                         gyro_source::LensParams {
-                            pixel_focal_length: Some(pfl),
+                            pixel_focal_length: Some((pfl, pfl)),
                             ..Default::default()
                         },
                     );
                 }
             } else {
                 for (_ts, params) in md.lens_params.iter_mut() {
-                    params.pixel_focal_length = Some(pfl);
+                    params.pixel_focal_length = Some((pfl, pfl));
                 }
             }
         }
@@ -3037,11 +3178,10 @@ impl StabilizationManager {
             // Per-group lens correction: anamorphic ON uses the slider value (default 100),
             // anamorphic OFF always reverts to 100. This matches the user expectation that
             // turning off anamorphic fully clears the group-specific correction override.
-            let correction_percent =
-                niyien_lens_presets::effective_lens_correction_amount_percent(
-                    &cfg,
-                    applies_anamorphic,
-                );
+            let correction_percent = niyien_lens_presets::effective_lens_correction_amount_percent(
+                &cfg,
+                applies_anamorphic,
+            );
             self.set_lens_correction_amount(correction_percent / 100.0);
 
             if let Some(od) = out_dim {
@@ -3448,6 +3588,10 @@ impl StabilizationManager {
                 "max_zoom":               params.max_zoom,
                 "max_zoom_iterations":    params.max_zoom_iterations,
                 "frame_offset":           params.frame_offset,
+                "focal_length_smoothing_enabled":  params.focal_length_smoothing_enabled,
+                "focal_length_max_zoom_rate":      params.focal_length_max_zoom_rate,
+                "lens_metadata_delay_frames":      params.lens_metadata_delay_frames,
+                "lens_breathing_enabled":          params.lens_breathing_enabled,
             },
             "gyro_source": {
                 "filepath":           gyro.file_url,
@@ -3514,6 +3658,7 @@ impl StabilizationManager {
 
         if let Some(serde_json::Value::Object(obj)) = obj.get_mut("gyro_source") {
             let file_metadata = gyro.file_metadata.read();
+
             if typ == GyroflowProjectType::Simple {
                 if let Ok(val) = serde_json::to_value(file_metadata.thin()) {
                     obj.insert("file_metadata".into(), val);
@@ -3525,6 +3670,21 @@ impl StabilizationManager {
             }
 
             if typ == GyroflowProjectType::WithProcessedData {
+                // Export focal length arrays for smoothing (for new plugins that support it)
+                if !params.focal_lengths.is_empty() {
+                    util::compress_to_base91_cbor(&params.focal_lengths).and_then(|s| {
+                        obj.insert("focal_lengths".into(), serde_json::Value::String(s))
+                    });
+                }
+                if !params.smoothed_focal_lengths.is_empty() {
+                    util::compress_to_base91_cbor(&params.smoothed_focal_lengths).and_then(|s| {
+                        obj.insert(
+                            "smoothed_focal_lengths".into(),
+                            serde_json::Value::String(s),
+                        )
+                    });
+                }
+
                 let mut imu_timestamps = Vec::with_capacity(gyro.quaternions.len());
                 let mut imu_timestamps_final = Vec::with_capacity(gyro.quaternions.len());
                 for (t, _) in &gyro.quaternions {
@@ -3703,9 +3863,9 @@ impl StabilizationManager {
             #[cfg(any(target_os = "macos", target_os = "ios"))]
             if allow_external_io
                 && let Some(v) = obj
-                .get("videofile_bookmark")
-                .and_then(|x| x.as_str())
-                .filter(|x| !x.is_empty())
+                    .get("videofile_bookmark")
+                    .and_then(|x| x.as_str())
+                    .filter(|x| !x.is_empty())
             {
                 let (resolved, _is_stale) = filesystem::apple::resolve_bookmark(v, url);
                 if !resolved.is_empty() {
@@ -3787,9 +3947,9 @@ impl StabilizationManager {
                 #[cfg(any(target_os = "macos", target_os = "ios"))]
                 if allow_external_io
                     && let Some(v) = obj
-                    .get("filepath_bookmark")
-                    .and_then(|x| x.as_str())
-                    .filter(|x| !x.is_empty())
+                        .get("filepath_bookmark")
+                        .and_then(|x| x.as_str())
+                        .filter(|x| !x.is_empty())
                 {
                     let (resolved, _is_stale) = filesystem::apple::resolve_bookmark(v, url);
                     if !resolved.is_empty() {
@@ -3821,8 +3981,7 @@ impl StabilizationManager {
                             .unwrap_or_default(),
                     );
 
-                let gyro_file_exists =
-                    allow_external_io && filesystem::exists(&gyro_url);
+                let gyro_file_exists = allow_external_io && filesystem::exists(&gyro_url);
                 ::log::info!(
                     "[import_gyroflow] gyro_source: org_gyro_url='{}', gyro_url='{}', is_main_video={}, is_compressed={}, built_in_gyro_has_motion={}, has_raw_imu={}, has_quats={}, file_exists={}, blocking={}",
                     filesystem::get_filename(&org_gyro_url),
@@ -4065,12 +4224,38 @@ impl StabilizationManager {
                     gyro.imu_transforms.gyro_bias = serde_json::from_value(v.clone()).ok();
                 }
 
+                {
+                    // The curves of a project file only stand in until the next recompute: they may come from another build
+                    // (older ones stored millimetres, the renderer projects with output pixels) or from other lens metadata
+                    // or settings than the ones loaded now. The base curve they'd be derived from is not stored, so the
+                    // next recompute extracts it (and derives the curves it computed itself) from the loaded data
+                    let mut params = self.params.write();
+                    if let Ok(fls) = util::decompress_from_base91_cbor::<Vec<Option<f64>>>(
+                        obj.get("focal_lengths")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or_default(),
+                    ) {
+                        params.focal_lengths = fls;
+                    }
+                    if let Ok(fls) = util::decompress_from_base91_cbor::<Vec<Option<f64>>>(
+                        obj.get("smoothed_focal_lengths")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or_default(),
+                    ) {
+                        params.smoothed_focal_lengths = fls;
+                    }
+                    params.focal_length_base.clear();
+                    params.focal_length_base_key = 0;
+                }
+
                 obj.remove("raw_imu");
                 obj.remove("quaternions");
                 obj.remove("smoothed_quaternions");
                 obj.remove("image_orientations");
                 obj.remove("gravity_vectors");
                 obj.remove("file_metadata");
+                obj.remove("focal_lengths");
+                obj.remove("smoothed_focal_lengths");
             }
             if let Some(lens) = obj.get("calibration_data") {
                 let mut l = self.lens.write();
@@ -4303,6 +4488,28 @@ impl StabilizationManager {
                         .set_horizon_lock_integration_method(v as i32);
                 }
 
+                if let Some(v) = obj
+                    .get("focal_length_smoothing_enabled")
+                    .and_then(|x| x.as_bool())
+                {
+                    params.focal_length_smoothing_enabled = v;
+                }
+                if let Some(v) = obj
+                    .get("focal_length_max_zoom_rate")
+                    .and_then(|x| x.as_f64())
+                {
+                    params.focal_length_max_zoom_rate = v.clamp(0.01, 10.0);
+                }
+                if let Some(v) = obj
+                    .get("lens_metadata_delay_frames")
+                    .and_then(|x| x.as_i64())
+                {
+                    params.lens_metadata_delay_frames = v.clamp(-30, 30) as i32;
+                }
+                if let Some(v) = obj.get("lens_breathing_enabled").and_then(|x| x.as_bool()) {
+                    params.lens_breathing_enabled = v;
+                }
+
                 obj.remove("adaptive_zoom_fovs");
             }
             if let Some(serde_json::Value::Object(obj)) = obj.get_mut("output") {
@@ -4323,9 +4530,9 @@ impl StabilizationManager {
                 #[cfg(any(target_os = "macos", target_os = "ios"))]
                 if allow_external_io
                     && let Some(v) = obj
-                    .get("output_folder_bookmark")
-                    .and_then(|x| x.as_str())
-                    .filter(|x| !x.is_empty())
+                        .get("output_folder_bookmark")
+                        .and_then(|x| x.as_str())
+                        .filter(|x| !x.is_empty())
                 {
                     let (resolved, _is_stale) = filesystem::apple::resolve_bookmark(v, url);
                     if !resolved.is_empty() {
@@ -5054,11 +5261,10 @@ mod tests {
 
     const SMOOTHING_SENTINEL_TS: i64 = 987_654_321;
     fn plant_smoothing_sentinel(manager: &StabilizationManager) {
-        manager
-            .gyro
-            .write()
-            .smoothed_quaternions
-            .insert(SMOOTHING_SENTINEL_TS, crate::gyro_source::Quat64::identity());
+        manager.gyro.write().smoothed_quaternions.insert(
+            SMOOTHING_SENTINEL_TS,
+            crate::gyro_source::Quat64::identity(),
+        );
     }
     fn smoothing_sentinel_alive(manager: &StabilizationManager) -> bool {
         manager
@@ -5135,7 +5341,9 @@ mod tests {
         let m = manager_with_synthetic_gyro();
         m.recompute_blocking();
         let gyro_checksum = m.gyro.read().get_checksum();
-        let state = m.smoothing.read().get_state_checksum(gyro_checksum);
+        let mut compute_params = ComputeParams::from_manager(&m);
+        compute_params.calculate_camera_fovs();
+        let state = m.smoothing.read().get_state_checksum(gyro_checksum, &compute_params);
         assert_eq!(
             m.smoothing_checksum.load(SeqCst),
             state,
@@ -5252,14 +5460,14 @@ mod tests {
             (
                 0,
                 gyro_source::LensParams {
-                    pixel_focal_length: Some(3500.0),
+                    pixel_focal_length: Some((3500.0, 3500.0)),
                     ..Default::default()
                 },
             ),
             (
                 100_000,
                 gyro_source::LensParams {
-                    pixel_focal_length: Some(3600.0),
+                    pixel_focal_length: Some((3600.0, 3600.0)),
                     ..Default::default()
                 },
             ),
@@ -5349,7 +5557,10 @@ mod tests {
         assert_eq!(params.fovs.len(), params.frame_count, "case={case}");
         assert_eq!(params.minimal_fovs.len(), params.frame_count, "case={case}");
         assert!(
-            params.fovs.iter().all(|value| value.is_finite() && *value > 0.0),
+            params
+                .fovs
+                .iter()
+                .all(|value| value.is_finite() && *value > 0.0),
             "case={case} fovs={:?}",
             params.fovs
         );
@@ -5367,10 +5578,7 @@ mod tests {
         assert!(!gyro.smoothed_quaternions.is_empty(), "case={case}");
         assert!(
             gyro.smoothed_quaternions.values().all(|quat| {
-                quat.w.is_finite()
-                    && quat.i.is_finite()
-                    && quat.j.is_finite()
-                    && quat.k.is_finite()
+                quat.w.is_finite() && quat.i.is_finite() && quat.j.is_finite() && quat.k.is_finite()
             }),
             "case={case}"
         );
@@ -5415,7 +5623,10 @@ mod tests {
         ));
         enabled.recompute_blocking();
 
-        assert_eq!(recompute_signature(&enabled), recompute_signature(&disabled));
+        assert_eq!(
+            recompute_signature(&enabled),
+            recompute_signature(&disabled)
+        );
         assert_recompute_output_is_finite(&enabled, "identity-max-zoom-enabled");
     }
 
@@ -5465,12 +5676,7 @@ mod tests {
             if let Some(expected_preskip) = expected_preskip {
                 let (baseline_fovs, scaling_factor) = baseline_zoom_inputs(&manager);
                 assert_eq!(
-                    max_zoom_preskip_allows_skip(
-                        &baseline_fovs,
-                        max_zoom,
-                        None,
-                        scaling_factor
-                    ),
+                    max_zoom_preskip_allows_skip(&baseline_fovs, max_zoom, None, scaling_factor),
                     expected_preskip,
                     "case={case} baseline_min={:?} scaling={scaling_factor}",
                     baseline_fovs.iter().copied().reduce(f64::min)
@@ -5825,7 +6031,11 @@ mod tests {
             other => panic!("expected Timeout, got {:?}", other),
         }
         // Slept at least the timeout duration (with the 20 ms grain slack).
-        assert!(elapsed >= Duration::from_millis(80), "elapsed={:?}", elapsed);
+        assert!(
+            elapsed >= Duration::from_millis(80),
+            "elapsed={:?}",
+            elapsed
+        );
         // cancel_flag MUST remain set on timeout.
         assert!(cancel_flag.load(SeqCst));
     }
@@ -5852,7 +6062,7 @@ mod tests {
                 0,
                 gyro_source::LensParams {
                     focal_length: Some(35.0),
-                    pixel_focal_length: Some(3500.0),
+                    pixel_focal_length: Some((3500.0, 3500.0)),
                     ..Default::default()
                 },
             )]),
@@ -6041,9 +6251,7 @@ mod tests {
 
             let settings_json: serde_json::Value =
                 serde_json::from_str(&std::fs::read_to_string(&settings_file).unwrap()).unwrap();
-            let stored = settings_json["lens_group_configs_v1"]
-                .as_str()
-                .unwrap();
+            let stored = settings_json["lens_group_configs_v1"].as_str().unwrap();
             let groups: Vec<niyien_lens_presets::LensGroupConfig> =
                 serde_json::from_str(stored).unwrap();
 
@@ -6088,14 +6296,11 @@ mod tests {
             let mut configs = niyien_lens_presets::default_lens_group_configs();
             configs[3].focal_length_mm = Some(45.0);
             configs[3].anamorphic_enabled = true;
-            configs[3].squeeze_direction =
-                Some(niyien_lens_presets::SqueezeDirection::Vertical);
+            configs[3].squeeze_direction = Some(niyien_lens_presets::SqueezeDirection::Vertical);
             configs[3].squeeze_ratio = Some(1.33);
             settings::set(
                 "lens_group_configs_v1",
-                serde_json::Value::String(niyien_lens_presets::lens_group_config_to_json(
-                    &configs,
-                )),
+                serde_json::Value::String(niyien_lens_presets::lens_group_config_to_json(&configs)),
             );
             settings::set("lens_group_manual_edit", serde_json::Value::Bool(true));
             settings::flush();
@@ -6163,11 +6368,7 @@ mod tests {
         assert_eq!(calibration["focal_length"], 35.0);
         assert_eq!(
             calibration["fisheye_params"]["camera_matrix"],
-            serde_json::json!([
-                [3500.0, 0.0, 960.0],
-                [0.0, 3500.0, 540.0],
-                [0.0, 0.0, 1.0]
-            ])
+            serde_json::json!([[3500.0, 0.0, 960.0], [0.0, 3500.0, 540.0], [0.0, 0.0, 1.0]])
         );
     }
 
@@ -6200,23 +6401,25 @@ mod tests {
         let project = export_project_json(&manager);
         let calibration = &project["calibration_data"];
 
-        assert_eq!(
-            calibration["lens_model"],
-            "Sirui Saturn 35mm T2.9 1.60x"
-        );
+        assert_eq!(calibration["lens_model"], "Sirui Saturn 35mm T2.9 1.60x");
         assert_eq!(calibration["input_horizontal_stretch"], 1.6);
         assert_eq!(calibration["input_vertical_stretch"], 1.0);
-        assert_eq!(calibration["calib_dimension"], serde_json::json!({ "w": 3072, "h": 1080 }));
-        assert_eq!(calibration["orig_dimension"], serde_json::json!({ "w": 3072, "h": 1080 }));
-        assert_eq!(calibration["output_dimension"], serde_json::json!({ "w": 3072, "h": 1080 }));
+        assert_eq!(
+            calibration["calib_dimension"],
+            serde_json::json!({ "w": 3072, "h": 1080 })
+        );
+        assert_eq!(
+            calibration["orig_dimension"],
+            serde_json::json!({ "w": 3072, "h": 1080 })
+        );
+        assert_eq!(
+            calibration["output_dimension"],
+            serde_json::json!({ "w": 3072, "h": 1080 })
+        );
         assert_eq!(calibration["distortion_model"], "opencv_fisheye");
         assert_eq!(
             calibration["fisheye_params"]["camera_matrix"],
-            serde_json::json!([
-                [3500.0, 0.0, 1536.0],
-                [0.0, 3500.0, 540.0],
-                [0.0, 0.0, 1.0]
-            ])
+            serde_json::json!([[3500.0, 0.0, 1536.0], [0.0, 3500.0, 540.0], [0.0, 0.0, 1.0]])
         );
         assert_eq!(
             calibration["fisheye_params"]["distortion_coeffs"]
@@ -6244,14 +6447,13 @@ mod tests {
         assert_eq!(calibration["lens_model"], "Manual anamorphic 1.50x H");
         assert_eq!(calibration["input_horizontal_stretch"], 1.5);
         assert_eq!(calibration["input_vertical_stretch"], 1.0);
-        assert_eq!(calibration["output_dimension"], serde_json::json!({ "w": 2880, "h": 1080 }));
+        assert_eq!(
+            calibration["output_dimension"],
+            serde_json::json!({ "w": 2880, "h": 1080 })
+        );
         assert_eq!(
             calibration["fisheye_params"]["camera_matrix"],
-            serde_json::json!([
-                [3500.0, 0.0, 1440.0],
-                [0.0, 3500.0, 540.0],
-                [0.0, 0.0, 1.0]
-            ])
+            serde_json::json!([[3500.0, 0.0, 1440.0], [0.0, 3500.0, 540.0], [0.0, 0.0, 1.0]])
         );
     }
 
@@ -6402,7 +6604,10 @@ mod tests {
         settings::set_project_import_gate(false);
         let ungated = StabilizationManager::default();
         import(&ungated);
-        assert_eq!(ungated.smoothing.read().current().get_name(), "Fixed camera");
+        assert_eq!(
+            ungated.smoothing.read().current().get_name(),
+            "Fixed camera"
+        );
 
         // Gate on is the desktop app: the project cannot move a global the user
         // has no way to see or change back.
@@ -6649,7 +6854,12 @@ mod tests {
 
             assert_eq!(target.params.read().lens_correction_amount, 0.25);
             assert_eq!(
-                target.project_lens.read().as_ref().unwrap().lens_correction_amount,
+                target
+                    .project_lens
+                    .read()
+                    .as_ref()
+                    .unwrap()
+                    .lens_correction_amount,
                 0.25
             );
         });
@@ -6665,9 +6875,7 @@ mod tests {
 
         settings::with_test_settings_file(settings_file, || {
             let target = StabilizationManager::default();
-            target.set_lens_group_config_json(
-                r#"[{ "lens_index": 0, "focal_length_mm": 35.0 }]"#,
-            );
+            target.set_lens_group_config_json(r#"[{ "lens_index": 0, "focal_length_mm": 35.0 }]"#);
 
             let mut project = project_json_with_calibration(
                 "Sirui Atar 50mm 1.33x",
@@ -6680,9 +6888,7 @@ mod tests {
             assert!(target.has_project_lens());
             let display_before = target.get_project_lens_display_json();
 
-            target.set_lens_group_config_json(
-                r#"[{ "lens_index": 1, "focal_length_mm": 60.0 }]"#,
-            );
+            target.set_lens_group_config_json(r#"[{ "lens_index": 1, "focal_length_mm": 60.0 }]"#);
             assert!(target.has_project_lens());
             assert_eq!(target.get_project_lens_display_json(), display_before);
 
@@ -6795,7 +7001,12 @@ mod tests {
         manager.refresh_project_lens_from_current();
 
         assert_eq!(
-            manager.project_lens.read().as_ref().unwrap().focal_length_mm,
+            manager
+                .project_lens
+                .read()
+                .as_ref()
+                .unwrap()
+                .focal_length_mm,
             Some(50.0)
         );
     }
@@ -6836,11 +7047,8 @@ mod tests {
         let manager = StabilizationManager::default();
         {
             let mut lens = manager.lens.write();
-            lens.fisheye_params.camera_matrix = vec![
-                [1000.0, 0.0, 960.0],
-                [0.0, 1000.0, 540.0],
-                [0.0, 0.0, 1.0],
-            ];
+            lens.fisheye_params.camera_matrix =
+                vec![[1000.0, 0.0, 960.0], [0.0, 1000.0, 540.0], [0.0, 0.0, 1.0]];
             lens.fisheye_params.distortion_coeffs = vec![0.0, 0.0, 0.0, 0.0];
         }
         manager.smoothing_checksum.store(123, SeqCst);
@@ -6848,7 +7056,10 @@ mod tests {
 
         manager.set_lens_param("fx", 2400.0);
 
-        assert_eq!(manager.lens.read().fisheye_params.camera_matrix[0][0], 2400.0);
+        assert_eq!(
+            manager.lens.read().fisheye_params.camera_matrix[0][0],
+            2400.0
+        );
         assert_eq!(manager.smoothing_checksum.load(SeqCst), 0);
         assert_eq!(manager.zooming_checksum.load(SeqCst), 0);
     }
@@ -6888,8 +7099,14 @@ mod tests {
                 .unwrap();
 
         assert_eq!(profile.focal_length, Some(24.0));
-        assert_eq!(profile.fisheye_params.camera_matrix[0], [2400.0, 0.0, 960.0]);
-        assert_eq!(profile.fisheye_params.camera_matrix[1], [0.0, 2400.0, 540.0]);
+        assert_eq!(
+            profile.fisheye_params.camera_matrix[0],
+            [2400.0, 0.0, 960.0]
+        );
+        assert_eq!(
+            profile.fisheye_params.camera_matrix[1],
+            [0.0, 2400.0, 540.0]
+        );
 
         assert_eq!(manager.lens.read().focal_length, None);
         assert_eq!(*manager.lens_group_config.read(), stored_configs_before);
@@ -6911,7 +7128,7 @@ mod tests {
                     0,
                     gyro_source::LensParams {
                         focal_length: Some(31.0),
-                        pixel_focal_length: Some(3100.0),
+                        pixel_focal_length: Some((3100.0, 3100.0)),
                         ..Default::default()
                     },
                 )]),
@@ -6932,8 +7149,14 @@ mod tests {
                 .unwrap();
 
         assert_eq!(profile.focal_length, Some(50.0));
-        assert_eq!(profile.fisheye_params.camera_matrix[0], [5000.0, 0.0, 1277.0]);
-        assert_eq!(profile.fisheye_params.camera_matrix[1], [0.0, 5000.0, 540.0]);
+        assert_eq!(
+            profile.fisheye_params.camera_matrix[0],
+            [5000.0, 0.0, 1277.0]
+        );
+        assert_eq!(
+            profile.fisheye_params.camera_matrix[1],
+            [0.0, 5000.0, 540.0]
+        );
         assert_eq!(manager.lens.read().focal_length, None);
         assert!(manager.pre_anamorphic_backup.read().is_none());
     }
@@ -6954,7 +7177,7 @@ mod tests {
                     0,
                     gyro_source::LensParams {
                         focal_length: Some(31.0),
-                        pixel_focal_length: Some(3100.0),
+                        pixel_focal_length: Some((3100.0, 3100.0)),
                         ..Default::default()
                     },
                 )]),
@@ -6978,8 +7201,14 @@ mod tests {
                 .unwrap();
 
         assert_eq!(profile.focal_length, Some(50.0));
-        assert_eq!(profile.fisheye_params.camera_matrix[0], [5000.0, 0.0, 1277.0]);
-        assert_eq!(profile.fisheye_params.camera_matrix[1], [0.0, 5000.0, 540.0]);
+        assert_eq!(
+            profile.fisheye_params.camera_matrix[0],
+            [5000.0, 0.0, 1277.0]
+        );
+        assert_eq!(
+            profile.fisheye_params.camera_matrix[1],
+            [0.0, 5000.0, 540.0]
+        );
         assert_eq!(manager.smoothing_checksum.load(SeqCst), 123);
         assert_eq!(manager.zooming_checksum.load(SeqCst), 456);
     }
@@ -7000,7 +7229,7 @@ mod tests {
                     0,
                     gyro_source::LensParams {
                         focal_length: Some(31.0),
-                        pixel_focal_length: Some(3100.0),
+                        pixel_focal_length: Some((3100.0, 3100.0)),
                         ..Default::default()
                     },
                 )]),
@@ -7020,8 +7249,14 @@ mod tests {
                 .unwrap();
 
         assert_eq!(profile.focal_length, Some(31.0));
-        assert_eq!(profile.fisheye_params.camera_matrix[0], [3100.0, 0.0, 1277.0]);
-        assert_eq!(profile.fisheye_params.camera_matrix[1], [0.0, 3100.0, 540.0]);
+        assert_eq!(
+            profile.fisheye_params.camera_matrix[0],
+            [3100.0, 0.0, 1277.0]
+        );
+        assert_eq!(
+            profile.fisheye_params.camera_matrix[1],
+            [0.0, 3100.0, 540.0]
+        );
     }
 
     #[test]
@@ -7209,7 +7444,7 @@ mod tests {
                     0,
                     gyro_source::LensParams {
                         focal_length: Some(31.0),
-                        pixel_focal_length: Some(3100.0),
+                        pixel_focal_length: Some((3100.0, 3100.0)),
                         ..Default::default()
                     },
                 )]),
@@ -7251,7 +7486,7 @@ mod tests {
                     0,
                     gyro_source::LensParams {
                         focal_length: Some(31.0),
-                        pixel_focal_length: Some(3100.0),
+                        pixel_focal_length: Some((3100.0, 3100.0)),
                         ..Default::default()
                     },
                 )]),
@@ -7292,7 +7527,7 @@ mod tests {
                     0,
                     gyro_source::LensParams {
                         focal_length: Some(31.0),
-                        pixel_focal_length: Some(3100.0),
+                        pixel_focal_length: Some((3100.0, 3100.0)),
                         ..Default::default()
                     },
                 )]),
@@ -7334,7 +7569,7 @@ mod tests {
                     0,
                     gyro_source::LensParams {
                         focal_length: Some(28.0),
-                        pixel_focal_length: Some(2800.0),
+                        pixel_focal_length: Some((2800.0, 2800.0)),
                         ..Default::default()
                     },
                 )]),
@@ -7388,7 +7623,7 @@ mod tests {
                 lens_params: BTreeMap::from([(
                     0,
                     gyro_source::LensParams {
-                        pixel_focal_length: Some(3100.0),
+                        pixel_focal_length: Some((3100.0, 3100.0)),
                         ..Default::default()
                     },
                 )]),
@@ -7463,7 +7698,7 @@ mod tests {
                     0,
                     gyro_source::LensParams {
                         focal_length: Some(31.0),
-                        pixel_focal_length: Some(3100.0),
+                        pixel_focal_length: Some((3100.0, 3100.0)),
                         ..Default::default()
                     },
                 )]),
@@ -7503,7 +7738,7 @@ mod tests {
                     0,
                     gyro_source::LensParams {
                         focal_length: Some(31.0),
-                        pixel_focal_length: Some(3100.0),
+                        pixel_focal_length: Some((3100.0, 3100.0)),
                         ..Default::default()
                     },
                 )]),
@@ -7595,11 +7830,8 @@ mod tests {
         let manager = manager_with_sentinel_lens_group_baseline();
 
         let mut configs = niyien_lens_presets::default_lens_group_configs();
-        configs[0] = lens_group_config_for_restore_test(
-            true,
-            Some("blazar_viper_35mm_1_50x"),
-            None,
-        );
+        configs[0] =
+            lens_group_config_for_restore_test(true, Some("blazar_viper_35mm_1_50x"), None);
         *manager.lens_group_config.write() = configs;
 
         assert_eq!(manager.apply_lens_group_to_main(0), Some((2880, 1080)));
@@ -7637,11 +7869,8 @@ mod tests {
         let manager = manager_with_sentinel_lens_group_baseline();
 
         let mut configs = niyien_lens_presets::default_lens_group_configs();
-        configs[0] = lens_group_config_for_restore_test(
-            true,
-            Some("blazar_viper_35mm_1_50x"),
-            None,
-        );
+        configs[0] =
+            lens_group_config_for_restore_test(true, Some("blazar_viper_35mm_1_50x"), None);
         *manager.lens_group_config.write() = configs;
 
         assert_eq!(manager.apply_lens_group_to_main(0), Some((2880, 1080)));
@@ -7686,7 +7915,7 @@ mod tests {
                     0,
                     gyro_source::LensParams {
                         focal_length: Some(31.0),
-                        pixel_focal_length: Some(3100.0),
+                        pixel_focal_length: Some((3100.0, 3100.0)),
                         ..Default::default()
                     },
                 )]),
@@ -7732,7 +7961,7 @@ mod tests {
                     0,
                     gyro_source::LensParams {
                         focal_length: Some(31.0),
-                        pixel_focal_length: Some(3100.0),
+                        pixel_focal_length: Some((3100.0, 3100.0)),
                         ..Default::default()
                     },
                 )]),

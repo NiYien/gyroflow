@@ -2664,6 +2664,42 @@ Do you want to submit your profile?</source>
         <source>Distortion coefficients</source>
         <translation>失真係數</translation>
     </message>
+    <message>
+        <source>"Analyze" measures it on the zooms recorded in this clip. Positive values read the lens metadata later.</source>
+        <translation>「分析」會根據本素材中的變焦過程測量延遲。正值表示讀取較晚的鏡頭中繼資料。</translation>
+    </message>
+    <message>
+        <source>Analyze</source>
+        <translation>分析</translation>
+    </message>
+    <message>
+        <source>How many frames later than the picture the lens reports its focal length. It depends on the lens, not on the frame rate: some report two frames late.</source>
+        <translation>鏡頭回報的焦距比畫面延遲多少影格。延遲取決於鏡頭，與影格率無關；部分鏡頭會延遲兩個影格。</translation>
+    </message>
+    <message>
+        <source>Keeps the field of view constant while focusing, using the lens breathing data recorded by the camera.</source>
+        <translation>利用相機記錄的鏡頭呼吸資料，補償對焦時的視角變化。</translation>
+    </message>
+    <message>
+        <source>Lens breathing compensation</source>
+        <translation>鏡頭呼吸效應補償</translation>
+    </message>
+    <message>
+        <source>Lens metadata delay</source>
+        <translation>鏡頭中繼資料延遲</translation>
+    </message>
+    <message>
+        <source>Ok</source>
+        <translation>確定</translation>
+    </message>
+    <message>
+        <source>The lens metadata delay could not be estimated. The clip needs a zoom recorded in the lens metadata, and the picture has to follow it clearly.</source>
+        <translation>無法估算鏡頭中繼資料延遲。素材需要包含鏡頭中繼資料記錄的變焦過程，且畫面中的變焦變化應清晰可辨。</translation>
+    </message>
+    <message>
+        <source>frames</source>
+        <translation>影格</translation>
+    </message>
 </context>
 <context>
     <name>LensProfileSearchDelegate</name>
@@ -5060,6 +5096,22 @@ If you need more accuracy, increase the number of iterations in &quot;Advanced&q
         <source>Link with zooming speed</source>
         <translation>鏈接縮放速度</translation>
     </message>
+    <message>
+        <source>Limits how fast the picture may zoom when the lens metadata records a changing focal length.</source>
+        <translation>當鏡頭中繼資料記錄了焦距變化時，限制畫面的變焦速度。</translation>
+    </message>
+    <message>
+        <source>Max zoom speed</source>
+        <translation>最大變焦速度</translation>
+    </message>
+    <message>
+        <source>Stabilize focal length</source>
+        <translation>平滑焦距變化</translation>
+    </message>
+    <message>
+        <source>Zooms slower than the limit pass through untouched. Faster zooms are spread out by cropping ahead of a zoom-in and after a zoom-out. Lower values give a smoother zoom and more crop.</source>
+        <translation>低於速度限制的變焦保持原樣。較快的變焦會透過在拉近前和拉遠後增加裁切來放緩。數值越低，變焦越平滑，裁切也越多。</translation>
+    </message>
 </context>
 <context>
     <name>Statistics</name>
@@ -5866,6 +5918,10 @@ Are you sure you want to continue?</source>
         <location filename="../../src/ui/components/Timeline.qml" line="1033"/>
         <source>Save</source>
         <translation>保存</translation>
+    </message>
+    <message>
+        <source>Focal length</source>
+        <translation>焦距</translation>
     </message>
 </context>
 <context>

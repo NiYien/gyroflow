@@ -163,7 +163,7 @@ pub struct KernelParams {
     pub background: [f32; 4], // 16
     pub f: [f32; 2],       // 8  - focal length in pixels
     pub c: [f32; 2],       // 16 - lens center
-    pub k: [f32; 12],      // 16,16,16 - distortion coefficients
+    pub k: [f32; 24],      // 16 x 6 - distortion coefficients
     pub fov: f32,          // 4
     pub r_limit: f32,      // 8
     pub lens_correction_amount: f32, // 12
@@ -218,12 +218,13 @@ mod kernel_params_tests {
 
     #[test]
     fn post_affine_extension_preserves_offsets_and_defaults_to_identity_scale() {
-        assert_eq!(std::mem::offset_of!(KernelParams, post_rotation), 320);
-        assert_eq!(std::mem::offset_of!(KernelParams, post_zoom), 324);
-        assert_eq!(std::mem::offset_of!(KernelParams, post_offset), 328);
-        assert_eq!(std::mem::offset_of!(KernelParams, post_scale), 336);
-        assert_eq!(std::mem::offset_of!(KernelParams, post_scale_reserved), 344);
-        assert_eq!(std::mem::size_of::<KernelParams>(), 352);
+        // The Sony spline adds twelve coefficients (48 bytes) before these fields.
+        assert_eq!(std::mem::offset_of!(KernelParams, post_rotation), 368);
+        assert_eq!(std::mem::offset_of!(KernelParams, post_zoom), 372);
+        assert_eq!(std::mem::offset_of!(KernelParams, post_offset), 376);
+        assert_eq!(std::mem::offset_of!(KernelParams, post_scale), 384);
+        assert_eq!(std::mem::offset_of!(KernelParams, post_scale_reserved), 392);
+        assert_eq!(std::mem::size_of::<KernelParams>(), 400);
         assert_eq!(
             std::mem::size_of::<KernelParams>(),
             std::mem::size_of::<stabilize_spirv::KernelParams>()
@@ -289,7 +290,7 @@ pub struct StabTimingAccumulator {
 }
 
 fn timing_accumulators() -> &'static parking_lot::Mutex<std::collections::HashMap<&'static str, StabTimingAccumulator>> {
-    static MAP: std::sync::OnceLock<parking_lot::Mutex<std::collections::HashMap<&'static str, StabTimingAccumulator>>> = std::sync::OnceLock::new();
+    static MAP: std::sync::OnceLock<parking_lot::Mutex<std::collections::HashMap<&'static str, StabTimingAccumulator>>,> = std::sync::OnceLock::new();
     MAP.get_or_init(|| parking_lot::Mutex::new(std::collections::HashMap::new()))
 }
 
@@ -515,14 +516,12 @@ impl Stabilization {
         {
             let gyro = self.compute_params.gyro.read();
             let file_metadata = gyro.file_metadata.read();
-            if let Some(mc) = file_metadata.mesh_correction.get(frame) {
-                if mc.1[0] > 10.0 {
-                    kernel_flags.set(KernelParamsFlags::HAS_MESH_DATA, true);
-                }
-                if mc.1[0] > 0.0 && mc.1[mc.1[0] as usize] > 0.0 {
-                    kernel_flags.set(KernelParamsFlags::HAS_FPD_DATA, true);
-                }
-            }
+            kernel_flags.set(
+                KernelParamsFlags::HAS_MESH_DATA, file_metadata.mesh_correction.has_mesh(frame),
+            );
+                    kernel_flags.set(KernelParamsFlags::HAS_FPD_DATA,
+                file_metadata.mesh_correction.has_focal_plane(frame),
+            );
             if file_metadata.camera_stab_data.len() > frame {
                 kernel_flags.set(KernelParamsFlags::HAS_IBIS_DATA, true);
             }
@@ -634,8 +633,32 @@ impl Stabilization {
             transform.kernel_params.post_scale = pa.scale_xy;
         }
 
+        /*static PREV: parking_lot::RwLock<Vec<f32>> = parking_lot::RwLock::new(Vec::new());
+        if let Ok(Ok(v)) = std::fs::read_to_string(std::env::current_exe().unwrap().with_file_name("params.json")).map(|x| serde_json::from_str(&x) as serde_json::Result<Vec<f32>>) {
+            if v.len() == 24 {
+                *PREV.write() = v.clone();
+            }
+        }
+        {
+            let v = PREV.read();
+            v.iter().enumerate().for_each(|(i, x)| transform.kernel_params.custom[i] = *x);
+        }*/
+
         transform.kernel_params.source_rect = Self::get_rect(&buffers.input);
         transform.kernel_params.output_rect = Self::get_rect(&buffers.output);
+
+        /*transform.kernel_params.distortion_model = match &self.compute_params.distortion_model.inner {
+            distortion_models::DistortionModels::OpenCVFisheye(_) => stabilize_spirv::DistortionModel::OpenCVFisheye,
+            distortion_models::DistortionModels::OpenCVStandard(_) => stabilize_spirv::DistortionModel::OpenCVStandard,
+            distortion_models::DistortionModels::Insta360(_) => stabilize_spirv::DistortionModel::Insta360,
+            _ => { stabilize_spirv::DistortionModel::None }
+        };
+        transform.kernel_params.digital_lens = match self.compute_params.digital_lens.as_ref().map(|x| &x.inner) {
+            Some(distortion_models::DistortionModels::GoProSuperview(_)) => stabilize_spirv::DistortionModel::GoProSuperview,
+            Some(distortion_models::DistortionModels::GoProHyperview(_)) => stabilize_spirv::DistortionModel::GoProHyperview,
+            Some(distortion_models::DistortionModels::DigitalStretch(_)) => stabilize_spirv::DistortionModel::DigitalStretch,
+            _ => { stabilize_spirv::DistortionModel::None }
+        };*/
 
         transform
     }
@@ -647,7 +670,7 @@ impl Stabilization {
         buffers: &mut Buffers,
         is_pixel_normalized: bool,
     ) {
-        self.ensure_stab_data_at_timestamp_timed::<T>(timestamp_us, frame, buffers, is_pixel_normalized).0
+        self.ensure_stab_data_at_timestamp_timed::<T>(timestamp_us, frame, buffers, is_pixel_normalized,).0
     }
     // Variant exposed for the `stab.timing` instrumentation: returns
     // (was_inserted, elapsed_ms_of_insert). When `was_inserted` is false the
@@ -740,19 +763,19 @@ impl Stabilization {
             ("in_rect",  format!("{:?}", buffers.input.rect)),
             ("in_rot",   format!("{:?}", buffers.input.rotation)),
             ("in_pa",    format!("{:?}", buffers.input.post_affine)),
-            ("in_flip",  format!("{}{}", buffers.input.flip_h as u8, buffers.input.flip_v as u8)),
+            ("in_flip",  format!("{}{}", buffers.input.flip_h as u8, buffers.input.flip_v as u8),),
             ("in_src",   buffers.input.source_diag()),
             ("out_geom", format!("{:?}", buffers.output.size)),
             ("out_rect", format!("{:?}", buffers.output.rect)),
             ("out_rot",  format!("{:?}", buffers.output.rotation)),
             ("out_pa",   format!("{:?}", buffers.output.post_affine)),
-            ("out_flip", format!("{}{}", buffers.output.flip_h as u8, buffers.output.flip_v as u8)),
+            ("out_flip", format!("{}{}", buffers.output.flip_h as u8, buffers.output.flip_v as u8),),
             ("out_src",  buffers.output.source_diag()),
-            ("lens",     format!("{}", self.compute_params.distortion_model.id())),
-            ("dlens",    format!("{}", self.compute_params.digital_lens.as_ref().map(|x| x.id()).unwrap_or_default())),
+            ("lens",     format!("{}", self.compute_params.distortion_model.id()),),
+            ("dlens",    format!("{}", self.compute_params.digital_lens.as_ref().map(|x| x.id()).unwrap_or_default()),),
             ("interp",   format!("{}", self.interpolation as u32)),
             ("flags",    format!("{}", flags.bits())),
-            ("proc_size", format!("{:?}->{:?}", self.size, self.output_size)),
+            ("proc_size", format!("{:?}->{:?}", self.size, self.output_size),),
             ("thread",   format!("{:?}", std::thread::current().id())),
         ]
     }

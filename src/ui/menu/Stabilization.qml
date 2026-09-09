@@ -42,6 +42,8 @@ MenuItem {
         property alias zoomingMethod: zoomingMethod.currentIndex;
         property alias maxZoom: maxZoomSlider.value;
         property alias maxZoomIterations: maxZoomIterations.value;
+        property alias focalLengthSmoothingEnabled: flEnable.cb.checked;
+        property alias focalLengthMaxZoomRate: flMaxZoomRate.value;
 
         Component.onCompleted: {
             // A global preference is a default for new projects, not a saved project mode.
@@ -117,6 +119,13 @@ MenuItem {
             }
             if (stab.hasOwnProperty("horizon_lock_integration_method")) {
                 integrationMethod.currentIndex = stab.horizon_lock_integration_method;
+            }
+
+            if (stab.hasOwnProperty("focal_length_smoothing_enabled")) {
+                flEnable.cb.checked = !!stab.focal_length_smoothing_enabled;
+            }
+            if (stab.hasOwnProperty("focal_length_max_zoom_rate")) {
+                flMaxZoomRate.value = +stab.focal_length_max_zoom_rate;
             }
 
             const hasKeyframes = typeof obj.keyframes === "object" && obj.keyframes !== null;
@@ -745,6 +754,37 @@ MenuItem {
             from: 0; to: 240;
             unit: "fps";
             onValueChanged: { if (window.batchState) window.batchState.framerate = value; }
+        }
+    }
+
+    CheckBoxWithContent {
+        id: flEnable;
+        text: qsTr("Stabilize focal length");
+        visible: controller.has_per_frame_focal_length;
+        cb.tooltip: qsTr("Limits how fast the picture may zoom when the lens metadata records a changing focal length.") + "\n" +
+                 qsTr("Zooms slower than the limit pass through untouched. Faster zooms are spread out by cropping ahead of a zoom-in and after a zoom-out. Lower values give a smoother zoom and more crop.");
+        cb.checked: controller.focal_length_smoothing_enabled;
+        cb.onCheckedChanged: {
+            controller.focal_length_smoothing_enabled = cb.checked;
+            // Show the focal length curves on the chart, so the effect of this setting can be seen
+            if (cb.checked) window.videoArea?.timeline?.setFocalLengthVisible(true);
+        }
+
+        Label {
+            text: qsTr("Max zoom speed");
+            position: Label.LeftPosition;
+            SliderWithField {
+                id: flMaxZoomRate;
+                from: 5;
+                to: 200;
+                unit: "%/s";
+                precision: 0;
+                scaler: 100.0;
+                width: parent.width;
+                value: controller.focal_length_max_zoom_rate;
+                defaultValue: 50;
+                onValueChanged: controller.focal_length_max_zoom_rate = value;
+            }
         }
     }
 

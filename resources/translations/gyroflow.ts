@@ -2469,6 +2469,42 @@ Do you want to submit your profile?</source>
         <source>Distortion coefficients</source>
         <translation type="unfinished"></translation>
     </message>
+    <message>
+        <source>"Analyze" measures it on the zooms recorded in this clip. Positive values read the lens metadata later.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Analyze</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>How many frames later than the picture the lens reports its focal length. It depends on the lens, not on the frame rate: some report two frames late.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Keeps the field of view constant while focusing, using the lens breathing data recorded by the camera.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Lens breathing compensation</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Lens metadata delay</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Ok</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The lens metadata delay could not be estimated. The clip needs a zoom recorded in the lens metadata, and the picture has to follow it clearly.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>frames</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>LensProfileSearchDelegate</name>
@@ -4687,6 +4723,22 @@ If you need more accuracy, increase the number of iterations in &quot;Advanced&q
         <source>Link with zooming speed</source>
         <translation type="unfinished"></translation>
     </message>
+    <message>
+        <source>Limits how fast the picture may zoom when the lens metadata records a changing focal length.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Max zoom speed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Stabilize focal length</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Zooms slower than the limit pass through untouched. Faster zooms are spread out by cropping ahead of a zoom-in and after a zoom-out. Lower values give a smoother zoom and more crop.</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>Statistics</name>
@@ -5483,6 +5535,10 @@ Are you sure you want to continue?</source>
     <message>
         <location filename="../../src/ui/components/Timeline.qml" line="1033"/>
         <source>Save</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Focal length</source>
         <translation type="unfinished"></translation>
     </message>
 </context>

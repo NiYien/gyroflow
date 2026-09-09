@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2023 Adrian <adrian.eddy at gmail>
 
-use glam::{vec2, IVec4, Vec2, Vec4};
+use glam::{IVec4, Vec2, Vec4,vec2};
 pub use spirv_std::glam;
 
 #[cfg(target_arch = "spirv")]
@@ -50,6 +50,9 @@ pub struct KernelParams {
     pub k1: Vec4,          // 16 - distortion coefficients
     pub k2: Vec4,          // 16 - distortion coefficients
     pub k3: Vec4,          // 16 - distortion coefficients
+    pub k4: Vec4,          // 16 - distortion coefficients
+    pub k5: Vec4,          // 16 - distortion coefficients
+    pub k6: Vec4,          // 16 - distortion coefficients
     pub fov: f32,          // 4
     pub r_limit: f32,      // 8
     pub lens_correction_amount: f32, // 12

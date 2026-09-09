@@ -1,4 +1,34 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+
+#[cfg(test)]
+mod sony_kernel_tests {
+    use super::*;
+    use crate::gpu::{BufferDescription, BufferSource};
+    use crate::stabilization::KernelParamsFlags;
+
+    #[test]
+    #[ignore = "requires an OpenCL GPU"]
+    fn sony_spline_and_mesh_compile_on_opencl() {
+        let mut input = vec![0u8; 32 * 32 * 4];
+        let mut output = input.clone();
+        let buffers = Buffers {
+            input: BufferDescription { size: (32, 32, 128), data: BufferSource::Cpu { buffer: &mut input }, ..Default::default() },
+            output: BufferDescription { size: (32, 32, 128), data: BufferSource::Cpu { buffer: &mut output }, ..Default::default() },
+        };
+        let params = KernelParams {
+            width: 32, height: 32, stride: 128,
+            output_width: 32, output_height: 32, output_stride: 128,
+            bytes_per_pixel: 4, pix_element_count: 4, interpolation: 2, matrix_count: 1,
+            flags: (KernelParamsFlags::HAS_IBIS_DATA | KernelParamsFlags::HAS_MESH_DATA).bits(),
+            ..Default::default()
+        };
+        let _kernel = OclWrapper::new(
+            &params,
+            ("uchar4", "convert_uchar4_sat", "float4", "convert_float4"),
+            DistortionModel::from_name("sony"), None, &buffers, 16,
+        ).expect("the Sony spline and mesh kernel must compile on the selected GPU");
+    }
+}
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
 
 use super::*;

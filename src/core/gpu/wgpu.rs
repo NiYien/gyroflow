@@ -1116,8 +1116,17 @@ mod tests {
 
     #[test]
     fn post_affine_scale_wgsl_is_well_formed() {
+        validate_lens_kernel(DistortionModel::default());
+    }
+
+    #[test]
+    fn sony_spline_and_mesh_wgsl_is_well_formed() {
+        validate_lens_kernel(DistortionModel::from_name("sony"));
+    }
+
+    fn validate_lens_kernel(model: DistortionModel) {
         let mut kernel = include_str!("wgpu_undistort.wgsl").to_string();
-        let mut lens_functions = DistortionModel::default().wgsl_functions().to_string();
+        let mut lens_functions = model.wgsl_functions().to_string();
         lens_functions.push_str(
             "fn digital_undistort_point(uv: vec2<f32>) -> vec2<f32> { return uv; }\n\
              fn digital_distort_point(uv: vec2<f32>) -> vec2<f32> { return uv; }",
@@ -1136,6 +1145,6 @@ mod tests {
             wgpu::naga::valid::Capabilities::all(),
         )
         .validate(&module)
-        .expect("assembled post-affine WGSL must validate");
+        .expect("assembled lens and post-affine WGSL must validate");
     }
 }

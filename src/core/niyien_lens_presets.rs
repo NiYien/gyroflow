@@ -550,7 +550,7 @@ pub fn apply_focal_length_fallback_to_metadata(metadata: &mut FileMetadata, foca
     };
     let pixel_focal_length = metadata
         .unit_pixel_focal_length
-        .map(|upfl| (focal_length_mm * upfl) as f32);
+        .map(|upfl| { let f = (focal_length_mm * upfl) as f32; (f, f) });
 
     if metadata.lens_params.is_empty() {
         metadata.lens_params.insert(
@@ -1528,7 +1528,7 @@ mod tests {
         metadata.lens_params.insert(
             0,
             LensParams {
-                pixel_focal_length: Some(3100.0),
+                pixel_focal_length: Some((3100.0, 3100.0)),
                 ..Default::default()
             },
         );
@@ -1583,7 +1583,7 @@ mod tests {
             0,
             LensParams {
                 focal_length: Some(31.0),
-                pixel_focal_length: Some(3100.0),
+                pixel_focal_length: Some((3100.0, 3100.0)),
                 ..Default::default()
             },
         );
@@ -1614,7 +1614,7 @@ mod tests {
             0,
             LensParams {
                 focal_length: Some(31.0),
-                pixel_focal_length: Some(3100.0),
+                pixel_focal_length: Some((3100.0, 3100.0)),
                 ..Default::default()
             },
         );
@@ -1702,7 +1702,7 @@ mod tests {
             0,
             LensParams {
                 focal_length: Some(focal_mm),
-                pixel_focal_length: Some(focal_mm * 100.0),
+                pixel_focal_length: Some((focal_mm * 100.0, focal_mm * 100.0)),
                 ..Default::default()
             },
         );
@@ -1815,7 +1815,7 @@ mod tests {
             0,
             LensParams {
                 focal_length: Some(55.0),
-                pixel_focal_length: Some(5500.0),
+                pixel_focal_length: Some((5500.0, 5500.0)),
                 ..Default::default()
             },
         );
@@ -1883,7 +1883,7 @@ mod tests {
         metadata.lens_params.insert(
             0,
             crate::gyro_source::LensParams {
-                pixel_focal_length: Some(3100.0),
+                pixel_focal_length: Some((3100.0, 3100.0)),
                 ..Default::default()
             },
         );
@@ -2759,7 +2759,7 @@ mod tests {
 
         let params = metadata.lens_params.get(&0).unwrap();
         assert_eq!(params.focal_length, Some(30.0));
-        assert_eq!(params.pixel_focal_length, Some(3000.0));
+        assert_eq!(params.pixel_focal_length, Some((3000.0, 3000.0)));
     }
 
     #[test]
@@ -2781,6 +2781,6 @@ mod tests {
 
         let params = metadata.lens_params.get(&10).unwrap();
         assert_eq!(params.focal_length, Some(24.0));
-        assert_eq!(params.pixel_focal_length, Some(1200.0));
+        assert_eq!(params.pixel_focal_length, Some((1200.0, 1200.0)));
     }
 }

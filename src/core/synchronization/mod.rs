@@ -27,16 +27,17 @@ mod find_offset {
 use super::gyro_source::TimeIMU;
 
 mod autosync;
-pub mod optimsync;
-pub mod sync_repair;
 pub mod batch_clock;
-pub mod sync_diag;
 pub mod deep_match;
+pub mod lens_delay;
+pub mod optimsync;
+pub mod posterior;
+pub mod sync_diag;
 pub mod sync_metric;
 pub mod sync_perf;
-pub mod posterior;
+pub mod sync_repair;
 use crate::util::MapClosest;
-pub use autosync::{AutosyncProcess, describe_autosync_init_failure};
+pub use autosync::{describe_autosync_init_failure, AutosyncError,AutosyncProcess, AutosyncResult};
 
 pub type GrayImage = image::GrayImage;
 pub type OpticalFlowPoints = Vec<(f32, f32)>; // timestamp_us, points

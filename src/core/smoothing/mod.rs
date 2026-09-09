@@ -3,6 +3,7 @@
 
 pub mod default_algo;
 pub mod fixed;
+pub mod focal_length;
 pub mod horizon;
 pub mod none;
 pub mod plain;
@@ -145,12 +146,16 @@ impl Smoothing {
         &mut self.algs.0[self.current_id]
     }
 
-    pub fn get_state_checksum(&self, gyro_checksum: u64) -> u64 {
+    pub fn get_state_checksum(&self, gyro_checksum: u64, compute_params: &ComputeParams) -> u64 {
         let mut hasher = DefaultHasher::new();
         hasher.write_u64(gyro_checksum);
         hasher.write_usize(self.current_id);
         hasher.write_u64(self.algs.0[self.current_id].get_checksum());
         hasher.write_u64(self.horizon_lock.get_checksum());
+        hasher.write_usize(compute_params.camera_diagonal_fovs.len());
+        for fov in &compute_params.camera_diagonal_fovs {
+            hasher.write_u64(fov.to_bits());
+        }
         hasher.finish()
     }
 
@@ -248,7 +253,9 @@ impl Smoothing {
         let ranges = params
             .trim_ranges
             .iter()
-            .map(|x| (x.0 * params.scaled_duration_ms, x.1 * params.scaled_duration_ms))
+            .map(|x| { (x.0 * params.scaled_duration_ms, x.1 * params.scaled_duration_ms,
+                )
+            })
             .collect::<Vec<_>>();
         let identity_quat = Quat64::identity();
 

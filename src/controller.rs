@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
 
-use itertools::{Either, Itertools};
+use itertools::Itertools;
 use nalgebra::Vector4;
 use parking_lot::Mutex;
 use qmetaobject::*;
@@ -15,15 +15,15 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use qml_video_rs::video_item::MDKVideoItem;
 
 use crate::core;
-use crate::core::{OpGuard, StabilizationManager, WaitOutcome};
-use crate::log_context;
 #[cfg(feature = "opencv")]
 use crate::core::calibration::LensCalibrator;
 use crate::core::filesystem;
 use crate::core::keyframes::*;
 use crate::core::stabilization::KernelParamsFlags;
 use crate::core::synchronization;
-use crate::core::synchronization::AutosyncProcess;
+use crate::core::synchronization::{AutosyncError, AutosyncProcess, AutosyncResult};
+use crate::core::{OpGuard, StabilizationManager, WaitOutcome};
+use crate::log_context;
 use crate::niyien_device::{DeviceCommand, DeviceConnectionStatus, DeviceEvent, DeviceManager};
 use crate::qt_gpu::qrhi_undistort;
 use crate::rendering;
@@ -65,7 +65,14 @@ pub struct Controller {
     reset_player: qt_method!(fn(&self, player: QJSValue)),
     load_video: qt_method!(fn(&self, url: QUrl, player: QJSValue)),
     log_video_file_dialog: qt_method!(
-        fn(&self, selected_count: i32, first_url: QUrl, selected_file: QUrl, current_folder: QUrl, selected_files_raw: QString)
+        fn(
+            &self,
+            selected_count: i32,
+            first_url: QUrl,
+            selected_file: QUrl,
+            current_folder: QUrl,
+            selected_files_raw: QString,
+        )
     ),
     log_video_metadata_state: qt_method!(
         fn(&self, width: i32, height: i32, duration_ms: f64, fps: f64, frame_count: i32)
@@ -118,6 +125,7 @@ pub struct Controller {
         qt_method!(fn(&self, graph: QJSValue, idx: usize, ts: f64, sr: f64, fft_size: usize)),
     update_keyframes_view: qt_method!(fn(&self, kfview: QJSValue)),
     rolling_shutter_estimated: qt_signal!(rolling_shutter: f64),
+    lens_delay_estimated: qt_signal!(delay_frames: i32, correlation: f64),
     estimate_bias: qt_method!(fn(&self, timestamp_fract: QString)),
     bias_estimated: qt_signal!(bx: f64, by: f64, bz: f64),
     orientation_guessed: qt_signal!(orientation: QString),
@@ -225,6 +233,13 @@ pub struct Controller {
     zooming_center_y: qt_property!(f64; WRITE set_zooming_center_y),
     zooming_method: qt_property!(i32; WRITE set_zooming_method),
 
+    focal_length_smoothing_enabled: qt_property!(bool; READ get_focal_length_smoothing_enabled WRITE set_focal_length_smoothing_enabled),
+    focal_length_max_zoom_rate: qt_property!(f64; READ get_focal_length_max_zoom_rate WRITE set_focal_length_max_zoom_rate),
+    lens_metadata_delay_frames: qt_property!(i32; READ get_lens_metadata_delay_frames WRITE set_lens_metadata_delay_frames NOTIFY lens_metadata_delay_changed),
+    lens_metadata_delay_changed: qt_signal!(),
+    has_lens_breathing: qt_property!(bool; READ has_lens_breathing NOTIFY gyro_changed),
+    lens_breathing_enabled: qt_property!(bool; READ get_lens_breathing_enabled WRITE set_lens_breathing_enabled),
+
     additional_rotation_x: qt_property!(f64; WRITE set_additional_rotation_x),
     additional_rotation_y: qt_property!(f64; WRITE set_additional_rotation_y),
     additional_rotation_z: qt_property!(f64; WRITE set_additional_rotation_z),
@@ -259,6 +274,7 @@ pub struct Controller {
     gyro_has_quaternions: qt_property!(bool; READ gyro_has_quaternions NOTIFY gyro_changed),
     gyro_has_accurate_timestamps: qt_property!(bool; READ gyro_has_accurate_timestamps NOTIFY gyro_changed),
     has_gravity_vectors: qt_property!(bool; READ has_gravity_vectors NOTIFY gyro_changed),
+    has_per_frame_focal_length: qt_property!(bool; READ has_per_frame_focal_length NOTIFY gyro_changed),
 
     compute_progress: qt_signal!(id: u64, progress: f64),
     sync_progress: qt_signal!(progress: f64, ready: usize, total: usize),
@@ -490,7 +506,8 @@ pub struct Controller {
     #[allow(non_snake_case)]
     estimateFeedbackSize: qt_method!(fn(&self, options_json: QString) -> i64),
     #[allow(non_snake_case)]
-    submitFeedback: qt_method!(fn(&mut self, description: QString, email: QString, options_json: QString)),
+    submitFeedback:
+        qt_method!(fn(&mut self, description: QString, email: QString, options_json: QString)),
     #[allow(non_snake_case)]
     scanCrashCheckpoints: qt_method!(fn(&mut self)),
     #[allow(non_snake_case)]
@@ -620,7 +637,13 @@ fn wait_for_import_slot<P: Fn(f64), B: Fn(())>(
     progress: P,
     on_guard_broken: B,
 ) -> ImportWaitOutcome {
-    wait_for_import_slot_with_budget(import_retry_budget_s(), stab, cancel_flag, progress, on_guard_broken)
+    wait_for_import_slot_with_budget(
+        import_retry_budget_s(),
+        stab,
+        cancel_flag,
+        progress,
+        on_guard_broken,
+    )
 }
 
 // Budget-injectable body, split out so unit tests bypass the env cache.
@@ -656,7 +679,10 @@ fn wait_for_import_slot_with_budget<P: Fn(f64), B: Fn(())>(
                 }
                 let waited_s = started.elapsed().as_secs();
                 if budget_s == 0 || waited_s >= budget_s {
-                    return ImportWaitOutcome::Busy { remaining, waited_s };
+                    return ImportWaitOutcome::Busy {
+                        remaining,
+                        waited_s,
+                    };
                 }
                 // progress < 1.0 keeps loading_gyro_in_progress true on the
                 // QML side, so the loader spinner stays visible while queued.
@@ -783,8 +809,7 @@ impl Controller {
         //   do_toast — Timeout path: surfaces a "retry shortly" toast.
         let do_load = util::qt_queued_callback_mut(
             QPointer::from(self as &Self),
-            move |this,
-                  payload: (String, String, String, &'static str, i32, f64)| {
+            move |this, payload: (String, String, String, &'static str, i32, f64)| {
                 let (
                     encoded_url,
                     filename,
@@ -817,8 +842,7 @@ impl Controller {
                 let g = OpGuard::enter(&this.stabilizer.in_flight_count);
                 if core::video_load_guard_enabled() {
                     // Park time feeds the stale-guard circuit breaker.
-                    *this.stabilizer.video_load_guard.lock() =
-                        Some((g, std::time::Instant::now()));
+                    *this.stabilizer.video_load_guard.lock() = Some((g, std::time::Instant::now()));
                     this.video_loading_in_progress = true;
                     this.video_loading_in_progress_changed();
                     ::log::info!(
@@ -852,9 +876,8 @@ impl Controller {
                         "{}",
                         None,
                     ) {
-                        if let Ok(mut current_state) =
-                            serde_json::from_str(current_state.as_str())
-                                as serde_json::Result<serde_json::Value>
+                        if let Ok(mut current_state) = serde_json::from_str(current_state.as_str())
+                            as serde_json::Result<serde_json::Value>
                         {
                             // Tag this payload as a UI reset broadcast rather
                             // than a loaded project. A freshly cleared state
@@ -882,10 +905,7 @@ impl Controller {
                 this.project_file_url_changed();
                 if let Some(vid) = player.to_qobject::<MDKVideoItem>() {
                     let vid = unsafe { &mut *vid.as_ptr() };
-                    filesystem::stop_accessing_url(
-                        &util::qurl_to_encoded(vid.url.clone()),
-                        false,
-                    );
+                    filesystem::stop_accessing_url(&util::qurl_to_encoded(vid.url.clone()), false);
                     filesystem::start_accessing_url(&encoded_url, false);
                     ::log::info!(
                         target: "video.load",
@@ -904,9 +924,11 @@ impl Controller {
                     // be read from the resolved first frame; the resolve is a
                     // no-op for every other input and leaves `encoded_url` as
                     // the url the curve is built from.
-                    let curve_url =
-                        util::resolve_image_sequence_first_frame(&encoded_url, image_sequence_start)
-                            .unwrap_or_else(|| encoded_url.clone());
+                    let curve_url = util::resolve_image_sequence_first_frame(
+                        &encoded_url,
+                        image_sequence_start,
+                    )
+                    .unwrap_or_else(|| encoded_url.clone());
                     let dng_curve = core::dng_tone_curve::DngToneCurve::from_url(&curve_url);
                     vid.setUrl(
                         QUrl::from(QString::from(encoded_url)),
@@ -964,13 +986,11 @@ impl Controller {
         // the breaker itself only drops the guard (core cannot reach this
         // controller property). Without this, the loadFile gate would keep
         // blocking video loads even though the guard is gone.
-        let clear_loading_flag = util::qt_queued_callback_mut(
-            QPointer::from(self as &Self),
-            move |this, _: ()| {
+        let clear_loading_flag =
+            util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, _: ()| {
                 this.video_loading_in_progress = false;
                 this.video_loading_in_progress_changed();
-            },
-        );
+            });
 
         let stab = self.stabilizer.clone();
         let cancel_flag = self.cancel_flag.clone();
@@ -1135,7 +1155,11 @@ impl Controller {
 
         let for_rs = mode == "estimate_rolling_shutter";
 
-        let every_nth_frame = sync_params.every_nth_frame;
+        let every_nth_frame = if mode == "estimate_lens_delay" {
+            1
+        } else {
+            sync_params.every_nth_frame
+        };
 
         self.sync_in_progress = true;
         self.sync_in_progress_changed();
@@ -1160,12 +1184,10 @@ impl Controller {
         // worker→UI latency. job_id=0 sentinel (no batch job concept here).
         let set_offsets_latency_probe: Option<Arc<dyn Fn() + Send + Sync>> =
             if gyroflow_core::batch_sync_diag::enabled() {
-                let acc = Arc::new(
-                    gyroflow_core::batch_sync_diag::UiLatencyAccumulator::new(
-                        0,
-                        "set_offsets",
-                    ),
-                );
+                let acc = Arc::new(gyroflow_core::batch_sync_diag::UiLatencyAccumulator::new(
+                    0,
+                    "set_offsets",
+                ));
                 let inner = util::qt_queued_callback_mut(
                     QPointer::from(self as &Self),
                     move |_this, enq: std::time::Instant| {
@@ -1182,10 +1204,7 @@ impl Controller {
                 // Locus C body-exec span: measures how long this UI-thread callback
                 // takes from entry to exit. job_id=0 is the controller-path
                 // sentinel (no batch job concept on this code path).
-                let _diag_exec = gyroflow_core::batch_sync_diag::UiExecSpan::new(
-                    0,
-                    "set_offsets",
-                );
+                let _diag_exec = gyroflow_core::batch_sync_diag::UiExecSpan::new(0, "set_offsets");
                 if for_rs {
                     if let Some(offs) = offsets.first() {
                         this.rolling_shutter_estimated(offs.1);
@@ -1194,22 +1213,13 @@ impl Controller {
                     // Locus A: on_finished + lock spans, mirrored from the batch-sync
                     // path in render_queue.rs. job_id=0 here too (controller sentinel).
                     let _diag_on_finished =
-                        gyroflow_core::batch_sync_diag::OnFinishedSpan::new(
-                            0,
-                            offsets.len(),
-                        );
+                        gyroflow_core::batch_sync_diag::OnFinishedSpan::new(0, offsets.len());
                     let _diag_gyro_acq =
-                        gyroflow_core::batch_sync_diag::LockAcquireSpan::new(
-                            "gyro_write",
-                            0,
-                        );
+                        gyroflow_core::batch_sync_diag::LockAcquireSpan::new("gyro_write", 0);
                     let mut gyro = this.stabilizer.gyro.write();
                     drop(_diag_gyro_acq);
                     let _diag_gyro_hold =
-                        gyroflow_core::batch_sync_diag::LockHoldSpan::new(
-                            "gyro_write",
-                            0,
-                        );
+                        gyroflow_core::batch_sync_diag::LockHoldSpan::new("gyro_write", 0);
                     gyro.prevent_recompute = true;
                     for x in offsets {
                         ::log::info!(
@@ -1238,17 +1248,11 @@ impl Controller {
                     gyro.prevent_recompute = false;
                     gyro.adjust_offsets();
                     let _diag_kf_acq =
-                        gyroflow_core::batch_sync_diag::LockAcquireSpan::new(
-                            "keyframes_write",
-                            0,
-                        );
+                        gyroflow_core::batch_sync_diag::LockAcquireSpan::new("keyframes_write", 0);
                     let mut kf = this.stabilizer.keyframes.write();
                     drop(_diag_kf_acq);
                     let _diag_kf_hold =
-                        gyroflow_core::batch_sync_diag::LockHoldSpan::new(
-                            "keyframes_write",
-                            0,
-                        );
+                        gyroflow_core::batch_sync_diag::LockHoldSpan::new("keyframes_write", 0);
                     kf.update_gyro(&gyro);
                     drop(kf);
                     drop(_diag_kf_hold);
@@ -1263,6 +1267,24 @@ impl Controller {
             move |this, orientation: String| {
                 ::log::info!("Setting orientation {}", &orientation);
                 this.orientation_guessed(QString::from(orientation));
+            },
+        );
+        let set_lens_delay = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            move |this, estimate: Option<(i32, f64, f64)>| {
+                if let Some((delay_frames, exact, correlation)) = estimate {
+                    ::log::info!(
+                        "Lens metadata delay estimated at {delay_frames} frames ({exact:.2} exact, correlation {correlation:.2})"
+                    );
+                    this.stabilizer.params.write().lens_metadata_delay_frames = delay_frames;
+                    this.lens_metadata_delay_changed();
+                    this.lens_delay_estimated(delay_frames, correlation);
+                } else {
+                    this.lens_delay_estimated(0, 0.0);
+                }
+                this.sync_in_progress = false;
+                this.sync_in_progress_changed();
+                this.request_recompute();
             },
         );
         let err = util::qt_queued_callback_mut(
@@ -1289,123 +1311,133 @@ impl Controller {
             &sync_params,
         );
 
-        if let Ok(mut sync) = AutosyncProcess::from_manager(
-            &self.stabilizer,
-            &timestamps_fract,
-            sync_params,
-            mode.clone(),
-            self.cancel_flag.clone(),
-        ) {
+        let stabilizer = self.stabilizer.clone();
+        let cancel_flag = self.cancel_flag.clone();
+        let input_file = self.stabilizer.input_file.read().clone();
+        let proc_height = self.processing_resolution;
+        let gpu_decoding = self.stabilizer.gpu_decoding.load(SeqCst);
+        let guard = OpGuard::enter(&self.stabilizer.in_flight_count);
+        core::run_threaded(move || {
+            let _guard = guard;
+            let mut sync = match AutosyncProcess::from_manager(
+                &stabilizer,
+                &timestamps_fract,
+                sync_params,
+                mode.clone(),
+                cancel_flag.clone(),
+            ) {
+                Ok(sync) => sync,
+                Err(AutosyncError::NoZoomInMetadata) => return set_lens_delay(None),
+                Err(AutosyncError::InvalidParameters) => {
+                    let detail =
+                        format!("Invalid autosync parameters ({mode}): {sync_failure_detail}");
+                    return err(("An error occured: %1".to_string(), detail));
+                }
+            };
             sync.on_progress(move |percent, ready, total| {
                 progress((percent, ready, total));
             });
             sync.on_finished(move |arg| {
                 match arg {
-                    Either::Left(offsets) => {
+                    AutosyncResult::Offsets(offsets) => {
                         if let Some(p) = &set_offsets_latency_probe {
                             p();
                         }
                         set_offsets(offsets);
                     }
-                    Either::Right(Some(orientation)) => set_orientation(orientation.0),
+                    AutosyncResult::Orientation(Some(orientation)) => {
+                        set_orientation(orientation.0)
+                    }
+                    AutosyncResult::LensDelay(estimate) => set_lens_delay(
+                        estimate.map(|e| (e.delay_frames, e.delay_frames_exact, e.correlation)),
+                    ),
                     _ => (),
                 };
             });
 
             let ranges = sync.get_ranges();
-            let cancel_flag = self.cancel_flag.clone();
-
-            let input_file = self.stabilizer.input_file.read().clone();
-            let proc_height = self.processing_resolution;
-            let gpu_decoding = self.stabilizer.gpu_decoding.load(SeqCst);
-            let in_flight_count = self.stabilizer.in_flight_count.clone();
-            core::run_threaded(move || {
-                // §4.7 OpGuard: autosync rayon worker holds the in_flight
-                // counter for its lifetime so a concurrent project-load /
-                // load_video sees the op and waits in wait_until_idle.
-                let _g = OpGuard::enter(&in_flight_count);
-                // Probe codec signature so we can consult the GPU blocklist
-                // before attempting decode and record on failure. Probe only
-                // when GPU is even a candidate; if the user has GPU disabled,
-                // we go straight to software without paying probe cost.
-                let codec_sig = if gpu_decoding {
-                    match VideoProcessor::get_video_info(&input_file.url) {
-                        Ok(info) => Some(rendering::gpu_codec_blocklist::CodecSignature::from(&info)),
-                        Err(e) => {
-                            ::log::debug!(
-                                "[autosync] codec signature probe failed: {e:?} (proceeding without blocklist consultation)"
-                            );
-                            None
-                        }
+            // Probe codec signature so we can consult the GPU blocklist
+            // before attempting decode and record on failure. Probe only
+            // when GPU is even a candidate; if the user has GPU disabled,
+            // we go straight to software without paying probe cost.
+            let codec_sig = if gpu_decoding {
+                match VideoProcessor::get_video_info(&input_file.url) {
+                    Ok(info) => Some(rendering::gpu_codec_blocklist::CodecSignature::from(&info)),
+                    Err(e) => {
+                        ::log::debug!(
+                            "[autosync] codec signature probe failed: {e:?} (proceeding without blocklist consultation)"
+                        );
+                        None
                     }
-                } else {
-                    None
-                };
-
-                // Wrap sync in Rc before try_run so the closure captures the Rc
-                // (cheap to clone per attempt) instead of the underlying value.
-                let sync = std::rc::Rc::new(sync);
-
-                // CinemaDNG decodes to scene-linear samples, which the GRAY8 /
-                // NV12 conversion below would collapse into ~10 distinct levels
-                // - far too little signal for optical flow. Rebuild the camera's
-                // own encoding from the file's LinearizationTable so the flow
-                // input keeps its gradients. Built once per sync run (try_run
-                // may be attempted twice on GPU fallback), never per frame.
-                // `None` for anything that is not a DNG carrying that table, so
-                // every other format keeps its existing behaviour byte for byte.
-                //
-                // As on the preview path, a `%0Nd` sequence url names no file:
-                // resolve it to the real first frame first (identity for every
-                // non-sequence input).
-                let curve_url = util::resolve_image_sequence_first_frame(
-                    &input_file.url,
-                    input_file.image_sequence_start,
-                )
-                .unwrap_or_else(|| input_file.url.clone());
-                let dng_curve =
-                    core::dng_tone_curve::DngToneCurve::from_url(&curve_url).map(std::rc::Rc::new);
-                if dng_curve.is_some() {
-                    ::log::info!(target: "sync", "[dng] tone curve active for sync input");
                 }
+            } else {
+                None
+            };
 
-                let try_run = |use_gpu: bool, ranges: Vec<(f64, f64)>| -> Result<(), rendering::FFmpegError> {
-                    let mut frame_no = 0;
-                    let mut abs_frame_no = 0;
+            // Wrap sync in Rc before try_run so the closure captures the Rc
+            // (cheap to clone per attempt) instead of the underlying value.
+            let sync = std::rc::Rc::new(sync);
 
-                    let mut decoder_options = ffmpeg_next::Dictionary::new();
-                    if input_file.image_sequence_fps > 0.0 {
-                        let fps = rendering::fps_to_rational(input_file.image_sequence_fps);
-                        decoder_options.set(
-                            "framerate",
-                            &format!("{}/{}", fps.numerator(), fps.denominator()),
-                        );
-                    }
-                    if input_file.image_sequence_start > 0 {
-                        decoder_options.set(
-                            "start_number",
-                            &format!("{}", input_file.image_sequence_start),
-                        );
-                    }
-                    // Decoder scale is decoupled from proc_height: on macOS R3D/NEV
-                    // this requests a REDMetal-clean tier; the converter.scale below
-                    // still downscales to proc_height so NeuFlow input is unchanged.
-                    if let Some(scale) = rendering::sync_decoder_scale_string(proc_height, &input_file.url) {
-                        decoder_options.set("scale", &scale);
-                    }
-                    ::log::debug!("Decoder options: {:?}", decoder_options);
+            // CinemaDNG decodes to scene-linear samples, which the GRAY8 /
+            // NV12 conversion below would collapse into ~10 distinct levels
+            // - far too little signal for optical flow. Rebuild the camera's
+            // own encoding from the file's LinearizationTable so the flow
+            // input keeps its gradients. Built once per sync run (try_run
+            // may be attempted twice on GPU fallback), never per frame.
+            // `None` for anything that is not a DNG carrying that table, so
+            // every other format keeps its existing behaviour byte for byte.
+            //
+            // As on the preview path, a `%0Nd` sequence url names no file:
+            // resolve it to the real first frame first (identity for every
+            // non-sequence input).
+            let curve_url = util::resolve_image_sequence_first_frame(
+                &input_file.url,
+                input_file.image_sequence_start,
+            )
+            .unwrap_or_else(|| input_file.url.clone());
+            let dng_curve =
+                core::dng_tone_curve::DngToneCurve::from_url(&curve_url).map(std::rc::Rc::new);
+            if dng_curve.is_some() {
+                ::log::info!(target: "sync", "[dng] tone curve active for sync input");
+            }
 
-                    let mut proc = VideoProcessor::from_file(
-                        &input_file.url,
-                        use_gpu,
-                        0,
-                        Some(decoder_options),
-                    )?;
+            let try_run = |use_gpu: bool,
+                           ranges: Vec<(f64, f64)>|
+             -> Result<(), rendering::FFmpegError> {
+                let mut frame_no = 0;
+                let mut abs_frame_no = 0;
 
-                    let err2 = err.clone();
-                    let sync2 = sync.clone();
-                    let dng_curve2 = dng_curve.clone();
-                    proc.on_frame(
+                let mut decoder_options = ffmpeg_next::Dictionary::new();
+                if input_file.image_sequence_fps > 0.0 {
+                    let fps = rendering::fps_to_rational(input_file.image_sequence_fps);
+                    decoder_options.set(
+                        "framerate",
+                        &format!("{}/{}", fps.numerator(), fps.denominator()),
+                    );
+                }
+                if input_file.image_sequence_start > 0 {
+                    decoder_options.set(
+                        "start_number",
+                        &format!("{}", input_file.image_sequence_start),
+                    );
+                }
+                // Decoder scale is decoupled from proc_height: on macOS R3D/NEV
+                // this requests a REDMetal-clean tier; the converter.scale below
+                // still downscales to proc_height so NeuFlow input is unchanged.
+                if let Some(scale) =
+                    rendering::sync_decoder_scale_string(proc_height, &input_file.url)
+                {
+                    decoder_options.set("scale", &scale);
+                }
+                ::log::debug!("Decoder options: {:?}", decoder_options);
+
+                let mut proc =
+                    VideoProcessor::from_file(&input_file.url, use_gpu, 0, Some(decoder_options))?;
+
+                let err2 = err.clone();
+                let sync2 = sync.clone();
+                let dng_curve2 = dng_curve.clone();
+                proc.on_frame(
                         move |timestamp_us,
                               input_frame,
                               _output_frame,
@@ -1495,82 +1527,77 @@ impl Controller {
                             Ok(())
                         },
                     );
-                    proc.start_decoder_only(ranges, cancel_flag.clone())
-                };
+                proc.start_decoder_only(ranges, cancel_flag.clone())
+            };
 
-                // Decide whether to attempt GPU. Blocklist is advisory only when
-                // the user setting allows GPU; if GPU is off we skip the check.
-                let try_gpu = match (gpu_decoding, codec_sig.as_ref()) {
-                    (true, Some(sig)) => {
-                        if rendering::gpu_codec_blocklist::is_blocklisted(sig) {
+            // Decide whether to attempt GPU. Blocklist is advisory only when
+            // the user setting allows GPU; if GPU is off we skip the check.
+            let try_gpu = match (gpu_decoding, codec_sig.as_ref()) {
+                (true, Some(sig)) => {
+                    if rendering::gpu_codec_blocklist::is_blocklisted(sig) {
+                        ::log::info!(
+                            "[autosync] skipping GPU for blocklisted signature {:?}",
+                            sig
+                        );
+                        false
+                    } else {
+                        true
+                    }
+                }
+                (true, None) => true,
+                (false, _) => false,
+            };
+
+            let result = if try_gpu {
+                match try_run(true, ranges.clone()) {
+                    Err(rendering::FFmpegError::GPUDecodingFailed) => {
+                        if let Some(sig) = codec_sig.clone() {
                             ::log::info!(
-                                "[autosync] skipping GPU for blocklisted signature {:?}",
+                                "[autosync] GPU decode failed for signature {:?}, retrying with software",
                                 sig
                             );
-                            false
+                            rendering::gpu_codec_blocklist::record_failure(sig);
                         } else {
-                            true
+                            ::log::info!(
+                                "[autosync] GPU decode failed (no signature available), retrying with software"
+                            );
                         }
+                        try_run(false, ranges)
                     }
-                    (true, None) => true,
-                    (false, _) => false,
-                };
-
-                let result = if try_gpu {
-                    match try_run(true, ranges.clone()) {
-                        Err(rendering::FFmpegError::GPUDecodingFailed) => {
-                            if let Some(sig) = codec_sig.clone() {
-                                ::log::info!(
-                                    "[autosync] GPU decode failed for signature {:?}, retrying with software",
-                                    sig
-                                );
-                                rendering::gpu_codec_blocklist::record_failure(sig);
-                            } else {
-                                ::log::info!(
-                                    "[autosync] GPU decode failed (no signature available), retrying with software"
-                                );
-                            }
-                            try_run(false, ranges)
-                        }
-                        other => other,
-                    }
-                } else {
-                    try_run(false, ranges)
-                };
-
-                let round1_ok = result.is_ok();
-                if let Err(e) = result {
-                    err(("An error occured: %1".to_string(), e.to_string()));
+                    other => other,
                 }
-                sync.finished_feeding_frames();
-                // Lazy probe escalation: phase 1 held the finished callback,
-                // decode only the probe range and run the joint pass. Skip it
-                // when round-1 decode hard-errored (empty offsets would
-                // otherwise trigger a spurious second decode of the same file).
-                if round1_ok {
-                    if let Some(probe_ranges) = sync.pending_probe_ranges() {
-                        let result = if try_gpu {
-                            match try_run(true, probe_ranges.clone()) {
-                                Err(rendering::FFmpegError::GPUDecodingFailed) => {
-                                    try_run(false, probe_ranges)
-                                }
-                                other => other,
+            } else {
+                try_run(false, ranges)
+            };
+
+            let round1_ok = result.is_ok();
+            if let Err(e) = result {
+                err(("An error occured: %1".to_string(), e.to_string()));
+            }
+            sync.finished_feeding_frames();
+            // Lazy probe escalation: phase 1 held the finished callback,
+            // decode only the probe range and run the joint pass. Skip it
+            // when round-1 decode hard-errored (empty offsets would
+            // otherwise trigger a spurious second decode of the same file).
+            if round1_ok {
+                if let Some(probe_ranges) = sync.pending_probe_ranges() {
+                    let result = if try_gpu {
+                        match try_run(true, probe_ranges.clone()) {
+                            Err(rendering::FFmpegError::GPUDecodingFailed) => {
+                                try_run(false, probe_ranges)
                             }
-                        } else {
-                            try_run(false, probe_ranges)
-                        };
-                        if let Err(e) = result {
-                            err(("An error occured: %1".to_string(), e.to_string()));
+                            other => other,
                         }
-                        sync.finished_feeding_frames();
+                    } else {
+                        try_run(false, probe_ranges)
+                    };
+                    if let Err(e) = result {
+                        err(("An error occured: %1".to_string(), e.to_string()));
                     }
+                    sync.finished_feeding_frames();
                 }
-            });
-        } else {
-            let detail = format!("Invalid autosync parameters ({mode}): {sync_failure_detail}");
-            ::log::warn!("[autosync] start_autosync rejected: {detail}");
-            err(("An error occured: %1".to_string(), detail));
-        }
+            }
+        });
     }
 
     fn estimate_bias(&mut self, timestamps_fract: QString) {
@@ -1917,12 +1944,7 @@ impl Controller {
                     if is_main_video {
                         this.video_loading_in_progress = false;
                         this.video_loading_in_progress_changed();
-                        let was_present = this
-                            .stabilizer
-                            .video_load_guard
-                            .lock()
-                            .take()
-                            .is_some();
+                        let was_present = this.stabilizer.video_load_guard.lock().take().is_some();
                         if was_present {
                             ::log::info!(
                                 target: "lifecycle",
@@ -1983,11 +2005,9 @@ impl Controller {
                     {
                         // Image sequences read telemetry from the first frame; all
                         // other inputs use the url unchanged.
-                        let telemetry_url = crate::util::resolve_image_sequence_first_frame(
-                            &url,
-                            image_seq_start,
-                        )
-                        .unwrap_or_else(|| url.clone());
+                        let telemetry_url =
+                            crate::util::resolve_image_sequence_first_frame(&url, image_seq_start)
+                                .unwrap_or_else(|| url.clone());
                         if let Ok(mut file) = filesystem::open_file(&telemetry_url, false, false) {
                             let filesize = file.size;
                             if is_main_video {
@@ -2148,12 +2168,13 @@ impl Controller {
                     // video info panel and the single-video load agree. See
                     // util::derive_creation_date_from_filename for what the guess
                     // can get wrong (naming convention, and no timezone).
-                    let derived_creation_date = file_metadata.creation_date_utc.clone().or_else(|| {
-                        crate::util::derive_creation_date_from_filename(
-                            &filesystem::get_filename(&url),
-                            file_metadata.timecode.as_deref()?,
-                        )
-                    });
+                    let derived_creation_date =
+                        file_metadata.creation_date_utc.clone().or_else(|| {
+                            crate::util::derive_creation_date_from_filename(
+                                &filesystem::get_filename(&url),
+                                file_metadata.timecode.as_deref()?,
+                            )
+                        });
                     if let Some(ref utc_str) = derived_creation_date {
                         additional_obj.insert(
                             "creation_date_utc".to_owned(),
@@ -2207,7 +2228,11 @@ impl Controller {
                         .as_ref()
                         .map(|v| v.get_identifier_for_autoload())
                         .unwrap_or_default();
-                    if is_main_video && !id_str.is_empty() && !has_builtin_profile && !canon_defer_lens {
+                    if is_main_video
+                        && !id_str.is_empty()
+                        && !has_builtin_profile
+                        && !canon_defer_lens
+                    {
                         let needs_load = {
                             let mut db = stab.lens_profile_db.write();
                             db.on_loaded(move |db| {
@@ -2232,10 +2257,7 @@ impl Controller {
                     }
 
                     if let Some(cam_id) = camera_id.as_ref() {
-                        crate::distribution::report_camera_open_event(
-                            &cam_id.brand,
-                            &cam_id.model,
-                        );
+                        crate::distribution::report_camera_open_event(&cam_id.brand, &cam_id.model);
                         additional_obj.insert(
                             "camera_identifier".to_owned(),
                             serde_json::to_value(cam_id).unwrap(),
@@ -3065,8 +3087,7 @@ impl Controller {
         // Locus D trigger throttle. request_recompute (qt_signal) is dispatched
         // by QML via `Qt.callLater(controller.recompute_threaded)` so this is
         // the canonical Rust entry — instrumenting here catches every funnel.
-        gyroflow_core::batch_sync_diag::recompute_trigger_throttle()
-            .maybe_emit("controller");
+        gyroflow_core::batch_sync_diag::recompute_trigger_throttle().maybe_emit("controller");
         if self.stabilizer.params.read().duration_ms <= 0.0 {
             return;
         }
@@ -3074,12 +3095,13 @@ impl Controller {
             .stabilizer
             .recompute_threaded(util::qt_queued_callback_mut(
                 QPointer::from(self as &Self),
-                |this, (id, _discarded): (u64, bool)| {
+                move |this, (id, _discarded): (u64, bool)| {
                     if !this.ongoing_computations.contains(&id) {
                         ::log::error!("Unknown compute_id: {}", id);
                     }
                     this.ongoing_computations.remove(&id);
                     let finished = this.ongoing_computations.is_empty();
+
                     this.compute_progress(id, if finished { 1.0 } else { 0.0 });
                 },
             ));
@@ -3368,26 +3390,22 @@ impl Controller {
         // After the circuit breaker force-releases a stale guard mid-retry,
         // reset the QML-visible loading flag from the QML thread (core only
         // drops the guard; the loadFile gate reads this property).
-        let clear_loading_flag = util::qt_queued_callback_mut(
-            QPointer::from(self as &Self),
-            move |this, _: ()| {
+        let clear_loading_flag =
+            util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, _: ()| {
                 this.video_loading_in_progress = false;
                 this.video_loading_in_progress_changed();
-            },
-        );
+            });
         // Abandoned path (main video changed while queued): clear the loading
         // flags WITHOUT emitting gyroflow_file_loaded — QML panels must keep
         // the newly loaded video's state, not receive an empty project
         // broadcast. prevent_recompute is restored by the new video's own
         // load chain (do_load reset broadcast → onGyroflow_file_loaded).
-        let abandoned = util::qt_queued_callback_mut(
-            QPointer::from(self as &Self),
-            move |this, _: ()| {
+        let abandoned =
+            util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, _: ()| {
                 this.loading_gyro_in_progress = false;
                 this.loading_gyro_progress(1.0);
                 this.loading_gyro_in_progress_changed();
-            },
-        );
+            });
 
         let stab = self.stabilizer.clone();
         let cancel_flag = self.cancel_flag.clone();
@@ -3400,22 +3418,21 @@ impl Controller {
             match wait_for_import_slot(&stab, &cancel_flag, &progress, &clear_loading_flag) {
                 ImportWaitOutcome::Ready => {
                     let _g = OpGuard::enter(&stab.in_flight_count);
-                    finished(stab.import_gyroflow_file(
-                        &url,
-                        false,
-                        progress,
-                        cancel_flag,
-                        false,
-                    ));
+                    finished(stab.import_gyroflow_file(&url, false, progress, cancel_flag, false));
                 }
-                ImportWaitOutcome::Busy { remaining, waited_s } => {
+                ImportWaitOutcome::Busy {
+                    remaining,
+                    waited_s,
+                } => {
                     ::log::warn!(
                         target: "lifecycle",
                         "import_gyroflow_file refused: {} ops still running after {}s of retries",
                         remaining, waited_s
                     );
                     // Do NOT clear cancel_flag: stuck ops keep trying to exit.
-                    finished(Err(gyroflow_core::GyroflowCoreError::LifecycleBusy(remaining)));
+                    finished(Err(gyroflow_core::GyroflowCoreError::LifecycleBusy(
+                        remaining,
+                    )));
                 }
                 ImportWaitOutcome::Abandoned => abandoned(()),
             }
@@ -3442,21 +3459,17 @@ impl Controller {
             },
         );
         // Same pair as import_gyroflow_file — see comments there.
-        let clear_loading_flag = util::qt_queued_callback_mut(
-            QPointer::from(self as &Self),
-            move |this, _: ()| {
+        let clear_loading_flag =
+            util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, _: ()| {
                 this.video_loading_in_progress = false;
                 this.video_loading_in_progress_changed();
-            },
-        );
-        let abandoned = util::qt_queued_callback_mut(
-            QPointer::from(self as &Self),
-            move |this, _: ()| {
+            });
+        let abandoned =
+            util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, _: ()| {
                 this.loading_gyro_in_progress = false;
                 this.loading_gyro_progress(1.0);
                 this.loading_gyro_in_progress_changed();
-            },
-        );
+            });
 
         let stab = self.stabilizer.clone();
         let cancel_flag = self.cancel_flag.clone();
@@ -3483,13 +3496,18 @@ impl Controller {
                     // render-thread re-init against transitional D3D11 textures.
                     finished(result);
                 }
-                ImportWaitOutcome::Busy { remaining, waited_s } => {
+                ImportWaitOutcome::Busy {
+                    remaining,
+                    waited_s,
+                } => {
                     ::log::warn!(
                         target: "lifecycle",
                         "import_gyroflow_data refused: {} ops still running after {}s of retries",
                         remaining, waited_s
                     );
-                    finished(Err(gyroflow_core::GyroflowCoreError::LifecycleBusy(remaining)));
+                    finished(Err(gyroflow_core::GyroflowCoreError::LifecycleBusy(
+                        remaining,
+                    )));
                 }
                 ImportWaitOutcome::Abandoned => abandoned(()),
             }
@@ -3685,11 +3703,7 @@ impl Controller {
     fn mesh_at_frame(&self, frame: usize) -> QVariantList {
         let gyro = self.stabilizer.gyro.read();
         let file_metadata = gyro.file_metadata.read();
-        if let Some(mc) = file_metadata.mesh_correction.get(frame) {
-            QVariantList::from_iter(mc.1.iter())
-        } else {
-            QVariantList::default()
-        }
+        QVariantList::from_iter(file_metadata.mesh_correction.kernel_buffer(frame).iter())
     }
     fn get_turn_speed(&self, timestamp_ms: f64) -> f64 {
         let params = self.stabilizer.params.read();
@@ -3770,7 +3784,13 @@ impl Controller {
     fn check_updates(&self) {
         let update = util::qt_queued_callback_mut(
             QPointer::from(self as &Self),
-            |this, (version, changelog, download_url, changelog_truncated): (String, String, String, bool)| {
+            |this,
+             (version, changelog, download_url, changelog_truncated): (
+                String,
+                String,
+                String,
+                bool,
+            )| {
                 this.updates_available(
                     QString::from(version),
                     QString::from(changelog),
@@ -3782,12 +3802,10 @@ impl Controller {
         // Queued bridge back to the UI thread: the sync below runs on a worker
         // thread and must not emit Qt signals directly. Fired once when a `lens`
         // package was actually updated, so the lens-group preset UI re-reads.
-        let lens_updated_cb = util::qt_queued_callback_mut(
-            QPointer::from(self as &Self),
-            |this, _: ()| {
+        let lens_updated_cb =
+            util::qt_queued_callback_mut(QPointer::from(self as &Self), |this, _: ()| {
                 this.lens_presets_updated();
-            },
-        );
+            });
         core::run_threaded(move || match crate::distribution::fetch_manifest(false) {
             Ok(manifest) => {
                 match crate::distribution::sync_data_packages(&manifest) {
@@ -3823,13 +3841,14 @@ impl Controller {
                     // `gyroflow_core::settings::set("lang", ...)`, so we
                     // read it back the same way to stay in sync.
                     let locale = gyroflow_core::settings::get_str("lang", "en");
-                    let (changelog, changelog_truncated) = crate::distribution::resolve_update_changelog(
-                        &manifest.app.manual_versions,
-                        &manifest.app.version,
-                        &manifest.app.changelog,
-                        &manifest.app.changelogs,
-                        &locale,
-                    );
+                    let (changelog, changelog_truncated) =
+                        crate::distribution::resolve_update_changelog(
+                            &manifest.app.manual_versions,
+                            &manifest.app.version,
+                            &manifest.app.changelog,
+                            &manifest.app.changelogs,
+                            &locale,
+                        );
                     update((
                         manifest.app.version,
                         changelog,
@@ -3974,7 +3993,10 @@ impl Controller {
 
         self.device_time_sync_in_progress = false;
         self.device_state_changed();
-        self.device_time_sync_finished(false, QString::from("Device command channel is unavailable"));
+        self.device_time_sync_finished(
+            false,
+            QString::from("Device command channel is unavailable"),
+        );
     }
 
     fn set_device_ui_language(&mut self, lang: QString) {
@@ -4828,12 +4850,11 @@ impl Controller {
                 .exists()
         {
             core::run_threaded(move || {
-                if let Ok(Ok(body)) =
-                    crate::network::get(
-                        "https://api.github.com/repos/gyroflow/lens_profiles/releases",
-                    )
-                    .call()
-                    .map(|x| x.into_body().read_to_string())
+                if let Ok(Ok(body)) = crate::network::get(
+                    "https://api.github.com/repos/gyroflow/lens_profiles/releases",
+                )
+                .call()
+                .map(|x| x.into_body().read_to_string())
                 {
                     (|| -> Option<()> {
                         let v: Vec<serde_json::Value> = serde_json::from_str(&body).ok()?;
@@ -4970,10 +4991,8 @@ impl Controller {
             let gyro_url =
                 util::resolve_image_sequence_first_frame(&gyro_url, self.image_sequence_start)
                     .unwrap_or(gyro_url);
-            let contents = gyroflow_core::gyro_export::export_full_metadata(
-                &gyro_url,
-                &self.stabilizer,
-            )?;
+            let contents =
+                gyroflow_core::gyro_export::export_full_metadata(&gyro_url, &self.stabilizer)?;
             Ok(filesystem::write(
                 &util::qurl_to_encoded(url),
                 contents.as_bytes(),
@@ -5168,6 +5187,65 @@ impl Controller {
         let fm = gyro.file_metadata.read();
         let has_motion = !fm.raw_imu.is_empty() || !fm.quaternions.is_empty();
         rendering::render_queue::stabilize_step_pending(&fm, has_motion, has_offsets)
+    }
+    fn has_per_frame_focal_length(&self) -> bool {
+        !self
+            .stabilizer
+            .gyro
+            .read()
+            .file_metadata
+            .read()
+            .lens_params
+            .is_empty()
+    }
+    fn has_lens_breathing(&self) -> bool {
+        !self
+            .stabilizer
+            .gyro
+            .read()
+            .file_metadata
+            .read()
+            .lens_breathing
+            .is_empty()
+    }
+    fn get_lens_breathing_enabled(&self) -> bool {
+        self.stabilizer.params.read().lens_breathing_enabled
+    }
+    fn set_lens_breathing_enabled(&mut self, v: bool) {
+        self.stabilizer.params.write().lens_breathing_enabled = v;
+        self.request_recompute();
+    }
+
+    fn get_focal_length_smoothing_enabled(&self) -> bool {
+        self.stabilizer.params.read().focal_length_smoothing_enabled
+    }
+    fn set_focal_length_smoothing_enabled(&mut self, v: bool) {
+        self.stabilizer
+            .params
+            .write()
+            .focal_length_smoothing_enabled = v;
+        self.request_recompute();
+    }
+
+    fn get_focal_length_max_zoom_rate(&self) -> f64 {
+        self.stabilizer.params.read().focal_length_max_zoom_rate
+    }
+    fn set_focal_length_max_zoom_rate(&mut self, v: f64) {
+        self.stabilizer.params.write().focal_length_max_zoom_rate = v.clamp(0.01, 10.0);
+        self.request_recompute();
+    }
+
+    fn get_lens_metadata_delay_frames(&self) -> i32 {
+        self.stabilizer.params.read().lens_metadata_delay_frames
+    }
+    fn set_lens_metadata_delay_frames(&mut self, v: i32) {
+        let v = v.clamp(-30, 30);
+        if self.stabilizer.params.read().lens_metadata_delay_frames == v {
+            return;
+        }
+        self.stabilizer.params.write().lens_metadata_delay_frames = v;
+        self.lens_metadata_delay_changed();
+        self.request_recompute();
     }
 
     fn check_external_sdk(&self, filename: QString) -> bool {
@@ -5503,7 +5581,7 @@ impl Controller {
         md.camera_stab_data.len() > 1
             || md.lens_params.len() > 1
             || md.lens_positions.len() > 1
-            || md.mesh_correction.len() > 1
+            || md.has_mesh_correction()
     }
     fn export_stmap(&self, folder_url: QUrl, per_frame: bool) {
         let folder_url = util::qurl_to_encoded(folder_url);
@@ -5728,29 +5806,45 @@ impl Controller {
         let mut inputs = crate::feedback::packager::PackageInputs::default();
         if let Some(dir) = logs {
             let cur = dir.join("gyroflow.log");
-            if cur.exists() { inputs.current_log = Some(cur); }
+            if cur.exists() {
+                inputs.current_log = Some(cur);
+            }
             for i in 1..=4 {
                 let p = dir.join(format!("gyroflow.log.{i}"));
-                if p.exists() { inputs.history_logs.push(p); }
+                if p.exists() {
+                    inputs.history_logs.push(p);
+                }
             }
             let inc = dir.join("gyroflow-incidents.log");
-            if inc.exists() { inputs.incidents_log = Some(inc); }
+            if inc.exists() {
+                inputs.incidents_log = Some(inc);
+            }
             inputs.crash_zips = crate::feedback::pending_crash_zips();
         }
         let data_dir = gyroflow_core::settings::data_dir();
         let lens = data_dir.join("lens.json");
-        if lens.exists() { inputs.lens_file = Some(lens); }
+        if lens.exists() {
+            inputs.lens_file = Some(lens);
+        }
         let queue = data_dir.join("render_queue.json");
-        if queue.exists() { inputs.queue_file = Some(queue); }
+        if queue.exists() {
+            inputs.queue_file = Some(queue);
+        }
         let settings = data_dir.join("settings.json");
-        if settings.exists() { inputs.settings_file = Some(settings); }
+        if settings.exists() {
+            inputs.settings_file = Some(settings);
+        }
         // Plugin logs are siblings of lens.json in data_dir (not under logs/).
         // Captured tail-only by the packager; truncated by uploader::cleanup
         // after a successful confirm, mirroring incidents.log.
         let openfx = data_dir.join("gyroflow-openfx.log");
-        if openfx.exists() { inputs.openfx_log = Some(openfx); }
+        if openfx.exists() {
+            inputs.openfx_log = Some(openfx);
+        }
         let adobe = data_dir.join("gyroflow-adobe.log");
-        if adobe.exists() { inputs.adobe_log = Some(adobe); }
+        if adobe.exists() {
+            inputs.adobe_log = Some(adobe);
+        }
         // project_file: omitted in Phase 4 baseline; controller exposes a
         // hook later if user wants the current .gyroflow snapshot wired.
         inputs
@@ -5760,15 +5854,15 @@ impl Controller {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(json) {
             let g = |k: &str, default: bool| v.get(k).and_then(|x| x.as_bool()).unwrap_or(default);
             crate::feedback::packager::PackageOptions {
-                include_current_log:    g("current_log",    true),
-                include_history_logs:   g("history_logs",   true),
-                include_incidents:      g("incidents",      true),
-                include_project:        g("project",        true),
-                include_video_meta:     g("video_meta",     true),
-                include_lens:           g("lens",           true),
+                include_current_log: g("current_log", true),
+                include_history_logs: g("history_logs", true),
+                include_incidents: g("incidents", true),
+                include_project: g("project", true),
+                include_video_meta: g("video_meta", true),
+                include_lens: g("lens", true),
                 include_queue_settings: g("queue_settings", true),
-                include_system_info:    g("system_info",    true),
-                include_crashes:        g("crashes",        true),
+                include_system_info: g("system_info", true),
+                include_crashes: g("crashes", true),
             }
         } else {
             crate::feedback::packager::PackageOptions::default()
@@ -5797,29 +5891,48 @@ impl Controller {
             |this, st: crate::feedback::FeedbackJobState| {
                 use crate::feedback::FeedbackJobState as S;
                 match st {
-                    S::Packaging       => this.feedbackProgress(QString::from("packaging"), 0),
-                    S::RequestingToken => this.feedbackProgress(QString::from("requesting_token"), 5),
-                    S::Uploading{pct}  => this.feedbackProgress(QString::from("uploading"), pct as i32),
-                    S::Confirming      => this.feedbackProgress(QString::from("confirming"), 96),
-                    S::Cleanup         => this.feedbackProgress(QString::from("cleanup"), 99),
-                    S::Done{id}        => this.feedbackCompleted(true, QString::from(id), QString::default()),
-                    S::Failed{reason, ..} => this.feedbackCompleted(false, QString::default(), QString::from(reason)),
+                    S::Packaging => this.feedbackProgress(QString::from("packaging"), 0),
+                    S::RequestingToken => {
+                        this.feedbackProgress(QString::from("requesting_token"), 5)
+                    }
+                    S::Uploading { pct } => {
+                        this.feedbackProgress(QString::from("uploading"), pct as i32)
+                    }
+                    S::Confirming => this.feedbackProgress(QString::from("confirming"), 96),
+                    S::Cleanup => this.feedbackProgress(QString::from("cleanup"), 99),
+                    S::Done { id } => {
+                        this.feedbackCompleted(true, QString::from(id), QString::default())
+                    }
+                    S::Failed { reason, .. } => {
+                        this.feedbackCompleted(false, QString::default(), QString::from(reason))
+                    }
                 }
             },
         );
         // Forwarder thread: receive Sync events from worker → invoke Qt callback.
-        std::thread::Builder::new().name("feedback-progress".into()).spawn(move || {
-            while let Ok(st) = rx.recv() {
-                progress_cb(st);
-            }
-        }).ok();
+        std::thread::Builder::new()
+            .name("feedback-progress".into())
+            .spawn(move || {
+                while let Ok(st) = rx.recv() {
+                    progress_cb(st);
+                }
+            })
+            .ok();
 
         // Worker thread: actual submit pipeline.
-        std::thread::Builder::new().name("feedback-submit".into()).spawn(move || {
-            let _ = crate::feedback::uploader::submit(crate::feedback::uploader::SubmitArgs {
-                inputs, options: opts, summary, email, meta, events: tx,
-            });
-        }).ok();
+        std::thread::Builder::new()
+            .name("feedback-submit".into())
+            .spawn(move || {
+                let _ = crate::feedback::uploader::submit(crate::feedback::uploader::SubmitArgs {
+                    inputs,
+                    options: opts,
+                    summary,
+                    email,
+                    meta,
+                    events: tx,
+                });
+            })
+            .ok();
     }
 
     #[allow(non_snake_case)]
@@ -5859,7 +5972,7 @@ impl Controller {
                 .and_then(|s| s.to_str())
                 .unwrap_or("<unknown>");
             match std::fs::File::create(&marker) {
-                Ok(_)  => ::log::info!(target: "feedback", "crash dismissed: {base}"),
+                Ok(_) => ::log::info!(target: "feedback", "crash dismissed: {base}"),
                 Err(e) => ::log::warn!(target: "feedback", "crash dismiss failed for {base}: {e}"),
             }
         }
@@ -6048,10 +6161,15 @@ mod tests {
             *stab.video_load_guard.lock() = Some((g, parked_at));
             let broke = Arc::new(AtomicBool::new(false));
             let broke2 = broke.clone();
-            let outcome =
-                wait_for_import_slot_with_budget(20, &stab, &cancel_flag, |_| {}, move |_| {
+            let outcome = wait_for_import_slot_with_budget(
+                20,
+                &stab,
+                &cancel_flag,
+                |_| {},
+                move |_| {
                     broke2.store(true, SeqCst);
-                });
+                },
+            );
             assert!(matches!(outcome, ImportWaitOutcome::Ready));
             assert!(broke.load(SeqCst), "on_guard_broken must fire on a break");
             assert_eq!(stab.in_flight_count.load(SeqCst), 0);
@@ -6060,7 +6178,10 @@ mod tests {
 
     #[test]
     fn video_log_scheme_classifies_mobile_and_local_urls() {
-        assert_eq!(video_log_scheme("content://media/external/video/media/42"), "content");
+        assert_eq!(
+            video_log_scheme("content://media/external/video/media/42"),
+            "content"
+        );
         assert_eq!(video_log_scheme("file:///sdcard/DCIM/clip.mp4"), "file");
         assert_eq!(video_log_scheme("C:/Users/Jhe/Videos/clip.mp4"), "path");
         assert_eq!(video_log_scheme(""), "empty");
@@ -6069,9 +6190,18 @@ mod tests {
     #[test]
     fn video_log_decoder_label_keeps_values_coarse() {
         assert_eq!(video_log_decoder_label(""), "default");
-        assert_eq!(video_log_decoder_label("FFmpeg:avformat_options=start_number=1"), "FFmpeg");
-        assert_eq!(video_log_decoder_label("BRAW:gpu=no:scale=1920x1080"), "BRAW");
-        assert_eq!(video_log_decoder_label("R3D:gpu=auto:scale=1920x1080"), "R3D");
+        assert_eq!(
+            video_log_decoder_label("FFmpeg:avformat_options=start_number=1"),
+            "FFmpeg"
+        );
+        assert_eq!(
+            video_log_decoder_label("BRAW:gpu=no:scale=1920x1080"),
+            "BRAW"
+        );
+        assert_eq!(
+            video_log_decoder_label("R3D:gpu=auto:scale=1920x1080"),
+            "R3D"
+        );
     }
 
     #[test]
@@ -6181,7 +6311,8 @@ pub struct Filesystem {
     display_folder_filename: qt_method!(fn(&self, folder: QUrl, filename: QString) -> QString),
     catch_url_open: qt_method!(fn(&self, url: QUrl)),
     catch_urls_open: qt_method!(fn(&self, urls: QStringList)),
-    open_native_picker: qt_method!(fn(&self, mode: i32, allow_multiple: bool, initial_url: QString) -> bool),
+    open_native_picker:
+        qt_method!(fn(&self, mode: i32, allow_multiple: bool, initial_url: QString) -> bool),
     open_ios_video_picker: qt_method!(fn(&self) -> bool),
     catch_picker_cancelled: qt_method!(fn(&self)),
     catch_picker_error: qt_method!(fn(&self, message: QString)),
@@ -6213,7 +6344,9 @@ impl Filesystem {
         QString::from(filesystem::check_access(&util::qurl_to_encoded(url)))
     }
     fn protected_folder_kind(&self, url: QUrl) -> QString {
-        QString::from(filesystem::protected_folder_kind(&util::qurl_to_encoded(url)))
+        QString::from(filesystem::protected_folder_kind(&util::qurl_to_encoded(
+            url,
+        )))
     }
     fn get_filename(&self, url: QUrl) -> QString {
         QString::from(filesystem::get_filename(&util::qurl_to_encoded(url)))

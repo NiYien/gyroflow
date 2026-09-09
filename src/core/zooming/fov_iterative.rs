@@ -147,6 +147,7 @@ impl<'a> FovIterative<'a> {
             &self.compute_params,
             lens_correction_amount,
             false,
+            true,
         );
         for (x, y) in polygon.iter_mut() {
             *x -= adaptive_zoom_center_x as f32 * self.input_dim.0;
@@ -186,6 +187,7 @@ impl<'a> FovIterative<'a> {
                     &self.compute_params,
                     lens_correction_amount,
                     false,
+                    true,
                 );
                 for (x, y) in polygon.iter_mut() {
                     *x -= adaptive_zoom_center_x as f32 * self.input_dim.0;

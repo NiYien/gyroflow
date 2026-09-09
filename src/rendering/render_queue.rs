@@ -9610,7 +9610,6 @@ impl RenderQueue {
             use crate::rendering::VideoProcessor;
             use gyroflow_core::synchronization;
             use gyroflow_core::synchronization::AutosyncProcess;
-            use itertools::Either;
 
             if let Ok(mut sync_params) = serde_json::from_value(sync_settings)
                 as serde_json::Result<synchronization::SyncParams>
@@ -9776,7 +9775,7 @@ impl RenderQueue {
                         let collected_points2 = collected_points.clone();
                         let requested_timestamps_ms = attempted_timestamps_ms.clone();
                         sync.on_finished(move |arg| {
-                            if let Either::Left(offsets) = arg {
+                            if let gyroflow_core::synchronization::AutosyncResult::Offsets(offsets) = arg {
                                 // Locus A: wall-clock span + lock acquire/hold spans for
                                 // gyro and keyframes writes. All four spans are RAII so an
                                 // early break/return inside the loop still emits clean.
@@ -18517,7 +18516,7 @@ mod tests {
             0,
             core::gyro_source::LensParams {
                 focal_length: Some(30.0),
-                pixel_focal_length: Some((3840.0 / 32.26 * 30.0) as f32),
+                pixel_focal_length: Some(((3840.0 / 32.26 * 30.0) as f32, (3840.0 / 32.26 * 30.0) as f32)),
                 ..Default::default()
             },
         );
@@ -19659,7 +19658,7 @@ mod tests {
                 0,
                 core::gyro_source::LensParams {
                     focal_length: Some(31.0),
-                    pixel_focal_length: Some(3100.0),
+                    pixel_focal_length: Some((3100.0, 3100.0)),
                     ..Default::default()
                 },
             )]),
@@ -25672,7 +25671,7 @@ mod tests {
                 0,
                 core::gyro_source::LensParams {
                     focal_length: Some(35.0),
-                    pixel_focal_length: Some(3500.0),
+                    pixel_focal_length: Some((3500.0, 3500.0)),
                     ..Default::default()
                 },
             )]),
@@ -26198,7 +26197,7 @@ mod tests {
                 0,
                 core::gyro_source::LensParams {
                     focal_length: Some(31.0),
-                    pixel_focal_length: Some(3100.0),
+                    pixel_focal_length: Some((3100.0, 3100.0)),
                     ..Default::default()
                 },
             )]),
@@ -26328,7 +26327,7 @@ mod tests {
                 0,
                 core::gyro_source::LensParams {
                     focal_length: Some(36.0),
-                    pixel_focal_length: Some(3080.557),
+                    pixel_focal_length: Some((3080.557, 3080.557)),
                     ..Default::default()
                 },
             )]),

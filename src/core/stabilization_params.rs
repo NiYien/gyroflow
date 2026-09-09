@@ -127,6 +127,20 @@ pub struct StabilizationParams {
     pub current_device: i32,
 
     pub zooming_debug_points: std::collections::BTreeMap<i64, Vec<(f64, f64)>>,
+
+    // Focal length smoothing
+    pub focal_lengths: Vec<Option<f64>>,
+    pub smoothed_focal_lengths: Vec<Option<f64>>,
+    /// The delay-free dequantized curve the two above are derived from (`smoothing::focal_length::compute_base_curve`),
+    /// with a hash of everything it depends on: the file's lens metadata, the lens profile and the video geometry, no
+    /// setting. A recompute reuses it and only re-derives the curves, so a slider tick never repeats the per-frame sweep
+    pub focal_length_base: Vec<f64>,
+    pub focal_length_base_key: u64,
+    pub focal_length_smoothing_enabled: bool,
+    pub focal_length_max_zoom_rate: f64,
+    pub lens_metadata_delay_frames: i32, // how many frames the lens metadata lags the picture
+
+    pub lens_breathing_enabled: bool, // Sony lens breathing compensation, when the file carries the lens tables
 }
 impl Default for StabilizationParams {
     fn default() -> Self {
@@ -202,6 +216,16 @@ impl Default for StabilizationParams {
             video_created_at: None,
             video_timezone: None,
             video_display_anchor_us: None,
+
+            focal_lengths: vec![],
+            smoothed_focal_lengths: vec![],
+            focal_length_base: vec![],
+            focal_length_base_key: 0,
+            focal_length_smoothing_enabled: false,
+            focal_length_max_zoom_rate: 0.5,
+            lens_metadata_delay_frames: 0,
+
+            lens_breathing_enabled: true,
         }
     }
 }
@@ -219,7 +243,7 @@ impl Default for StabilizationParams {
 /// Single source of truth shared by the single-video load path
 /// (controller::load_telemetry) and the batch queue-add path so both bake the
 /// same value; this avoids the cross-path 1-frame drift seen historically (C50).
-pub fn compute_video_display_anchor_us(url: &str, detected_source: Option<&str>, fps: f64) -> Option<i64> {
+pub fn compute_video_display_anchor_us(url: &str, detected_source: Option<&str>, fps: f64,) -> Option<i64> {
     let url_lower = url.to_ascii_lowercase();
     let is_canon_proxy_name =
         url_lower.ends_with("_proxy.mp4") || url_lower.ends_with("_proxy.mov");
@@ -267,7 +291,7 @@ impl StabilizationParams {
         }
     }
 
-    pub fn set_fovs(&mut self, fovs: Vec<f64>, mut lens_fov_adjustment: f64, horizontal_stretch: f64) {
+    pub fn set_fovs(&mut self, fovs: Vec<f64>, mut lens_fov_adjustment: f64, horizontal_stretch: f64,) {
         if let Some(mut min_fov) = fovs.iter().copied().reduce(f64::min) {
             // Use effective input width so anamorphic desqueezed outputs
             // (output.0 > size.0 because squeezed pixels were stretched, not
@@ -383,6 +407,8 @@ impl StabilizationParams {
             show_safe_area: self.show_safe_area,
             max_zoom: self.max_zoom,
             max_zoom_iterations: self.max_zoom_iterations,
+            focal_length_smoothing_enabled: self.focal_length_smoothing_enabled,
+            focal_length_max_zoom_rate: self.focal_length_max_zoom_rate,
             ..Self::default()
         };
     }

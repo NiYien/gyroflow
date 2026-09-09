@@ -8,7 +8,7 @@ mod sony;
 pub mod splines;
 pub use file_metadata::*;
 pub use imu_transforms::*;
-pub use sony::interpolate_mesh;
+pub use sony::{MESH_REFINE_SKIP_PX, MESH_REFINE_THRESHOLD_PX,interpolate_mesh};
 
 use nalgebra::*;
 use parking_lot::RwLock;
@@ -155,9 +155,8 @@ fn resolve_senseflow_install_angles(
         };
     }
 
-    if let Some([pitch, roll, yaw]) = job_mounting.filter(|angles| {
-        angles.iter().all(|angle| angle.is_finite())
-    }) {
+    if let Some([pitch, roll, yaw]) = job_mounting.filter(|angles|
+        angles.iter().all(|angle| angle.is_finite())) {
         return ResolvedSenseFlowInstallAngles {
             angles: (
                 pitch.round() as i32,
@@ -468,7 +467,7 @@ pub fn compute_auto_rotation_for_segment_with_state(
 
     let info = senseflow_auto_rotation_info_from_quat(
         state.quaternion(),
-        resolved_install_angles.angles,
+        resolved_install_angles.angles
     )?;
     log::info!(
         "[auto_rotate niyien segment] file='{}' samples={} pitch={:.2} pitch_q={} roll={:.2} roll_q={} direction={} mounting_source={} install_angles={:?} output_rotation={}",
@@ -917,15 +916,55 @@ impl GyroSource {
                         if let Some(v) = map.get_t(TagId::FocusDistance) as Option<&f32> {
                             lens_info.focus_distance = Some(*v);
                         }
+                        if let Some(v) = map.get_t(TagId::IrisFStop) as Option<&f32> {
+                            lens_info.iris_fstop = Some( *v);
+                        }
+                        if let Some(v) = map.get_t(TagId::IrisTStop) as Option<&f32> {
+                            lens_info.iris_tstop = Some(*v);
+                        }
+                        if let Some(v) = map.get_t(TagId::ZoomRingPosition) as Option<&f32> {
+                            lens_info.zoom_ring_position = Some(*v);
+                        }
+                        let (pfl_scale, pfl_valid) =
+                            match tag_map.get(&GroupId::Imager).and_then(|im| {
+                                im.get_t(TagId::Custom("ActiveAreaAspectRatio".into()))
+                                    as Option<&(u32, u32)>
+                            }) {
+                                Some(&(aw, ah)) if aw > 0 && ah > 0 && size.0 > 0 && size.1 > 0 => {
+                                    let aspect_matches = ((aw as f64 / ah as f64)
+                                        / (size.0 as f64 / size.1 as f64)
+                                        - 1.0)
+                                        .abs()
+                                        < 0.02;
+                                    (size.0 as f32 / aw as f32, aspect_matches)
+                                }
+                                _ => (1.0, true),
+                            };
+                        if !pfl_valid {
+                            lens_info.pixel_focal_length = None;
+                        }
+                        if let Some(v) = map.get_t(TagId::PixelFocalLength) as Option<&(f32, f32)> {
+                            if pfl_valid {
+                                lens_info.pixel_focal_length =
+                                    Some((v.0 * pfl_scale, v.1 * pfl_scale));
+                            }
+                        }
                         if let Some(v) = map.get_t(TagId::PixelFocalLength) as Option<&f32> {
-                            if *v > 5.0 {
-                                lens_info.pixel_focal_length = Some(*v);
+                            if pfl_valid && *v > 5.0 {
+                                lens_info.pixel_focal_length =
+                                    Some((*v * pfl_scale, *v * pfl_scale));
                             }
                         }
                         if let Some(v) = map.get_t(TagId::PixelFocalLength) as Option<&Vec<f32>> {
-                            if let Some(v) = v.first() {
-                                if *v > 5.0 {
-                                    lens_info.pixel_focal_length = Some(*v);
+                            match v.as_slice() {
+                                [fx] if pfl_valid && *fx > 5.0 => {
+                                    lens_info.pixel_focal_length = Some((*fx * pfl_scale, *fx * pfl_scale))
+                                }
+                                [fx, fy, ..] if pfl_valid && *fx > 5.0 && *fy > 5.0 => {
+                                    lens_info.pixel_focal_length =
+                                        Some((*fx * pfl_scale, *fy * pfl_scale))
+                                }
+                                _ => {
                                 }
                             }
                         }
@@ -958,12 +997,13 @@ impl GyroSource {
                                     0.0
                                 };
                                 if pixel_focal_length > 5.0 {
-                                    lens_info.pixel_focal_length = Some(pixel_focal_length);
+                                    lens_info.pixel_focal_length = Some((pixel_focal_length, pixel_focal_length));
                                 }
                             }
                         }
                     }
-                    if lens_info.pixel_focal_length.is_some()
+                    if lens_info.has_descriptive_data()
+                        || lens_info.pixel_focal_length.is_some()
                         || (lens_info.pixel_pitch.is_some()
                             && lens_info.capture_area_size.is_some()
                             && lens_info.focal_length.is_some())
@@ -1174,6 +1214,17 @@ impl GyroSource {
         let mut raw_imu =
             util::normalized_imu_interpolated(&input, Some("XYZ".into())).unwrap_or_default();
 
+        // Sony: the metadata packets carry the gyro timing (offset and rate per frame), use it instead of a uniform spacing
+        let sony_packet_timed = input.camera_type() == "Sony"
+            && input
+                .samples
+                .as_ref()
+                .map(|s| sony::retime_imu_from_packets(&mut raw_imu, s))
+                .unwrap_or(false);
+        if sony_packet_timed {
+            log::debug!("Sony gyro samples re-timed from the metadata packets");
+        }
+
         if (input.camera_type() == "RED" || input.camera_type() == "RED RAW")
             && options.project_version > 0
             && options.project_version < 4
@@ -1291,7 +1342,10 @@ impl GyroSource {
             unit_pixel_focal_length,
             digital_zoom,
             camera_stab_data: Vec::new(),
-            mesh_correction: Vec::new(),
+            mesh_correction: Default::default(),
+            legacy_mesh_correction: Vec::new(),
+            lens_breathing: Vec::new(),
+            focal_length_varies_cache: Default::default(),
             duration_ms: input
                 .samples
                 .as_ref()
@@ -1374,16 +1428,21 @@ impl GyroSource {
                 if let Some(ref tag_map) = info.tag_map {
                     // --------------------------------- Sony ---------------------------------
                     if let Some((org_sample_rate, offset)) =
-                        sony::get_time_offset(&md, &input, tag_map, sample_rate)
+                        sony::get_time_offset(&md, &input, tag_map, sample_rate, sony_packet_timed)
                     {
                         original_sample_rate = org_sample_rate;
                         md.per_frame_time_offsets.push(offset);
                     }
                     sony::init_lens_profile(&mut md, &input, tag_map, size, info);
                     sony::stab_collect(&mut is_temp, tag_map, info, fps);
-                    if let Some(mesh) = sony::get_mesh_correction(tag_map, &mut mesh_cache) {
-                        md.mesh_correction.push(mesh);
-                    }
+                    // One entry per sample, the correction is looked up by frame index: empty where the frame has none
+                    // (`MeshCorrections::frame`); the whole thing goes when no frame has one
+                    let mesh_frame = sony::get_mesh_correction(tag_map,
+                        size,
+                        &mut md.mesh_correction, &mut mesh_cache,
+                    )
+                    .unwrap_or_default();
+                        md.mesh_correction.frames.push(mesh_frame);
 
                     if let Some(ois) = tag_map
                         .get(&GroupId::LensOSS)
@@ -1484,14 +1543,27 @@ impl GyroSource {
                 }
             }
             if input.camera_type() == "Sony" {
+                md.lens_breathing = sony::breathing::compute(samples);
+            }
+            if md.mesh_correction.is_empty() {
+                md.mesh_correction.clear();
+            } else {
+                let tables = &md.mesh_correction.tables;
+                log::debug!(
+                    "Mesh correction: {} tables over {} frames, {} refined against the camera's mesh",
+                    tables.len(),
+                    md.mesh_correction.frames.len(),
+                    tables.iter().filter(|t| !t.refinement.is_empty()).count()
+                );
+            }
+            if input.camera_type() == "Sony" {
                 md.camera_stab_data =
                     sony::stab_calc_splines(&md, &is_temp, sample_rate, fps, size)
                         .unwrap_or_default();
-                if md.frame_readout_time.is_some() {
-                    md.frame_readout_time = scale_sony_frame_readout_time(
-                        md.frame_readout_time,
+                if !sony_packet_timed { md.frame_readout_time = scale_sony_frame_readout_time(
+                    md.frame_readout_time,
                         original_sample_rate,
-                        sample_rate,
+                        sample_rate
                     );
                 }
             }
@@ -1515,8 +1587,8 @@ impl GyroSource {
             let verdict = file_metadata::classify_in_camera_stabilization(
                 stabilizer_on,
                 &camera_type,
-                is_temp.ibis_x.len(),
-                is_temp.ois_x.len(),
+                is_temp.ibis.x.len(),
+                is_temp.ois.x.len(),
                 ois_sentinel,
             );
             if verdict.blocks_processing() {
@@ -1526,15 +1598,15 @@ impl GyroSource {
                     verdict.as_str(),
                     camera_type,
                     stabilizer_on,
-                    is_temp.ibis_x.len(),
-                    is_temp.ois_x.len(),
+                    is_temp.ibis.x.len(),
+                    is_temp.ois.x.len(),
                     ois_sentinel
                 );
             }
             if let serde_json::Value::Object(o) = &mut md.additional_data {
                 o.insert(
                     "stabilization_verdict".into(),
-                    verdict.as_str().into(),
+                    verdict.as_str().into()
                 );
                 o.insert(
                     "stabilization_blocks_processing".into(),
@@ -1667,7 +1739,7 @@ impl GyroSource {
         self.clear_offsets();
     }
 
-    pub fn load_from_telemetry(&mut self, telemetry: FileMetadata) {
+    pub fn load_from_telemetry(&mut self, mut telemetry: FileMetadata) {
         if self.duration_ms <= 0.0 {
             ::log::error!("Invalid duration_ms {}", self.duration_ms);
             return;
@@ -1686,6 +1758,7 @@ impl GyroSource {
         if let Some(v) = preserved_acc_rotation {
             self.imu_transforms.set_acc_rotation(v[0], v[1], v[2]);
         }
+        sony::upgrade_legacy_metadata(&mut telemetry);
 
         self.imu_transforms.imu_orientation = telemetry.imu_orientation.clone();
 
@@ -1884,7 +1957,7 @@ impl GyroSource {
             3 => {
                 let q = SimpleGyroIntegrator::integrate(
                     self.raw_imu(&file_metadata),
-                    self.duration_ms,
+                    self.duration_ms
                 );
                 if !q.is_empty() {
                     self.quaternions = q;
@@ -2333,7 +2406,7 @@ impl GyroSource {
             start_us,
             Self::clamped_quat_at_gyro_timestamp(quats, start_us as f64 / 1000.0),
         );
-        ret.extend(quats.range(start_us..=end_us).map(|(&ts, &quat)| (ts, quat)));
+        ret.extend(quats.range(start_us..=end_us).map(|(&ts, &quat)| (ts, quat)),);
         ret.insert(
             end_us,
             Self::clamped_quat_at_gyro_timestamp(quats, end_us as f64 / 1000.0),
@@ -2362,7 +2435,7 @@ impl GyroSource {
         {
             ret.insert(start_us, vec);
         }
-        ret.extend(vectors.range(start_us..=end_us).map(|(&ts, &vec)| (ts, vec)));
+        ret.extend(vectors.range(start_us..=end_us).map(|(&ts, &vec)| (ts, vec)),);
         if let Some(vec) =
             super::smoothing::horizon::HorizonLock::interpolate_gravity_vector(vectors, end_us)
         {
@@ -2716,15 +2789,15 @@ mod tests {
         source.imu_transforms.set_imu_rotation(0.0, -90.0, 0.0);
 
         source.apply_transforms();
-        assert_vector_close(first_processed_sample(&source).gyro.unwrap(), [1.0, 0.0, 0.0]);
+        assert_vector_close(first_processed_sample(&source).gyro.unwrap(), [1.0, 0.0, 0.0],);
 
         source.file_metadata = external_metadata.into();
         source.apply_transforms();
-        assert_vector_close(first_processed_sample(&source).gyro.unwrap(), [0.0, -1.0, 0.0]);
+        assert_vector_close(first_processed_sample(&source).gyro.unwrap(), [0.0, -1.0, 0.0],);
 
         source.file_metadata = builtin_metadata.into();
         source.apply_transforms();
-        assert_vector_close(first_processed_sample(&source).gyro.unwrap(), [1.0, 0.0, 0.0]);
+        assert_vector_close(first_processed_sample(&source).gyro.unwrap(), [1.0, 0.0, 0.0],);
         assert_eq!(
             source.imu_transforms.imu_rotation_angles,
             Some([0.0, -90.0, 0.0])
@@ -2814,14 +2887,14 @@ mod tests {
         let telemetry = serde_json::json!({ "install_angle": [0, 90, 0] });
         let resolved = resolve_senseflow_install_angles(
             Some(&telemetry),
-            Some([0.0, -90.0, 0.0]),
+            Some([0.0, -90.0, 0.0])
         );
         assert_eq!(resolved.angles, (0, 90, 0));
         assert_eq!(resolved.source, SenseFlowInstallAngleSource::Telemetry);
 
         let resolved = resolve_senseflow_install_angles(
             Some(&serde_json::json!({})),
-            Some([0.0, -90.0, 0.0]),
+            Some([0.0, -90.0, 0.0])
         );
         assert_eq!(resolved.angles, (0, -90, 0));
         assert_eq!(resolved.source, SenseFlowInstallAngleSource::JobMounting);
@@ -2832,7 +2905,7 @@ mod tests {
 
         let resolved = resolve_senseflow_install_angles(
             None,
-            Some([0.0, f64::NAN, 0.0]),
+            Some([0.0, f64::NAN, 0.0])
         );
         assert_eq!(resolved.angles, (0, 0, 0));
         assert_eq!(resolved.source, SenseFlowInstallAngleSource::Default);
@@ -2875,7 +2948,7 @@ mod tests {
             );
             let info = senseflow_auto_rotation_info_from_quat(
                 [1.0, 0.0, 0.0, 0.0],
-                resolved.angles,
+                resolved.angles
             )
             .unwrap();
             assert_eq!(info.output_rotation, expected, "mounting={job_mounting:?}");

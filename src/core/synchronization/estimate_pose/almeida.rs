@@ -60,7 +60,7 @@ pub struct Camera {
 
 impl Camera {
     pub fn point_angle(&self, p: na::Point2<f32>, timestamp_ms: f64) -> na::Vector2<f32> {
-        let (intrinsics, _, _, _, _, _) =
+        let (intrinsics, _, _, _, _, _, _) =
             FrameTransform::get_lens_data_at_timestamp(&self.compute_params, timestamp_ms, false);
 
         // Center the point.
@@ -80,7 +80,7 @@ impl Camera {
     ) -> na::Vector2<f32> {
         let vw = self.compute_params.width as f32;
         let vh = self.compute_params.height as f32;
-        let (camera_matrix, distortion_coeffs, _, _, _, _) =
+        let (camera_matrix, distortion_coeffs, _, _, _, _, _) =
             FrameTransform::get_lens_data_at_timestamp(&self.compute_params, timestamp_ms, false);
 
         let rot = na::Matrix3::<f32>::from(rotation.fixed_view::<3, 3>(0, 0));
@@ -92,12 +92,13 @@ impl Camera {
             na::convert(rot),
             Some(camera_matrix),
             None,
-            None,
             &self.compute_params,
+            1.0,
             1.0,
             timestamp_ms,
             None,
             None,
+            0.0,
         )[0];
 
         na::Point2::new(pt.0 / vw, pt.1 / vh) - coords
