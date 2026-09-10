@@ -187,7 +187,7 @@ def test_copy_prompt_renders_directory_prompt(tmp_path, monkeypatch):
 
     monkeypatch.setattr(orchestrator_module, "clipboard_set", fake_clipboard_set)
 
-    backend, _ = _build_backend(tmp_path, items)
+    backend, _ = _build_backend(tmp_path / "发布 tools" / "log_center" / "_cache", items)
     backend.refresh()
     download = backend.download_one("20260502-glo")
     assert download["ok"], download
@@ -197,7 +197,10 @@ def test_copy_prompt_renders_directory_prompt(tmp_path, monkeypatch):
     assert res["data"]["mechanism"] == "test"
     text = copied["text"]
 
-    assert str(extracted) in text
+    path_block = text.split("```text\n", 1)[1].split("\n```", 1)[0]
+    assert "\\" not in path_block
+    assert Path(path_block).is_absolute()
+    assert Path(path_block).samefile(extracted)
     assert "from manifest" in text
     assert "1.6.3" in text
     assert "Windows 11" in text

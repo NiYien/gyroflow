@@ -79,5 +79,6 @@ distribution/log_center/log_center.config.json
 *.pyc
 /local-qml-video-rs
 *.[mM][dD]
+!/distribution/log_center/templates/analyze.md
 openspec/
 /docs/

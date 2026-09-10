@@ -395,7 +395,7 @@ class BackendAPI:
                 manifest = {}
 
         substitutions = {
-            "feedback_dir": str(root),
+            "feedback_dir": root.resolve().as_posix(),
             "user_summary": (
                 manifest.get("summary") or row.get("summary") or "(no summary)"
             ),
