@@ -1916,6 +1916,7 @@ pub struct RenderQueue {
     // the already-baked offsets (no re-sync).
     prepare_video_exports_for_rerender: qt_method!(fn(&mut self)),
     get_gyroflow_data: qt_method!(fn(&self, job_id: u32) -> QString),
+    is_job_video_export_finished: qt_method!(fn(&self, job_id: u32) -> bool),
 
     add_file:
         qt_method!(fn(&mut self, url: String, gyro_url: String, additional_data: String) -> u32),
@@ -6222,6 +6223,15 @@ impl RenderQueue {
     // QML entry for the per-row "Plugin only" queue badge.
     fn is_job_plugin_only(&self, job_id: u32) -> bool {
         self.jobs.get(&job_id).map_or(false, |j| j.plugin_only)
+    }
+
+    fn is_job_video_export_finished(&self, job_id: u32) -> bool {
+        let Some(job) = self.jobs.get(&job_id) else { return false; };
+        if !matches!(job.last_finished_export_project, Some(0 | 4)) {
+            return false;
+        }
+        let Ok(queue) = self.queue.try_borrow() else { return false; };
+        queue.iter().any(|item| item.job_id == job_id && item.status == JobStatus::Finished)
     }
 
     fn has_finished_video_exports(&self) -> bool {
@@ -15932,8 +15942,8 @@ impl RenderQueue {
             if groups.is_empty() {
                 return serde_json::json!({ "state": "no_groups" });
             }
-            groups.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-            let preselect = groups[groups.len() / 2].0;
+            groups.sort_by_key(|(index, _)| *index);
+            let preselect = groups[0].0;
             let groups_json: Vec<serde_json::Value> = groups
                 .iter()
                 .map(|(idx, focal)| serde_json::json!({ "index": idx, "focal": focal }))
@@ -22753,6 +22763,22 @@ mod tests {
     }
 
     #[test]
+    fn preview_video_export_finished_requires_successful_video_output() {
+        for status in [JobStatus::Queued, JobStatus::Rendering, JobStatus::Finished, JobStatus::Error, JobStatus::Skipped] {
+            let mut queue = queue_with_eta_job(status.clone());
+            for mode in [None, Some(0), Some(1), Some(2), Some(3), Some(4)] {
+                queue.jobs.get_mut(&1).unwrap().last_finished_export_project = mode;
+                assert_eq!(
+                    queue.is_job_video_export_finished(1),
+                    status == JobStatus::Finished && matches!(mode, Some(0 | 4)),
+                    "status={status:?} export={mode:?}",
+                );
+                assert!(!queue.is_job_video_export_finished(99));
+            }
+        }
+    }
+
+    #[test]
     fn deep_match_needs_lens_choice_states() {
         let mut queue = queue_with_eta_job(JobStatus::Queued);
         add_motion_to_job(&mut queue, 1, false);
@@ -22767,20 +22793,27 @@ mod tests {
             serde_json::from_str(&queue.deep_match_needs_lens_choice(1).to_string()).unwrap();
         assert_eq!(v["state"], "no_groups");
 
-        // Configured groups L1=18 / L3=50 / L5=85 -> needs_choice with the
-        // median-focal group (L3, index 2) preselected.
+        // Lens numbers determine order and selection even when focal lengths are reversed.
         {
             let mut configs = queue.stabilizer.lens_group_config.write();
-            configs[0].focal_length_mm = Some(18.0);
+            configs[0].focal_length_mm = Some(85.0);
             configs[2].focal_length_mm = Some(50.0);
-            configs[4].focal_length_mm = Some(85.0);
+            configs[4].focal_length_mm = Some(18.0);
         }
         let v: serde_json::Value =
             serde_json::from_str(&queue.deep_match_needs_lens_choice(1).to_string()).unwrap();
         assert_eq!(v["state"], "needs_choice");
         assert_eq!(v["reason"], "bare");
-        assert_eq!(v["preselect"], 2);
-        assert_eq!(v["groups"].as_array().unwrap().len(), 3);
+        assert_eq!(v["preselect"], 0);
+        assert_eq!(v["groups"], serde_json::json!([
+            { "index": 0, "focal": 85.0 },
+            { "index": 2, "focal": 50.0 },
+            { "index": 4, "focal": 18.0 },
+        ]));
+        queue.stabilizer.lens_group_config.write()[0].focal_length_mm = None;
+        let without_l1 = queue.deep_match_needs_lens_choice_impl(1, true);
+        assert_eq!(without_l1["preselect"], 2);
+        assert_eq!(without_l1["groups"][0]["index"], 2);
 
         // A job-level lens index override resolves the lens identity -> ok.
         queue.jobs.get_mut(&1).unwrap().lens_index_override = Some(3);

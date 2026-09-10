@@ -429,7 +429,7 @@ Item {
     }
     // Lens-group confirmation modal for deep matches, two modes by reason:
     // "bare" lists the focal-configured groups (labels mirror lensSlotLabel
-    // incl. the anamorphic suffix), pre-selecting the median-focal group;
+    // incl. the anamorphic suffix), ordered and preselected by lens number;
     // "anamorphic" lists the resolvable anamorphic groups (focal optional)
     // plus a "spherical lens" escape entry that starts the probe without
     // injection. Cancel starts nothing; the choice is probe-scoped and

@@ -47,6 +47,26 @@ Item {
     property bool skipAssociatedGyroflowOnLoad: false;
     property bool queueEditLoading: false;
     property url loadedFileUrl;
+    readonly property bool previewLoading: !vid.loaded || queueEditLoading || !!pendingGyroflowData
+        || controller.video_loading_in_progress || controller.loading_gyro_in_progress;
+    property bool defaultPreviewPending: false;
+
+    function applyDefaultPreview(): void {
+        if (!root.defaultPreviewPending || root.previewLoading) return;
+        root.defaultPreviewPending = false;
+        // MobileWorkspace owns its comparison state and applies it after project import.
+        if (window.hasOwnProperty("useMobileWorkspace") && window.useMobileWorkspace) return;
+        // A video without motion data is ordinary playback until the user enables stabilization.
+        stabEnabledBtn.checked = root.isCalibrator || controller.gyro_loaded;
+    }
+
+    function shouldShowStabilizeHint(): bool {
+        if (!window.deepMatchStabilizePending || root.previewLoading || !stabEnabledBtn.checked) return false;
+        const jobId = render_queue.editing_job_id;
+        // The reminder belongs to queue work, never to unrelated videos opened for playback.
+        if (jobId <= 0 || render_queue.is_job_video_export_finished(jobId)) return false;
+        return controller.stabilize_step_pending_for_preview();
+    }
 
     // queue-edit-writeback: canonical snapshot of the editable state, taken when
     // a queue item settles in the preview and compared again at batch dispatch
@@ -167,6 +187,7 @@ Item {
             return;
         }
 
+        if (urls[0]) root.defaultPreviewPending = true;
         const isCorrectVideoLoaded = urls[0] && vidInfo.filename == filesystem.get_filename(urls[0]);
         const isCorrectGyroLoaded  = urls[1] && window.motionData.filename == filesystem.get_filename(urls[1]);
         console.log("Video path:", urls[0], "(" + (isCorrectVideoLoaded? "loaded" : "not loaded") + ")", "Gyro path:", urls[1], "(" + (isCorrectGyroLoaded? "loaded" : "not loaded") + ")");
@@ -317,6 +338,7 @@ Item {
                 root.queueEditLoading = false;
             }
             controller.set_prevent_recompute(false);
+            Qt.callLater(root.applyDefaultPreview);
             Qt.callLater(controller.recompute_gyro);
             Qt.callLater(controller.recompute_threaded);
             Qt.callLater(timeline.updateDurations);
@@ -373,6 +395,7 @@ Item {
             }
         }
         function onTelemetry_loaded(is_main_video: bool, filename: string, camera: string, additional_data: var): void {
+            if (!is_main_video && controller.gyro_loaded) root.defaultPreviewPending = true;
             if (is_main_video) {
                 root.detectedCamera = camera;
                 vidInfo.updateEntry("Detected camera", camera || "---");
@@ -451,6 +474,7 @@ Item {
                 window.motionData.lastSelectedFile = crmUrl;
                 controller.load_telemetry(crmUrl, false, window.videoArea.vid, -1, 0);
             }
+            Qt.callLater(root.applyDefaultPreview);
         }
         function onChart_data_changed(): void {
             timeline.triggerUpdateChart("");
@@ -574,6 +598,7 @@ Item {
             }
         }
 
+        root.defaultPreviewPending = true;
         stabEnabledBtn.checked = false;
 
         if (controller.check_external_sdk(filename)) {
@@ -1105,8 +1130,7 @@ Item {
                     // which also flips `playing`) cannot stack messages.
                     property real lastStabilizeHintMs: 0;
                     onPlayingChanged: {
-                        if (!playing || !window.deepMatchStabilizePending) return;
-                        if (!controller.stabilize_step_pending_for_preview()) return;
+                        if (!playing || !root.shouldShowStabilizeHint()) return;
                         const now = Date.now();
                         if (now - vid.lastStabilizeHintMs < 5000) return;
                         vid.lastStabilizeHintMs = now;
@@ -1223,7 +1247,7 @@ Item {
                             if (vid.duration == 0) {
                                 vid.play();
                                 Qt.callLater(function() {
-                                    stabEnabledBtn.checked = true;
+                                    root.applyDefaultPreview();
                                     vid.volume = volumeSlider.value / 100.0;
                                 })
                             } else {
@@ -1261,7 +1285,7 @@ Item {
                                 vid.currentFrame++;
                                 Qt.callLater(() => vid.currentFrame = 0);
                                 if (vid.videoWidth) {
-                                    stabEnabledBtn.checked = true;
+                                    root.applyDefaultPreview();
                                     vid.volume = volumeSlider.value / 100.0;
                                 }
                             });
@@ -1949,7 +1973,7 @@ Item {
             y: root.additionalTopMargin;
             InfoMessage {
                 type: InfoMessage.Warning;
-                visible: vid.loaded && !controller.lens_loaded && !isCalibrator;
+                visible: !root.previewLoading && stabEnabledBtn.checked && !controller.lens_loaded && !isCalibrator;
                 text: qsTr("Lens profile is not loaded, the results will not look correct. Please load a lens profile for your camera.");
             }
         }
