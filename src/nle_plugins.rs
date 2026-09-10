@@ -24,7 +24,7 @@ const LEGACY_RESOLVE_ENTRY: &str = "Gyroflow NiYien Auto Cut.lua";
 const LINUX_OPENFX_INSTALL_ROOT: &str = "/usr/OFX/Plugins/";
 const LINUX_PLUGIN_MANUAL_INSTALL_REQUIRED: &str = "PLUGIN_MANUAL_INSTALL_REQUIRED:";
 const FINALCUT_ASSET_NAME: &str = "GyroflowNiyien-FinalCut-macos.zip";
-const FINALCUT_ARTIFACT_NAME: &str = "GyroflowNiyien-FinalCut-macos";
+const FINALCUT_ARTIFACT_NAME: &str = "GyroflowNiyien-FCP-macos-zip";
 const FINALCUT_APP_PATH: &str = "/Applications/NiYien FCP.app";
 const FINALCUT_APP_NAME: &str = "NiYien FCP.app";
 const FINALCUT_LEGACY_APP_NAME: &str = "GyroflowNiYien Final Cut.app";
@@ -3330,7 +3330,7 @@ mod tests {
     }
 
     #[test]
-    fn finalcut_release_and_artifact_urls_share_fixed_filename_contract() {
+    fn finalcut_artifact_url_selects_the_zip_delivery_instead_of_the_dmg() {
         assert_eq!(
             finalcut_download_url(""),
             format!("{DEFAULT_RELEASE_PLUGINS_BASE}/{FINALCUT_ASSET_NAME}")
@@ -3340,8 +3340,8 @@ mod tests {
             format!("https://mirror.example/plugins/{FINALCUT_ASSET_NAME}")
         );
         assert_eq!(
-            finalcut_download_url("https://nightly.link/run/"),
-            format!("https://nightly.link/run/{FINALCUT_ARTIFACT_NAME}.zip")
+            finalcut_download_url("https://nightly.link/NiYien/gyroflow-plugins/actions/runs/34297032423/"),
+            "https://nightly.link/NiYien/gyroflow-plugins/actions/runs/34297032423/GyroflowNiyien-FCP-macos-zip.zip"
         );
     }
 
