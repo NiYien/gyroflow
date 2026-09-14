@@ -14,10 +14,13 @@ Item {
     property alias dt: dt;
     property alias isDragging: lv.isDragging;
     property bool shown: false;
-    readonly property bool importBusy: loader.active || r3dSeqLoader.waiting || r3dSeqLoader.queue.length > 0;
+    readonly property bool importBusy: window.mobilePhotoPickerBusy || loader.active || r3dSeqLoader.waiting || r3dSeqLoader.queue.length > 0;
     function requestMobileFiles(): void {
         if (Qt.platform.os === "android") requestMobileDirectPicker(true, function(urls) { dt.loadFiles(urls); }, "video");
-        else mobileAddFilesAction.clicked();
+        else videoSourcePicker.openFiles(function(urls) { dt.loadFiles(urls); }, mobileAddFilesDialog);
+    }
+    function requestMobilePhotos(): void {
+        if (Qt.platform.os === "ios") videoSourcePicker.openPhotos(function(urls) { dt.loadFiles(urls); });
     }
     readonly property var mobileVideoExtensions: fileDialog.extensions
     function requestMobileFolder(): void { mobileAddFolderAction.clicked(); }

@@ -320,6 +320,74 @@ TestCase {
         mouseClick(toggle, toggle.width - 20, toggle.height / 2);
         compare(percent.text, "37%"); verify(percent.visible);
     }
+    function test_ios_import_entries_data() {
+        return [{tag: "iphone-se", w: 320, h: 548}, {tag: "iphone-safe-area", w: 393, h: 759},
+            {tag: "iphone-landscape-safe-area", w: 734, h: 372}, {tag: "ipad", w: 1024, h: 1322},
+            {tag: "ipad-split-view", w: 375, h: 980}];
+    }
+    function test_ios_import_entries(data) {
+        workspace.platformOs = "ios";
+        workspace.width = data.w; workspace.height = data.h;
+        let photos = 0, files = 0, folders = 0;
+        workspace.queueService = {importBusy: false, gyroFilesInfo: [],
+            requestMobilePhotos: () => photos++, requestMobileFiles: () => files++,
+            requestMobileFolderLocation: callback => folders++};
+        workspace.showPanel("add");
+        waitForRendering(workspace);
+        const photo = findChild(workspace, "mobileChoosePhotos");
+        const file = findChild(workspace, "mobileChooseVideos");
+        const folder = findChild(workspace, "mobileChooseVideoFolders");
+        verify(photo.visible && file.visible && folder.visible);
+        verify(folder.mapToItem(workspace, 0, folder.height).y <= workspace.height);
+        mouseClick(photo, photo.width / 2, photo.height / 2);
+        compare(photos, 1); compare(files, 0); compare(workspace.panel, "");
+        workspace.showPanel("add");
+        mouseClick(file, file.width / 2, file.height / 2);
+        compare(files, 1); compare(photos, 1); compare(workspace.panel, "");
+        workspace.showPanel("add");
+        mouseClick(folder, folder.width / 2, folder.height / 2);
+        compare(folders, 1); compare(workspace.panel, "");
+        workspace.showPanel("add"); workspace.importTab = 1;
+        verify(!photo.visible);
+        workspace.importTab = 0; workspace.platformOs = "android";
+        verify(!photo.visible);
+    }
+    function swipeIosEdge(dx, dy) {
+        const edge = findChild(workspace, "mobileIosBackEdge");
+        verify(edge.visible);
+        const start = edge.mapToItem(workspace, 8, Math.min(100, edge.height / 2));
+        const touch = touchEvent(workspace);
+        touch.press(0, workspace, start.x, start.y).commit();
+        for (let step = 1; step <= 6; ++step) {
+            touch.move(0, workspace, start.x + dx * step / 6, start.y + dy * step / 6).commit();
+            wait(16);
+        }
+        touch.release(0, workspace, start.x + dx, start.y + dy).commit();
+        wait(20);
+    }
+    function test_ios_edge_back_data() {
+        return [{tag: "settings-phone", panel: "settings", w: 393, h: 759},
+            {tag: "settings-landscape", panel: "settings", w: 734, h: 372},
+            {tag: "result", panel: "deepResult", w: 393, h: 759},
+            {tag: "preview", panel: "", w: 393, h: 759}];
+    }
+    function test_ios_edge_back(data) {
+        workspace.platformOs = "ios"; workspace.width = data.w; workspace.height = data.h;
+        if (data.panel) workspace.showPanel(data.panel); else workspace.page = "preview";
+        waitForRendering(workspace);
+        swipeIosEdge(12, 0);
+        compare(workspace.panel, data.panel);
+        if (!data.panel) compare(workspace.page, "preview");
+        swipeIosEdge(120, 0);
+        compare(workspace.panel, ""); compare(workspace.page, "library");
+        compare(workspace.operation, null);
+        if (data.panel) workspace.showPanel(data.panel); else workspace.page = "preview";
+        swipeIosEdge(40, 0);
+        compare(workspace.panel, data.panel);
+        swipeIosEdge(3, 100);
+        compare(workspace.panel, data.panel);
+        if (!data.panel) compare(workspace.page, "preview");
+    }
     function test_import_routes_data() {
         return [{ tag: "portrait", w: 360, h: 640 }, { tag: "landscape", w: 800, h: 360 }, { tag: "narrow", w: 280, h: 640 }];
     }

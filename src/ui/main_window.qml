@@ -21,6 +21,8 @@ Window {
     readonly property bool startupLoading: !!appLoader && appLoader.status === Loader.Loading;
     property var safeAreaMargins: ({});
     readonly property bool applyMobileSafeArea: Qt.platform.os === "android" || (Qt.platform.os === "ios" && appLoader.item && appLoader.item.useMobileWorkspace);
+    onApplyMobileSafeAreaChanged: updateMargins.restart();
+    onActiveChanged: if (active) updateMargins.restart();
     onWidthChanged: updateMargins.start();
     onHeightChanged: updateMargins.start();
     Timer {
@@ -32,6 +34,7 @@ Window {
     title: brandDisplayName + " " + version;
 
     onVisibilityChanged: {
+        if (visible) updateMargins.restart();
         Qt.callLater(() => {
             if (main_window.visibility != 0)
                 sett.visibility = main_window.visibility;

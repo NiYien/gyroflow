@@ -287,9 +287,21 @@ Item {
                 ui.operation = null; ui.summary = "";
                 app.isSimpleMode = false;
                 smoke.stage = 11;
-            } else {
+            } else if (smoke.stage === 14) {
                 smoke.check(app.videoArea.parent === ui.previewHost && ui.rows.length === 6, "mobile workspace restores without rebuilding queue");
-                console.log("MOBILE_SMOKE_PASS two-folder import, global edit, preview, direct information without playback, navigation, rotation, browse isolation, mode switch");
+                ui.platformOs = "ios";
+                ui.returnToList(); ui.showPanel("add");
+                smoke.applicationWindow.width = 393; smoke.applicationWindow.height = 759;
+                smoke.stage = 19;
+            } else if (smoke.stage === 19) {
+                smoke.check(smoke.findNamed(ui, "mobileChoosePhotos").visible, "iOS photos entry is direct");
+                if (!smoke.capture("ios-add")) return;
+                smoke.applicationWindow.width = 734; smoke.applicationWindow.height = 372;
+                smoke.stage = 21;
+            } else if (smoke.stage === 21) {
+                if (!smoke.capture("ios-add-landscape")) return;
+                ui.platformOs = Qt.platform.os;
+                console.log("MOBILE_SMOKE_PASS two-folder import, global edit, preview, direct information without playback, navigation, rotation, browse isolation, mode switch, iOS import layout");
                 ui.panel = ""; ui.selectionMode = false; ui.returnToList();
                 smoke.completed = true; smoke.applicationWindow.closeConfirmed = true;
                 Qt.quit();

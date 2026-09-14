@@ -40,6 +40,7 @@ Rectangle {
     property alias mobileUI: mobileWorkspaceLoader.item;
     property bool mobileSettingsReady: false;
     property bool mobileWorkspaceCreated: false;
+    readonly property bool mobilePhotoPickerBusy: videoSourcePicker.busy;
     property var mobilePendingParams: ({});
     property var mobileDefaultJobs: ({});
     readonly property bool mobileAutoRotateAvailable: !!(simpleStab && simpleStab.isSenseFlow);

@@ -111,6 +111,32 @@ TestCase {
         callbackUrls = null
     }
 
+    function test_directPhotosSkipsSourcePrompt(): void {
+        picker.openPhotos(selectedCallback)
+        compare(hostObject.messageBoxCalls, 0)
+        compare(filesystemObject.nativeOpenCalls, 1)
+        verify(picker.busy)
+        verify(hostObject.pendingPickerCallback === selectedCallback)
+        picker.openPhotos(secondSelectedCallback)
+        compare(filesystemObject.nativeOpenCalls, 1)
+        filesystemObject.picker_cancelled()
+        verify(!picker.busy)
+        compare(hostObject.pendingPickerCallback, null)
+        picker.openPhotos(secondSelectedCallback)
+        compare(filesystemObject.nativeOpenCalls, 2)
+        filesystemObject.urls_opened(["file:///new.mov"])
+        compare(callbackUrls, ["second", ["file:///new.mov"]])
+    }
+
+    function test_directFilesSkipsSourcePrompt(): void {
+        picker.openFiles(selectedCallback, fallbackDialog)
+        compare(hostObject.messageBoxCalls, 0)
+        compare(hostObject.openPickerCalls, 1)
+        verify(hostObject.lastCallback === selectedCallback)
+        verify(hostObject.lastFallback === fallbackDialog)
+        compare(filesystemObject.nativeOpenCalls, 0)
+    }
+
     function test_nonIosUsesExistingPicker(): void {
         picker.open("android", selectedCallback, fallbackDialog)
 

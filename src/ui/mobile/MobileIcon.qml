@@ -28,6 +28,7 @@ Canvas {
         else if (name === "check") line([5,12,10,17,19,7]);
         else if (name === "folder") { line([3,7,3,19,21,19,21,7,12,7,10,4,3,4,3,7]); }
         else if (name === "file") { line([5,3,14,3,19,8,19,21,5,21,5,3]); line([14,3,14,8,19,8]); line([9,13,15,13]); line([9,17,15,17]); }
+        else if (name === "photos") { line([3,4,21,4,21,20,3,20,3,4]); circle(8,9,1.5,false); line([3,17,9,12,13,16,17,11,21,15]); }
         else if (name === "search") { circle(10,10,6,false); line([15,15,21,21]); }
         else if (name === "trash") { line([4,6,20,6]); line([9,6,9,3,15,3,15,6]); line([6,6,7,21,17,21,18,6]); line([10,10,10,17]); line([14,10,14,17]); }
         else if (name === "reset" || name === "update") { c.beginPath(); c.arc(12,12,8,-2.4,2.5); c.stroke(); line([4,4,4,10,10,10]); }

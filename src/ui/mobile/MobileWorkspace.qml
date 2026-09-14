@@ -10,6 +10,7 @@ Rectangle {
     id: root
     objectName: "mobileWorkspace"
     property var host: null
+    property string platformOs: Qt.platform.os
     property var backend: null
     property var filesystemService: null
     property var queueService: host && host.videoArea ? host.videoArea.queue : null
@@ -300,6 +301,11 @@ Rectangle {
         else if (browseFilesInApp) { showPanel("files"); folderPicker.start("video", true); }
         else { panel = ""; queueService.requestMobileFiles(); }
     }
+    function requestPhotos() {
+        if (platformOs !== "ios" || !inputsAllowed() || !queueService) return;
+        dismissPanel();
+        queueService.requestMobilePhotos();
+    }
     function requestGyro() {
         if (!inputsAllowed() || !queueService) return;
         if (browseFilesInApp) { showPanel("files"); folderPicker.start("gyro", true); return; }
@@ -453,7 +459,7 @@ Rectangle {
         MobileActionRow { visible: parent.record.status === "Rendering"; width: parent.width; unit: root.unit; dark: root.dark; destructive: true; iconName: "pause"; text: qsTr("Stop this video"); onClicked: root.backend.stop_job(parent.record.id) }
         MobileActionRow { visible: parent.record.skipReason === "user_stopped"; width: parent.width; unit: root.unit; dark: root.dark; text: qsTr("Retry"); iconName: "reset"; enabled: !root.busy; onClicked: root.retryJob(parent.record.id) }
         MobileActionRow { visible: parent.record.skipReason === "no_gyro"; width: parent.width; unit: root.unit; dark: root.dark; text: qsTr("Add gyroscope data"); iconName: "plus"; enabled: !root.busy; onClicked: root.requestGyro() }
-        MobileActionRow { visible: parent.record.status === "Finished" && (parent.record.lastExport === 4 || parent.record.lastExport === 0) && Qt.platform.os !== "ios"; width: parent.width; unit: root.unit; dark: root.dark; navigation: true; iconName: "play"; text: qsTranslate("RenderQueue", "Open rendered file"); onClicked: if (root.host) root.host.openMobileOutput(parent.record.id) }
+        MobileActionRow { visible: parent.record.status === "Finished" && (parent.record.lastExport === 4 || parent.record.lastExport === 0) && root.platformOs !== "ios"; width: parent.width; unit: root.unit; dark: root.dark; navigation: true; iconName: "play"; text: qsTranslate("RenderQueue", "Open rendered file"); onClicked: if (root.host) root.host.openMobileOutput(parent.record.id) }
         MobileActionRow { visible: !!parent.record.paired; width: parent.width; unit: root.unit; dark: root.dark; iconName: "reset"; text: qsTranslate("RenderQueue", "Unpair gyro"); enabled: !root.busy; onClicked: { if (root.inputsAllowed()) { root.backend.unpair_video(parent.record.id); root.refresh(); } } }
     }
     function taskTitle() {
@@ -916,6 +922,7 @@ Rectangle {
                         width: parent.width; spacing: 16 * root.unit
                         MobileGroup {
                             width: parent.width; unit: root.unit; dark: root.dark; contentInset: 0
+                            MobileActionRow { objectName: "mobileChoosePhotos"; visible: root.platformOs === "ios"; width: parent.width; unit: root.unit; dark: root.dark; navigation: true; iconName: "photos"; divider: true; text: qsTranslate("VideoSourcePicker", "Photos"); enabled: !root.busy; onClicked: root.requestPhotos() }
                             MobileActionRow { objectName: "mobileChooseVideos"; width: parent.width; unit: root.unit; dark: root.dark; navigation: true; iconName: "play"; divider: true; text: qsTr("Choose files"); enabled: !root.busy; onClicked: root.requestAdd(false) }
                             MobileActionRow { objectName: "mobileChooseVideoFolders"; width: parent.width; unit: root.unit; dark: root.dark; navigation: true; iconName: "folder"; text: qsTr("Choose folders"); enabled: !root.busy; onClicked: root.requestAdd(true) }
                         }
@@ -1029,20 +1036,31 @@ Rectangle {
         if (event.key === Qt.Key_Back || event.key === Qt.Key_Escape) event.accepted = root.back();
     }
     Item {
-        visible: Qt.platform.os === "ios" && root.page === "preview" && !root.panel
-        x: 0; y: root.headerHeight; width: 20 * root.unit; height: root.height - y
-        z: 12
+        objectName: "mobileIosBackEdge"
+        visible: root.platformOs === "ios" && (root.page === "preview" || root.panel.length > 0)
+        x: root.panel ? sheet.x : 0
+        y: root.panel ? sheet.y + 56 * root.unit : root.headerHeight
+        width: 20 * root.unit
+        height: Math.max(0, root.panel ? sheet.height - 56 * root.unit : root.height - y)
+        z: 30
         DragHandler {
+            objectName: "mobileIosBackDrag"
             target: null
             acceptedDevices: PointerDevice.TouchScreen
             yAxis.enabled: false
             property real initialWidth: 0
             property real initialHeight: 0
             property bool cancelled: false
+            property string initialPage: ""
+            property string initialPanel: ""
+            property real initialTranslation: 0
             onCanceled: cancelled = true
             onActiveChanged: {
-                if (active) { initialWidth = root.width; initialHeight = root.height; cancelled = false; }
-                else if (!cancelled && initialWidth === root.width && initialHeight === root.height && activeTranslation.x > 60 * root.unit) root.back();
+                if (active) { initialWidth = root.width; initialHeight = root.height; initialPage = root.page; initialPanel = root.panel; initialTranslation = persistentTranslation.x; cancelled = false; }
+                // activeTranslation is already reset when the touch ends.
+                else if (!cancelled && initialWidth === root.width && initialHeight === root.height
+                         && initialPage === root.page && initialPanel === root.panel
+                         && persistentTranslation.x - initialTranslation > 60 * root.unit) root.back();
             }
         }
     }

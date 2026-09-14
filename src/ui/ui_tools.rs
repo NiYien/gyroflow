@@ -278,7 +278,8 @@ impl UITools {
     pub fn get_safe_area_margins(&mut self, wnd: QJSValue) -> QJsonObject {
         cpp!(unsafe [wnd as "QJSValue"] -> QJsonObject as "QJsonObject" {
             auto obj = qobject_cast<QQuickWindow *>(wnd.toQObject());
-            QPlatformWindow *pWin = qobject_cast<QWindow *>(obj)->handle();
+            if (!obj || !obj->handle()) return QJsonObject();
+            QPlatformWindow *pWin = obj->handle();
             QMargins safeArea = pWin->safeAreaMargins();
             return QJsonObject {
                 { "top",    safeArea.top() },

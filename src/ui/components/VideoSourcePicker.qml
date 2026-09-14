@@ -14,9 +14,24 @@ Item {
     required property int errorType
     property bool busy: false
 
+    function openPhotos(callback: var): void {
+        if (root.busy) return
+        if (filesystemObject.open_ios_video_picker()) {
+            root.busy = true
+            hostObject.pendingPickerCallback = callback
+        } else {
+            hostObject.messageBox(errorType, qsTr("Unable to open the photo library."),
+                                  [ { text: qsTranslate("App", "Ok") } ])
+        }
+    }
+
+    function openFiles(callback: var, fallbackDialog: var): void {
+        hostObject.openPicker(0, true, callback, fallbackDialog)
+    }
+
     function open(platformOs: string, callback: var, fallbackDialog: var): void {
         if (platformOs !== "ios") {
-            hostObject.openPicker(0, true, callback, fallbackDialog)
+            openFiles(callback, fallbackDialog)
             return
         }
 
@@ -25,17 +40,7 @@ Item {
                 text: qsTr("Photos"),
                 accent: true,
                 clicked: function() {
-                    if (root.busy) return
-                    if (filesystemObject.open_ios_video_picker()) {
-                        root.busy = true
-                        hostObject.pendingPickerCallback = callback
-                    } else {
-                        hostObject.messageBox(
-                            errorType,
-                            qsTr("Unable to open the photo library."),
-                            [ { text: qsTranslate("App", "Ok") } ]
-                        )
-                    }
+                    root.openPhotos(callback)
                 }
             },
             {
