@@ -16,6 +16,13 @@ Item {
     anchors.horizontalCenter: parent.horizontalCenter;
 
     property alias vid: vid;
+    readonly property real mobilePreviewAspectRatio: {
+        const w = vidParent.orgW, h = vidParent.orgH;
+        if (!(w > 0 && h > 0)) return 16 / 9;
+        const angle = (stabEnabledBtn.checked ? 0 : vidInfo.videoRotation) * Math.PI / 180;
+        return (Math.abs(w * Math.cos(angle)) + Math.abs(h * Math.sin(angle)))
+            / Math.max(1, Math.abs(w * Math.sin(angle)) + Math.abs(h * Math.cos(angle)));
+    }
     // Preview/drop area only (excludes the timeline), used by the tutorial overlay.
     property alias previewArea: vidParentParent;
     property alias timeline: timeline;
@@ -188,7 +195,9 @@ Item {
         }
 
         if (urls[0]) root.defaultPreviewPending = true;
-        const isCorrectVideoLoaded = urls[0] && vidInfo.filename == filesystem.get_filename(urls[0]);
+        const isCorrectVideoLoaded = urls[0] && (window.useMobileWorkspace
+            ? root.loadedFileUrl.toString() === Qt.url(urls[0]).toString() && vid.loaded
+            : vidInfo.filename == filesystem.get_filename(urls[0]));
         const isCorrectGyroLoaded  = urls[1] && window.motionData.filename == filesystem.get_filename(urls[1]);
         console.log("Video path:", urls[0], "(" + (isCorrectVideoLoaded? "loaded" : "not loaded") + ")", "Gyro path:", urls[1], "(" + (isCorrectGyroLoaded? "loaded" : "not loaded") + ")");
 
@@ -294,7 +303,7 @@ Item {
                 if (window.advanced)       window.advanced.loadGyroflow(obj);
                 if (window.sync)           window.sync.loadGyroflow(obj);
                 if (window.lensProfile)    window.lensProfile.loadGyroflow(obj);
-                if (window.exportSettings) Qt.callLater(window.exportSettings.loadGyroflow, obj);
+                if (window.exportSettings && !window.useMobileWorkspace) Qt.callLater(window.exportSettings.loadGyroflow, obj);
 
                 if (obj.hasOwnProperty("image_sequence_start") && +obj.image_sequence_start > 0) {
                     controller.image_sequence_start = +obj.image_sequence_start;
@@ -847,6 +856,7 @@ Item {
     }
 
     function loadMultipleFiles(urls: list<url>, skip_detection: bool): void {
+        if (window.useMobileWorkspace) { window.importMobileFiles(urls, false); return; }
         if (urls.length > 0) {
             let hasCrm = false;
             let crmCount = 0;
@@ -1071,7 +1081,7 @@ Item {
     Item {
         id: vidParentParent;
         width: parent.width;
-        height: parent.height - (root.fullScreen || window.isMobileLayout? 0 : tlcol.height);
+        height: parent.height - (root.fullScreen || window.isMobileLayout || window.useMobileWorkspace? 0 : tlcol.height);
 
         Grid {
             readonly property bool vertical: vidParentParent.height - vidParent.height * 2 > vidParentParent.width - vidParent.width * 2;
@@ -1102,7 +1112,7 @@ Item {
                     id: vid;
                     visible: opacity > 0;
                     opacity: loaded? 1 : 0;
-                    Ease on opacity { }
+                    Ease on opacity { enabled: !window.useMobileWorkspace; }
                     anchors.fill: parent;
                     property bool loaded: false;
 
@@ -1134,7 +1144,9 @@ Item {
                         const now = Date.now();
                         if (now - vid.lastStabilizeHintMs < 5000) return;
                         vid.lastStabilizeHintMs = now;
-                        window.showNotification(Modal.Info, qsTr("Not stabilized yet. Click \"Stabilize (or use with plugins)\" first."));
+                        window.showNotification(Modal.Info, window.useMobileWorkspace
+                            ? qsTr("Not stabilized yet. Return to Videos and tap Stabilize.")
+                            : qsTr("Not stabilized yet. Click \"Stabilize (or use with plugins)\" first."));
                     }
 
                     function fovChanged(): void {
@@ -1281,6 +1293,13 @@ Item {
                         interval: 150;
                         onTriggered: {
                             if (!vid.videoWidth) bufferTrigger.start();
+                            if (window.useMobileWorkspace) {
+                                // The mobile workspace starts playback after import; do not rewind it during warm-up.
+                                vid.forceRedraw();
+                                root.applyDefaultPreview();
+                                vid.volume = volumeSlider.value / 100.0;
+                                return;
+                            }
                             Qt.callLater(() => {
                                 vid.currentFrame++;
                                 Qt.callLater(() => vid.currentFrame = 0);
@@ -1356,8 +1375,8 @@ Item {
             color: styleBackground;
             radius: 5 * dpiScale;
             opacity: da.containsDrag? (vid.loaded? 0.8 : 0.3) : vid.loaded? 0 : 1.0;
-            Ease on opacity { duration: 300; }
-            visible: opacity > 0;
+            Ease on opacity { duration: 300; enabled: !window.useMobileWorkspace; }
+            visible: opacity > 0 && !window.useMobileWorkspace;
             onVisibleChanged: if (!visible) dropText.loadingFile = "";
 
             BasicText {
@@ -1608,6 +1627,7 @@ Item {
 
     Column {
         id: tlcol;
+        visible: !window.useMobileWorkspace;
         width: parent.width;
         anchors.horizontalCenter: parent.horizontalCenter;
         anchors.bottom: parent.bottom;

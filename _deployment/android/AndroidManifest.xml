@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <!-- Direct folder browsing; the user grants special access in Android settings. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- In-app update: allows requesting the system package installer for the
          downloaded APK (user still confirms in the installer UI). -->
@@ -44,6 +46,7 @@
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
         <activity
             android:name="com.niyien.gyroflow.MainActivity"
+            android:enableOnBackInvokedCallback="false"
             android:configChanges="orientation|uiMode|screenLayout|screenSize|smallestScreenSize|layoutDirection|locale|fontScale|keyboard|keyboardHidden|navigation|mcc|mnc|density"
             android:label="Gyroflow(NiYien)"
             android:launchMode="singleTask"

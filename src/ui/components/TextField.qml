@@ -3,26 +3,28 @@
 
 import QtQuick
 import QtQuick.Controls as QQC
+import "../mobile" as Mobile
 
 QQC.TextField {
     id: root;
+    readonly property bool mobileStyle: typeof window !== "undefined" && window.useMobileWorkspace === true
     selectByMouse: true;
     selectionColor: styleAccentColor;
     placeholderTextColor: Qt.darker(styleTextColor);
-    height: 30 * dpiScale;
+    height: (mobileStyle ? 44 : 30) * dpiScale;
     implicitWidth: 150 * dpiScale;
 
     background: Rectangle {
-        radius: 5 * dpiScale;
-        color: root.activeFocus? styleBackground2 : styleButtonColor;
-        border.color: styleButtonColor;
-        border.width: 1 * dpiScale;
+        radius: (root.mobileStyle ? 4 : 5) * dpiScale;
+        color: root.mobileStyle ? Mobile.MobileStyle.fill(style === "dark") : root.activeFocus? styleBackground2 : styleButtonColor;
+        border.color: root.mobileStyle ? Mobile.MobileStyle.accent(style === "dark") : styleButtonColor;
+        border.width: root.mobileStyle ? (root.activeFocus ? 1 * dpiScale : 0) : 1 * dpiScale;
 
         opacity: root.hovered && !root.activeFocus? 0.8 : 1.0;
 
         Rectangle {
             layer.enabled: true;
-            visible: root.acceptableInput;
+            visible: root.acceptableInput && !root.mobileStyle;
 
             width: parent.width - 2*x;
             height: 6 * dpiScale;
@@ -42,11 +44,11 @@ QQC.TextField {
     color: styleTextColor;
     opacity: enabled? 1.0 : 0.5;
     verticalAlignment: Text.AlignVCenter;
-    font.family: styleFont;
-    font.pixelSize: 13 * dpiScale;
+    font.family: mobileStyle ? Mobile.MobileStyle.fontFamily : styleFont;
+    font.pixelSize: (mobileStyle ? Mobile.MobileStyle.body : 13) * dpiScale;
     bottomPadding: 5 * dpiScale;
     topPadding: 5 * dpiScale;
-    leftPadding: 6 * dpiScale;
+    leftPadding: (mobileStyle ? 12 : 6) * dpiScale;
 
     property alias tooltip: tt.text;
     ToolTip { id: tt; visible: !isMobile && text.length > 0 && root.hovered; }

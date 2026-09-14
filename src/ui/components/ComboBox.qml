@@ -3,18 +3,20 @@
 
 import QtQuick
 import QtQuick.Controls as QQC
+import "../mobile" as Mobile
 
 QQC.ComboBox {
     id: root;
+    readonly property bool mobileStyle: typeof window !== "undefined" && window.useMobileWorkspace === true
 
     //property alias icon: ti.icon;
     property alias itemHeight: pp.itemHeight;
 
     implicitWidth: 150 * dpiScale;
-    height: 35 * dpiScale;
+    height: (mobileStyle ? 48 : 35) * dpiScale;
 
-    font.pixelSize: 13 * dpiScale;
-    font.family: styleFont;
+    font.pixelSize: (mobileStyle ? Mobile.MobileStyle.body : 13) * dpiScale;
+    font.family: mobileStyle ? Mobile.MobileStyle.fontFamily : styleFont;
 
     hoverEnabled: enabled;
 
@@ -23,12 +25,12 @@ QQC.ComboBox {
     indicator: DropdownChevron { height: pp.itemHeight / 2.4; }
 
     background: Rectangle {
-        color: root.hovered || root.activeFocus? Qt.lighter(styleButtonColor, 1.2) : styleButtonColor;
+        color: root.mobileStyle ? Mobile.MobileStyle.fill(style === "dark") : root.hovered || root.activeFocus? Qt.lighter(styleButtonColor, 1.2) : styleButtonColor;
         opacity: root.down || !parent.enabled? 0.75 : 1.0;
         Ease on opacity { duration: 100; }
-        radius: 6 * dpiScale;
+        radius: (root.mobileStyle ? 4 : 6) * dpiScale;
         anchors.fill: parent;
-        border.width: style === "light"? (1 * dpiScale) : 0;
+        border.width: !root.mobileStyle && style === "light"? (1 * dpiScale) : 0;
         border.color: "#cccccc";
     }
     Keys.onPressed: (e) => {
@@ -42,7 +44,7 @@ QQC.ComboBox {
     Ease on scale {  }
 
     contentItem: Text {
-        text: typeof root.displayText === "string" ? qsTranslate("Popup", root.displayText) : "";
+        text: root.mobileStyle && !root.displayText ? qsTranslate("MobileWorkspace", "Select") : typeof root.displayText === "string" ? qsTranslate("Popup", root.displayText) : "";
         color: styleTextColor;
         font: root.font;
         anchors.left: parent.left;
@@ -59,7 +61,7 @@ QQC.ComboBox {
         font: root.font;
         model: root.delegateModel;
         currentIndex: root.currentIndex;
-        width: Math.max(root.width, pp.maxItemWidth + 10 * dpiScale);
+        width: root.mobileStyle ? Math.min(window.width - 32 * dpiScale, Math.max(root.width, pp.maxItemWidth + 10 * dpiScale)) : Math.max(root.width, pp.maxItemWidth + 10 * dpiScale);
         x: -(width - parent.width);
         highlightedIndex: root.highlightedIndex;
     }

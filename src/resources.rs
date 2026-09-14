@@ -7,6 +7,7 @@ qrc!(pub rsrc,
     "/" {
         "src/ui/components/qmldir",
         "src/ui/menu/qmldir",
+        "src/ui/mobile/qmldir",
         "src/ui/qmldir",
 
         "resources/shadow.png",

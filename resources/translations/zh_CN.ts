@@ -1101,6 +1101,10 @@ Try a different output codec (H.265/HEVC handles more cases than H.264/AVC), low
         <source>Go to settings</source>
         <translation>去设置</translation>
     </message>
+    <message>
+        <source>This video is still loading.</source>
+        <translation>这个视频仍在加载。</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4391,6 +4395,10 @@ Please provide frame rate: </source>
         <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
         <translation>请核对队列中各视频的镜头号，右键可修改，完成后再稳定。</translation>
     </message>
+    <message>
+        <source>Search stage %1 of %2</source>
+        <translation>搜索阶段 %1 / %2</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>
@@ -6328,6 +6336,10 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <source>Preview: overview</source>
         <translation>预览：稳定概览</translation>
     </message>
+    <message>
+        <source>Not stabilized yet. Return to Videos and tap Stabilize.</source>
+        <translation>还未稳定，请返回视频列表并点击“稳定”。</translation>
+    </message>
 </context>
 <context>
     <name>VideoInformation</name>
@@ -6393,6 +6405,562 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <location filename="../../src/ui/main_window.qml" line="114"/>
         <source>No</source>
         <translation>否</translation>
+    </message>
+</context>
+<context>
+    <name>MobileSettings</name>
+    <message>
+        <source>App preferences</source>
+        <translation>应用偏好</translation>
+    </message>
+    <message>
+        <source>Auto rotate</source>
+        <translation>自动旋转</translation>
+    </message>
+    <message>
+        <source>Dynamic zoom</source>
+        <translation>动态缩放</translation>
+    </message>
+    <message>
+        <source>Feedback</source>
+        <translation>反馈</translation>
+    </message>
+    <message>
+        <source>Horizon lock amount</source>
+        <translation>地平线锁定量</translation>
+    </message>
+    <message>
+        <source>Language</source>
+        <translation>语言</translation>
+    </message>
+    <message>
+        <source>Lens correction</source>
+        <translation>镜头校正</translation>
+    </message>
+    <message>
+        <source>Lock horizon</source>
+        <translation>锁定地平线</translation>
+    </message>
+    <message>
+        <source>Smoothness</source>
+        <translation>平滑度</translation>
+    </message>
+    <message>
+        <source>Stabilization</source>
+        <translation>稳定</translation>
+    </message>
+    <message>
+        <source>Static zoom</source>
+        <translation>静态缩放</translation>
+    </message>
+    <message>
+        <source>Theme</source>
+        <translation>主题</translation>
+    </message>
+    <message>
+        <source>Updates</source>
+        <translation>更新</translation>
+    </message>
+    <message>
+        <source>Zoom</source>
+        <translation>缩放</translation>
+    </message>
+</context>
+<context>
+    <name>MobileWorkspace</name>
+    <message>
+        <source>%1 completed · %2 need attention</source>
+        <translation>已完成 %1 · 待处理 %2</translation>
+    </message>
+    <message>
+        <source>%1 videos completed</source>
+        <translation>已完成 %1 个视频</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>添加</translation>
+    </message>
+    <message>
+        <source>Add files</source>
+        <translation>添加文件</translation>
+    </message>
+    <message>
+        <source>Add folder</source>
+        <translation>添加文件夹</translation>
+    </message>
+    <message>
+        <source>Add media</source>
+        <translation>添加素材</translation>
+    </message>
+    <message>
+        <source>Add videos and gyroscope data to get started.</source>
+        <translation>添加视频和陀螺仪数据，即可开始。</translation>
+    </message>
+    <message>
+        <source>All</source>
+        <translation>全选</translation>
+    </message>
+    <message>
+        <source>Back to videos</source>
+        <translation>返回视频列表</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>取消</translation>
+    </message>
+    <message>
+        <source>Clear queue</source>
+        <translation>清空队列</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>关闭</translation>
+    </message>
+    <message>
+        <source>Continue with all videos. Other clips from the same recording day can use this match when their timestamps are available.</source>
+        <translation>继续处理全部视频。同一拍摄日的其他片段若有可用时间戳，也能利用这次匹配。</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>深度搜索</translation>
+    </message>
+    <message>
+        <source>Deep search complete</source>
+        <translation>深度搜索完成</translation>
+    </message>
+    <message>
+        <source>Deep search · %1</source>
+        <translation>深度搜索 · %1</translation>
+    </message>
+    <message>
+        <source>Deselect</source>
+        <translation>取消选择</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>完成</translation>
+    </message>
+    <message>
+        <source>Export stabilized video</source>
+        <translation>导出稳定视频</translation>
+    </message>
+    <message>
+        <source>Exported</source>
+        <translation>已导出</translation>
+    </message>
+    <message>
+        <source>Exporting</source>
+        <translation>正在导出</translation>
+    </message>
+    <message>
+        <source>Exporting %1%</source>
+        <translation>正在导出 %1%</translation>
+    </message>
+    <message>
+        <source>Global settings</source>
+        <translation>全局设置</translation>
+    </message>
+    <message>
+        <source>Gyroscope data</source>
+        <translation>陀螺仪数据</translation>
+    </message>
+    <message>
+        <source>Info</source>
+        <translation>信息</translation>
+    </message>
+    <message>
+        <source>Match found. You can now stabilize.</source>
+        <translation>匹配成功，可以开始稳定了。</translation>
+    </message>
+    <message>
+        <source>Matching videos…</source>
+        <translation>正在匹配视频…</translation>
+    </message>
+    <message>
+        <source>More</source>
+        <translation>更多</translation>
+    </message>
+    <message>
+        <source>Needs attention</source>
+        <translation>需要处理</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>下一步</translation>
+    </message>
+    <message>
+        <source>No gyroscope data. Add a recording or try Deep search.</source>
+        <translation>没有陀螺仪数据。请添加记录或尝试深度搜索。</translation>
+    </message>
+    <message>
+        <source>No match found. Try a video with more camera motion, and check the gyro recording, in-camera stabilization and mounting position.</source>
+        <translation>没有找到匹配。请尝试相机运动更多的视频，并检查陀螺仪记录、机内防抖和安装位置。</translation>
+    </message>
+    <message>
+        <source>Original</source>
+        <translation>原始</translation>
+    </message>
+    <message>
+        <source>Pause</source>
+        <translation>暂停</translation>
+    </message>
+    <message>
+        <source>Play</source>
+        <translation>播放</translation>
+    </message>
+    <message>
+        <source>Playback position</source>
+        <translation>播放位置</translation>
+    </message>
+    <message>
+        <source>Preparing search…</source>
+        <translation>正在准备搜索…</translation>
+    </message>
+    <message>
+        <source>Preparing…</source>
+        <translation>正在准备…</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>上一段</translation>
+    </message>
+    <message>
+        <source>Processed %1 / %2</source>
+        <translation>已处理 %1 / %2</translation>
+    </message>
+    <message>
+        <source>Reading…</source>
+        <translation>正在读取…</translation>
+    </message>
+    <message>
+        <source>Ready</source>
+        <translation>就绪</translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation>移除</translation>
+    </message>
+    <message>
+        <source>Reset pairing</source>
+        <translation>重置配对</translation>
+    </message>
+    <message>
+        <source>Retry</source>
+        <translation>重试</translation>
+    </message>
+    <message>
+        <source>Search cancelled</source>
+        <translation>搜索已取消</translation>
+    </message>
+    <message>
+        <source>Select</source>
+        <translation>选择</translation>
+    </message>
+    <message>
+        <source>Selected %1</source>
+        <translation>已选 %1</translation>
+    </message>
+    <message>
+        <source>Settings</source>
+        <translation>设置</translation>
+    </message>
+    <message>
+        <source>Skipped</source>
+        <translation>已跳过</translation>
+    </message>
+    <message>
+        <source>Stabilize</source>
+        <translation>稳定</translation>
+    </message>
+    <message>
+        <source>Stabilized</source>
+        <translation>稳定后</translation>
+    </message>
+    <message>
+        <source>Stabilizing</source>
+        <translation>正在稳定</translation>
+    </message>
+    <message>
+        <source>Stabilizing %1%</source>
+        <translation>正在稳定 %1%</translation>
+    </message>
+    <message>
+        <source>Stop</source>
+        <translation>停止</translation>
+    </message>
+    <message>
+        <source>Stop the current task before changing its inputs.</source>
+        <translation>请先停止当前任务，再修改输入素材。</translation>
+    </message>
+    <message>
+        <source>Stop the current task to adjust processing settings.</source>
+        <translation>停止当前任务后，即可调整处理设置。</translation>
+    </message>
+    <message>
+        <source>Stop this video</source>
+        <translation>停止这个视频</translation>
+    </message>
+    <message>
+        <source>Stopped by you. Retry starts this video from the beginning.</source>
+        <translation>已手动停止。重试会从头处理这个视频。</translation>
+    </message>
+    <message>
+        <source>Stopped · %1 completed</source>
+        <translation>已停止 · 已完成 %1</translation>
+    </message>
+    <message>
+        <source>Stopping…</source>
+        <translation>正在停止…</translation>
+    </message>
+    <message>
+        <source>Sync not confirmed</source>
+        <translation>同步未确认</translation>
+    </message>
+    <message>
+        <source>Task details</source>
+        <translation>任务详情</translation>
+    </message>
+    <message>
+        <source>This format supports stabilization for editing plugins only.</source>
+        <translation>这个格式仅支持为剪辑插件生成稳定结果。</translation>
+    </message>
+    <message>
+        <source>This video could not be processed. Check its gyroscope data and lens settings.</source>
+        <translation>无法处理这个视频，请检查陀螺仪数据和镜头设置。</translation>
+    </message>
+    <message>
+        <source>This video is being processed. Preview will be available when it finishes.</source>
+        <translation>这个视频正在处理，完成后即可预览。</translation>
+    </message>
+    <message>
+        <source>Unknown</source>
+        <translation>未知</translation>
+    </message>
+    <message>
+        <source>Video information</source>
+        <translation>视频信息</translation>
+    </message>
+    <message>
+        <source>Videos</source>
+        <translation>视频</translation>
+    </message>
+    <message>
+        <source>Videos %1</source>
+        <translation>视频 %1</translation>
+    </message>
+    <message>
+        <source>View</source>
+        <translation>查看</translation>
+    </message>
+    <message>
+        <source>Waiting</source>
+        <translation>等待处理</translation>
+    </message>
+    <message>
+        <source>Your videos, ready to stabilize</source>
+        <translation>从这里开始稳定视频</translation>
+    </message>
+    <message>
+        <source>‹ Videos</source>
+        <translation>‹ 视频列表</translation>
+    </message>
+    <message>
+        <source>Add folders</source>
+        <translation>添加多个文件夹</translation>
+    </message>
+    <message>
+        <source>Add gyroscope data</source>
+        <translation>添加陀螺仪</translation>
+    </message>
+    <message>
+        <source>Focal length unknown</source>
+        <translation>焦距未知</translation>
+    </message>
+    <message>
+        <source>No gyroscope data added</source>
+        <translation>尚未添加陀螺仪数据</translation>
+    </message>
+    <message>
+        <source>Add recordings from an external gyroscope here. Built-in video data is read automatically.</source>
+        <translation>在这里添加外置陀螺仪的记录。视频自带的数据会自动读取。</translation>
+    </message>
+    <message>
+        <source>Add videos to get started.</source>
+        <translation>先添加要稳定的视频。</translation>
+    </message>
+    <message>
+        <source>Choose video folders</source>
+        <translation>选择视频文件夹</translation>
+    </message>
+    <message>
+        <source>Choose videos</source>
+        <translation>选择视频</translation>
+    </message>
+    <message>
+        <source>External gyroscope</source>
+        <translation>外置陀螺仪</translation>
+    </message>
+    <message>
+        <source>App</source>
+        <translation>应用</translation>
+    </message>
+    <message>
+        <source>Back</source>
+        <translation>上一步</translation>
+    </message>
+    <message>
+        <source>Changes apply to all videos.</source>
+        <translation>设置对全部视频生效。</translation>
+    </message>
+    <message>
+        <source>Clear video and gyroscope matches</source>
+        <translation>清除视频与陀螺仪的匹配关系</translation>
+    </message>
+    <message>
+        <source>Export</source>
+        <translation>导出</translation>
+    </message>
+    <message>
+        <source>Lens</source>
+        <translation>镜头</translation>
+    </message>
+    <message>
+        <source>Remove all videos from this list</source>
+        <translation>移除列表中的全部视频</translation>
+    </message>
+    <message>
+        <source>Choose files</source>
+        <translation>选择文件</translation>
+    </message>
+    <message>
+        <source>Choose folders</source>
+        <translation>选择文件夹</translation>
+    </message>
+    <message>
+        <source>View results</source>
+        <translation>查看结果</translation>
+    </message>
+    <message>
+        <source>Confirm folder import</source>
+        <translation>确认导入文件夹</translation>
+    </message>
+    <message>
+        <source>Import</source>
+        <translation>导入</translation>
+    </message>
+    <message>
+        <source>Stabilize (for plugins)</source>
+        <translation>稳定（插件用）</translation>
+    </message>
+    <message>
+        <source>Calibration pair</source>
+        <translation>校准配对视频</translation>
+    </message>
+    <message>
+        <source>In-camera stabilization on</source>
+        <translation>机内防抖已开启</translation>
+    </message>
+    <message>
+        <source>No gyroscope data</source>
+        <translation>无陀螺仪数据</translation>
+    </message>
+    <message>
+        <source>Plugin stabilization only</source>
+        <translation>仅支持插件稳定</translation>
+    </message>
+    <message>
+        <source>Skip reason not recorded</source>
+        <translation>未记录跳过原因</translation>
+    </message>
+    <message>
+        <source>Stopped manually</source>
+        <translation>已手动停止</translation>
+    </message>
+</context>
+<context>
+    <name>MobileFolderPicker</name>
+    <message>
+        <source>Add %1 folders</source>
+        <translation>添加 %1 个文件夹</translation>
+    </message>
+    <message>
+        <source>Choose a location, then select the folders to add. You can also add folders from another location.</source>
+        <translation>先选择位置，再勾选要添加的文件夹。也可以继续选择其他位置的文件夹。</translation>
+    </message>
+    <message>
+        <source>Choose location</source>
+        <translation>选择位置</translation>
+    </message>
+    <message>
+        <source>No subfolders. Select this folder to add its files.</source>
+        <translation>没有子文件夹。选择“此文件夹”即可添加其中的文件。</translation>
+    </message>
+    <message>
+        <source>Open folder</source>
+        <translation>打开文件夹</translation>
+    </message>
+    <message>
+        <source>This folder</source>
+        <translation>此文件夹</translation>
+    </message>
+    <message>
+        <source>Unable to read this folder. Choose the location again.</source>
+        <translation>无法读取文件夹，请重新选择位置。</translation>
+    </message>
+    <message>
+        <source>Up one level</source>
+        <translation>上一级</translation>
+    </message>
+    <message>
+        <source>Add this folder</source>
+        <translation>添加此文件夹</translation>
+    </message>
+    <message>
+        <source>No subfolders</source>
+        <translation>没有子文件夹</translation>
+    </message>
+    <message>
+        <source>Subfolders</source>
+        <translation>子文件夹</translation>
+    </message>
+    <message>
+        <source>Browse</source>
+        <translation>浏览</translation>
+    </message>
+    <message>
+        <source>Add %1 files</source>
+        <translation>添加 %1 个文件</translation>
+    </message>
+    <message>
+        <source>Add location</source>
+        <translation>添加位置</translation>
+    </message>
+    <message>
+        <source>Choose a folder once to browse its files here.</source>
+        <translation>先选择一个存放位置，以后就能直接在这里浏览文件。</translation>
+    </message>
+    <message>
+        <source>No matching files</source>
+        <translation>没有可添加的文件</translation>
+    </message>
+    <message>
+        <source>Includes files in this folder and up to two levels of subfolders.</source>
+        <translation>自动读取所选文件夹及最多两层子文件夹中的文件。</translation>
+    </message>
+    <message>
+        <source>Saved folders</source>
+        <translation>已保存的文件夹</translation>
+    </message>
+    <message>
+        <source>Other locations</source>
+        <translation>其他位置</translation>
+    </message>
+</context>
+<context>
+    <name>MobileGyroBar</name>
+    <message>
+        <source>Not added</source>
+        <translation>未添加</translation>
     </message>
 </context>
 </TS>

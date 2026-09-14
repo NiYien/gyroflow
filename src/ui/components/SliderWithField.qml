@@ -3,11 +3,13 @@
 
 import QtQuick
 import QtQuick.Controls as QQC
+import "../mobile" as Mobile
 
 Row {
     id: root;
+    readonly property bool mobileStyle: typeof window !== "undefined" && window.useMobileWorkspace === true
     spacing: 5 * dpiScale;
-    height: 25 * dpiScale;
+    height: (mobileStyle ? 44 : 25) * dpiScale;
     property alias slider: slider;
     property alias field: field;
     property alias defaultValue: field.defaultValue;
@@ -102,10 +104,10 @@ Row {
     }
     NumberField {
         id: field;
-        width: 55 * dpiScale;
-        height: 25 * dpiScale;
+        width: (root.mobileStyle ? 80 : 55) * dpiScale;
+        height: (root.mobileStyle ? 44 : 25) * dpiScale;
         precision: 3;
-        font.pixelSize: 11 * dpiScale;
+        font.pixelSize: (root.mobileStyle ? Mobile.MobileStyle.body : 11) * dpiScale;
         anchors.verticalCenter: parent.verticalCenter;
         contextMenu: root.contextMenu;
         onValueChanged: {

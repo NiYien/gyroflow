@@ -24,7 +24,7 @@ Column {
         }
         return [];
     }
-    readonly property bool _queueShown: !!(window && window.videoArea && window.videoArea.queue && window.videoArea.queue.shown)
+    readonly property bool _queueShown: !!(window && window.videoArea && window.videoArea.queue && (window.useMobileWorkspace || window.videoArea.queue.shown))
     readonly property bool _queueAutoRotateContext: {
         return !!(
             root._queueShown && root._batchGyroFilesInfo.some((info) => root.isSenseFlowSource(info.detected_source || ""))
@@ -171,6 +171,7 @@ Column {
     }
 
     function loadGyroflow(obj: var): void {
+        if (window.useMobileWorkspace) return;
         const stab = obj && obj.stabilization ? obj.stabilization : null;
         if (!stab) {
             return;

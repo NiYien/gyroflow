@@ -1101,6 +1101,10 @@ Try a different output codec (H.265/HEVC handles more cases than H.264/AVC), low
         <source>Go to settings</source>
         <translation>設定へ移動</translation>
     </message>
+    <message>
+        <source>This video is still loading.</source>
+        <translation>この動画は読み込み中です。</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4340,6 +4344,10 @@ Please provide frame rate: </source>
         <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
         <translation>キュー内の各動画のレンズ番号を確認してください。右クリックで変更し、その後スタビライズしてください。</translation>
     </message>
+    <message>
+        <source>Search stage %1 of %2</source>
+        <translation>検索段階 %1 / %2</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>
@@ -6266,6 +6274,10 @@ Gyroflowを使用するには、レンズの手ぶれ補正（Optical SteadyShot
         <source>Playback speed</source>
         <translation>再生速度</translation>
     </message>
+    <message>
+        <source>Not stabilized yet. Return to Videos and tap Stabilize.</source>
+        <translation>まだ安定化されていません。動画一覧に戻り、「安定化」をタップしてください。</translation>
+    </message>
 </context>
 <context>
     <name>VideoInformation</name>
@@ -6303,6 +6315,562 @@ Gyroflowを使用するには、レンズの手ぶれ補正（Optical SteadyShot
         <location filename="../../src/ui/main_window.qml" line="114"/>
         <source>No</source>
         <translation>いいえ</translation>
+    </message>
+</context>
+<context>
+    <name>MobileSettings</name>
+    <message>
+        <source>App preferences</source>
+        <translation>アプリ設定</translation>
+    </message>
+    <message>
+        <source>Auto rotate</source>
+        <translation>自動回転</translation>
+    </message>
+    <message>
+        <source>Dynamic zoom</source>
+        <translation>動的ズーム</translation>
+    </message>
+    <message>
+        <source>Feedback</source>
+        <translation>フィードバック</translation>
+    </message>
+    <message>
+        <source>Horizon lock amount</source>
+        <translation>水平線ロック 量</translation>
+    </message>
+    <message>
+        <source>Language</source>
+        <translation>言語</translation>
+    </message>
+    <message>
+        <source>Lens correction</source>
+        <translation>レンズ補正</translation>
+    </message>
+    <message>
+        <source>Lock horizon</source>
+        <translation>水平線をロック</translation>
+    </message>
+    <message>
+        <source>Smoothness</source>
+        <translation>滑らかさ</translation>
+    </message>
+    <message>
+        <source>Stabilization</source>
+        <translation>スタビライゼーション</translation>
+    </message>
+    <message>
+        <source>Static zoom</source>
+        <translation>固定ズーム</translation>
+    </message>
+    <message>
+        <source>Theme</source>
+        <translation>テーマ</translation>
+    </message>
+    <message>
+        <source>Updates</source>
+        <translation>アップデート</translation>
+    </message>
+    <message>
+        <source>Zoom</source>
+        <translation>ズーム</translation>
+    </message>
+</context>
+<context>
+    <name>MobileWorkspace</name>
+    <message>
+        <source>%1 completed · %2 need attention</source>
+        <translation>%1 件完了 · %2 件要確認</translation>
+    </message>
+    <message>
+        <source>%1 videos completed</source>
+        <translation>%1 本の動画が完了</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>追加</translation>
+    </message>
+    <message>
+        <source>Add files</source>
+        <translation>ファイルを追加</translation>
+    </message>
+    <message>
+        <source>Add folder</source>
+        <translation>フォルダを追加</translation>
+    </message>
+    <message>
+        <source>Add media</source>
+        <translation>メディアを追加</translation>
+    </message>
+    <message>
+        <source>Add videos and gyroscope data to get started.</source>
+        <translation>動画とジャイロデータを追加して始めましょう。</translation>
+    </message>
+    <message>
+        <source>All</source>
+        <translation>すべて</translation>
+    </message>
+    <message>
+        <source>Back to videos</source>
+        <translation>動画一覧に戻る</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>キャンセル</translation>
+    </message>
+    <message>
+        <source>Clear queue</source>
+        <translation>キューを空にする</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>閉じる</translation>
+    </message>
+    <message>
+        <source>Continue with all videos. Other clips from the same recording day can use this match when their timestamps are available.</source>
+        <translation>すべての動画で続行します。同じ撮影日の他のクリップも、タイムスタンプがあればこの照合結果を利用できます。</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>ディープサーチ</translation>
+    </message>
+    <message>
+        <source>Deep search complete</source>
+        <translation>詳細検索完了</translation>
+    </message>
+    <message>
+        <source>Deep search · %1</source>
+        <translation>詳細検索 · %1</translation>
+    </message>
+    <message>
+        <source>Deselect</source>
+        <translation>選択解除</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>完了</translation>
+    </message>
+    <message>
+        <source>Export stabilized video</source>
+        <translation>手ブレ補正動画を書き出し</translation>
+    </message>
+    <message>
+        <source>Exported</source>
+        <translation>書き出し済み</translation>
+    </message>
+    <message>
+        <source>Exporting</source>
+        <translation>書き出し中</translation>
+    </message>
+    <message>
+        <source>Exporting %1%</source>
+        <translation>書き出し中 %1%</translation>
+    </message>
+    <message>
+        <source>Global settings</source>
+        <translation>全体設定</translation>
+    </message>
+    <message>
+        <source>Gyroscope data</source>
+        <translation>ジャイロデータ</translation>
+    </message>
+    <message>
+        <source>Info</source>
+        <translation>情報</translation>
+    </message>
+    <message>
+        <source>Match found. You can now stabilize.</source>
+        <translation>一致が見つかりました。安定化を実行できます。</translation>
+    </message>
+    <message>
+        <source>Matching videos…</source>
+        <translation>動画を照合中…</translation>
+    </message>
+    <message>
+        <source>More</source>
+        <translation>その他</translation>
+    </message>
+    <message>
+        <source>Needs attention</source>
+        <translation>確認が必要</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>次へ</translation>
+    </message>
+    <message>
+        <source>No gyroscope data. Add a recording or try Deep search.</source>
+        <translation>ジャイロデータがありません。記録を追加するか、詳細検索を試してください。</translation>
+    </message>
+    <message>
+        <source>No match found. Try a video with more camera motion, and check the gyro recording, in-camera stabilization and mounting position.</source>
+        <translation>一致が見つかりませんでした。カメラの動きが多い動画を試し、ジャイロ記録、カメラ内手ブレ補正、取り付け位置を確認してください。</translation>
+    </message>
+    <message>
+        <source>Original</source>
+        <translation>オリジナル</translation>
+    </message>
+    <message>
+        <source>Pause</source>
+        <translation>一時停止</translation>
+    </message>
+    <message>
+        <source>Play</source>
+        <translation>再生</translation>
+    </message>
+    <message>
+        <source>Playback position</source>
+        <translation>再生位置</translation>
+    </message>
+    <message>
+        <source>Preparing search…</source>
+        <translation>検索を準備中…</translation>
+    </message>
+    <message>
+        <source>Preparing…</source>
+        <translation>準備中…</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>前へ</translation>
+    </message>
+    <message>
+        <source>Processed %1 / %2</source>
+        <translation>処理済み %1 / %2</translation>
+    </message>
+    <message>
+        <source>Reading…</source>
+        <translation>読み込み中…</translation>
+    </message>
+    <message>
+        <source>Ready</source>
+        <translation>準備完了</translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation>削除</translation>
+    </message>
+    <message>
+        <source>Reset pairing</source>
+        <translation>ペアリングをリセット</translation>
+    </message>
+    <message>
+        <source>Retry</source>
+        <translation>再試行</translation>
+    </message>
+    <message>
+        <source>Search cancelled</source>
+        <translation>検索をキャンセルしました</translation>
+    </message>
+    <message>
+        <source>Select</source>
+        <translation>選択</translation>
+    </message>
+    <message>
+        <source>Selected %1</source>
+        <translation>%1 件選択</translation>
+    </message>
+    <message>
+        <source>Settings</source>
+        <translation>設定</translation>
+    </message>
+    <message>
+        <source>Skipped</source>
+        <translation>スキップ済み</translation>
+    </message>
+    <message>
+        <source>Stabilize</source>
+        <translation>安定化</translation>
+    </message>
+    <message>
+        <source>Stabilized</source>
+        <translation>スタビライズ済み</translation>
+    </message>
+    <message>
+        <source>Stabilizing</source>
+        <translation>安定化中</translation>
+    </message>
+    <message>
+        <source>Stabilizing %1%</source>
+        <translation>安定化中 %1%</translation>
+    </message>
+    <message>
+        <source>Stop</source>
+        <translation>停止</translation>
+    </message>
+    <message>
+        <source>Stop the current task before changing its inputs.</source>
+        <translation>入力素材を変更する前に、実行中のタスクを停止してください。</translation>
+    </message>
+    <message>
+        <source>Stop the current task to adjust processing settings.</source>
+        <translation>処理設定を変更するには、実行中のタスクを停止してください。</translation>
+    </message>
+    <message>
+        <source>Stop this video</source>
+        <translation>この動画を停止</translation>
+    </message>
+    <message>
+        <source>Stopped by you. Retry starts this video from the beginning.</source>
+        <translation>停止しました。再試行すると、この動画を最初から処理します。</translation>
+    </message>
+    <message>
+        <source>Stopped · %1 completed</source>
+        <translation>停止済み · %1 件完了</translation>
+    </message>
+    <message>
+        <source>Stopping…</source>
+        <translation>停止中…</translation>
+    </message>
+    <message>
+        <source>Sync not confirmed</source>
+        <translation>同期未確認</translation>
+    </message>
+    <message>
+        <source>Task details</source>
+        <translation>タスクの詳細</translation>
+    </message>
+    <message>
+        <source>This format supports stabilization for editing plugins only.</source>
+        <translation>この形式の安定化は編集ソフト用プラグインでのみ利用できます。</translation>
+    </message>
+    <message>
+        <source>This video could not be processed. Check its gyroscope data and lens settings.</source>
+        <translation>この動画を処理できませんでした。ジャイロデータとレンズ設定を確認してください。</translation>
+    </message>
+    <message>
+        <source>This video is being processed. Preview will be available when it finishes.</source>
+        <translation>この動画は処理中です。完了後にプレビューできます。</translation>
+    </message>
+    <message>
+        <source>Unknown</source>
+        <translation>不明</translation>
+    </message>
+    <message>
+        <source>Video information</source>
+        <translation>ビデオ情報</translation>
+    </message>
+    <message>
+        <source>Videos</source>
+        <translation>動画</translation>
+    </message>
+    <message>
+        <source>Videos %1</source>
+        <translation>動画 %1</translation>
+    </message>
+    <message>
+        <source>View</source>
+        <translation>表示</translation>
+    </message>
+    <message>
+        <source>Waiting</source>
+        <translation>待機中</translation>
+    </message>
+    <message>
+        <source>Your videos, ready to stabilize</source>
+        <translation>動画を安定化しましょう</translation>
+    </message>
+    <message>
+        <source>‹ Videos</source>
+        <translation>‹ 動画</translation>
+    </message>
+    <message>
+        <source>Add folders</source>
+        <translation>フォルダを追加</translation>
+    </message>
+    <message>
+        <source>Add gyroscope data</source>
+        <translation>ジャイロデータを追加</translation>
+    </message>
+    <message>
+        <source>Focal length unknown</source>
+        <translation>焦点距離不明</translation>
+    </message>
+    <message>
+        <source>No gyroscope data added</source>
+        <translation>ジャイロデータが追加されていません</translation>
+    </message>
+    <message>
+        <source>Add recordings from an external gyroscope here. Built-in video data is read automatically.</source>
+        <translation>外部ジャイロの記録をここに追加します。動画内蔵のデータは自動で読み込まれます。</translation>
+    </message>
+    <message>
+        <source>Add videos to get started.</source>
+        <translation>動画を追加して始めましょう。</translation>
+    </message>
+    <message>
+        <source>Choose video folders</source>
+        <translation>動画フォルダを選択</translation>
+    </message>
+    <message>
+        <source>Choose videos</source>
+        <translation>動画を選択</translation>
+    </message>
+    <message>
+        <source>External gyroscope</source>
+        <translation>外部ジャイロ</translation>
+    </message>
+    <message>
+        <source>App</source>
+        <translation>アプリ</translation>
+    </message>
+    <message>
+        <source>Back</source>
+        <translation>戻る</translation>
+    </message>
+    <message>
+        <source>Changes apply to all videos.</source>
+        <translation>変更はすべての動画に適用されます。</translation>
+    </message>
+    <message>
+        <source>Clear video and gyroscope matches</source>
+        <translation>動画とジャイロの照合結果をクリア</translation>
+    </message>
+    <message>
+        <source>Export</source>
+        <translation>エクスポート</translation>
+    </message>
+    <message>
+        <source>Lens</source>
+        <translation>レンズ</translation>
+    </message>
+    <message>
+        <source>Remove all videos from this list</source>
+        <translation>この一覧からすべての動画を削除</translation>
+    </message>
+    <message>
+        <source>Choose files</source>
+        <translation>ファイルを選択</translation>
+    </message>
+    <message>
+        <source>Choose folders</source>
+        <translation>フォルダを選択</translation>
+    </message>
+    <message>
+        <source>View results</source>
+        <translation>結果を見る</translation>
+    </message>
+    <message>
+        <source>Confirm folder import</source>
+        <translation>フォルダの読み込みを確認</translation>
+    </message>
+    <message>
+        <source>Import</source>
+        <translation>読み込む</translation>
+    </message>
+    <message>
+        <source>Stabilize (for plugins)</source>
+        <translation>手ブレ補正（プラグイン用）</translation>
+    </message>
+    <message>
+        <source>Calibration pair</source>
+        <translation>キャリブレーションペア</translation>
+    </message>
+    <message>
+        <source>In-camera stabilization on</source>
+        <translation>カメラ内手ブレ補正が有効</translation>
+    </message>
+    <message>
+        <source>No gyroscope data</source>
+        <translation>ジャイロデータなし</translation>
+    </message>
+    <message>
+        <source>Plugin stabilization only</source>
+        <translation>プラグイン用の手ブレ補正のみ</translation>
+    </message>
+    <message>
+        <source>Skip reason not recorded</source>
+        <translation>スキップ理由の記録なし</translation>
+    </message>
+    <message>
+        <source>Stopped manually</source>
+        <translation>手動で停止</translation>
+    </message>
+</context>
+<context>
+    <name>MobileFolderPicker</name>
+    <message>
+        <source>Add %1 folders</source>
+        <translation>%1 個のフォルダを追加</translation>
+    </message>
+    <message>
+        <source>Choose a location, then select the folders to add. You can also add folders from another location.</source>
+        <translation>場所を選んで、追加するフォルダにチェックを入れてください。別の場所のフォルダも追加できます。</translation>
+    </message>
+    <message>
+        <source>Choose location</source>
+        <translation>場所を選択</translation>
+    </message>
+    <message>
+        <source>No subfolders. Select this folder to add its files.</source>
+        <translation>サブフォルダはありません。このフォルダを選ぶと中のファイルを追加できます。</translation>
+    </message>
+    <message>
+        <source>Open folder</source>
+        <translation>フォルダを開く</translation>
+    </message>
+    <message>
+        <source>This folder</source>
+        <translation>このフォルダ</translation>
+    </message>
+    <message>
+        <source>Unable to read this folder. Choose the location again.</source>
+        <translation>フォルダを読み取れません。場所を選び直してください。</translation>
+    </message>
+    <message>
+        <source>Up one level</source>
+        <translation>上の階層へ</translation>
+    </message>
+    <message>
+        <source>Add this folder</source>
+        <translation>このフォルダを追加</translation>
+    </message>
+    <message>
+        <source>No subfolders</source>
+        <translation>サブフォルダはありません</translation>
+    </message>
+    <message>
+        <source>Subfolders</source>
+        <translation>サブフォルダ</translation>
+    </message>
+    <message>
+        <source>Browse</source>
+        <translation>閲覧する</translation>
+    </message>
+    <message>
+        <source>Add %1 files</source>
+        <translation>%1 個のファイルを追加</translation>
+    </message>
+    <message>
+        <source>Add location</source>
+        <translation>場所を追加</translation>
+    </message>
+    <message>
+        <source>Choose a folder once to browse its files here.</source>
+        <translation>フォルダを一度選択すると、ここでファイルを参照できます。</translation>
+    </message>
+    <message>
+        <source>No matching files</source>
+        <translation>該当するファイルはありません</translation>
+    </message>
+    <message>
+        <source>Includes files in this folder and up to two levels of subfolders.</source>
+        <translation>このフォルダと、2階層下までのサブフォルダのファイルを含みます。</translation>
+    </message>
+    <message>
+        <source>Saved folders</source>
+        <translation>保存済みフォルダ</translation>
+    </message>
+    <message>
+        <source>Other locations</source>
+        <translation>その他の場所</translation>
+    </message>
+</context>
+<context>
+    <name>MobileGyroBar</name>
+    <message>
+        <source>Not added</source>
+        <translation>未追加</translation>
     </message>
 </context>
 </TS>

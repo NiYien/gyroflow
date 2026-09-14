@@ -1101,6 +1101,10 @@ Prøv en anden output-codec (H.265/HEVC klarer flere tilfælde end H.264/AVC), s
         <source>Go to settings</source>
         <translation>Gå til indstillinger</translation>
     </message>
+    <message>
+        <source>This video is still loading.</source>
+        <translation>Denne video indlæses stadig.</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4339,6 +4343,10 @@ Angiv venligst billedhastighed: </translation>
         <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
         <translation>Tjek objektivnummeret på hver video i køen. Højreklik for at ændre det, og stabiliser derefter.</translation>
     </message>
+    <message>
+        <source>Search stage %1 of %2</source>
+        <translation>Søgetrin %1 af %2</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>
@@ -6264,6 +6272,10 @@ Deaktiver objektivstabilisering (Optical SteadyShot) for at bruge Gyroflow.</tra
         <source>Playback speed</source>
         <translation>Afspilningshastighed</translation>
     </message>
+    <message>
+        <source>Not stabilized yet. Return to Videos and tap Stabilize.</source>
+        <translation>Ikke stabiliseret endnu. Gå tilbage til Videoer, og tryk på Stabiliser.</translation>
+    </message>
 </context>
 <context>
     <name>VideoInformation</name>
@@ -6301,6 +6313,562 @@ Deaktiver objektivstabilisering (Optical SteadyShot) for at bruge Gyroflow.</tra
         <location filename="../../src/ui/main_window.qml" line="114"/>
         <source>No</source>
         <translation>Nej</translation>
+    </message>
+</context>
+<context>
+    <name>MobileSettings</name>
+    <message>
+        <source>App preferences</source>
+        <translation>Appindstillinger</translation>
+    </message>
+    <message>
+        <source>Auto rotate</source>
+        <translation>Automatisk rotation</translation>
+    </message>
+    <message>
+        <source>Dynamic zoom</source>
+        <translation>Dynamisk zoom</translation>
+    </message>
+    <message>
+        <source>Feedback</source>
+        <translation>Feedback</translation>
+    </message>
+    <message>
+        <source>Horizon lock amount</source>
+        <translation>Lås horisont mængde</translation>
+    </message>
+    <message>
+        <source>Language</source>
+        <translation>Sprog</translation>
+    </message>
+    <message>
+        <source>Lens correction</source>
+        <translation>Linsekorrektion</translation>
+    </message>
+    <message>
+        <source>Lock horizon</source>
+        <translation>Lås horisonten</translation>
+    </message>
+    <message>
+        <source>Smoothness</source>
+        <translation>Udjævning</translation>
+    </message>
+    <message>
+        <source>Stabilization</source>
+        <translation>Stabilisering</translation>
+    </message>
+    <message>
+        <source>Static zoom</source>
+        <translation>Statisk zoom</translation>
+    </message>
+    <message>
+        <source>Theme</source>
+        <translation>Tema</translation>
+    </message>
+    <message>
+        <source>Updates</source>
+        <translation>Opdateringer</translation>
+    </message>
+    <message>
+        <source>Zoom</source>
+        <translation>Zoom</translation>
+    </message>
+</context>
+<context>
+    <name>MobileWorkspace</name>
+    <message>
+        <source>%1 completed · %2 need attention</source>
+        <translation>%1 fuldført · %2 kræver opmærksomhed</translation>
+    </message>
+    <message>
+        <source>%1 videos completed</source>
+        <translation>%1 videoer fuldført</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>Tilføj</translation>
+    </message>
+    <message>
+        <source>Add files</source>
+        <translation>Tilføj filer</translation>
+    </message>
+    <message>
+        <source>Add folder</source>
+        <translation>Tilføj mappe</translation>
+    </message>
+    <message>
+        <source>Add media</source>
+        <translation>Tilføj medier</translation>
+    </message>
+    <message>
+        <source>Add videos and gyroscope data to get started.</source>
+        <translation>Tilføj videoer og gyroskopdata for at komme i gang.</translation>
+    </message>
+    <message>
+        <source>All</source>
+        <translation>Alle</translation>
+    </message>
+    <message>
+        <source>Back to videos</source>
+        <translation>Tilbage til videoer</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Annuller</translation>
+    </message>
+    <message>
+        <source>Clear queue</source>
+        <translation>Ryd kø</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Luk</translation>
+    </message>
+    <message>
+        <source>Continue with all videos. Other clips from the same recording day can use this match when their timestamps are available.</source>
+        <translation>Fortsæt med alle videoer. Andre klip fra samme optagedag kan bruge dette match, når deres tidsstempler er tilgængelige.</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>Dyb søgning</translation>
+    </message>
+    <message>
+        <source>Deep search complete</source>
+        <translation>Dyb søgning fuldført</translation>
+    </message>
+    <message>
+        <source>Deep search · %1</source>
+        <translation>Dyb søgning · %1</translation>
+    </message>
+    <message>
+        <source>Deselect</source>
+        <translation>Fravælg</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>Udført</translation>
+    </message>
+    <message>
+        <source>Export stabilized video</source>
+        <translation>Eksportér stabiliseret video</translation>
+    </message>
+    <message>
+        <source>Exported</source>
+        <translation>Eksporteret</translation>
+    </message>
+    <message>
+        <source>Exporting</source>
+        <translation>Eksporterer</translation>
+    </message>
+    <message>
+        <source>Exporting %1%</source>
+        <translation>Eksporterer %1%</translation>
+    </message>
+    <message>
+        <source>Global settings</source>
+        <translation>Globale indstillinger</translation>
+    </message>
+    <message>
+        <source>Gyroscope data</source>
+        <translation>Gyroskopdata</translation>
+    </message>
+    <message>
+        <source>Info</source>
+        <translation>Info</translation>
+    </message>
+    <message>
+        <source>Match found. You can now stabilize.</source>
+        <translation>Match fundet. Du kan nu stabilisere.</translation>
+    </message>
+    <message>
+        <source>Matching videos…</source>
+        <translation>Matcher videoer…</translation>
+    </message>
+    <message>
+        <source>More</source>
+        <translation>Mere</translation>
+    </message>
+    <message>
+        <source>Needs attention</source>
+        <translation>Kræver opmærksomhed</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>Næste</translation>
+    </message>
+    <message>
+        <source>No gyroscope data. Add a recording or try Deep search.</source>
+        <translation>Ingen gyroskopdata. Tilføj en optagelse, eller prøv Dyb søgning.</translation>
+    </message>
+    <message>
+        <source>No match found. Try a video with more camera motion, and check the gyro recording, in-camera stabilization and mounting position.</source>
+        <translation>Intet match fundet. Prøv en video med mere kamerabevægelse, og kontrollér gyrooptagelsen, kameraets stabilisering og monteringspositionen.</translation>
+    </message>
+    <message>
+        <source>Original</source>
+        <translation>Original</translation>
+    </message>
+    <message>
+        <source>Pause</source>
+        <translation>Pause</translation>
+    </message>
+    <message>
+        <source>Play</source>
+        <translation>Afspil</translation>
+    </message>
+    <message>
+        <source>Playback position</source>
+        <translation>Afspilningsposition</translation>
+    </message>
+    <message>
+        <source>Preparing search…</source>
+        <translation>Forbereder søgning…</translation>
+    </message>
+    <message>
+        <source>Preparing…</source>
+        <translation>Forbereder…</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>Forrige</translation>
+    </message>
+    <message>
+        <source>Processed %1 / %2</source>
+        <translation>Behandlet %1 / %2</translation>
+    </message>
+    <message>
+        <source>Reading…</source>
+        <translation>Læser…</translation>
+    </message>
+    <message>
+        <source>Ready</source>
+        <translation>Klar</translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation>Fjern</translation>
+    </message>
+    <message>
+        <source>Reset pairing</source>
+        <translation>Nulstil parring</translation>
+    </message>
+    <message>
+        <source>Retry</source>
+        <translation>Prøv igen</translation>
+    </message>
+    <message>
+        <source>Search cancelled</source>
+        <translation>Søgning annulleret</translation>
+    </message>
+    <message>
+        <source>Select</source>
+        <translation>Vælg</translation>
+    </message>
+    <message>
+        <source>Selected %1</source>
+        <translation>Valgt %1</translation>
+    </message>
+    <message>
+        <source>Settings</source>
+        <translation>Indstillinger</translation>
+    </message>
+    <message>
+        <source>Skipped</source>
+        <translation>Sprunget over</translation>
+    </message>
+    <message>
+        <source>Stabilize</source>
+        <translation>Stabiliser</translation>
+    </message>
+    <message>
+        <source>Stabilized</source>
+        <translation>Stabiliseret</translation>
+    </message>
+    <message>
+        <source>Stabilizing</source>
+        <translation>Stabiliserer</translation>
+    </message>
+    <message>
+        <source>Stabilizing %1%</source>
+        <translation>Stabiliserer %1%</translation>
+    </message>
+    <message>
+        <source>Stop</source>
+        <translation>Stop</translation>
+    </message>
+    <message>
+        <source>Stop the current task before changing its inputs.</source>
+        <translation>Stop den aktuelle opgave, før du ændrer dens input.</translation>
+    </message>
+    <message>
+        <source>Stop the current task to adjust processing settings.</source>
+        <translation>Stop den aktuelle opgave for at justere behandlingsindstillinger.</translation>
+    </message>
+    <message>
+        <source>Stop this video</source>
+        <translation>Stop denne video</translation>
+    </message>
+    <message>
+        <source>Stopped by you. Retry starts this video from the beginning.</source>
+        <translation>Stoppet af dig. Et nyt forsøg starter videoen forfra.</translation>
+    </message>
+    <message>
+        <source>Stopped · %1 completed</source>
+        <translation>Stoppet · %1 fuldført</translation>
+    </message>
+    <message>
+        <source>Stopping…</source>
+        <translation>Stopper…</translation>
+    </message>
+    <message>
+        <source>Sync not confirmed</source>
+        <translation>Synkronisering ikke bekræftet</translation>
+    </message>
+    <message>
+        <source>Task details</source>
+        <translation>Opgavedetaljer</translation>
+    </message>
+    <message>
+        <source>This format supports stabilization for editing plugins only.</source>
+        <translation>Dette format understøtter kun stabilisering til redigeringsplugins.</translation>
+    </message>
+    <message>
+        <source>This video could not be processed. Check its gyroscope data and lens settings.</source>
+        <translation>Denne video kunne ikke behandles. Kontrollér gyroskopdata og objektivindstillinger.</translation>
+    </message>
+    <message>
+        <source>This video is being processed. Preview will be available when it finishes.</source>
+        <translation>Denne video behandles. Forhåndsvisning bliver tilgængelig, når den er færdig.</translation>
+    </message>
+    <message>
+        <source>Unknown</source>
+        <translation>Ukendt</translation>
+    </message>
+    <message>
+        <source>Video information</source>
+        <translation>Videoinformation</translation>
+    </message>
+    <message>
+        <source>Videos</source>
+        <translation>Videoer</translation>
+    </message>
+    <message>
+        <source>Videos %1</source>
+        <translation>Videoer %1</translation>
+    </message>
+    <message>
+        <source>View</source>
+        <translation>Vis</translation>
+    </message>
+    <message>
+        <source>Waiting</source>
+        <translation>Venter</translation>
+    </message>
+    <message>
+        <source>Your videos, ready to stabilize</source>
+        <translation>Dine videoer, klar til stabilisering</translation>
+    </message>
+    <message>
+        <source>‹ Videos</source>
+        <translation>‹ Videoer</translation>
+    </message>
+    <message>
+        <source>Add folders</source>
+        <translation>Tilføj mapper</translation>
+    </message>
+    <message>
+        <source>Add gyroscope data</source>
+        <translation>Tilføj gyroskopdata</translation>
+    </message>
+    <message>
+        <source>Focal length unknown</source>
+        <translation>Ukendt brændvidde</translation>
+    </message>
+    <message>
+        <source>No gyroscope data added</source>
+        <translation>Ingen gyroskopdata tilføjet</translation>
+    </message>
+    <message>
+        <source>Add recordings from an external gyroscope here. Built-in video data is read automatically.</source>
+        <translation>Tilføj optagelser fra et eksternt gyroskop her. Data i videoen læses automatisk.</translation>
+    </message>
+    <message>
+        <source>Add videos to get started.</source>
+        <translation>Tilføj videoer for at komme i gang.</translation>
+    </message>
+    <message>
+        <source>Choose video folders</source>
+        <translation>Vælg videomapper</translation>
+    </message>
+    <message>
+        <source>Choose videos</source>
+        <translation>Vælg videoer</translation>
+    </message>
+    <message>
+        <source>External gyroscope</source>
+        <translation>Eksternt gyroskop</translation>
+    </message>
+    <message>
+        <source>App</source>
+        <translation>App</translation>
+    </message>
+    <message>
+        <source>Back</source>
+        <translation>Tilbage</translation>
+    </message>
+    <message>
+        <source>Changes apply to all videos.</source>
+        <translation>Ændringer gælder for alle videoer.</translation>
+    </message>
+    <message>
+        <source>Clear video and gyroscope matches</source>
+        <translation>Ryd match mellem videoer og gyroskop</translation>
+    </message>
+    <message>
+        <source>Export</source>
+        <translation>Eksport</translation>
+    </message>
+    <message>
+        <source>Lens</source>
+        <translation>Objektiv</translation>
+    </message>
+    <message>
+        <source>Remove all videos from this list</source>
+        <translation>Fjern alle videoer fra denne liste</translation>
+    </message>
+    <message>
+        <source>Choose files</source>
+        <translation>Vælg filer</translation>
+    </message>
+    <message>
+        <source>Choose folders</source>
+        <translation>Vælg mapper</translation>
+    </message>
+    <message>
+        <source>View results</source>
+        <translation>Vis resultater</translation>
+    </message>
+    <message>
+        <source>Confirm folder import</source>
+        <translation>Bekræft mappeimport</translation>
+    </message>
+    <message>
+        <source>Import</source>
+        <translation>Importér</translation>
+    </message>
+    <message>
+        <source>Stabilize (for plugins)</source>
+        <translation>Stabilisér (til plugins)</translation>
+    </message>
+    <message>
+        <source>Calibration pair</source>
+        <translation>Kalibreringspar</translation>
+    </message>
+    <message>
+        <source>In-camera stabilization on</source>
+        <translation>Kamerastabilisering slået til</translation>
+    </message>
+    <message>
+        <source>No gyroscope data</source>
+        <translation>Ingen gyroskopdata</translation>
+    </message>
+    <message>
+        <source>Plugin stabilization only</source>
+        <translation>Kun stabilisering til plugins</translation>
+    </message>
+    <message>
+        <source>Skip reason not recorded</source>
+        <translation>Årsag til spring over ikke registreret</translation>
+    </message>
+    <message>
+        <source>Stopped manually</source>
+        <translation>Stoppet manuelt</translation>
+    </message>
+</context>
+<context>
+    <name>MobileFolderPicker</name>
+    <message>
+        <source>Add %1 folders</source>
+        <translation>Tilføj %1 mapper</translation>
+    </message>
+    <message>
+        <source>Choose a location, then select the folders to add. You can also add folders from another location.</source>
+        <translation>Vælg en placering, og markér mapperne. Du kan også tilføje mapper fra andre placeringer.</translation>
+    </message>
+    <message>
+        <source>Choose location</source>
+        <translation>Vælg placering</translation>
+    </message>
+    <message>
+        <source>No subfolders. Select this folder to add its files.</source>
+        <translation>Ingen undermapper. Vælg denne mappe for at tilføje dens filer.</translation>
+    </message>
+    <message>
+        <source>Open folder</source>
+        <translation>Åbn mappe</translation>
+    </message>
+    <message>
+        <source>This folder</source>
+        <translation>Denne mappe</translation>
+    </message>
+    <message>
+        <source>Unable to read this folder. Choose the location again.</source>
+        <translation>Mappen kan ikke læses. Vælg placeringen igen.</translation>
+    </message>
+    <message>
+        <source>Up one level</source>
+        <translation>Et niveau op</translation>
+    </message>
+    <message>
+        <source>Add this folder</source>
+        <translation>Tilføj denne mappe</translation>
+    </message>
+    <message>
+        <source>No subfolders</source>
+        <translation>Ingen undermapper</translation>
+    </message>
+    <message>
+        <source>Subfolders</source>
+        <translation>Undermapper</translation>
+    </message>
+    <message>
+        <source>Browse</source>
+        <translation>Gennemse</translation>
+    </message>
+    <message>
+        <source>Add %1 files</source>
+        <translation>Tilføj %1 filer</translation>
+    </message>
+    <message>
+        <source>Add location</source>
+        <translation>Tilføj placering</translation>
+    </message>
+    <message>
+        <source>Choose a folder once to browse its files here.</source>
+        <translation>Vælg en mappe én gang for at gennemse dens filer her.</translation>
+    </message>
+    <message>
+        <source>No matching files</source>
+        <translation>Ingen matchende filer</translation>
+    </message>
+    <message>
+        <source>Includes files in this folder and up to two levels of subfolders.</source>
+        <translation>Medtager filer i denne mappe og op til to niveauer af undermapper.</translation>
+    </message>
+    <message>
+        <source>Saved folders</source>
+        <translation>Gemte mapper</translation>
+    </message>
+    <message>
+        <source>Other locations</source>
+        <translation>Andre placeringer</translation>
+    </message>
+</context>
+<context>
+    <name>MobileGyroBar</name>
+    <message>
+        <source>Not added</source>
+        <translation>Ikke tilføjet</translation>
     </message>
 </context>
 </TS>

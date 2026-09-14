@@ -3,10 +3,12 @@
 
 import QtQuick
 import QtQuick.Controls as QQC
+import "../mobile" as Mobile
 
 QQC.RadioButton {
     id: root;
-    implicitHeight: 30 * dpiScale;
+    readonly property bool mobileStyle: typeof window !== "undefined" && window.useMobileWorkspace === true
+    implicitHeight: mobileStyle ? Math.max(44 * dpiScale, contentItem.implicitHeight + 12 * dpiScale) : 30 * dpiScale;
 
     indicator: Rectangle {
         implicitWidth: 20 * dpiScale;
@@ -35,8 +37,9 @@ QQC.RadioButton {
     }
     contentItem: Text {
         text: root.text;
-        font.pixelSize: 13 * dpiScale;
-        font.family: styleFont;
+        font.pixelSize: (root.mobileStyle ? Mobile.MobileStyle.body : 13) * dpiScale;
+        font.family: root.mobileStyle ? Mobile.MobileStyle.fontFamily : styleFont;
+        wrapMode: root.mobileStyle ? Text.WordWrap : Text.NoWrap;
         color: styleTextColor;
         opacity: enabled ? 1.0 : 0.3;
         linkColor: styleAccentColor;

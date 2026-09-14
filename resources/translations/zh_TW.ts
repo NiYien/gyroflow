@@ -1101,6 +1101,10 @@ Try a different output codec (H.265/HEVC handles more cases than H.264/AVC), low
         <source>Go to settings</source>
         <translation>前往設定</translation>
     </message>
+    <message>
+        <source>This video is still loading.</source>
+        <translation>這部影片仍在載入。</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4375,6 +4379,10 @@ Please provide frame rate: </source>
         <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
         <translation>請核對佇列中各影片的鏡頭編號，按右鍵可修改，完成後再穩定。</translation>
     </message>
+    <message>
+        <source>Search stage %1 of %2</source>
+        <translation>搜尋階段 %1 / %2</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>
@@ -6316,6 +6324,10 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <source>Playback speed</source>
         <translation>播放速度</translation>
     </message>
+    <message>
+        <source>Not stabilized yet. Return to Videos and tap Stabilize.</source>
+        <translation>尚未穩定，請返回影片列表並點選「穩定」。</translation>
+    </message>
 </context>
 <context>
     <name>VideoInformation</name>
@@ -6353,6 +6365,562 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <location filename="../../src/ui/main_window.qml" line="114"/>
         <source>No</source>
         <translation>否</translation>
+    </message>
+</context>
+<context>
+    <name>MobileSettings</name>
+    <message>
+        <source>App preferences</source>
+        <translation>App 偏好設定</translation>
+    </message>
+    <message>
+        <source>Auto rotate</source>
+        <translation>自動旋轉</translation>
+    </message>
+    <message>
+        <source>Dynamic zoom</source>
+        <translation>動態縮放</translation>
+    </message>
+    <message>
+        <source>Feedback</source>
+        <translation>意見回饋</translation>
+    </message>
+    <message>
+        <source>Horizon lock amount</source>
+        <translation>地平線鎖定量</translation>
+    </message>
+    <message>
+        <source>Language</source>
+        <translation>語言</translation>
+    </message>
+    <message>
+        <source>Lens correction</source>
+        <translation>鏡頭校正</translation>
+    </message>
+    <message>
+        <source>Lock horizon</source>
+        <translation>鎖定水平</translation>
+    </message>
+    <message>
+        <source>Smoothness</source>
+        <translation>平滑度</translation>
+    </message>
+    <message>
+        <source>Stabilization</source>
+        <translation>穩定</translation>
+    </message>
+    <message>
+        <source>Static zoom</source>
+        <translation>靜態縮放</translation>
+    </message>
+    <message>
+        <source>Theme</source>
+        <translation>主題</translation>
+    </message>
+    <message>
+        <source>Updates</source>
+        <translation>更新</translation>
+    </message>
+    <message>
+        <source>Zoom</source>
+        <translation>縮放</translation>
+    </message>
+</context>
+<context>
+    <name>MobileWorkspace</name>
+    <message>
+        <source>%1 completed · %2 need attention</source>
+        <translation>已完成 %1 · 待處理 %2</translation>
+    </message>
+    <message>
+        <source>%1 videos completed</source>
+        <translation>已完成 %1 部影片</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>加入</translation>
+    </message>
+    <message>
+        <source>Add files</source>
+        <translation>新增檔案</translation>
+    </message>
+    <message>
+        <source>Add folder</source>
+        <translation>新增資料夾</translation>
+    </message>
+    <message>
+        <source>Add media</source>
+        <translation>加入素材</translation>
+    </message>
+    <message>
+        <source>Add videos and gyroscope data to get started.</source>
+        <translation>加入影片和陀螺儀資料，即可開始。</translation>
+    </message>
+    <message>
+        <source>All</source>
+        <translation>全選</translation>
+    </message>
+    <message>
+        <source>Back to videos</source>
+        <translation>返回影片列表</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>取消</translation>
+    </message>
+    <message>
+        <source>Clear queue</source>
+        <translation>清空佇列</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>關閉</translation>
+    </message>
+    <message>
+        <source>Continue with all videos. Other clips from the same recording day can use this match when their timestamps are available.</source>
+        <translation>繼續處理全部影片。同一拍攝日的其他片段若有可用時間戳記，也能利用這次配對。</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>深度搜尋</translation>
+    </message>
+    <message>
+        <source>Deep search complete</source>
+        <translation>深度搜尋完成</translation>
+    </message>
+    <message>
+        <source>Deep search · %1</source>
+        <translation>深度搜尋 · %1</translation>
+    </message>
+    <message>
+        <source>Deselect</source>
+        <translation>取消選取</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>完成</translation>
+    </message>
+    <message>
+        <source>Export stabilized video</source>
+        <translation>匯出穩定後的影片</translation>
+    </message>
+    <message>
+        <source>Exported</source>
+        <translation>已匯出</translation>
+    </message>
+    <message>
+        <source>Exporting</source>
+        <translation>正在匯出</translation>
+    </message>
+    <message>
+        <source>Exporting %1%</source>
+        <translation>正在匯出 %1%</translation>
+    </message>
+    <message>
+        <source>Global settings</source>
+        <translation>全域設定</translation>
+    </message>
+    <message>
+        <source>Gyroscope data</source>
+        <translation>陀螺儀資料</translation>
+    </message>
+    <message>
+        <source>Info</source>
+        <translation>資訊</translation>
+    </message>
+    <message>
+        <source>Match found. You can now stabilize.</source>
+        <translation>配對成功，可以開始穩定了。</translation>
+    </message>
+    <message>
+        <source>Matching videos…</source>
+        <translation>正在配對影片…</translation>
+    </message>
+    <message>
+        <source>More</source>
+        <translation>更多</translation>
+    </message>
+    <message>
+        <source>Needs attention</source>
+        <translation>需要處理</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>下一步</translation>
+    </message>
+    <message>
+        <source>No gyroscope data. Add a recording or try Deep search.</source>
+        <translation>沒有陀螺儀資料。請加入記錄或嘗試深度搜尋。</translation>
+    </message>
+    <message>
+        <source>No match found. Try a video with more camera motion, and check the gyro recording, in-camera stabilization and mounting position.</source>
+        <translation>沒有找到配對。請嘗試相機運動更多的影片，並檢查陀螺儀記錄、機內防手震和安裝位置。</translation>
+    </message>
+    <message>
+        <source>Original</source>
+        <translation>原始</translation>
+    </message>
+    <message>
+        <source>Pause</source>
+        <translation>暫停</translation>
+    </message>
+    <message>
+        <source>Play</source>
+        <translation>播放</translation>
+    </message>
+    <message>
+        <source>Playback position</source>
+        <translation>播放位置</translation>
+    </message>
+    <message>
+        <source>Preparing search…</source>
+        <translation>正在準備搜尋…</translation>
+    </message>
+    <message>
+        <source>Preparing…</source>
+        <translation>正在準備…</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>上一段</translation>
+    </message>
+    <message>
+        <source>Processed %1 / %2</source>
+        <translation>已處理 %1 / %2</translation>
+    </message>
+    <message>
+        <source>Reading…</source>
+        <translation>正在讀取…</translation>
+    </message>
+    <message>
+        <source>Ready</source>
+        <translation>就緒</translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation>移除</translation>
+    </message>
+    <message>
+        <source>Reset pairing</source>
+        <translation>重設配對</translation>
+    </message>
+    <message>
+        <source>Retry</source>
+        <translation>重試</translation>
+    </message>
+    <message>
+        <source>Search cancelled</source>
+        <translation>搜尋已取消</translation>
+    </message>
+    <message>
+        <source>Select</source>
+        <translation>選取</translation>
+    </message>
+    <message>
+        <source>Selected %1</source>
+        <translation>已選 %1</translation>
+    </message>
+    <message>
+        <source>Settings</source>
+        <translation>設定</translation>
+    </message>
+    <message>
+        <source>Skipped</source>
+        <translation>已略過</translation>
+    </message>
+    <message>
+        <source>Stabilize</source>
+        <translation>穩定</translation>
+    </message>
+    <message>
+        <source>Stabilized</source>
+        <translation>增穩後</translation>
+    </message>
+    <message>
+        <source>Stabilizing</source>
+        <translation>正在穩定</translation>
+    </message>
+    <message>
+        <source>Stabilizing %1%</source>
+        <translation>正在穩定 %1%</translation>
+    </message>
+    <message>
+        <source>Stop</source>
+        <translation>停止</translation>
+    </message>
+    <message>
+        <source>Stop the current task before changing its inputs.</source>
+        <translation>請先停止目前工作，再修改輸入素材。</translation>
+    </message>
+    <message>
+        <source>Stop the current task to adjust processing settings.</source>
+        <translation>停止目前工作後，即可調整處理設定。</translation>
+    </message>
+    <message>
+        <source>Stop this video</source>
+        <translation>停止這部影片</translation>
+    </message>
+    <message>
+        <source>Stopped by you. Retry starts this video from the beginning.</source>
+        <translation>已手動停止。重試會從頭處理這部影片。</translation>
+    </message>
+    <message>
+        <source>Stopped · %1 completed</source>
+        <translation>已停止 · 已完成 %1</translation>
+    </message>
+    <message>
+        <source>Stopping…</source>
+        <translation>正在停止…</translation>
+    </message>
+    <message>
+        <source>Sync not confirmed</source>
+        <translation>同步未確認</translation>
+    </message>
+    <message>
+        <source>Task details</source>
+        <translation>工作詳情</translation>
+    </message>
+    <message>
+        <source>This format supports stabilization for editing plugins only.</source>
+        <translation>這個格式僅支援為剪輯外掛產生穩定結果。</translation>
+    </message>
+    <message>
+        <source>This video could not be processed. Check its gyroscope data and lens settings.</source>
+        <translation>無法處理這部影片，請檢查陀螺儀資料和鏡頭設定。</translation>
+    </message>
+    <message>
+        <source>This video is being processed. Preview will be available when it finishes.</source>
+        <translation>這部影片正在處理，完成後即可預覽。</translation>
+    </message>
+    <message>
+        <source>Unknown</source>
+        <translation>未知</translation>
+    </message>
+    <message>
+        <source>Video information</source>
+        <translation>影片資訊</translation>
+    </message>
+    <message>
+        <source>Videos</source>
+        <translation>影片</translation>
+    </message>
+    <message>
+        <source>Videos %1</source>
+        <translation>影片 %1</translation>
+    </message>
+    <message>
+        <source>View</source>
+        <translation>檢視</translation>
+    </message>
+    <message>
+        <source>Waiting</source>
+        <translation>等待處理</translation>
+    </message>
+    <message>
+        <source>Your videos, ready to stabilize</source>
+        <translation>從這裡開始穩定影片</translation>
+    </message>
+    <message>
+        <source>‹ Videos</source>
+        <translation>‹ 影片列表</translation>
+    </message>
+    <message>
+        <source>Add folders</source>
+        <translation>加入多個資料夾</translation>
+    </message>
+    <message>
+        <source>Add gyroscope data</source>
+        <translation>加入陀螺儀</translation>
+    </message>
+    <message>
+        <source>Focal length unknown</source>
+        <translation>焦距未知</translation>
+    </message>
+    <message>
+        <source>No gyroscope data added</source>
+        <translation>尚未加入陀螺儀資料</translation>
+    </message>
+    <message>
+        <source>Add recordings from an external gyroscope here. Built-in video data is read automatically.</source>
+        <translation>在這裡加入外接陀螺儀的記錄。影片內建的資料會自動讀取。</translation>
+    </message>
+    <message>
+        <source>Add videos to get started.</source>
+        <translation>先加入要穩定的影片。</translation>
+    </message>
+    <message>
+        <source>Choose video folders</source>
+        <translation>選擇影片資料夾</translation>
+    </message>
+    <message>
+        <source>Choose videos</source>
+        <translation>選擇影片</translation>
+    </message>
+    <message>
+        <source>External gyroscope</source>
+        <translation>外接陀螺儀</translation>
+    </message>
+    <message>
+        <source>App</source>
+        <translation>應用</translation>
+    </message>
+    <message>
+        <source>Back</source>
+        <translation>上一步</translation>
+    </message>
+    <message>
+        <source>Changes apply to all videos.</source>
+        <translation>設定套用至所有影片。</translation>
+    </message>
+    <message>
+        <source>Clear video and gyroscope matches</source>
+        <translation>清除影片與陀螺儀的配對關係</translation>
+    </message>
+    <message>
+        <source>Export</source>
+        <translation>導出</translation>
+    </message>
+    <message>
+        <source>Lens</source>
+        <translation>鏡頭</translation>
+    </message>
+    <message>
+        <source>Remove all videos from this list</source>
+        <translation>移除清單中的所有影片</translation>
+    </message>
+    <message>
+        <source>Choose files</source>
+        <translation>選擇檔案</translation>
+    </message>
+    <message>
+        <source>Choose folders</source>
+        <translation>選擇資料夾</translation>
+    </message>
+    <message>
+        <source>View results</source>
+        <translation>查看結果</translation>
+    </message>
+    <message>
+        <source>Confirm folder import</source>
+        <translation>確認匯入資料夾</translation>
+    </message>
+    <message>
+        <source>Import</source>
+        <translation>匯入</translation>
+    </message>
+    <message>
+        <source>Stabilize (for plugins)</source>
+        <translation>穩定（外掛用）</translation>
+    </message>
+    <message>
+        <source>Calibration pair</source>
+        <translation>校準配對影片</translation>
+    </message>
+    <message>
+        <source>In-camera stabilization on</source>
+        <translation>機內防抖已開啟</translation>
+    </message>
+    <message>
+        <source>No gyroscope data</source>
+        <translation>無陀螺儀資料</translation>
+    </message>
+    <message>
+        <source>Plugin stabilization only</source>
+        <translation>僅支援外掛穩定</translation>
+    </message>
+    <message>
+        <source>Skip reason not recorded</source>
+        <translation>未記錄略過原因</translation>
+    </message>
+    <message>
+        <source>Stopped manually</source>
+        <translation>已手動停止</translation>
+    </message>
+</context>
+<context>
+    <name>MobileFolderPicker</name>
+    <message>
+        <source>Add %1 folders</source>
+        <translation>加入 %1 個資料夾</translation>
+    </message>
+    <message>
+        <source>Choose a location, then select the folders to add. You can also add folders from another location.</source>
+        <translation>先選擇位置，再勾選要加入的資料夾。也可以繼續選擇其他位置的資料夾。</translation>
+    </message>
+    <message>
+        <source>Choose location</source>
+        <translation>選擇位置</translation>
+    </message>
+    <message>
+        <source>No subfolders. Select this folder to add its files.</source>
+        <translation>沒有子資料夾。選擇「此資料夾」即可加入其中的檔案。</translation>
+    </message>
+    <message>
+        <source>Open folder</source>
+        <translation>開啟資料夾</translation>
+    </message>
+    <message>
+        <source>This folder</source>
+        <translation>此資料夾</translation>
+    </message>
+    <message>
+        <source>Unable to read this folder. Choose the location again.</source>
+        <translation>無法讀取資料夾，請重新選擇位置。</translation>
+    </message>
+    <message>
+        <source>Up one level</source>
+        <translation>上一層</translation>
+    </message>
+    <message>
+        <source>Add this folder</source>
+        <translation>加入此資料夾</translation>
+    </message>
+    <message>
+        <source>No subfolders</source>
+        <translation>沒有子資料夾</translation>
+    </message>
+    <message>
+        <source>Subfolders</source>
+        <translation>子資料夾</translation>
+    </message>
+    <message>
+        <source>Browse</source>
+        <translation>瀏覽</translation>
+    </message>
+    <message>
+        <source>Add %1 files</source>
+        <translation>加入 %1 個檔案</translation>
+    </message>
+    <message>
+        <source>Add location</source>
+        <translation>加入位置</translation>
+    </message>
+    <message>
+        <source>Choose a folder once to browse its files here.</source>
+        <translation>先選擇一個存放位置，以後就能直接在這裡瀏覽檔案。</translation>
+    </message>
+    <message>
+        <source>No matching files</source>
+        <translation>沒有可加入的檔案</translation>
+    </message>
+    <message>
+        <source>Includes files in this folder and up to two levels of subfolders.</source>
+        <translation>自動讀取所選資料夾及最多兩層子資料夾中的檔案。</translation>
+    </message>
+    <message>
+        <source>Saved folders</source>
+        <translation>已儲存的資料夾</translation>
+    </message>
+    <message>
+        <source>Other locations</source>
+        <translation>其他位置</translation>
+    </message>
+</context>
+<context>
+    <name>MobileGyroBar</name>
+    <message>
+        <source>Not added</source>
+        <translation>尚未加入</translation>
     </message>
 </context>
 </TS>

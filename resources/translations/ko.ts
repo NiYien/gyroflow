@@ -1100,6 +1100,10 @@ Try a different output codec (H.265/HEVC handles more cases than H.264/AVC), low
         <source>Go to settings</source>
         <translation>설정으로 이동</translation>
     </message>
+    <message>
+        <source>This video is still loading.</source>
+        <translation>이 동영상을 아직 불러오는 중입니다.</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4338,6 +4342,10 @@ Please provide frame rate: </source>
         <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
         <translation>대기열에 있는 각 동영상의 렌즈 번호를 확인하세요. 마우스 오른쪽 버튼으로 클릭해 변경한 다음 안정화하세요.</translation>
     </message>
+    <message>
+        <source>Search stage %1 of %2</source>
+        <translation>검색 단계 %1 / %2</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>
@@ -6263,6 +6271,10 @@ Gyroflow를 사용하려면 렌즈 안정화(광학 SteadyShot)를 비활성화�
         <source>Playback speed</source>
         <translation>재생 속도</translation>
     </message>
+    <message>
+        <source>Not stabilized yet. Return to Videos and tap Stabilize.</source>
+        <translation>아직 안정화되지 않았습니다. 동영상 목록으로 돌아가 안정화를 누르세요.</translation>
+    </message>
 </context>
 <context>
     <name>VideoInformation</name>
@@ -6300,6 +6312,562 @@ Gyroflow를 사용하려면 렌즈 안정화(광학 SteadyShot)를 비활성화�
         <location filename="../../src/ui/main_window.qml" line="114"/>
         <source>No</source>
         <translation>아니요</translation>
+    </message>
+</context>
+<context>
+    <name>MobileSettings</name>
+    <message>
+        <source>App preferences</source>
+        <translation>앱 환경설정</translation>
+    </message>
+    <message>
+        <source>Auto rotate</source>
+        <translation>자동 회전</translation>
+    </message>
+    <message>
+        <source>Dynamic zoom</source>
+        <translation>동적 줌</translation>
+    </message>
+    <message>
+        <source>Feedback</source>
+        <translation>의견 보내기</translation>
+    </message>
+    <message>
+        <source>Horizon lock amount</source>
+        <translation>수평 잠금 수준</translation>
+    </message>
+    <message>
+        <source>Language</source>
+        <translation>언어</translation>
+    </message>
+    <message>
+        <source>Lens correction</source>
+        <translation>렌즈 보정</translation>
+    </message>
+    <message>
+        <source>Lock horizon</source>
+        <translation>수평 잠금</translation>
+    </message>
+    <message>
+        <source>Smoothness</source>
+        <translation>평활도</translation>
+    </message>
+    <message>
+        <source>Stabilization</source>
+        <translation>안정화</translation>
+    </message>
+    <message>
+        <source>Static zoom</source>
+        <translation>줌 값 고정</translation>
+    </message>
+    <message>
+        <source>Theme</source>
+        <translation>테마</translation>
+    </message>
+    <message>
+        <source>Updates</source>
+        <translation>업데이트</translation>
+    </message>
+    <message>
+        <source>Zoom</source>
+        <translation>줌</translation>
+    </message>
+</context>
+<context>
+    <name>MobileWorkspace</name>
+    <message>
+        <source>%1 completed · %2 need attention</source>
+        <translation>%1개 완료 · %2개 확인 필요</translation>
+    </message>
+    <message>
+        <source>%1 videos completed</source>
+        <translation>동영상 %1개 완료</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>추가</translation>
+    </message>
+    <message>
+        <source>Add files</source>
+        <translation>파일 추가</translation>
+    </message>
+    <message>
+        <source>Add folder</source>
+        <translation>폴더 추가</translation>
+    </message>
+    <message>
+        <source>Add media</source>
+        <translation>미디어 추가</translation>
+    </message>
+    <message>
+        <source>Add videos and gyroscope data to get started.</source>
+        <translation>동영상과 자이로스코프 데이터를 추가해 시작하세요.</translation>
+    </message>
+    <message>
+        <source>All</source>
+        <translation>전체</translation>
+    </message>
+    <message>
+        <source>Back to videos</source>
+        <translation>동영상 목록으로</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>취소</translation>
+    </message>
+    <message>
+        <source>Clear queue</source>
+        <translation>대기열 비우기</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>닫기</translation>
+    </message>
+    <message>
+        <source>Continue with all videos. Other clips from the same recording day can use this match when their timestamps are available.</source>
+        <translation>모든 동영상으로 계속합니다. 같은 촬영일의 다른 클립도 타임스탬프가 있으면 이 매칭 결과를 사용할 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>딥 서치</translation>
+    </message>
+    <message>
+        <source>Deep search complete</source>
+        <translation>심층 검색 완료</translation>
+    </message>
+    <message>
+        <source>Deep search · %1</source>
+        <translation>심층 검색 · %1</translation>
+    </message>
+    <message>
+        <source>Deselect</source>
+        <translation>선택 해제</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>완료</translation>
+    </message>
+    <message>
+        <source>Export stabilized video</source>
+        <translation>안정화된 영상 내보내기</translation>
+    </message>
+    <message>
+        <source>Exported</source>
+        <translation>내보내기 완료</translation>
+    </message>
+    <message>
+        <source>Exporting</source>
+        <translation>내보내는 중</translation>
+    </message>
+    <message>
+        <source>Exporting %1%</source>
+        <translation>내보내기 %1%</translation>
+    </message>
+    <message>
+        <source>Global settings</source>
+        <translation>전체 설정</translation>
+    </message>
+    <message>
+        <source>Gyroscope data</source>
+        <translation>자이로스코프 데이터</translation>
+    </message>
+    <message>
+        <source>Info</source>
+        <translation>정보</translation>
+    </message>
+    <message>
+        <source>Match found. You can now stabilize.</source>
+        <translation>매칭을 찾았습니다. 이제 안정화할 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>Matching videos…</source>
+        <translation>동영상 매칭 중…</translation>
+    </message>
+    <message>
+        <source>More</source>
+        <translation>더보기</translation>
+    </message>
+    <message>
+        <source>Needs attention</source>
+        <translation>확인 필요</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>다음</translation>
+    </message>
+    <message>
+        <source>No gyroscope data. Add a recording or try Deep search.</source>
+        <translation>자이로스코프 데이터가 없습니다. 기록을 추가하거나 심층 검색을 시도하세요.</translation>
+    </message>
+    <message>
+        <source>No match found. Try a video with more camera motion, and check the gyro recording, in-camera stabilization and mounting position.</source>
+        <translation>매칭을 찾지 못했습니다. 카메라 움직임이 더 많은 동영상을 시도하고 자이로 기록, 카메라 내부 손떨림 보정, 장착 위치를 확인하세요.</translation>
+    </message>
+    <message>
+        <source>Original</source>
+        <translation>원본</translation>
+    </message>
+    <message>
+        <source>Pause</source>
+        <translation>일시 중단</translation>
+    </message>
+    <message>
+        <source>Play</source>
+        <translation>재생</translation>
+    </message>
+    <message>
+        <source>Playback position</source>
+        <translation>재생 위치</translation>
+    </message>
+    <message>
+        <source>Preparing search…</source>
+        <translation>검색 준비 중…</translation>
+    </message>
+    <message>
+        <source>Preparing…</source>
+        <translation>준비 중…</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>이전</translation>
+    </message>
+    <message>
+        <source>Processed %1 / %2</source>
+        <translation>처리됨 %1 / %2</translation>
+    </message>
+    <message>
+        <source>Reading…</source>
+        <translation>읽는 중…</translation>
+    </message>
+    <message>
+        <source>Ready</source>
+        <translation>준비됨</translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation>제거</translation>
+    </message>
+    <message>
+        <source>Reset pairing</source>
+        <translation>페어링 재설정</translation>
+    </message>
+    <message>
+        <source>Retry</source>
+        <translation>다시 시도</translation>
+    </message>
+    <message>
+        <source>Search cancelled</source>
+        <translation>검색 취소됨</translation>
+    </message>
+    <message>
+        <source>Select</source>
+        <translation>선택</translation>
+    </message>
+    <message>
+        <source>Selected %1</source>
+        <translation>%1개 선택</translation>
+    </message>
+    <message>
+        <source>Settings</source>
+        <translation>설정</translation>
+    </message>
+    <message>
+        <source>Skipped</source>
+        <translation>건너뜀</translation>
+    </message>
+    <message>
+        <source>Stabilize</source>
+        <translation>안정화</translation>
+    </message>
+    <message>
+        <source>Stabilized</source>
+        <translation>안정화됨</translation>
+    </message>
+    <message>
+        <source>Stabilizing</source>
+        <translation>안정화 중</translation>
+    </message>
+    <message>
+        <source>Stabilizing %1%</source>
+        <translation>안정화 %1%</translation>
+    </message>
+    <message>
+        <source>Stop</source>
+        <translation>중지</translation>
+    </message>
+    <message>
+        <source>Stop the current task before changing its inputs.</source>
+        <translation>입력 파일을 변경하기 전에 현재 작업을 중지하세요.</translation>
+    </message>
+    <message>
+        <source>Stop the current task to adjust processing settings.</source>
+        <translation>처리 설정을 조정하려면 현재 작업을 중지하세요.</translation>
+    </message>
+    <message>
+        <source>Stop this video</source>
+        <translation>이 동영상 중지</translation>
+    </message>
+    <message>
+        <source>Stopped by you. Retry starts this video from the beginning.</source>
+        <translation>사용자가 중지했습니다. 다시 시도하면 이 동영상을 처음부터 처리합니다.</translation>
+    </message>
+    <message>
+        <source>Stopped · %1 completed</source>
+        <translation>중지됨 · %1개 완료</translation>
+    </message>
+    <message>
+        <source>Stopping…</source>
+        <translation>중지 중…</translation>
+    </message>
+    <message>
+        <source>Sync not confirmed</source>
+        <translation>동기화 미확인</translation>
+    </message>
+    <message>
+        <source>Task details</source>
+        <translation>작업 상세</translation>
+    </message>
+    <message>
+        <source>This format supports stabilization for editing plugins only.</source>
+        <translation>이 형식은 편집 플러그인용 안정화만 지원합니다.</translation>
+    </message>
+    <message>
+        <source>This video could not be processed. Check its gyroscope data and lens settings.</source>
+        <translation>이 동영상을 처리할 수 없습니다. 자이로스코프 데이터와 렌즈 설정을 확인하세요.</translation>
+    </message>
+    <message>
+        <source>This video is being processed. Preview will be available when it finishes.</source>
+        <translation>이 동영상을 처리 중입니다. 완료되면 미리 볼 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>Unknown</source>
+        <translation>알 수 없음</translation>
+    </message>
+    <message>
+        <source>Video information</source>
+        <translation>영상 정보</translation>
+    </message>
+    <message>
+        <source>Videos</source>
+        <translation>동영상</translation>
+    </message>
+    <message>
+        <source>Videos %1</source>
+        <translation>동영상 %1</translation>
+    </message>
+    <message>
+        <source>View</source>
+        <translation>보기</translation>
+    </message>
+    <message>
+        <source>Waiting</source>
+        <translation>대기 중</translation>
+    </message>
+    <message>
+        <source>Your videos, ready to stabilize</source>
+        <translation>동영상 안정화를 시작하세요</translation>
+    </message>
+    <message>
+        <source>‹ Videos</source>
+        <translation>‹ 동영상</translation>
+    </message>
+    <message>
+        <source>Add folders</source>
+        <translation>폴더 추가</translation>
+    </message>
+    <message>
+        <source>Add gyroscope data</source>
+        <translation>자이로 데이터 추가</translation>
+    </message>
+    <message>
+        <source>Focal length unknown</source>
+        <translation>초점 거리 미상</translation>
+    </message>
+    <message>
+        <source>No gyroscope data added</source>
+        <translation>추가된 자이로 데이터 없음</translation>
+    </message>
+    <message>
+        <source>Add recordings from an external gyroscope here. Built-in video data is read automatically.</source>
+        <translation>외부 자이로스코프 기록을 여기에 추가하세요. 동영상에 포함된 데이터는 자동으로 읽습니다.</translation>
+    </message>
+    <message>
+        <source>Add videos to get started.</source>
+        <translation>동영상을 추가해 시작하세요.</translation>
+    </message>
+    <message>
+        <source>Choose video folders</source>
+        <translation>동영상 폴더 선택</translation>
+    </message>
+    <message>
+        <source>Choose videos</source>
+        <translation>동영상 선택</translation>
+    </message>
+    <message>
+        <source>External gyroscope</source>
+        <translation>외부 자이로스코프</translation>
+    </message>
+    <message>
+        <source>App</source>
+        <translation>앱</translation>
+    </message>
+    <message>
+        <source>Back</source>
+        <translation>뒤로</translation>
+    </message>
+    <message>
+        <source>Changes apply to all videos.</source>
+        <translation>변경 사항은 모든 동영상에 적용됩니다.</translation>
+    </message>
+    <message>
+        <source>Clear video and gyroscope matches</source>
+        <translation>동영상과 자이로스코프 매칭 지우기</translation>
+    </message>
+    <message>
+        <source>Export</source>
+        <translation>내보내기</translation>
+    </message>
+    <message>
+        <source>Lens</source>
+        <translation>렌즈</translation>
+    </message>
+    <message>
+        <source>Remove all videos from this list</source>
+        <translation>이 목록에서 모든 동영상 제거</translation>
+    </message>
+    <message>
+        <source>Choose files</source>
+        <translation>파일 선택</translation>
+    </message>
+    <message>
+        <source>Choose folders</source>
+        <translation>폴더 선택</translation>
+    </message>
+    <message>
+        <source>View results</source>
+        <translation>결과 보기</translation>
+    </message>
+    <message>
+        <source>Confirm folder import</source>
+        <translation>폴더 가져오기 확인</translation>
+    </message>
+    <message>
+        <source>Import</source>
+        <translation>가져오기</translation>
+    </message>
+    <message>
+        <source>Stabilize (for plugins)</source>
+        <translation>안정화 (플러그인용)</translation>
+    </message>
+    <message>
+        <source>Calibration pair</source>
+        <translation>보정 쌍</translation>
+    </message>
+    <message>
+        <source>In-camera stabilization on</source>
+        <translation>카메라 내 손떨림 보정 켜짐</translation>
+    </message>
+    <message>
+        <source>No gyroscope data</source>
+        <translation>자이로스코프 데이터 없음</translation>
+    </message>
+    <message>
+        <source>Plugin stabilization only</source>
+        <translation>플러그인용 안정화만 지원</translation>
+    </message>
+    <message>
+        <source>Skip reason not recorded</source>
+        <translation>건너뛴 이유가 기록되지 않음</translation>
+    </message>
+    <message>
+        <source>Stopped manually</source>
+        <translation>수동으로 중지됨</translation>
+    </message>
+</context>
+<context>
+    <name>MobileFolderPicker</name>
+    <message>
+        <source>Add %1 folders</source>
+        <translation>폴더 %1개 추가</translation>
+    </message>
+    <message>
+        <source>Choose a location, then select the folders to add. You can also add folders from another location.</source>
+        <translation>위치를 고른 뒤 추가할 폴더를 선택하세요. 다른 위치의 폴더도 추가할 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>Choose location</source>
+        <translation>위치 선택</translation>
+    </message>
+    <message>
+        <source>No subfolders. Select this folder to add its files.</source>
+        <translation>하위 폴더가 없습니다. 이 폴더를 선택하면 안의 파일을 추가합니다.</translation>
+    </message>
+    <message>
+        <source>Open folder</source>
+        <translation>폴더 열기</translation>
+    </message>
+    <message>
+        <source>This folder</source>
+        <translation>이 폴더</translation>
+    </message>
+    <message>
+        <source>Unable to read this folder. Choose the location again.</source>
+        <translation>폴더를 읽을 수 없습니다. 위치를 다시 선택하세요.</translation>
+    </message>
+    <message>
+        <source>Up one level</source>
+        <translation>상위 폴더</translation>
+    </message>
+    <message>
+        <source>Add this folder</source>
+        <translation>이 폴더 추가</translation>
+    </message>
+    <message>
+        <source>No subfolders</source>
+        <translation>하위 폴더 없음</translation>
+    </message>
+    <message>
+        <source>Subfolders</source>
+        <translation>하위 폴더</translation>
+    </message>
+    <message>
+        <source>Browse</source>
+        <translation>찾아보기</translation>
+    </message>
+    <message>
+        <source>Add %1 files</source>
+        <translation>파일 %1개 추가</translation>
+    </message>
+    <message>
+        <source>Add location</source>
+        <translation>위치 추가</translation>
+    </message>
+    <message>
+        <source>Choose a folder once to browse its files here.</source>
+        <translation>폴더를 한 번 선택하면 여기에서 파일을 탐색할 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>No matching files</source>
+        <translation>해당 파일 없음</translation>
+    </message>
+    <message>
+        <source>Includes files in this folder and up to two levels of subfolders.</source>
+        <translation>이 폴더와 최대 두 단계의 하위 폴더에 있는 파일을 포함합니다.</translation>
+    </message>
+    <message>
+        <source>Saved folders</source>
+        <translation>저장된 폴더</translation>
+    </message>
+    <message>
+        <source>Other locations</source>
+        <translation>다른 위치</translation>
+    </message>
+</context>
+<context>
+    <name>MobileGyroBar</name>
+    <message>
+        <source>Not added</source>
+        <translation>추가 안 됨</translation>
     </message>
 </context>
 </TS>

@@ -22,9 +22,43 @@ pub fn get_jvm() -> jni::JavaVM {
     unsafe { jni::JavaVM::from_raw(ndk_context::android_context().vm().cast()) }
 }
 
+pub fn persisted_folder_urls() -> Result<Vec<String>> {
+    Ok(get_jvm().attach_current_thread(|mut env| {
+        check_exception!(env, Vec<String>; {
+            let resolver = ContentResolver::get(&mut env)?;
+            let permissions = env.call_method(&resolver, jni_str!("getPersistedUriPermissions"),
+                jni_sig!("()Ljava/util/List;"), &[])?.l()?;
+            let count = env.call_method(&permissions, jni_str!("size"), jni_sig!("()I"), &[])?.i()?;
+            let mut urls = Vec::new();
+            for index in 0..count {
+                let permission = env.call_method(&permissions, jni_str!("get"),
+                    jni_sig!("(I)Ljava/lang/Object;"), &[JValue::Int(index)])?.l()?;
+                if !env.call_method(&permission, jni_str!("isReadPermission"), jni_sig!("()Z"), &[])?.z()? {
+                    continue;
+                }
+                let uri = env.call_method(&permission, jni_str!("getUri"),
+                    jni_sig!("()Landroid/net/Uri;"), &[])?.l()?;
+                let url = Uri::to_string(&mut env, &uri)?;
+                if super::is_bare_content_tree_url(&url) { urls.push(url); }
+            }
+            urls.sort();
+            urls.dedup();
+            Ok(urls)
+        })
+    })?)
+}
+
 impl super::FileWrapper {
     pub fn open_android(url: &str, open_mode: &str) -> Result<Self> {
         let jvm = android::get_jvm();
+        if url.starts_with("file://") {
+            // Open first so writable files may be created before querying their size.
+            let handle = open_file(&jvm, url, open_mode)?;
+            let file: std::fs::File = unsafe { std::os::fd::FromRawFd::from_raw_fd(handle.fd) };
+            let mut wrapper = Self { file: Some(file), size: 0, url: url.to_owned(), android_handle: handle };
+            wrapper.size = wrapper.get_file().metadata()?.len() as usize;
+            return Ok(wrapper);
+        }
         let android_info = get_url_info(url)?;
         if let Some(size) = android_info.size {
             let handle = open_file(&jvm, url, open_mode)?;

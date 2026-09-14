@@ -1100,6 +1100,10 @@ Kokeile toista lähtökoodekkia (H.265/HEVC tukee useampia tapauksia kuin H.264/
         <source>Go to settings</source>
         <translation>Siirry asetuksiin</translation>
     </message>
+    <message>
+        <source>This video is still loading.</source>
+        <translation>Tätä videota ladataan vielä.</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4338,6 +4342,10 @@ Anna kuvanopeus:</translation>
         <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
         <translation>Tarkista jokaisen jonossa olevan videon objektiivinumero. Muuta napsauttamalla hiiren oikealla painikkeella ja vakauta sitten.</translation>
     </message>
+    <message>
+        <source>Search stage %1 of %2</source>
+        <translation>Hakuvaihe %1 / %2</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>
@@ -6263,6 +6271,10 @@ Poista objektiivin stabilointi (Optical SteadyShot) käytöstä, jotta voit käy
         <source>Playback speed</source>
         <translation>Toistonopeus</translation>
     </message>
+    <message>
+        <source>Not stabilized yet. Return to Videos and tap Stabilize.</source>
+        <translation>Ei vielä vakautettu. Palaa videoihin ja napauta Vakauta.</translation>
+    </message>
 </context>
 <context>
     <name>VideoInformation</name>
@@ -6300,6 +6312,562 @@ Poista objektiivin stabilointi (Optical SteadyShot) käytöstä, jotta voit käy
         <location filename="../../src/ui/main_window.qml" line="114"/>
         <source>No</source>
         <translation>Ei</translation>
+    </message>
+</context>
+<context>
+    <name>MobileSettings</name>
+    <message>
+        <source>App preferences</source>
+        <translation>Sovelluksen asetukset</translation>
+    </message>
+    <message>
+        <source>Auto rotate</source>
+        <translation>Automaattinen kierto</translation>
+    </message>
+    <message>
+        <source>Dynamic zoom</source>
+        <translation>Dynaaminen zoomaus</translation>
+    </message>
+    <message>
+        <source>Feedback</source>
+        <translation>Palaute</translation>
+    </message>
+    <message>
+        <source>Horizon lock amount</source>
+        <translation>Horisontin lukituksen määrä</translation>
+    </message>
+    <message>
+        <source>Language</source>
+        <translation>Kieli</translation>
+    </message>
+    <message>
+        <source>Lens correction</source>
+        <translation>Linssin korjaus</translation>
+    </message>
+    <message>
+        <source>Lock horizon</source>
+        <translation>Lukitse horisontti</translation>
+    </message>
+    <message>
+        <source>Smoothness</source>
+        <translation>Pehmeys</translation>
+    </message>
+    <message>
+        <source>Stabilization</source>
+        <translation>Vakauttaminen</translation>
+    </message>
+    <message>
+        <source>Static zoom</source>
+        <translation>Staattinen zoom</translation>
+    </message>
+    <message>
+        <source>Theme</source>
+        <translation>Teema</translation>
+    </message>
+    <message>
+        <source>Updates</source>
+        <translation>Päivitykset</translation>
+    </message>
+    <message>
+        <source>Zoom</source>
+        <translation>Zoomaus</translation>
+    </message>
+</context>
+<context>
+    <name>MobileWorkspace</name>
+    <message>
+        <source>%1 completed · %2 need attention</source>
+        <translation>%1 valmis · %2 tarkistettava</translation>
+    </message>
+    <message>
+        <source>%1 videos completed</source>
+        <translation>%1 videota valmis</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>Lisää</translation>
+    </message>
+    <message>
+        <source>Add files</source>
+        <translation>Lisää tiedostoja</translation>
+    </message>
+    <message>
+        <source>Add folder</source>
+        <translation>Lisää kansio</translation>
+    </message>
+    <message>
+        <source>Add media</source>
+        <translation>Lisää mediaa</translation>
+    </message>
+    <message>
+        <source>Add videos and gyroscope data to get started.</source>
+        <translation>Aloita lisäämällä videoita ja gyroskooppidataa.</translation>
+    </message>
+    <message>
+        <source>All</source>
+        <translation>Kaikki</translation>
+    </message>
+    <message>
+        <source>Back to videos</source>
+        <translation>Takaisin videoihin</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Peruuta</translation>
+    </message>
+    <message>
+        <source>Clear queue</source>
+        <translation>Tyhjennä jono</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Sulje</translation>
+    </message>
+    <message>
+        <source>Continue with all videos. Other clips from the same recording day can use this match when their timestamps are available.</source>
+        <translation>Jatka kaikilla videoilla. Muut samana päivänä kuvatut leikkeet voivat käyttää tätä vastaavuutta, jos niiden aikaleimat ovat käytettävissä.</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>Syvähaku</translation>
+    </message>
+    <message>
+        <source>Deep search complete</source>
+        <translation>Syvähaku valmis</translation>
+    </message>
+    <message>
+        <source>Deep search · %1</source>
+        <translation>Syvähaku · %1</translation>
+    </message>
+    <message>
+        <source>Deselect</source>
+        <translation>Poista valinta</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>Valmis</translation>
+    </message>
+    <message>
+        <source>Export stabilized video</source>
+        <translation>Vie vakautettu video</translation>
+    </message>
+    <message>
+        <source>Exported</source>
+        <translation>Viety</translation>
+    </message>
+    <message>
+        <source>Exporting</source>
+        <translation>Viedään</translation>
+    </message>
+    <message>
+        <source>Exporting %1%</source>
+        <translation>Viedään %1%</translation>
+    </message>
+    <message>
+        <source>Global settings</source>
+        <translation>Yleiset asetukset</translation>
+    </message>
+    <message>
+        <source>Gyroscope data</source>
+        <translation>Gyroskooppidata</translation>
+    </message>
+    <message>
+        <source>Info</source>
+        <translation>Tiedot</translation>
+    </message>
+    <message>
+        <source>Match found. You can now stabilize.</source>
+        <translation>Vastaavuus löytyi. Voit nyt vakauttaa.</translation>
+    </message>
+    <message>
+        <source>Matching videos…</source>
+        <translation>Yhdistetään videoita…</translation>
+    </message>
+    <message>
+        <source>More</source>
+        <translation>Lisää</translation>
+    </message>
+    <message>
+        <source>Needs attention</source>
+        <translation>Tarkistettava</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>Seuraava</translation>
+    </message>
+    <message>
+        <source>No gyroscope data. Add a recording or try Deep search.</source>
+        <translation>Ei gyroskooppidataa. Lisää tallenne tai kokeile syvähakua.</translation>
+    </message>
+    <message>
+        <source>No match found. Try a video with more camera motion, and check the gyro recording, in-camera stabilization and mounting position.</source>
+        <translation>Vastaavuutta ei löytynyt. Kokeile videota, jossa kamera liikkuu enemmän, ja tarkista gyrotallenne, kameran vakautus sekä kiinnitysasento.</translation>
+    </message>
+    <message>
+        <source>Original</source>
+        <translation>Alkuperäinen</translation>
+    </message>
+    <message>
+        <source>Pause</source>
+        <translation>Keskeytä</translation>
+    </message>
+    <message>
+        <source>Play</source>
+        <translation>Toista</translation>
+    </message>
+    <message>
+        <source>Playback position</source>
+        <translation>Toistokohta</translation>
+    </message>
+    <message>
+        <source>Preparing search…</source>
+        <translation>Valmistellaan hakua…</translation>
+    </message>
+    <message>
+        <source>Preparing…</source>
+        <translation>Valmistellaan…</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>Edellinen</translation>
+    </message>
+    <message>
+        <source>Processed %1 / %2</source>
+        <translation>Käsitelty %1 / %2</translation>
+    </message>
+    <message>
+        <source>Reading…</source>
+        <translation>Luetaan…</translation>
+    </message>
+    <message>
+        <source>Ready</source>
+        <translation>Valmis</translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation>Poista</translation>
+    </message>
+    <message>
+        <source>Reset pairing</source>
+        <translation>Nollaa parinmuodostus</translation>
+    </message>
+    <message>
+        <source>Retry</source>
+        <translation>Yritä uudelleen</translation>
+    </message>
+    <message>
+        <source>Search cancelled</source>
+        <translation>Haku peruttu</translation>
+    </message>
+    <message>
+        <source>Select</source>
+        <translation>Valitse</translation>
+    </message>
+    <message>
+        <source>Selected %1</source>
+        <translation>Valittu %1</translation>
+    </message>
+    <message>
+        <source>Settings</source>
+        <translation>Asetukset</translation>
+    </message>
+    <message>
+        <source>Skipped</source>
+        <translation>Ohitettu</translation>
+    </message>
+    <message>
+        <source>Stabilize</source>
+        <translation>Vakauta</translation>
+    </message>
+    <message>
+        <source>Stabilized</source>
+        <translation>Vakautettu</translation>
+    </message>
+    <message>
+        <source>Stabilizing</source>
+        <translation>Vakautetaan</translation>
+    </message>
+    <message>
+        <source>Stabilizing %1%</source>
+        <translation>Vakautetaan %1%</translation>
+    </message>
+    <message>
+        <source>Stop</source>
+        <translation>Pysähdy</translation>
+    </message>
+    <message>
+        <source>Stop the current task before changing its inputs.</source>
+        <translation>Pysäytä nykyinen tehtävä ennen sen syötteiden muuttamista.</translation>
+    </message>
+    <message>
+        <source>Stop the current task to adjust processing settings.</source>
+        <translation>Pysäytä nykyinen tehtävä muuttaaksesi käsittelyasetuksia.</translation>
+    </message>
+    <message>
+        <source>Stop this video</source>
+        <translation>Pysäytä tämä video</translation>
+    </message>
+    <message>
+        <source>Stopped by you. Retry starts this video from the beginning.</source>
+        <translation>Pysäytit tämän videon. Uusi yritys aloittaa sen alusta.</translation>
+    </message>
+    <message>
+        <source>Stopped · %1 completed</source>
+        <translation>Pysäytetty · %1 valmis</translation>
+    </message>
+    <message>
+        <source>Stopping…</source>
+        <translation>Pysäytetään…</translation>
+    </message>
+    <message>
+        <source>Sync not confirmed</source>
+        <translation>Synkronointia ei vahvistettu</translation>
+    </message>
+    <message>
+        <source>Task details</source>
+        <translation>Tehtävän tiedot</translation>
+    </message>
+    <message>
+        <source>This format supports stabilization for editing plugins only.</source>
+        <translation>Tämä muoto tukee vakautusta vain editointiohjelmien lisäosille.</translation>
+    </message>
+    <message>
+        <source>This video could not be processed. Check its gyroscope data and lens settings.</source>
+        <translation>Tätä videota ei voitu käsitellä. Tarkista sen gyroskooppidata ja objektiivin asetukset.</translation>
+    </message>
+    <message>
+        <source>This video is being processed. Preview will be available when it finishes.</source>
+        <translation>Tätä videota käsitellään. Esikatselu on käytettävissä käsittelyn valmistuttua.</translation>
+    </message>
+    <message>
+        <source>Unknown</source>
+        <translation>Tuntematon</translation>
+    </message>
+    <message>
+        <source>Video information</source>
+        <translation>Videon tiedot</translation>
+    </message>
+    <message>
+        <source>Videos</source>
+        <translation>Videot</translation>
+    </message>
+    <message>
+        <source>Videos %1</source>
+        <translation>Videot %1</translation>
+    </message>
+    <message>
+        <source>View</source>
+        <translation>Näytä</translation>
+    </message>
+    <message>
+        <source>Waiting</source>
+        <translation>Odottaa</translation>
+    </message>
+    <message>
+        <source>Your videos, ready to stabilize</source>
+        <translation>Videosi valmiina vakautukseen</translation>
+    </message>
+    <message>
+        <source>‹ Videos</source>
+        <translation>‹ Videot</translation>
+    </message>
+    <message>
+        <source>Add folders</source>
+        <translation>Lisää kansioita</translation>
+    </message>
+    <message>
+        <source>Add gyroscope data</source>
+        <translation>Lisää gyroskooppidataa</translation>
+    </message>
+    <message>
+        <source>Focal length unknown</source>
+        <translation>Tuntematon polttoväli</translation>
+    </message>
+    <message>
+        <source>No gyroscope data added</source>
+        <translation>Gyroskooppidataa ei ole lisätty</translation>
+    </message>
+    <message>
+        <source>Add recordings from an external gyroscope here. Built-in video data is read automatically.</source>
+        <translation>Lisää ulkoisen gyroskoopin tallenteet tähän. Videon sisäinen data luetaan automaattisesti.</translation>
+    </message>
+    <message>
+        <source>Add videos to get started.</source>
+        <translation>Aloita lisäämällä videoita.</translation>
+    </message>
+    <message>
+        <source>Choose video folders</source>
+        <translation>Valitse videokansiot</translation>
+    </message>
+    <message>
+        <source>Choose videos</source>
+        <translation>Valitse videot</translation>
+    </message>
+    <message>
+        <source>External gyroscope</source>
+        <translation>Ulkoinen gyroskooppi</translation>
+    </message>
+    <message>
+        <source>App</source>
+        <translation>Sovellus</translation>
+    </message>
+    <message>
+        <source>Back</source>
+        <translation>Takaisin</translation>
+    </message>
+    <message>
+        <source>Changes apply to all videos.</source>
+        <translation>Muutokset koskevat kaikkia videoita.</translation>
+    </message>
+    <message>
+        <source>Clear video and gyroscope matches</source>
+        <translation>Poista videoiden ja gyroskoopin vastaavuudet</translation>
+    </message>
+    <message>
+        <source>Export</source>
+        <translation>Vie (export)</translation>
+    </message>
+    <message>
+        <source>Lens</source>
+        <translation>Linssi</translation>
+    </message>
+    <message>
+        <source>Remove all videos from this list</source>
+        <translation>Poista kaikki videot tästä luettelosta</translation>
+    </message>
+    <message>
+        <source>Choose files</source>
+        <translation>Valitse tiedostot</translation>
+    </message>
+    <message>
+        <source>Choose folders</source>
+        <translation>Valitse kansiot</translation>
+    </message>
+    <message>
+        <source>View results</source>
+        <translation>Näytä tulokset</translation>
+    </message>
+    <message>
+        <source>Confirm folder import</source>
+        <translation>Vahvista kansion tuonti</translation>
+    </message>
+    <message>
+        <source>Import</source>
+        <translation>Tuo</translation>
+    </message>
+    <message>
+        <source>Stabilize (for plugins)</source>
+        <translation>Vakauta (liitännäisille)</translation>
+    </message>
+    <message>
+        <source>Calibration pair</source>
+        <translation>Kalibrointipari</translation>
+    </message>
+    <message>
+        <source>In-camera stabilization on</source>
+        <translation>Kameran vakautus käytössä</translation>
+    </message>
+    <message>
+        <source>No gyroscope data</source>
+        <translation>Ei gyroskooppitietoja</translation>
+    </message>
+    <message>
+        <source>Plugin stabilization only</source>
+        <translation>Vain vakautus liitännäisille</translation>
+    </message>
+    <message>
+        <source>Skip reason not recorded</source>
+        <translation>Ohituksen syytä ei tallennettu</translation>
+    </message>
+    <message>
+        <source>Stopped manually</source>
+        <translation>Pysäytetty käsin</translation>
+    </message>
+</context>
+<context>
+    <name>MobileFolderPicker</name>
+    <message>
+        <source>Add %1 folders</source>
+        <translation>Lisää %1 kansiota</translation>
+    </message>
+    <message>
+        <source>Choose a location, then select the folders to add. You can also add folders from another location.</source>
+        <translation>Valitse sijainti ja lisättävät kansiot. Voit lisätä kansioita myös muista sijainneista.</translation>
+    </message>
+    <message>
+        <source>Choose location</source>
+        <translation>Valitse sijainti</translation>
+    </message>
+    <message>
+        <source>No subfolders. Select this folder to add its files.</source>
+        <translation>Ei alikansioita. Valitse tämä kansio lisätäksesi sen tiedostot.</translation>
+    </message>
+    <message>
+        <source>Open folder</source>
+        <translation>Avaa kansio</translation>
+    </message>
+    <message>
+        <source>This folder</source>
+        <translation>Tämä kansio</translation>
+    </message>
+    <message>
+        <source>Unable to read this folder. Choose the location again.</source>
+        <translation>Kansiota ei voi lukea. Valitse sijainti uudelleen.</translation>
+    </message>
+    <message>
+        <source>Up one level</source>
+        <translation>Yksi taso ylös</translation>
+    </message>
+    <message>
+        <source>Add this folder</source>
+        <translation>Lisää tämä kansio</translation>
+    </message>
+    <message>
+        <source>No subfolders</source>
+        <translation>Ei alikansioita</translation>
+    </message>
+    <message>
+        <source>Subfolders</source>
+        <translation>Alikansiot</translation>
+    </message>
+    <message>
+        <source>Browse</source>
+        <translation>Selaa</translation>
+    </message>
+    <message>
+        <source>Add %1 files</source>
+        <translation>Lisää %1 tiedostoa</translation>
+    </message>
+    <message>
+        <source>Add location</source>
+        <translation>Lisää sijainti</translation>
+    </message>
+    <message>
+        <source>Choose a folder once to browse its files here.</source>
+        <translation>Valitse kansio kerran, niin voit selata sen tiedostoja tässä.</translation>
+    </message>
+    <message>
+        <source>No matching files</source>
+        <translation>Ei sopivia tiedostoja</translation>
+    </message>
+    <message>
+        <source>Includes files in this folder and up to two levels of subfolders.</source>
+        <translation>Sisältää tämän kansion tiedostot ja enintään kaksi alikansiotasoa.</translation>
+    </message>
+    <message>
+        <source>Saved folders</source>
+        <translation>Tallennetut kansiot</translation>
+    </message>
+    <message>
+        <source>Other locations</source>
+        <translation>Muut sijainnit</translation>
+    </message>
+</context>
+<context>
+    <name>MobileGyroBar</name>
+    <message>
+        <source>Not added</source>
+        <translation>Ei lisätty</translation>
     </message>
 </context>
 </TS>

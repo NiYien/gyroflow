@@ -1155,11 +1155,7 @@ impl Controller {
 
         let for_rs = mode == "estimate_rolling_shutter";
 
-        let every_nth_frame = if mode == "estimate_lens_delay" {
-            1
-        } else {
-            sync_params.every_nth_frame
-        };
+        let every_nth_frame = if mode == "estimate_lens_delay" { 1 } else { sync_params.every_nth_frame };
 
         self.sync_in_progress = true;
         self.sync_in_progress_changed();
@@ -1184,10 +1180,12 @@ impl Controller {
         // worker→UI latency. job_id=0 sentinel (no batch job concept here).
         let set_offsets_latency_probe: Option<Arc<dyn Fn() + Send + Sync>> =
             if gyroflow_core::batch_sync_diag::enabled() {
-                let acc = Arc::new(gyroflow_core::batch_sync_diag::UiLatencyAccumulator::new(
-                    0,
-                    "set_offsets",
-                ));
+                let acc = Arc::new(
+                    gyroflow_core::batch_sync_diag::UiLatencyAccumulator::new(
+                        0,
+                        "set_offsets",
+                    ),
+                );
                 let inner = util::qt_queued_callback_mut(
                     QPointer::from(self as &Self),
                     move |_this, enq: std::time::Instant| {
@@ -1204,7 +1202,10 @@ impl Controller {
                 // Locus C body-exec span: measures how long this UI-thread callback
                 // takes from entry to exit. job_id=0 is the controller-path
                 // sentinel (no batch job concept on this code path).
-                let _diag_exec = gyroflow_core::batch_sync_diag::UiExecSpan::new(0, "set_offsets");
+                let _diag_exec = gyroflow_core::batch_sync_diag::UiExecSpan::new(
+                    0,
+                    "set_offsets",
+                );
                 if for_rs {
                     if let Some(offs) = offsets.first() {
                         this.rolling_shutter_estimated(offs.1);
@@ -1213,13 +1214,22 @@ impl Controller {
                     // Locus A: on_finished + lock spans, mirrored from the batch-sync
                     // path in render_queue.rs. job_id=0 here too (controller sentinel).
                     let _diag_on_finished =
-                        gyroflow_core::batch_sync_diag::OnFinishedSpan::new(0, offsets.len());
+                        gyroflow_core::batch_sync_diag::OnFinishedSpan::new(
+                            0,
+                            offsets.len(),
+                        );
                     let _diag_gyro_acq =
-                        gyroflow_core::batch_sync_diag::LockAcquireSpan::new("gyro_write", 0);
+                        gyroflow_core::batch_sync_diag::LockAcquireSpan::new(
+                            "gyro_write",
+                            0,
+                        );
                     let mut gyro = this.stabilizer.gyro.write();
                     drop(_diag_gyro_acq);
                     let _diag_gyro_hold =
-                        gyroflow_core::batch_sync_diag::LockHoldSpan::new("gyro_write", 0);
+                        gyroflow_core::batch_sync_diag::LockHoldSpan::new(
+                            "gyro_write",
+                            0,
+                        );
                     gyro.prevent_recompute = true;
                     for x in offsets {
                         ::log::info!(
@@ -1248,11 +1258,17 @@ impl Controller {
                     gyro.prevent_recompute = false;
                     gyro.adjust_offsets();
                     let _diag_kf_acq =
-                        gyroflow_core::batch_sync_diag::LockAcquireSpan::new("keyframes_write", 0);
+                        gyroflow_core::batch_sync_diag::LockAcquireSpan::new(
+                            "keyframes_write",
+                            0,
+                        );
                     let mut kf = this.stabilizer.keyframes.write();
                     drop(_diag_kf_acq);
                     let _diag_kf_hold =
-                        gyroflow_core::batch_sync_diag::LockHoldSpan::new("keyframes_write", 0);
+                        gyroflow_core::batch_sync_diag::LockHoldSpan::new(
+                            "keyframes_write",
+                            0,
+                        );
                     kf.update_gyro(&gyro);
                     drop(kf);
                     drop(_diag_kf_hold);
@@ -1269,24 +1285,19 @@ impl Controller {
                 this.orientation_guessed(QString::from(orientation));
             },
         );
-        let set_lens_delay = util::qt_queued_callback_mut(
-            QPointer::from(self as &Self),
-            move |this, estimate: Option<(i32, f64, f64)>| {
-                if let Some((delay_frames, exact, correlation)) = estimate {
-                    ::log::info!(
-                        "Lens metadata delay estimated at {delay_frames} frames ({exact:.2} exact, correlation {correlation:.2})"
-                    );
-                    this.stabilizer.params.write().lens_metadata_delay_frames = delay_frames;
-                    this.lens_metadata_delay_changed();
-                    this.lens_delay_estimated(delay_frames, correlation);
-                } else {
-                    this.lens_delay_estimated(0, 0.0);
-                }
-                this.sync_in_progress = false;
-                this.sync_in_progress_changed();
-                this.request_recompute();
-            },
-        );
+        let set_lens_delay = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, estimate: Option<(i32, f64, f64)>| {
+            if let Some((delay_frames, exact, correlation)) = estimate {
+                ::log::info!("Lens metadata delay estimated at {delay_frames} frames ({exact:.2} exact, correlation {correlation:.2})");
+                this.stabilizer.params.write().lens_metadata_delay_frames = delay_frames;
+                this.lens_metadata_delay_changed();
+                this.lens_delay_estimated(delay_frames, correlation);
+            } else {
+                this.lens_delay_estimated(0, 0.0);
+            }
+            this.sync_in_progress = false;
+            this.sync_in_progress_changed();
+            this.request_recompute();
+        });
         let err = util::qt_queued_callback_mut(
             QPointer::from(self as &Self),
             |this, (msg, mut arg): (String, String)| {
@@ -1318,22 +1329,21 @@ impl Controller {
         let gpu_decoding = self.stabilizer.gpu_decoding.load(SeqCst);
         let guard = OpGuard::enter(&self.stabilizer.in_flight_count);
         core::run_threaded(move || {
-            let _guard = guard;
-            let mut sync = match AutosyncProcess::from_manager(
-                &stabilizer,
-                &timestamps_fract,
-                sync_params,
-                mode.clone(),
-                cancel_flag.clone(),
-            ) {
-                Ok(sync) => sync,
-                Err(AutosyncError::NoZoomInMetadata) => return set_lens_delay(None),
-                Err(AutosyncError::InvalidParameters) => {
-                    let detail =
-                        format!("Invalid autosync parameters ({mode}): {sync_failure_detail}");
-                    return err(("An error occured: %1".to_string(), detail));
-                }
-            };
+        let _guard = guard;
+        let mut sync = match AutosyncProcess::from_manager(
+            &stabilizer,
+            &timestamps_fract,
+            sync_params,
+            mode.clone(),
+            cancel_flag.clone(),
+        ) {
+            Ok(sync) => sync,
+            Err(AutosyncError::NoZoomInMetadata) => return set_lens_delay(None),
+            Err(AutosyncError::InvalidParameters) => {
+                let detail = format!("Invalid autosync parameters ({mode}): {sync_failure_detail}");
+                return err(("An error occured: %1".to_string(), detail));
+            }
+        };
             sync.on_progress(move |percent, ready, total| {
                 progress((percent, ready, total));
             });
@@ -1345,99 +1355,95 @@ impl Controller {
                         }
                         set_offsets(offsets);
                     }
-                    AutosyncResult::Orientation(Some(orientation)) => {
-                        set_orientation(orientation.0)
-                    }
-                    AutosyncResult::LensDelay(estimate) => set_lens_delay(
-                        estimate.map(|e| (e.delay_frames, e.delay_frames_exact, e.correlation)),
-                    ),
+                    AutosyncResult::Orientation(Some(orientation)) => set_orientation(orientation.0),
+                    AutosyncResult::LensDelay(estimate) => set_lens_delay(estimate.map(|e| (e.delay_frames, e.delay_frames_exact, e.correlation))),
                     _ => (),
                 };
             });
 
             let ranges = sync.get_ranges();
-            // Probe codec signature so we can consult the GPU blocklist
-            // before attempting decode and record on failure. Probe only
-            // when GPU is even a candidate; if the user has GPU disabled,
-            // we go straight to software without paying probe cost.
-            let codec_sig = if gpu_decoding {
-                match VideoProcessor::get_video_info(&input_file.url) {
-                    Ok(info) => Some(rendering::gpu_codec_blocklist::CodecSignature::from(&info)),
-                    Err(e) => {
-                        ::log::debug!(
-                            "[autosync] codec signature probe failed: {e:?} (proceeding without blocklist consultation)"
-                        );
-                        None
+                // Probe codec signature so we can consult the GPU blocklist
+                // before attempting decode and record on failure. Probe only
+                // when GPU is even a candidate; if the user has GPU disabled,
+                // we go straight to software without paying probe cost.
+                let codec_sig = if gpu_decoding {
+                    match VideoProcessor::get_video_info(&input_file.url) {
+                        Ok(info) => Some(rendering::gpu_codec_blocklist::CodecSignature::from(&info)),
+                        Err(e) => {
+                            ::log::debug!(
+                                "[autosync] codec signature probe failed: {e:?} (proceeding without blocklist consultation)"
+                            );
+                            None
+                        }
                     }
+                } else {
+                    None
+                };
+
+                // Wrap sync in Rc before try_run so the closure captures the Rc
+                // (cheap to clone per attempt) instead of the underlying value.
+                let sync = std::rc::Rc::new(sync);
+
+                // CinemaDNG decodes to scene-linear samples, which the GRAY8 /
+                // NV12 conversion below would collapse into ~10 distinct levels
+                // - far too little signal for optical flow. Rebuild the camera's
+                // own encoding from the file's LinearizationTable so the flow
+                // input keeps its gradients. Built once per sync run (try_run
+                // may be attempted twice on GPU fallback), never per frame.
+                // `None` for anything that is not a DNG carrying that table, so
+                // every other format keeps its existing behaviour byte for byte.
+                //
+                // As on the preview path, a `%0Nd` sequence url names no file:
+                // resolve it to the real first frame first (identity for every
+                // non-sequence input).
+                let curve_url = util::resolve_image_sequence_first_frame(
+                    &input_file.url,
+                    input_file.image_sequence_start,
+                )
+                .unwrap_or_else(|| input_file.url.clone());
+                let dng_curve =
+                    core::dng_tone_curve::DngToneCurve::from_url(&curve_url).map(std::rc::Rc::new);
+                if dng_curve.is_some() {
+                    ::log::info!(target: "sync", "[dng] tone curve active for sync input");
                 }
-            } else {
-                None
-            };
 
-            // Wrap sync in Rc before try_run so the closure captures the Rc
-            // (cheap to clone per attempt) instead of the underlying value.
-            let sync = std::rc::Rc::new(sync);
+                let try_run = |use_gpu: bool, ranges: Vec<(f64, f64)>| -> Result<(), rendering::FFmpegError> {
+                    let mut frame_no = 0;
+                    let mut abs_frame_no = 0;
 
-            // CinemaDNG decodes to scene-linear samples, which the GRAY8 /
-            // NV12 conversion below would collapse into ~10 distinct levels
-            // - far too little signal for optical flow. Rebuild the camera's
-            // own encoding from the file's LinearizationTable so the flow
-            // input keeps its gradients. Built once per sync run (try_run
-            // may be attempted twice on GPU fallback), never per frame.
-            // `None` for anything that is not a DNG carrying that table, so
-            // every other format keeps its existing behaviour byte for byte.
-            //
-            // As on the preview path, a `%0Nd` sequence url names no file:
-            // resolve it to the real first frame first (identity for every
-            // non-sequence input).
-            let curve_url = util::resolve_image_sequence_first_frame(
-                &input_file.url,
-                input_file.image_sequence_start,
-            )
-            .unwrap_or_else(|| input_file.url.clone());
-            let dng_curve =
-                core::dng_tone_curve::DngToneCurve::from_url(&curve_url).map(std::rc::Rc::new);
-            if dng_curve.is_some() {
-                ::log::info!(target: "sync", "[dng] tone curve active for sync input");
-            }
+                    let mut decoder_options = ffmpeg_next::Dictionary::new();
+                    if input_file.image_sequence_fps > 0.0 {
+                        let fps = rendering::fps_to_rational(input_file.image_sequence_fps);
+                        decoder_options.set(
+                            "framerate",
+                            &format!("{}/{}", fps.numerator(), fps.denominator()),
+                        );
+                    }
+                    if input_file.image_sequence_start > 0 {
+                        decoder_options.set(
+                            "start_number",
+                            &format!("{}", input_file.image_sequence_start),
+                        );
+                    }
+                    // Decoder scale is decoupled from proc_height: on macOS R3D/NEV
+                    // this requests a REDMetal-clean tier; the converter.scale below
+                    // still downscales to proc_height so NeuFlow input is unchanged.
+                    if let Some(scale) = rendering::sync_decoder_scale_string(proc_height, &input_file.url) {
+                        decoder_options.set("scale", &scale);
+                    }
+                    ::log::debug!("Decoder options: {:?}", decoder_options);
 
-            let try_run = |use_gpu: bool,
-                           ranges: Vec<(f64, f64)>|
-             -> Result<(), rendering::FFmpegError> {
-                let mut frame_no = 0;
-                let mut abs_frame_no = 0;
+                    let mut proc = VideoProcessor::from_file(
+                        &input_file.url,
+                        use_gpu,
+                        0,
+                        Some(decoder_options),
+                    )?;
 
-                let mut decoder_options = ffmpeg_next::Dictionary::new();
-                if input_file.image_sequence_fps > 0.0 {
-                    let fps = rendering::fps_to_rational(input_file.image_sequence_fps);
-                    decoder_options.set(
-                        "framerate",
-                        &format!("{}/{}", fps.numerator(), fps.denominator()),
-                    );
-                }
-                if input_file.image_sequence_start > 0 {
-                    decoder_options.set(
-                        "start_number",
-                        &format!("{}", input_file.image_sequence_start),
-                    );
-                }
-                // Decoder scale is decoupled from proc_height: on macOS R3D/NEV
-                // this requests a REDMetal-clean tier; the converter.scale below
-                // still downscales to proc_height so NeuFlow input is unchanged.
-                if let Some(scale) =
-                    rendering::sync_decoder_scale_string(proc_height, &input_file.url)
-                {
-                    decoder_options.set("scale", &scale);
-                }
-                ::log::debug!("Decoder options: {:?}", decoder_options);
-
-                let mut proc =
-                    VideoProcessor::from_file(&input_file.url, use_gpu, 0, Some(decoder_options))?;
-
-                let err2 = err.clone();
-                let sync2 = sync.clone();
-                let dng_curve2 = dng_curve.clone();
-                proc.on_frame(
+                    let err2 = err.clone();
+                    let sync2 = sync.clone();
+                    let dng_curve2 = dng_curve.clone();
+                    proc.on_frame(
                         move |timestamp_us,
                               input_frame,
                               _output_frame,
@@ -1527,77 +1533,77 @@ impl Controller {
                             Ok(())
                         },
                     );
-                proc.start_decoder_only(ranges, cancel_flag.clone())
-            };
+                    proc.start_decoder_only(ranges, cancel_flag.clone())
+                };
 
-            // Decide whether to attempt GPU. Blocklist is advisory only when
-            // the user setting allows GPU; if GPU is off we skip the check.
-            let try_gpu = match (gpu_decoding, codec_sig.as_ref()) {
-                (true, Some(sig)) => {
-                    if rendering::gpu_codec_blocklist::is_blocklisted(sig) {
-                        ::log::info!(
-                            "[autosync] skipping GPU for blocklisted signature {:?}",
-                            sig
-                        );
-                        false
-                    } else {
-                        true
-                    }
-                }
-                (true, None) => true,
-                (false, _) => false,
-            };
-
-            let result = if try_gpu {
-                match try_run(true, ranges.clone()) {
-                    Err(rendering::FFmpegError::GPUDecodingFailed) => {
-                        if let Some(sig) = codec_sig.clone() {
+                // Decide whether to attempt GPU. Blocklist is advisory only when
+                // the user setting allows GPU; if GPU is off we skip the check.
+                let try_gpu = match (gpu_decoding, codec_sig.as_ref()) {
+                    (true, Some(sig)) => {
+                        if rendering::gpu_codec_blocklist::is_blocklisted(sig) {
                             ::log::info!(
-                                "[autosync] GPU decode failed for signature {:?}, retrying with software",
+                                "[autosync] skipping GPU for blocklisted signature {:?}",
                                 sig
                             );
-                            rendering::gpu_codec_blocklist::record_failure(sig);
+                            false
                         } else {
-                            ::log::info!(
-                                "[autosync] GPU decode failed (no signature available), retrying with software"
-                            );
+                            true
                         }
-                        try_run(false, ranges)
                     }
-                    other => other,
-                }
-            } else {
-                try_run(false, ranges)
-            };
+                    (true, None) => true,
+                    (false, _) => false,
+                };
 
-            let round1_ok = result.is_ok();
-            if let Err(e) = result {
-                err(("An error occured: %1".to_string(), e.to_string()));
-            }
-            sync.finished_feeding_frames();
-            // Lazy probe escalation: phase 1 held the finished callback,
-            // decode only the probe range and run the joint pass. Skip it
-            // when round-1 decode hard-errored (empty offsets would
-            // otherwise trigger a spurious second decode of the same file).
-            if round1_ok {
-                if let Some(probe_ranges) = sync.pending_probe_ranges() {
-                    let result = if try_gpu {
-                        match try_run(true, probe_ranges.clone()) {
-                            Err(rendering::FFmpegError::GPUDecodingFailed) => {
-                                try_run(false, probe_ranges)
+                let result = if try_gpu {
+                    match try_run(true, ranges.clone()) {
+                        Err(rendering::FFmpegError::GPUDecodingFailed) => {
+                            if let Some(sig) = codec_sig.clone() {
+                                ::log::info!(
+                                    "[autosync] GPU decode failed for signature {:?}, retrying with software",
+                                    sig
+                                );
+                                rendering::gpu_codec_blocklist::record_failure(sig);
+                            } else {
+                                ::log::info!(
+                                    "[autosync] GPU decode failed (no signature available), retrying with software"
+                                );
                             }
-                            other => other,
+                            try_run(false, ranges)
                         }
-                    } else {
-                        try_run(false, probe_ranges)
-                    };
-                    if let Err(e) = result {
-                        err(("An error occured: %1".to_string(), e.to_string()));
+                        other => other,
                     }
-                    sync.finished_feeding_frames();
+                } else {
+                    try_run(false, ranges)
+                };
+
+                let round1_ok = result.is_ok();
+                if let Err(e) = result {
+                    err(("An error occured: %1".to_string(), e.to_string()));
                 }
-            }
-        });
+                sync.finished_feeding_frames();
+                // Lazy probe escalation: phase 1 held the finished callback,
+                // decode only the probe range and run the joint pass. Skip it
+                // when round-1 decode hard-errored (empty offsets would
+                // otherwise trigger a spurious second decode of the same file).
+                if round1_ok {
+                    if let Some(probe_ranges) = sync.pending_probe_ranges() {
+                        let result = if try_gpu {
+                            match try_run(true, probe_ranges.clone()) {
+                                Err(rendering::FFmpegError::GPUDecodingFailed) => {
+                                    try_run(false, probe_ranges)
+                                }
+                                other => other,
+                            }
+                        } else {
+                            try_run(false, probe_ranges)
+                        };
+                        if let Err(e) = result {
+                            err(("An error occured: %1".to_string(), e.to_string()));
+                        }
+                        sync.finished_feeding_frames();
+                    }
+                }
+            });
     }
 
     fn estimate_bias(&mut self, timestamps_fract: QString) {
@@ -6313,6 +6319,9 @@ pub struct Filesystem {
     catch_urls_open: qt_method!(fn(&self, urls: QStringList)),
     open_native_picker:
         qt_method!(fn(&self, mode: i32, allow_multiple: bool, initial_url: QString) -> bool),
+    list_mobile_folders: qt_method!(fn(&self, url: QUrl, request_id: i32)),
+    get_mobile_locations: qt_method!(fn(&self) -> QString),
+    mobile_folders_listed: qt_signal!(request_id: i32, result: QString),
     open_ios_video_picker: qt_method!(fn(&self) -> bool),
     catch_picker_cancelled: qt_method!(fn(&self)),
     catch_picker_error: qt_method!(fn(&self, message: QString)),
@@ -6328,6 +6337,63 @@ pub struct Filesystem {
     picker_error: qt_signal!(message: QString),
 }
 impl Filesystem {
+    fn get_mobile_locations(&self) -> QString {
+        #[cfg(target_os = "android")]
+        let locations = filesystem::android::persisted_folder_urls().unwrap_or_else(|error| {
+            ::log::warn!("Unable to read persisted folder permissions: {error:?}");
+            Vec::new()
+        });
+        #[cfg(not(target_os = "android"))]
+        let locations = filesystem::get_allowed_folder_urls();
+        serde_json::to_string(&locations).unwrap_or_else(|_| "[]".into()).into()
+    }
+    fn list_mobile_folders(&self, url: QUrl, request_id: i32) {
+        let url = util::qurl_to_encoded(url);
+        let ready = util::qt_queued_callback(
+            QPointer::from(self as &Self),
+            |this, (id, result): (i32, String)| {
+                this.mobile_folders_listed(id, QString::from(result));
+            },
+        );
+        core::run_threaded(move || {
+            let list = (|| -> Result<Vec<(String, String, bool)>, String> {
+                #[cfg(target_os = "android")]
+                if url.starts_with("content://") {
+                    return filesystem::android::list_files(&url)
+                        .map(|items| {
+                            items
+                                .into_iter()
+                                .filter_map(|item| Some((item.filename?, item.url?, item.is_dir)))
+                                .collect()
+                        })
+                        .map_err(|error| error.to_string());
+                }
+                let entries = std::fs::read_dir(filesystem::url_to_path(&url))
+                    .map_err(|error| error.to_string())?;
+                Ok(entries
+                    .filter_map(Result::ok)
+                    .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir() || kind.is_file()))
+                    .map(|entry| {
+                        (
+                            entry.file_name().to_string_lossy().into_owned(),
+                            filesystem::path_to_url(&entry.path().to_string_lossy()),
+                            entry.file_type().is_ok_and(|kind| kind.is_dir()),
+                        )
+                    })
+                    .collect())
+            })();
+            let result = match list {
+                Ok(mut entries) => {
+                    entries.sort_by(|a, b| human_sort::compare(&a.0, &b.0));
+                    let (folders, files): (Vec<_>, Vec<_>) = entries.into_iter().partition(|entry| entry.2);
+                    let items = |entries: Vec<(String, String, bool)>| entries.into_iter().map(|(name, url, _)| serde_json::json!({ "name": name, "url": url })).collect::<Vec<_>>();
+                    serde_json::json!({ "url": url, "folders": items(folders), "files": items(files) })
+                }
+                Err(error) => serde_json::json!({ "url": url, "folders": [], "files": [], "error": error }),
+            };
+            ready((request_id, result.to_string()));
+        });
+    }
     fn exists_in_folder(&self, folder: QUrl, filename: QString) -> bool {
         filesystem::exists_in_folder(&util::qurl_to_encoded(folder), &filename.to_string())
     }

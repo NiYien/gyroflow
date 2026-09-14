@@ -59,6 +59,10 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
     public static final int PICKER_MODE_FOLDER = 1;
     private static final int PICKER_REQUEST_FILES = 0x6710;
     private static final int PICKER_REQUEST_FOLDER = 0x6711;
+    private static final int PICKER_REQUEST_STORAGE_ACCESS = 0x6712;
+    private String pendingFolderOptions;
+    private DirectFolderDialog directFolderDialog;
+    private java.io.File lastDirectFolder;
     // Candidate DocumentsUI packages, GMS build first (that is what ships on the
     // Xiaomi/HyperOS devices we target), AOSP second. Both are declared in the
     // manifest's <queries> block or resolveActivity() would be filtered to null.
@@ -147,6 +151,21 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // Configure the decoder before Qt creates its first MDK player.
+        // Own each completed frame instead of sampling a decoder surface that can be reused.
+        // Preserve the fallback order from qml-video-rs ef7c419.
+        try {
+            String decoders = android.system.Os.getenv("MDK_DECODERS");
+            if (decoders == null || decoders.trim().isEmpty()) {
+                android.system.Os.setenv("MDK_DECODERS",
+                        "AMediaCodec:java=0:copy=1:surface=0:async=0,"
+                        + "BRAW:gpu=auto:copy=1:scale=1920x1080,"
+                        + "R3D:gpu=auto:scale=1920x1080,FFmpeg", true);
+                Log.i("GyroflowPlayback", "Android hardware decoder uses copied ByteBuffer output");
+            }
+        } catch (android.system.ErrnoException error) {
+            Log.w("GyroflowPlayback", "Could not configure Android decoder acquisition", error);
+        }
         super.onCreate(savedInstanceState);
         instance = this;
         forceShowSystemBars("onCreate");
@@ -200,18 +219,11 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
         }
     }
 
-    // Phones lock to sensor landscape (both landscape orientations, follows
-    // the sensor); tablets keep free rotation. Runtime policy because a
-    // manifest screenOrientation attribute can't branch on device class.
+    // Follow the user's system rotation preference on phones and tablets.
     private void applyOrientationPolicy() {
         try {
-            int sw = getResources().getConfiguration().smallestScreenWidthDp;
-            if (sw < TABLET_SMALLEST_WIDTH_DP) {
-                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
-                Log.i(WINDOW_TAG, "orientation policy: sensorLandscape (smallestScreenWidthDp=" + sw + ")");
-            } else {
-                Log.i(WINDOW_TAG, "orientation policy: free rotation (smallestScreenWidthDp=" + sw + ")");
-            }
+            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+            Log.i(WINDOW_TAG, "orientation policy: system preference");
         } catch (Throwable t) {
             Log.w(WINDOW_TAG, "applyOrientationPolicy failed", t);
         }
@@ -238,12 +250,13 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
                     android.graphics.Insets bars = insets.getInsets(
                             android.view.WindowInsets.Type.systemBars()
                           | android.view.WindowInsets.Type.displayCutout());
-                    v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
-                    // Consume only what we handled; IME (soft keyboard) insets
-                    // must keep flowing to Qt's view for its own handling.
+                    android.graphics.Insets keyboard = insets.getInsets(android.view.WindowInsets.Type.ime());
+                    // Qt 6.7 does not resize its surface for the IME under enforced edge-to-edge.
+                    v.setPadding(bars.left, bars.top, bars.right, Math.max(bars.bottom, keyboard.bottom));
                     return new android.view.WindowInsets.Builder(insets)
                             .setInsets(android.view.WindowInsets.Type.systemBars(), android.graphics.Insets.NONE)
                             .setInsets(android.view.WindowInsets.Type.displayCutout(), android.graphics.Insets.NONE)
+                            .setInsets(android.view.WindowInsets.Type.ime(), android.graphics.Insets.NONE)
                             .build();
                 }
             });
@@ -272,6 +285,17 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
         // fileexplorer scenario), we still surface the picked URIs.
         super.onActivityResult(requestCode, resultCode, data);
 
+        if (requestCode == PICKER_REQUEST_STORAGE_ACCESS) {
+            String options = pendingFolderOptions;
+            pendingFolderOptions = null;
+            if (options != null && Build.VERSION.SDK_INT >= 30 && android.os.Environment.isExternalStorageManager()) {
+                showDirectFolderPicker(options);
+            } else {
+                pickerCancelled();
+            }
+            return;
+        }
+
         // Pickers we launched ourselves (openPicker) have no QML dialog behind
         // them, so nothing emits onRejected to clear the pending picker callback.
         // Report the empty outcome explicitly or a later VIEW/SEND intent would be
@@ -297,6 +321,21 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
                     + " type=" + data.getType());
             if (ownPicker) pickerCancelled();
             return;
+        }
+
+        if (requestCode == PICKER_REQUEST_FOLDER) {
+            int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            if ((data.getFlags() & Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) != 0) {
+                for (String value : picked) {
+                    try {
+                        getContentResolver().takePersistableUriPermission(Uri.parse(value), flags);
+                        Log.i(FILE_PICKER_TAG, "persisted picker permission flags=" + flags);
+                    } catch (SecurityException error) {
+                        Log.w(FILE_PICKER_TAG, "Could not persist picker permission", error);
+                    }
+                }
+            }
         }
 
         String joined = String.join("\n", picked);
@@ -327,6 +366,7 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
 
     @Override
     protected void onDestroy() {
+        if (directFolderDialog != null) directFolderDialog.cancel();
         closeUsbDevice();
         try {
             unregisterReceiver(usbReceiver);
@@ -399,6 +439,23 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
     }
 
     private void launchPicker(int mode, boolean allowMultiple, String initialUri) {
+        if ((mode == 2 || mode == 3) && Build.VERSION.SDK_INT >= 30) {
+            if (android.os.Environment.isExternalStorageManager()) {
+                showDirectFolderPicker(initialUri);
+            } else {
+                pendingFolderOptions = initialUri;
+                try {
+                    startActivityForResult(new Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                            Uri.parse("package:" + getPackageName())), PICKER_REQUEST_STORAGE_ACCESS);
+                } catch (RuntimeException error) {
+                    pendingFolderOptions = null;
+                    throw error;
+                }
+            }
+            return;
+        }
+        if (mode == 2) { mode = PICKER_MODE_FOLDER; initialUri = ""; }
+        if (mode == 3) { mode = PICKER_MODE_FILES; initialUri = ""; }
         boolean folder = mode == PICKER_MODE_FOLDER;
         Intent intent = new Intent(folder
                 ? Intent.ACTION_OPEN_DOCUMENT_TREE
@@ -414,6 +471,8 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
             }
         }
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        if (folder) intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         if (initialUri != null && !initialUri.isEmpty()
                 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             // Best-effort: lands the picker on the folder used last time. Ignored
@@ -446,6 +505,23 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
             Log.i(FILE_PICKER_TAG, "picker mode=" + mode + " no DocumentsUI found, implicit intent");
         }
         startActivityForResult(intent, requestCode);
+    }
+
+    private void showDirectFolderPicker(String options) {
+        if (directFolderDialog != null && directFolderDialog.isShowing()) return;
+        directFolderDialog = new DirectFolderDialog(this, options, lastDirectFolder, files -> {
+            if (files.isEmpty()) { pickerCancelled(); return; }
+            java.io.File first = files.get(0);
+            lastDirectFolder = first.isDirectory() ? first : first.getParentFile();
+            List<String> urls = new ArrayList<>();
+            for (java.io.File file : files) urls.add(Uri.fromFile(file).toString());
+            Log.i(FILE_PICKER_TAG, "direct selection count=" + urls.size());
+            urlsReceived(String.join("\n", urls));
+        }, () -> {
+            Log.i(FILE_PICKER_TAG, "direct folder cancelled");
+            pickerCancelled();
+        });
+        directFolderDialog.show();
     }
 
     // Resolves the intent against the known DocumentsUI packages. Returning a

@@ -1101,6 +1101,10 @@ Try a different output codec (H.265/HEVC handles more cases than H.264/AVC), low
         <source>Go to settings</source>
         <translation>Μετάβαση στις ρυθμίσεις</translation>
     </message>
+    <message>
+        <source>This video is still loading.</source>
+        <translation>Αυτό το βίντεο φορτώνεται ακόμη.</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4339,6 +4343,10 @@ Please provide frame rate: </source>
         <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
         <translation>Ελέγξτε τον αριθμό φακού κάθε βίντεο στην ουρά. Κάντε δεξί κλικ για αλλαγή και έπειτα σταθεροποιήστε.</translation>
     </message>
+    <message>
+        <source>Search stage %1 of %2</source>
+        <translation>Στάδιο αναζήτησης %1 από %2</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>
@@ -6264,6 +6272,10 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <source>Playback speed</source>
         <translation>Ταχύτητα αναπαραγωγής</translation>
     </message>
+    <message>
+        <source>Not stabilized yet. Return to Videos and tap Stabilize.</source>
+        <translation>Δεν έχει σταθεροποιηθεί ακόμη. Επιστρέψτε στα Βίντεο και πατήστε Σταθεροποίηση.</translation>
+    </message>
 </context>
 <context>
     <name>VideoInformation</name>
@@ -6301,6 +6313,562 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <location filename="../../src/ui/main_window.qml" line="114"/>
         <source>No</source>
         <translation>Όχι</translation>
+    </message>
+</context>
+<context>
+    <name>MobileSettings</name>
+    <message>
+        <source>App preferences</source>
+        <translation>Προτιμήσεις εφαρμογής</translation>
+    </message>
+    <message>
+        <source>Auto rotate</source>
+        <translation>Αυτόματη περιστροφή</translation>
+    </message>
+    <message>
+        <source>Dynamic zoom</source>
+        <translation>Δυναμικό ζουμ</translation>
+    </message>
+    <message>
+        <source>Feedback</source>
+        <translation>Σχόλια</translation>
+    </message>
+    <message>
+        <source>Horizon lock amount</source>
+        <translation>Ποσό κλειδώματος Ορίζοντα</translation>
+    </message>
+    <message>
+        <source>Language</source>
+        <translation>Γλώσσα</translation>
+    </message>
+    <message>
+        <source>Lens correction</source>
+        <translation>Διόρθωση φακού</translation>
+    </message>
+    <message>
+        <source>Lock horizon</source>
+        <translation>Κλείδωμα ορίζοντα</translation>
+    </message>
+    <message>
+        <source>Smoothness</source>
+        <translation>Ομαλότητα</translation>
+    </message>
+    <message>
+        <source>Stabilization</source>
+        <translation>Σταθεροποίηση</translation>
+    </message>
+    <message>
+        <source>Static zoom</source>
+        <translation>Στατική μεγέθυνση</translation>
+    </message>
+    <message>
+        <source>Theme</source>
+        <translation>Θέμα</translation>
+    </message>
+    <message>
+        <source>Updates</source>
+        <translation>Ενημερώσεις</translation>
+    </message>
+    <message>
+        <source>Zoom</source>
+        <translation>Ζουμ</translation>
+    </message>
+</context>
+<context>
+    <name>MobileWorkspace</name>
+    <message>
+        <source>%1 completed · %2 need attention</source>
+        <translation>%1 ολοκληρώθηκαν · %2 χρειάζονται έλεγχο</translation>
+    </message>
+    <message>
+        <source>%1 videos completed</source>
+        <translation>%1 βίντεο ολοκληρώθηκαν</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>Προσθήκη</translation>
+    </message>
+    <message>
+        <source>Add files</source>
+        <translation>Προσθήκη αρχείων</translation>
+    </message>
+    <message>
+        <source>Add folder</source>
+        <translation>Προσθήκη φακέλου</translation>
+    </message>
+    <message>
+        <source>Add media</source>
+        <translation>Προσθήκη πολυμέσων</translation>
+    </message>
+    <message>
+        <source>Add videos and gyroscope data to get started.</source>
+        <translation>Προσθέστε βίντεο και δεδομένα γυροσκοπίου για να ξεκινήσετε.</translation>
+    </message>
+    <message>
+        <source>All</source>
+        <translation>Όλα</translation>
+    </message>
+    <message>
+        <source>Back to videos</source>
+        <translation>Επιστροφή στα βίντεο</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Ακύρωση</translation>
+    </message>
+    <message>
+        <source>Clear queue</source>
+        <translation>Εκκαθάριση ουράς</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Κλείστε</translation>
+    </message>
+    <message>
+        <source>Continue with all videos. Other clips from the same recording day can use this match when their timestamps are available.</source>
+        <translation>Συνέχεια με όλα τα βίντεο. Άλλα κλιπ από την ίδια ημέρα εγγραφής μπορούν να χρησιμοποιήσουν αυτή την αντιστοίχιση, αν διαθέτουν χρονικές σημάνσεις.</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>Βαθιά αναζήτηση</translation>
+    </message>
+    <message>
+        <source>Deep search complete</source>
+        <translation>Η βαθιά αναζήτηση ολοκληρώθηκε</translation>
+    </message>
+    <message>
+        <source>Deep search · %1</source>
+        <translation>Βαθιά αναζήτηση · %1</translation>
+    </message>
+    <message>
+        <source>Deselect</source>
+        <translation>Αποεπιλογή</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>Ολοκληρώθηκε</translation>
+    </message>
+    <message>
+        <source>Export stabilized video</source>
+        <translation>Εξαγωγή σταθεροποιημένου βίντεο</translation>
+    </message>
+    <message>
+        <source>Exported</source>
+        <translation>Εξήχθη</translation>
+    </message>
+    <message>
+        <source>Exporting</source>
+        <translation>Γίνεται εξαγωγή</translation>
+    </message>
+    <message>
+        <source>Exporting %1%</source>
+        <translation>Εξαγωγή %1%</translation>
+    </message>
+    <message>
+        <source>Global settings</source>
+        <translation>Καθολικές ρυθμίσεις</translation>
+    </message>
+    <message>
+        <source>Gyroscope data</source>
+        <translation>Δεδομένα γυροσκοπίου</translation>
+    </message>
+    <message>
+        <source>Info</source>
+        <translation>Πληροφορίες</translation>
+    </message>
+    <message>
+        <source>Match found. You can now stabilize.</source>
+        <translation>Βρέθηκε αντιστοίχιση. Μπορείτε τώρα να σταθεροποιήσετε.</translation>
+    </message>
+    <message>
+        <source>Matching videos…</source>
+        <translation>Αντιστοίχιση βίντεο…</translation>
+    </message>
+    <message>
+        <source>More</source>
+        <translation>Περισσότερα</translation>
+    </message>
+    <message>
+        <source>Needs attention</source>
+        <translation>Χρειάζεται έλεγχο</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>Επόμενο</translation>
+    </message>
+    <message>
+        <source>No gyroscope data. Add a recording or try Deep search.</source>
+        <translation>Δεν υπάρχουν δεδομένα γυροσκοπίου. Προσθέστε μια καταγραφή ή δοκιμάστε βαθιά αναζήτηση.</translation>
+    </message>
+    <message>
+        <source>No match found. Try a video with more camera motion, and check the gyro recording, in-camera stabilization and mounting position.</source>
+        <translation>Δεν βρέθηκε αντιστοίχιση. Δοκιμάστε βίντεο με περισσότερη κίνηση κάμερας και ελέγξτε την καταγραφή γυροσκοπίου, τη σταθεροποίηση της κάμερας και τη θέση τοποθέτησης.</translation>
+    </message>
+    <message>
+        <source>Original</source>
+        <translation>Πρωτότυπο</translation>
+    </message>
+    <message>
+        <source>Pause</source>
+        <translation>Παύση</translation>
+    </message>
+    <message>
+        <source>Play</source>
+        <translation>Αναπαραγωγή</translation>
+    </message>
+    <message>
+        <source>Playback position</source>
+        <translation>Θέση αναπαραγωγής</translation>
+    </message>
+    <message>
+        <source>Preparing search…</source>
+        <translation>Προετοιμασία αναζήτησης…</translation>
+    </message>
+    <message>
+        <source>Preparing…</source>
+        <translation>Προετοιμασία…</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>Προηγούμενο</translation>
+    </message>
+    <message>
+        <source>Processed %1 / %2</source>
+        <translation>Επεξεργάστηκαν %1 / %2</translation>
+    </message>
+    <message>
+        <source>Reading…</source>
+        <translation>Ανάγνωση…</translation>
+    </message>
+    <message>
+        <source>Ready</source>
+        <translation>Έτοιμο</translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation>Αφαίρεση</translation>
+    </message>
+    <message>
+        <source>Reset pairing</source>
+        <translation>Επαναφορά αντιστοίχισης</translation>
+    </message>
+    <message>
+        <source>Retry</source>
+        <translation>Επανάληψη</translation>
+    </message>
+    <message>
+        <source>Search cancelled</source>
+        <translation>Η αναζήτηση ακυρώθηκε</translation>
+    </message>
+    <message>
+        <source>Select</source>
+        <translation>Επιλογή</translation>
+    </message>
+    <message>
+        <source>Selected %1</source>
+        <translation>Επιλεγμένα %1</translation>
+    </message>
+    <message>
+        <source>Settings</source>
+        <translation>Ρυθμίσεις</translation>
+    </message>
+    <message>
+        <source>Skipped</source>
+        <translation>Παραλείφθηκε</translation>
+    </message>
+    <message>
+        <source>Stabilize</source>
+        <translation>Σταθεροποίηση</translation>
+    </message>
+    <message>
+        <source>Stabilized</source>
+        <translation>Σταθεροποιήθηκε</translation>
+    </message>
+    <message>
+        <source>Stabilizing</source>
+        <translation>Γίνεται σταθεροποίηση</translation>
+    </message>
+    <message>
+        <source>Stabilizing %1%</source>
+        <translation>Σταθεροποίηση %1%</translation>
+    </message>
+    <message>
+        <source>Stop</source>
+        <translation>Διακοπή</translation>
+    </message>
+    <message>
+        <source>Stop the current task before changing its inputs.</source>
+        <translation>Διακόψτε την τρέχουσα εργασία πριν αλλάξετε τα δεδομένα εισόδου.</translation>
+    </message>
+    <message>
+        <source>Stop the current task to adjust processing settings.</source>
+        <translation>Διακόψτε την τρέχουσα εργασία για να αλλάξετε τις ρυθμίσεις επεξεργασίας.</translation>
+    </message>
+    <message>
+        <source>Stop this video</source>
+        <translation>Διακοπή αυτού του βίντεο</translation>
+    </message>
+    <message>
+        <source>Stopped by you. Retry starts this video from the beginning.</source>
+        <translation>Το διακόψατε. Η επανάληψη ξεκινά το βίντεο από την αρχή.</translation>
+    </message>
+    <message>
+        <source>Stopped · %1 completed</source>
+        <translation>Διακόπηκε · %1 ολοκληρώθηκαν</translation>
+    </message>
+    <message>
+        <source>Stopping…</source>
+        <translation>Διακοπή…</translation>
+    </message>
+    <message>
+        <source>Sync not confirmed</source>
+        <translation>Ο συγχρονισμός δεν επιβεβαιώθηκε</translation>
+    </message>
+    <message>
+        <source>Task details</source>
+        <translation>Λεπτομέρειες εργασίας</translation>
+    </message>
+    <message>
+        <source>This format supports stabilization for editing plugins only.</source>
+        <translation>Αυτή η μορφή υποστηρίζει σταθεροποίηση μόνο για πρόσθετα επεξεργασίας.</translation>
+    </message>
+    <message>
+        <source>This video could not be processed. Check its gyroscope data and lens settings.</source>
+        <translation>Δεν ήταν δυνατή η επεξεργασία του βίντεο. Ελέγξτε τα δεδομένα γυροσκοπίου και τις ρυθμίσεις φακού.</translation>
+    </message>
+    <message>
+        <source>This video is being processed. Preview will be available when it finishes.</source>
+        <translation>Αυτό το βίντεο επεξεργάζεται. Η προεπισκόπηση θα είναι διαθέσιμη όταν ολοκληρωθεί.</translation>
+    </message>
+    <message>
+        <source>Unknown</source>
+        <translation>Άγνωστο</translation>
+    </message>
+    <message>
+        <source>Video information</source>
+        <translation>Πληροφορίες πολυμέσου</translation>
+    </message>
+    <message>
+        <source>Videos</source>
+        <translation>Βίντεο</translation>
+    </message>
+    <message>
+        <source>Videos %1</source>
+        <translation>Βίντεο %1</translation>
+    </message>
+    <message>
+        <source>View</source>
+        <translation>Προβολή</translation>
+    </message>
+    <message>
+        <source>Waiting</source>
+        <translation>Αναμονή</translation>
+    </message>
+    <message>
+        <source>Your videos, ready to stabilize</source>
+        <translation>Τα βίντεό σας, έτοιμα για σταθεροποίηση</translation>
+    </message>
+    <message>
+        <source>‹ Videos</source>
+        <translation>‹ Βίντεο</translation>
+    </message>
+    <message>
+        <source>Add folders</source>
+        <translation>Προσθήκη φακέλων</translation>
+    </message>
+    <message>
+        <source>Add gyroscope data</source>
+        <translation>Προσθήκη δεδομένων γυροσκοπίου</translation>
+    </message>
+    <message>
+        <source>Focal length unknown</source>
+        <translation>Άγνωστη εστιακή απόσταση</translation>
+    </message>
+    <message>
+        <source>No gyroscope data added</source>
+        <translation>Δεν προστέθηκαν δεδομένα γυροσκοπίου</translation>
+    </message>
+    <message>
+        <source>Add recordings from an external gyroscope here. Built-in video data is read automatically.</source>
+        <translation>Προσθέστε εδώ καταγραφές από εξωτερικό γυροσκόπιο. Τα ενσωματωμένα δεδομένα βίντεο διαβάζονται αυτόματα.</translation>
+    </message>
+    <message>
+        <source>Add videos to get started.</source>
+        <translation>Προσθέστε βίντεο για να ξεκινήσετε.</translation>
+    </message>
+    <message>
+        <source>Choose video folders</source>
+        <translation>Επιλογή φακέλων βίντεο</translation>
+    </message>
+    <message>
+        <source>Choose videos</source>
+        <translation>Επιλογή βίντεο</translation>
+    </message>
+    <message>
+        <source>External gyroscope</source>
+        <translation>Εξωτερικό γυροσκόπιο</translation>
+    </message>
+    <message>
+        <source>App</source>
+        <translation>Εφαρμογή</translation>
+    </message>
+    <message>
+        <source>Back</source>
+        <translation>Πίσω</translation>
+    </message>
+    <message>
+        <source>Changes apply to all videos.</source>
+        <translation>Οι αλλαγές ισχύουν για όλα τα βίντεο.</translation>
+    </message>
+    <message>
+        <source>Clear video and gyroscope matches</source>
+        <translation>Εκκαθάριση αντιστοιχίσεων βίντεο και γυροσκοπίου</translation>
+    </message>
+    <message>
+        <source>Export</source>
+        <translation>Εξαγωγή</translation>
+    </message>
+    <message>
+        <source>Lens</source>
+        <translation>Φακός</translation>
+    </message>
+    <message>
+        <source>Remove all videos from this list</source>
+        <translation>Αφαίρεση όλων των βίντεο από αυτή τη λίστα</translation>
+    </message>
+    <message>
+        <source>Choose files</source>
+        <translation>Επιλογή αρχείων</translation>
+    </message>
+    <message>
+        <source>Choose folders</source>
+        <translation>Επιλογή φακέλων</translation>
+    </message>
+    <message>
+        <source>View results</source>
+        <translation>Προβολή αποτελεσμάτων</translation>
+    </message>
+    <message>
+        <source>Confirm folder import</source>
+        <translation>Επιβεβαίωση εισαγωγής φακέλου</translation>
+    </message>
+    <message>
+        <source>Import</source>
+        <translation>Εισαγωγή</translation>
+    </message>
+    <message>
+        <source>Stabilize (for plugins)</source>
+        <translation>Σταθεροποίηση (για πρόσθετα)</translation>
+    </message>
+    <message>
+        <source>Calibration pair</source>
+        <translation>Ζεύγος βαθμονόμησης</translation>
+    </message>
+    <message>
+        <source>In-camera stabilization on</source>
+        <translation>Ενεργή σταθεροποίηση κάμερας</translation>
+    </message>
+    <message>
+        <source>No gyroscope data</source>
+        <translation>Χωρίς δεδομένα γυροσκοπίου</translation>
+    </message>
+    <message>
+        <source>Plugin stabilization only</source>
+        <translation>Σταθεροποίηση μόνο για πρόσθετα</translation>
+    </message>
+    <message>
+        <source>Skip reason not recorded</source>
+        <translation>Δεν καταγράφηκε λόγος παράλειψης</translation>
+    </message>
+    <message>
+        <source>Stopped manually</source>
+        <translation>Διακόπηκε χειροκίνητα</translation>
+    </message>
+</context>
+<context>
+    <name>MobileFolderPicker</name>
+    <message>
+        <source>Add %1 folders</source>
+        <translation>Προσθήκη %1 φακέλων</translation>
+    </message>
+    <message>
+        <source>Choose a location, then select the folders to add. You can also add folders from another location.</source>
+        <translation>Επιλέξτε τοποθεσία και σημειώστε τους φακέλους. Μπορείτε να προσθέσετε φακέλους και από άλλη τοποθεσία.</translation>
+    </message>
+    <message>
+        <source>Choose location</source>
+        <translation>Επιλογή τοποθεσίας</translation>
+    </message>
+    <message>
+        <source>No subfolders. Select this folder to add its files.</source>
+        <translation>Δεν υπάρχουν υποφάκελοι. Επιλέξτε αυτόν τον φάκελο για να προσθέσετε τα αρχεία του.</translation>
+    </message>
+    <message>
+        <source>Open folder</source>
+        <translation>Άνοιγμα φακέλου</translation>
+    </message>
+    <message>
+        <source>This folder</source>
+        <translation>Αυτός ο φάκελος</translation>
+    </message>
+    <message>
+        <source>Unable to read this folder. Choose the location again.</source>
+        <translation>Δεν είναι δυνατή η ανάγνωση του φακέλου. Επιλέξτε ξανά την τοποθεσία.</translation>
+    </message>
+    <message>
+        <source>Up one level</source>
+        <translation>Ένα επίπεδο πάνω</translation>
+    </message>
+    <message>
+        <source>Add this folder</source>
+        <translation>Προσθήκη αυτού του φακέλου</translation>
+    </message>
+    <message>
+        <source>No subfolders</source>
+        <translation>Δεν υπάρχουν υποφάκελοι</translation>
+    </message>
+    <message>
+        <source>Subfolders</source>
+        <translation>Υποφάκελοι</translation>
+    </message>
+    <message>
+        <source>Browse</source>
+        <translation>Περιήγηση</translation>
+    </message>
+    <message>
+        <source>Add %1 files</source>
+        <translation>Προσθήκη %1 αρχείων</translation>
+    </message>
+    <message>
+        <source>Add location</source>
+        <translation>Προσθήκη τοποθεσίας</translation>
+    </message>
+    <message>
+        <source>Choose a folder once to browse its files here.</source>
+        <translation>Επιλέξτε έναν φάκελο μία φορά για να βλέπετε τα αρχεία του εδώ.</translation>
+    </message>
+    <message>
+        <source>No matching files</source>
+        <translation>Δεν υπάρχουν αντίστοιχα αρχεία</translation>
+    </message>
+    <message>
+        <source>Includes files in this folder and up to two levels of subfolders.</source>
+        <translation>Περιλαμβάνει αρχεία αυτού του φακέλου και έως δύο επίπεδα υποφακέλων.</translation>
+    </message>
+    <message>
+        <source>Saved folders</source>
+        <translation>Αποθηκευμένοι φάκελοι</translation>
+    </message>
+    <message>
+        <source>Other locations</source>
+        <translation>Άλλες τοποθεσίες</translation>
+    </message>
+</context>
+<context>
+    <name>MobileGyroBar</name>
+    <message>
+        <source>Not added</source>
+        <translation>Δεν προστέθηκε</translation>
     </message>
 </context>
 </TS>

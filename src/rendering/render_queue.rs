@@ -3,6 +3,14 @@
 
 use qmetaobject::*;
 
+// The selected folder is depth zero. Mobile gyro imports include one child level;
+// mobile video imports stay in the selected folder. Desktop keeps its depth cap.
+const fn folder_import_depth(mobile: bool, gyro: bool) -> usize {
+    if mobile { if gyro { 1 } else { 0 } } else { 3 }
+}
+const MAX_VIDEO_FOLDER_IMPORT_DEPTH: usize = folder_import_depth(cfg!(any(target_os = "android", target_os = "ios")), false);
+const MAX_GYRO_FOLDER_IMPORT_DEPTH: usize = folder_import_depth(cfg!(any(target_os = "android", target_os = "ios")), true);
+
 use crate::core::StabilizationManager;
 use crate::{core, rendering, util};
 use core::camera_identifier::CameraIdentifier;
@@ -426,6 +434,7 @@ impl JobLensGroupOverride {
 
 #[derive(Clone, Debug)]
 struct JobLensMetadataBackup {
+    display_focal_length_mm: Option<f64>,
     lens_params: BTreeMap<i64, core::gyro_source::LensParams>,
     lens_positions: BTreeMap<i64, f64>,
     lens_profile: Option<serde_json::Value>,
@@ -459,6 +468,7 @@ impl JobLensMetadataBackup {
             .cloned()
             .unwrap_or_else(|| md.additional_data.clone());
         Self {
+            display_focal_length_mm: niyien_lens_presets::extract_display_focal_length_mm(md),
             lens_params: md.lens_params.clone(),
             lens_positions: md.lens_positions.clone(),
             lens_profile: md.lens_profile.clone(),
@@ -1917,6 +1927,7 @@ pub struct RenderQueue {
     prepare_video_exports_for_rerender: qt_method!(fn(&mut self)),
     get_gyroflow_data: qt_method!(fn(&self, job_id: u32) -> QString),
     is_job_video_export_finished: qt_method!(fn(&self, job_id: u32) -> bool),
+    get_mobile_queue_snapshot: qt_method!(fn(&self) -> QString),
 
     add_file:
         qt_method!(fn(&mut self, url: String, gyro_url: String, additional_data: String) -> u32),
@@ -9479,6 +9490,61 @@ impl RenderQueue {
         }
     }
 
+    /// Read committed job metadata without borrowing a worker's mutable stabilizer.
+    /// Mobile pages can observe the same queue even when its legacy view is hidden.
+    pub fn get_mobile_queue_snapshot(&self) -> QString {
+        let video_ids: HashSet<u32> = self.collect_video_job_ids().into_iter().collect();
+        let workers_active = self.jobs.values().any(|job| {
+            job.pending_reset_requeue || job.stab.as_ref().is_some_and(|stab| {
+                stab.in_flight_count.load(SeqCst) > 0
+            })
+        });
+        let rows = self.queue.borrow().iter().filter(|item| video_ids.contains(&item.job_id)).map(|item| {
+            let job = self.jobs.get(&item.job_id);
+            let lens_group = job.and_then(|job| job.lens_index_override.or(job.lens_group_index).or_else(|| {
+                job.base_lens_metadata.as_ref().and_then(|metadata| niyien_lens_presets::extract_lens_index(&metadata.source_camera_additional_data))
+            }));
+            let focal_length = job.and_then(|job| job.focal_length_override.or_else(|| {
+                job.base_lens_metadata.as_ref().and_then(|metadata| metadata.display_focal_length_mm)
+            }));
+            let previewable = item.status != JobStatus::Rendering
+                && !self.deep_match_pending.contains_key(&item.job_id)
+                && !item.sync_status.to_string().contains("\"done_pending\"")
+                && !job.is_some_and(|job| job.pending_reset_requeue
+                    || job.stab.as_ref().is_some_and(|stab| stab.in_flight_count.load(SeqCst) > 0));
+            serde_json::json!({
+                "id": item.job_id,
+                "filename": item.input_filename.to_string(),
+                "url": item.input_file.to_string(),
+                "thumbnail": item.thumbnail_url.to_string(),
+                "duration": item.duration_ms,
+                "status": format!("{:?}", item.status),
+                "processing": item.processing_progress,
+                "frame": item.current_frame,
+                "frames": item.total_frames,
+                "error": item.error_string.to_string(),
+                "skipReason": item.skip_reason.to_string(),
+                "sync": item.sync_status.to_string(),
+                "deepMatched": self.deep_match_results.contains_key(&item.job_id),
+                "previewable": previewable,
+                "lastExport": job.and_then(|job| job.last_finished_export_project),
+                "epoch": job.map(|job| job.render_epoch.load(SeqCst)).unwrap_or(0),
+                "paired": self.manual_pairs.iter().any(|pair| pair.job_id == item.job_id) || self.deep_match_results.contains_key(&item.job_id),
+                "lensGroup": lens_group.map(|index| index + 1),
+                "manualLens": self.stabilizer.get_lens_group_manual_edit(),
+                "focalLength": focal_length,
+                "lensPending": self.stabilizer.get_lens_group_manual_edit() && lens_group.is_none(),
+                "outputFolder": item.output_folder.to_string(),
+                "outputFilename": item.output_filename.to_string(),
+            })
+        }).collect::<Vec<_>>();
+        QString::from(serde_json::json!({
+            "rows": rows,
+            "workersActive": workers_active,
+            "deepActive": !self.deep_match_pending.is_empty(),
+        }).to_string())
+    }
+
     fn do_autosync_attempt<
         F: Fn(f64) + Send + Sync + Clone + 'static,
         F2: Fn((String, String)) + Send + Sync + Clone + 'static,
@@ -10733,14 +10799,14 @@ impl RenderQueue {
     // in this folder" apart from "gyro-only folder" when deciding to prompt.
     fn add_gyro_folder(&mut self, folder_url: String) -> i32 {
         // Android SAF trees: same `_mix.bin` collection as `scan_gyro_folder`
-        // (depth cap 3, no result cap), walked via ContentResolver.
+        // (shared import depth cap, no result cap), walked via ContentResolver.
         #[cfg(target_os = "android")]
         if folder_url.starts_with("content://") {
             let mut found: Vec<(String, String)> = Vec::new();
             scan_saf_folder(
                 &folder_url,
                 0,
-                3,
+                MAX_GYRO_FOLDER_IMPORT_DEPTH,
                 usize::MAX,
                 &|u: &str| Self::saf_list_entries(u),
                 &|f| f.ends_with("_mix.bin"),
@@ -10765,7 +10831,7 @@ impl RenderQueue {
             return 0;
         }
         ::log::info!("[add_gyro_folder] 开始扫描文件夹: {}", path);
-        let files = self.scan_gyro_folder(dir, 0);
+        let files = self.scan_gyro_folder(dir, 0, MAX_GYRO_FOLDER_IMPORT_DEPTH);
         ::log::info!(
             "[add_gyro_folder] 扫描完成，共找到 {} 个 _mix.bin 文件",
             files.len()
@@ -10778,9 +10844,9 @@ impl RenderQueue {
         count
     }
 
-    fn scan_gyro_folder(&self, dir: &std::path::Path, depth: usize) -> Vec<std::path::PathBuf> {
+    fn scan_gyro_folder(&self, dir: &std::path::Path, depth: usize, max_depth: usize) -> Vec<std::path::PathBuf> {
         let mut result = Vec::new();
-        if depth > 3 {
+        if depth > max_depth {
             return result;
         }
         match std::fs::read_dir(dir) {
@@ -10813,7 +10879,7 @@ impl RenderQueue {
                 );
                 result.extend(files);
                 for d in subdirs {
-                    result.extend(self.scan_gyro_folder(&d, depth + 1));
+                    result.extend(self.scan_gyro_folder(&d, depth + 1, max_depth));
                 }
             }
             Err(e) => {
@@ -10833,7 +10899,7 @@ impl RenderQueue {
     //    "image_sequence_start": <int>, "frame_count": <int>}
     // Ordinary files use is_sequence=false, start=0, frame_count=0.
     fn list_video_files_in_folder(&self, folder_url: String, extensions_json: String) -> QString {
-        const MAX_VIDEO_FOLDER_DEPTH: usize = 3;
+        const MAX_VIDEO_FOLDER_DEPTH: usize = MAX_VIDEO_FOLDER_IMPORT_DEPTH;
         const MAX_VIDEO_FOLDER_RESULTS: usize = 600;
 
         // Android SAF trees have no filesystem path - walk them via
@@ -11071,7 +11137,7 @@ impl RenderQueue {
     }
 
     fn list_crm_proxy_files_in_folder(&self, folder_url: String, extensions_json: String) -> QString {
-        const MAX_VIDEO_FOLDER_DEPTH: usize = 3;
+        const MAX_VIDEO_FOLDER_DEPTH: usize = MAX_VIDEO_FOLDER_IMPORT_DEPTH;
         const MAX_VIDEO_FOLDER_RESULTS: usize = 600;
 
         #[cfg(target_os = "android")]
@@ -19067,6 +19133,30 @@ mod tests {
             &mut out,
         );
         assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn saf_walker_mobile_import_stops_before_third_child_level() {
+        let mut tree = HashMap::new();
+        for depth in 0..=3 {
+            let mut entries = vec![
+                saf_entry("clip.mp4", &format!("level{depth}/clip.mp4"), false),
+                saf_entry("take_mix.bin", &format!("level{depth}/take_mix.bin"), false),
+            ];
+            if depth < 3 { entries.push(saf_entry("child", &format!("level{}", depth + 1), true)); }
+            tree.insert(format!("level{depth}"), entries);
+        }
+        let visited = std::cell::RefCell::new(Vec::new());
+        let list = |url: &str| {
+            visited.borrow_mut().push(url.to_owned());
+            tree.get(url).cloned().unwrap_or_default()
+        };
+        let mut out = Vec::new();
+        scan_saf_folder("level0", 0, 2, 600, &list,
+            &|name| name.ends_with(".mp4") || name.ends_with("_mix.bin"), &mut out);
+        assert_eq!(out.len(), 6);
+        assert_eq!(*visited.borrow(), vec!["level0", "level1", "level2"]);
+        assert!(out.iter().all(|(_, url)| !url.starts_with("level3")));
     }
 
     #[test]
@@ -27459,9 +27549,65 @@ mod tests {
         std::fs::write(&sidecar_path, []).unwrap();
 
         let queue = RenderQueue::default();
-        let found = queue.scan_gyro_folder(dir.path(), 0);
+        let found = queue.scan_gyro_folder(dir.path(), 0, MAX_GYRO_FOLDER_IMPORT_DEPTH);
 
         assert_eq!(found, vec![gyro_path]);
+    }
+
+    #[test]
+    fn mobile_folder_import_depth_local() {
+        let dir = tempfile::tempdir().unwrap();
+        let child = dir.path().join("child");
+        let grandchild = child.join("grandchild");
+        std::fs::create_dir_all(&grandchild).unwrap();
+        for folder in [dir.path(), child.as_path(), grandchild.as_path()] {
+            for name in ["clip.mp4", "clip.crm", "frame0001.dng", "record_mix.bin"] {
+                std::fs::write(folder.join(name), []).unwrap();
+            }
+        }
+        let video_depth = folder_import_depth(true, false);
+        let gyro_depth = folder_import_depth(true, true);
+        let mut videos = Vec::new();
+        RenderQueue::scan_video_folder(dir.path(), 0, video_depth, 600, &default_exts(), "", &mut videos);
+        assert!(!videos.is_empty());
+        assert!(videos.iter().all(|file| file.parent() == Some(dir.path())));
+        let mut proxies = Vec::new();
+        RenderQueue::scan_crm_proxy_folder(dir.path(), 0, video_depth, 600, &default_exts(), &mut proxies);
+        assert_eq!(proxies.len(), 2);
+        assert!(proxies.iter().all(|file| file.parent() == Some(dir.path())));
+        let mut images = Vec::new();
+        RenderQueue::scan_image_sequence_candidates(dir.path(), 0, video_depth, 600, "", &mut images);
+        assert_eq!(images, vec![dir.path().join("frame0001.dng")]);
+        let queue = RenderQueue::default();
+        assert_eq!(queue.scan_gyro_folder(dir.path(), 0, gyro_depth),
+            vec![dir.path().join("record_mix.bin"), child.join("record_mix.bin")]);
+        assert_eq!(folder_import_depth(false, false), 3);
+        assert_eq!(folder_import_depth(false, true), 3);
+    }
+
+    #[test]
+    fn mobile_folder_import_depth_saf() {
+        let visited = std::cell::RefCell::new(Vec::new());
+        let list = |url: &str| {
+            visited.borrow_mut().push(url.to_string());
+            let mut entries = vec![
+                SafFolderEntry { filename: "clip.mp4".into(), url: format!("{url}/clip.mp4"), is_dir: false },
+                SafFolderEntry { filename: "record_mix.bin".into(), url: format!("{url}/record_mix.bin"), is_dir: false },
+            ];
+            if url.matches("/child").count() < 2 {
+                entries.push(SafFolderEntry { filename: "child".into(), url: format!("{url}/child"), is_dir: true });
+            }
+            entries
+        };
+        let mut videos = Vec::new();
+        scan_saf_folder("content://root", 0, folder_import_depth(true, false), 600, &list, &|name| name.ends_with(".mp4"), &mut videos);
+        assert_eq!(videos.len(), 1);
+        assert_eq!(visited.borrow().as_slice(), &["content://root"]);
+        visited.borrow_mut().clear();
+        let mut gyro = Vec::new();
+        scan_saf_folder("content://root", 0, folder_import_depth(true, true), 600, &list, &|name| name.ends_with("_mix.bin"), &mut gyro);
+        assert_eq!(gyro.len(), 2);
+        assert_eq!(visited.borrow().as_slice(), &["content://root", "content://root/child"]);
     }
 
     #[test]
@@ -27473,7 +27619,7 @@ mod tests {
         std::fs::write(&gyro_path, []).unwrap();
 
         let queue = RenderQueue::default();
-        let found = queue.scan_gyro_folder(dir.path(), 0);
+        let found = queue.scan_gyro_folder(dir.path(), 0, MAX_GYRO_FOLDER_IMPORT_DEPTH);
 
         assert_eq!(found, vec![gyro_path]);
     }
@@ -28453,8 +28599,8 @@ mod tests {
         let rq = include_str!("../ui/RenderQueue.qml");
         assert_eq!(
             rq.matches("window.deepMatchStabilizePending = true").count(),
-            1,
-            "exactly one arming site: deep match success, next to matchDirty = true"
+            2,
+            "desktop and mobile deep-match success each arm the reminder"
         );
         assert_eq!(
             rq.matches("window.deepMatchStabilizePending = false").count(),

@@ -63,10 +63,12 @@ cpp! {{
 
     #ifdef Q_OS_ANDROID
     #   include <QtCore/private/qandroidextras_p.h>
+    #   include <QtCore/qcoreapplication_platform.h>
     #endif
 }}
 
 fn entry() {
+    let startup_started = std::time::Instant::now();
     // 本地 QML 开发调试时临时改为 true 可开启热重载（引擎从 CARGO_MANIFEST_DIR 读 QML 源文件）。
     // Release / CI build 必须为 false，否则 QML 路径会硬编码为构建机磁盘路径，
     // 导致用户运行时 UI 加载失败（见 gyroflow.log: "QQmlApplicationEngine failed to load component"）。
@@ -298,11 +300,15 @@ fn entry() {
     {
         let mut ui = ui_tools.borrow_mut();
         ui.engine_ptr = Some(&mut engine as *mut _);
-        let theme = gyroflow_core::settings::get_u64("theme", 1);
+        let mobile_default = cfg!(any(target_os = "android", target_os = "ios"))
+            || std::env::var("GYROFLOW_MOBILE_UI_TEST").as_deref() == Ok("1");
+        let theme = gyroflow_core::settings::get_u64("theme", if mobile_default { 0 } else { 1 });
         ui.set_theme(theme_name_from_index(theme).into());
     }
 
     engine.set_property("isStorePackage".into(), util::is_store_package().into());
+    // Explicit desktop development preview; window size never selects the mobile product UI.
+    engine.set_property("mobileUiTest".into(), (std::env::var("GYROFLOW_MOBILE_UI_TEST").as_deref() == Ok("1")).into());
     engine.set_property(
         "isMobile".into(),
         cfg!(any(target_os = "android", target_os = "ios")).into(),
@@ -321,6 +327,7 @@ fn entry() {
     let engine_ptr = engine.cpp_ptr();
 
     // Load main UI
+    ::log::debug!(target: "app", "startup stage=before_qml elapsed_ms={}", startup_started.elapsed().as_millis());
     if !ui_live_reload {
         use std::path::PathBuf;
         // Try to load from disk first
@@ -349,13 +356,21 @@ fn entry() {
         cpp!(unsafe [engine_ptr as "QQmlApplicationEngine *", ui_path as "QString"] { init_live_reload(engine_ptr, ui_path); });
     }
 
+    ::log::debug!(target: "app", "startup stage=window_created elapsed_ms={}", startup_started.elapsed().as_millis());
     cpp!(unsafe [] {
         #ifdef Q_OS_ANDROID
-            QtAndroidPrivate::requestPermission("android.permission.READ_EXTERNAL_STORAGE").result();
-            QtAndroidPrivate::requestPermission("android.permission.WRITE_EXTERNAL_STORAGE").result();
-            QtAndroidPrivate::requestPermission("android.permission.READ_MEDIA_VIDEO").result();
+            const auto requestIfNeeded = [](const QString &permission) {
+                if (QtAndroidPrivate::checkPermission(permission).result() != QtAndroidPrivate::Authorized)
+                    QtAndroidPrivate::requestPermission(permission).result();
+            };
+            const int sdk = QNativeInterface::QAndroidApplication::sdkVersion();
+            // Only request permissions that apply to this Android version, and
+            // avoid relaunching permission activities for grants already held.
+            requestIfNeeded(sdk >= 33 ? "android.permission.READ_MEDIA_VIDEO" : "android.permission.READ_EXTERNAL_STORAGE");
+            if (sdk < 30) requestIfNeeded("android.permission.WRITE_EXTERNAL_STORAGE");
         #endif
     });
+    ::log::debug!(target: "app", "startup stage=permissions_checked elapsed_ms={}", startup_started.elapsed().as_millis());
 
     ctl.borrow_mut()
         .stabilizer
@@ -378,6 +393,7 @@ fn entry() {
     );
 
     engine.set_property("defaultInitializedDevice".into(), QString::default().into());
+    let startup_gpu_started = std::time::Instant::now();
     if let Some((name, list_name)) = core::gpu::initialize_contexts() {
         rendering::set_gpu_type_from_name(&name);
         engine.set_property(
@@ -412,6 +428,8 @@ fn entry() {
             serde_json::Value::from(selected.raw_index),
         );
     }
+
+    ::log::debug!(target: "app", "startup stage=gpu_ready elapsed_ms={} gpu_ms={}", startup_started.elapsed().as_millis(), startup_gpu_started.elapsed().as_millis());
 
     // Pre-load NeuFlow sessions in background while user interacts with UI
     #[cfg(feature = "neuflow-ort")]

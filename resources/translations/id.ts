@@ -1099,6 +1099,10 @@ Coba codec keluaran lain (H.265/HEVC menangani lebih banyak kasus daripada H.264
         <source>Go to settings</source>
         <translation>Buka pengaturan</translation>
     </message>
+    <message>
+        <source>This video is still loading.</source>
+        <translation>Video ini masih dimuat.</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4335,6 +4339,10 @@ Silakan masukan frame rate: </translation>
         <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
         <translation>Periksa nomor lensa pada setiap video dalam antrean. Klik kanan untuk mengubahnya, lalu stabilkan.</translation>
     </message>
+    <message>
+        <source>Search stage %1 of %2</source>
+        <translation>Tahap pencarian %1 dari %2</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>
@@ -6259,6 +6267,10 @@ Nonaktifkan stabilisasi lensa (Optical SteadyShot) untuk menggunakan Gyroflow.</
         <source>Playback speed</source>
         <translation>Kecepatan pemutaran</translation>
     </message>
+    <message>
+        <source>Not stabilized yet. Return to Videos and tap Stabilize.</source>
+        <translation>Belum distabilkan. Kembali ke Video dan ketuk Stabilkan.</translation>
+    </message>
 </context>
 <context>
     <name>VideoInformation</name>
@@ -6296,6 +6308,562 @@ Nonaktifkan stabilisasi lensa (Optical SteadyShot) untuk menggunakan Gyroflow.</
         <location filename="../../src/ui/main_window.qml" line="114"/>
         <source>No</source>
         <translation>Tidak</translation>
+    </message>
+</context>
+<context>
+    <name>MobileSettings</name>
+    <message>
+        <source>App preferences</source>
+        <translation>Preferensi aplikasi</translation>
+    </message>
+    <message>
+        <source>Auto rotate</source>
+        <translation>Rotasi otomatis</translation>
+    </message>
+    <message>
+        <source>Dynamic zoom</source>
+        <translation>Zoom dinamis</translation>
+    </message>
+    <message>
+        <source>Feedback</source>
+        <translation>Masukan</translation>
+    </message>
+    <message>
+        <source>Horizon lock amount</source>
+        <translation>Jumlah kunci horizon</translation>
+    </message>
+    <message>
+        <source>Language</source>
+        <translation>Bahasa</translation>
+    </message>
+    <message>
+        <source>Lens correction</source>
+        <translation>Koreksi lensa</translation>
+    </message>
+    <message>
+        <source>Lock horizon</source>
+        <translation>Kunci horizon</translation>
+    </message>
+    <message>
+        <source>Smoothness</source>
+        <translation>Tingkat Kehalusan</translation>
+    </message>
+    <message>
+        <source>Stabilization</source>
+        <translation>Stabilisasi</translation>
+    </message>
+    <message>
+        <source>Static zoom</source>
+        <translation>Perbesar statis</translation>
+    </message>
+    <message>
+        <source>Theme</source>
+        <translation>Tema</translation>
+    </message>
+    <message>
+        <source>Updates</source>
+        <translation>Pembaruan</translation>
+    </message>
+    <message>
+        <source>Zoom</source>
+        <translation>Zoom</translation>
+    </message>
+</context>
+<context>
+    <name>MobileWorkspace</name>
+    <message>
+        <source>%1 completed · %2 need attention</source>
+        <translation>%1 selesai · %2 perlu diperiksa</translation>
+    </message>
+    <message>
+        <source>%1 videos completed</source>
+        <translation>%1 video selesai</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>Tambah</translation>
+    </message>
+    <message>
+        <source>Add files</source>
+        <translation>Tambah berkas</translation>
+    </message>
+    <message>
+        <source>Add folder</source>
+        <translation>Tambah folder</translation>
+    </message>
+    <message>
+        <source>Add media</source>
+        <translation>Tambah media</translation>
+    </message>
+    <message>
+        <source>Add videos and gyroscope data to get started.</source>
+        <translation>Tambahkan video dan data giroskop untuk memulai.</translation>
+    </message>
+    <message>
+        <source>All</source>
+        <translation>Semua</translation>
+    </message>
+    <message>
+        <source>Back to videos</source>
+        <translation>Kembali ke video</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Batalkan</translation>
+    </message>
+    <message>
+        <source>Clear queue</source>
+        <translation>Kosongkan antrean</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Tutup</translation>
+    </message>
+    <message>
+        <source>Continue with all videos. Other clips from the same recording day can use this match when their timestamps are available.</source>
+        <translation>Lanjutkan dengan semua video. Klip lain dari hari perekaman yang sama dapat memakai kecocokan ini jika stempel waktunya tersedia.</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>Pencarian mendalam</translation>
+    </message>
+    <message>
+        <source>Deep search complete</source>
+        <translation>Pencarian mendalam selesai</translation>
+    </message>
+    <message>
+        <source>Deep search · %1</source>
+        <translation>Pencarian mendalam · %1</translation>
+    </message>
+    <message>
+        <source>Deselect</source>
+        <translation>Batalkan pilihan</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>Selesai</translation>
+    </message>
+    <message>
+        <source>Export stabilized video</source>
+        <translation>Ekspor video yang distabilkan</translation>
+    </message>
+    <message>
+        <source>Exported</source>
+        <translation>Diekspor</translation>
+    </message>
+    <message>
+        <source>Exporting</source>
+        <translation>Mengekspor</translation>
+    </message>
+    <message>
+        <source>Exporting %1%</source>
+        <translation>Mengekspor %1%</translation>
+    </message>
+    <message>
+        <source>Global settings</source>
+        <translation>Pengaturan global</translation>
+    </message>
+    <message>
+        <source>Gyroscope data</source>
+        <translation>Data giroskop</translation>
+    </message>
+    <message>
+        <source>Info</source>
+        <translation>Info</translation>
+    </message>
+    <message>
+        <source>Match found. You can now stabilize.</source>
+        <translation>Kecocokan ditemukan. Anda kini dapat menstabilkan.</translation>
+    </message>
+    <message>
+        <source>Matching videos…</source>
+        <translation>Mencocokkan video…</translation>
+    </message>
+    <message>
+        <source>More</source>
+        <translation>Lainnya</translation>
+    </message>
+    <message>
+        <source>Needs attention</source>
+        <translation>Perlu diperiksa</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>Berikutnya</translation>
+    </message>
+    <message>
+        <source>No gyroscope data. Add a recording or try Deep search.</source>
+        <translation>Tidak ada data giroskop. Tambahkan rekaman atau coba Pencarian mendalam.</translation>
+    </message>
+    <message>
+        <source>No match found. Try a video with more camera motion, and check the gyro recording, in-camera stabilization and mounting position.</source>
+        <translation>Tidak ditemukan kecocokan. Coba video dengan lebih banyak gerakan kamera, lalu periksa rekaman giroskop, stabilisasi kamera, dan posisi pemasangan.</translation>
+    </message>
+    <message>
+        <source>Original</source>
+        <translation>Orisinil</translation>
+    </message>
+    <message>
+        <source>Pause</source>
+        <translation>Pause</translation>
+    </message>
+    <message>
+        <source>Play</source>
+        <translation>Play</translation>
+    </message>
+    <message>
+        <source>Playback position</source>
+        <translation>Posisi pemutaran</translation>
+    </message>
+    <message>
+        <source>Preparing search…</source>
+        <translation>Menyiapkan pencarian…</translation>
+    </message>
+    <message>
+        <source>Preparing…</source>
+        <translation>Menyiapkan…</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>Sebelumnya</translation>
+    </message>
+    <message>
+        <source>Processed %1 / %2</source>
+        <translation>Diproses %1 / %2</translation>
+    </message>
+    <message>
+        <source>Reading…</source>
+        <translation>Membaca…</translation>
+    </message>
+    <message>
+        <source>Ready</source>
+        <translation>Siap</translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation>Hapus</translation>
+    </message>
+    <message>
+        <source>Reset pairing</source>
+        <translation>Setel ulang pemasangan</translation>
+    </message>
+    <message>
+        <source>Retry</source>
+        <translation>Coba lagi</translation>
+    </message>
+    <message>
+        <source>Search cancelled</source>
+        <translation>Pencarian dibatalkan</translation>
+    </message>
+    <message>
+        <source>Select</source>
+        <translation>Pilih</translation>
+    </message>
+    <message>
+        <source>Selected %1</source>
+        <translation>%1 dipilih</translation>
+    </message>
+    <message>
+        <source>Settings</source>
+        <translation>Pengaturan</translation>
+    </message>
+    <message>
+        <source>Skipped</source>
+        <translation>Dilewati</translation>
+    </message>
+    <message>
+        <source>Stabilize</source>
+        <translation>Stabilkan</translation>
+    </message>
+    <message>
+        <source>Stabilized</source>
+        <translation>Stabil</translation>
+    </message>
+    <message>
+        <source>Stabilizing</source>
+        <translation>Menstabilkan</translation>
+    </message>
+    <message>
+        <source>Stabilizing %1%</source>
+        <translation>Menstabilkan %1%</translation>
+    </message>
+    <message>
+        <source>Stop</source>
+        <translation>Stop</translation>
+    </message>
+    <message>
+        <source>Stop the current task before changing its inputs.</source>
+        <translation>Hentikan tugas saat ini sebelum mengubah masukannya.</translation>
+    </message>
+    <message>
+        <source>Stop the current task to adjust processing settings.</source>
+        <translation>Hentikan tugas saat ini untuk menyesuaikan pengaturan pemrosesan.</translation>
+    </message>
+    <message>
+        <source>Stop this video</source>
+        <translation>Hentikan video ini</translation>
+    </message>
+    <message>
+        <source>Stopped by you. Retry starts this video from the beginning.</source>
+        <translation>Anda menghentikannya. Percobaan ulang memproses video ini dari awal.</translation>
+    </message>
+    <message>
+        <source>Stopped · %1 completed</source>
+        <translation>Dihentikan · %1 selesai</translation>
+    </message>
+    <message>
+        <source>Stopping…</source>
+        <translation>Menghentikan…</translation>
+    </message>
+    <message>
+        <source>Sync not confirmed</source>
+        <translation>Sinkronisasi belum dikonfirmasi</translation>
+    </message>
+    <message>
+        <source>Task details</source>
+        <translation>Detail tugas</translation>
+    </message>
+    <message>
+        <source>This format supports stabilization for editing plugins only.</source>
+        <translation>Format ini hanya mendukung stabilisasi untuk plugin penyuntingan.</translation>
+    </message>
+    <message>
+        <source>This video could not be processed. Check its gyroscope data and lens settings.</source>
+        <translation>Video ini tidak dapat diproses. Periksa data giroskop dan pengaturan lensanya.</translation>
+    </message>
+    <message>
+        <source>This video is being processed. Preview will be available when it finishes.</source>
+        <translation>Video ini sedang diproses. Pratinjau tersedia setelah selesai.</translation>
+    </message>
+    <message>
+        <source>Unknown</source>
+        <translation>Tidak diketahui</translation>
+    </message>
+    <message>
+        <source>Video information</source>
+        <translation>Informasi video</translation>
+    </message>
+    <message>
+        <source>Videos</source>
+        <translation>Video</translation>
+    </message>
+    <message>
+        <source>Videos %1</source>
+        <translation>Video %1</translation>
+    </message>
+    <message>
+        <source>View</source>
+        <translation>Lihat</translation>
+    </message>
+    <message>
+        <source>Waiting</source>
+        <translation>Menunggu</translation>
+    </message>
+    <message>
+        <source>Your videos, ready to stabilize</source>
+        <translation>Video Anda, siap distabilkan</translation>
+    </message>
+    <message>
+        <source>‹ Videos</source>
+        <translation>‹ Video</translation>
+    </message>
+    <message>
+        <source>Add folders</source>
+        <translation>Tambahkan folder</translation>
+    </message>
+    <message>
+        <source>Add gyroscope data</source>
+        <translation>Tambahkan data giroskop</translation>
+    </message>
+    <message>
+        <source>Focal length unknown</source>
+        <translation>Panjang fokus tidak diketahui</translation>
+    </message>
+    <message>
+        <source>No gyroscope data added</source>
+        <translation>Belum ada data giroskop</translation>
+    </message>
+    <message>
+        <source>Add recordings from an external gyroscope here. Built-in video data is read automatically.</source>
+        <translation>Tambahkan rekaman giroskop eksternal di sini. Data bawaan video dibaca otomatis.</translation>
+    </message>
+    <message>
+        <source>Add videos to get started.</source>
+        <translation>Tambahkan video untuk memulai.</translation>
+    </message>
+    <message>
+        <source>Choose video folders</source>
+        <translation>Pilih folder video</translation>
+    </message>
+    <message>
+        <source>Choose videos</source>
+        <translation>Pilih video</translation>
+    </message>
+    <message>
+        <source>External gyroscope</source>
+        <translation>Giroskop eksternal</translation>
+    </message>
+    <message>
+        <source>App</source>
+        <translation>Aplikasi</translation>
+    </message>
+    <message>
+        <source>Back</source>
+        <translation>Kembali</translation>
+    </message>
+    <message>
+        <source>Changes apply to all videos.</source>
+        <translation>Perubahan berlaku untuk semua video.</translation>
+    </message>
+    <message>
+        <source>Clear video and gyroscope matches</source>
+        <translation>Hapus pasangan video dan giroskop</translation>
+    </message>
+    <message>
+        <source>Export</source>
+        <translation>Ekspor</translation>
+    </message>
+    <message>
+        <source>Lens</source>
+        <translation>Lensa</translation>
+    </message>
+    <message>
+        <source>Remove all videos from this list</source>
+        <translation>Hapus semua video dari daftar ini</translation>
+    </message>
+    <message>
+        <source>Choose files</source>
+        <translation>Pilih berkas</translation>
+    </message>
+    <message>
+        <source>Choose folders</source>
+        <translation>Pilih folder</translation>
+    </message>
+    <message>
+        <source>View results</source>
+        <translation>Lihat hasil</translation>
+    </message>
+    <message>
+        <source>Confirm folder import</source>
+        <translation>Konfirmasi impor folder</translation>
+    </message>
+    <message>
+        <source>Import</source>
+        <translation>Impor</translation>
+    </message>
+    <message>
+        <source>Stabilize (for plugins)</source>
+        <translation>Stabilkan (untuk plugin)</translation>
+    </message>
+    <message>
+        <source>Calibration pair</source>
+        <translation>Pasangan kalibrasi</translation>
+    </message>
+    <message>
+        <source>In-camera stabilization on</source>
+        <translation>Stabilisasi kamera aktif</translation>
+    </message>
+    <message>
+        <source>No gyroscope data</source>
+        <translation>Tidak ada data giroskop</translation>
+    </message>
+    <message>
+        <source>Plugin stabilization only</source>
+        <translation>Stabilisasi hanya untuk plugin</translation>
+    </message>
+    <message>
+        <source>Skip reason not recorded</source>
+        <translation>Alasan dilewati tidak tercatat</translation>
+    </message>
+    <message>
+        <source>Stopped manually</source>
+        <translation>Dihentikan secara manual</translation>
+    </message>
+</context>
+<context>
+    <name>MobileFolderPicker</name>
+    <message>
+        <source>Add %1 folders</source>
+        <translation>Tambahkan %1 folder</translation>
+    </message>
+    <message>
+        <source>Choose a location, then select the folders to add. You can also add folders from another location.</source>
+        <translation>Pilih lokasi, lalu centang folder yang akan ditambahkan. Anda juga dapat menambah folder dari lokasi lain.</translation>
+    </message>
+    <message>
+        <source>Choose location</source>
+        <translation>Pilih lokasi</translation>
+    </message>
+    <message>
+        <source>No subfolders. Select this folder to add its files.</source>
+        <translation>Tidak ada subfolder. Pilih folder ini untuk menambahkan filenya.</translation>
+    </message>
+    <message>
+        <source>Open folder</source>
+        <translation>Buka folder</translation>
+    </message>
+    <message>
+        <source>This folder</source>
+        <translation>Folder ini</translation>
+    </message>
+    <message>
+        <source>Unable to read this folder. Choose the location again.</source>
+        <translation>Folder tidak dapat dibaca. Pilih lokasinya lagi.</translation>
+    </message>
+    <message>
+        <source>Up one level</source>
+        <translation>Naik satu tingkat</translation>
+    </message>
+    <message>
+        <source>Add this folder</source>
+        <translation>Tambahkan folder ini</translation>
+    </message>
+    <message>
+        <source>No subfolders</source>
+        <translation>Tidak ada subfolder</translation>
+    </message>
+    <message>
+        <source>Subfolders</source>
+        <translation>Subfolder</translation>
+    </message>
+    <message>
+        <source>Browse</source>
+        <translation>Telusuri</translation>
+    </message>
+    <message>
+        <source>Add %1 files</source>
+        <translation>Tambahkan %1 file</translation>
+    </message>
+    <message>
+        <source>Add location</source>
+        <translation>Tambah lokasi</translation>
+    </message>
+    <message>
+        <source>Choose a folder once to browse its files here.</source>
+        <translation>Pilih folder sekali untuk menelusuri filenya di sini.</translation>
+    </message>
+    <message>
+        <source>No matching files</source>
+        <translation>Tidak ada file yang cocok</translation>
+    </message>
+    <message>
+        <source>Includes files in this folder and up to two levels of subfolders.</source>
+        <translation>Mencakup file dalam folder ini dan hingga dua tingkat subfolder.</translation>
+    </message>
+    <message>
+        <source>Saved folders</source>
+        <translation>Folder tersimpan</translation>
+    </message>
+    <message>
+        <source>Other locations</source>
+        <translation>Lokasi lain</translation>
+    </message>
+</context>
+<context>
+    <name>MobileGyroBar</name>
+    <message>
+        <source>Not added</source>
+        <translation>Belum ditambahkan</translation>
     </message>
 </context>
 </TS>

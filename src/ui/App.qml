@@ -9,6 +9,8 @@ import QtQuick.Dialogs
 import "."
 import "components/"
 import "menu/" as Menu
+import "mobile/" as Mobile
+import "mobile/MobileLogic.js" as MobileLogic
 import "Util.js" as Util
 import "menu/device_timezones.js" as DeviceTimezones
 
@@ -34,6 +36,102 @@ Rectangle {
 
     // Simple mode is session-scoped: always starts true, never persisted to QSettings.
     property bool isSimpleMode: true;
+    readonly property bool useMobileWorkspace: (isMobile || (typeof mobileUiTest !== "undefined" && mobileUiTest)) && isSimpleMode;
+    property alias mobileUI: mobileWorkspaceLoader.item;
+    property bool mobileSettingsReady: false;
+    property bool mobileWorkspaceCreated: false;
+    property var mobilePendingParams: ({});
+    property var mobileDefaultJobs: ({});
+    readonly property bool mobileAutoRotateAvailable: !!(simpleStab && simpleStab.isSenseFlow);
+    onUseMobileWorkspaceChanged: {
+        if (useMobileWorkspace) Qt.callLater(attachMobileWorkspace);
+        else if (mobileWorkspaceCreated) {
+            mobileSettingsReady = false;
+            videoArea.vid.pause();
+            videoArea.parent = videoAreaCol;
+            videoArea.x = 0;
+            videoArea.y = 0;
+            videoArea.width = Qt.binding(() => videoAreaCol.width);
+            videoArea.height = Qt.binding(() => videoAreaCol.height - (videoArea.fullScreen || isMobileLayout ? 0 : exportbar.height));
+            simpleSensorLensSection.locked = false;
+            Qt.callLater(reparentSimplePanels);
+            Qt.callLater(window.isLandscapeChanged);
+        }
+    }
+
+    function attachMobileWorkspace(): void {
+        if (!useMobileWorkspace || !mobileUI) return;
+        videoArea.parent = mobileUI.previewHost;
+        videoArea.width = Qt.binding(() => mobileUI.previewHost.width);
+        videoArea.height = Qt.binding(() => mobileUI.previewHost.height);
+        simpleSensorLensSection.locked = true;
+        pushToEnd(simpleSensorLensSection, mobileUI.settingsContent);
+        mobileSettingsReady = true;
+    }
+    function openMobilePreview(jobId: int): void {
+        if (!mobileUI || videoArea.queueEditLoading || controller.video_loading_in_progress) return;
+        const data = render_queue.get_gyroflow_data(jobId);
+        if (!data) { mobileUI.notify(qsTr("This video is still loading.")); return; }
+        const snapshot = MobileLogic.previewSnapshot(JSON.parse(data));
+        videoArea.vid.pause();
+        videoArea.loadGyroflowData(snapshot, jobId);
+        Qt.callLater(mobileUI.previewLoaded);
+    }
+    function setMobileComparison(stable: bool): void {
+        videoArea.fovOverviewBtn.checked = false;
+        videoArea.stabEnabledBtn.checked = stable;
+        videoArea.vid.forceRedraw();
+    }
+    function clearMobileQueue(): void { clearQueueAction.clicked(); }
+    function resetMobilePairing(): void { resetPairingAction.clicked(); }
+    function openMobileOutput(jobId: int): void {
+        filesystem.open_file_externally(filesystem.get_file_url(render_queue.get_job_output_folder(jobId), render_queue.get_job_output_filename(jobId), false));
+    }
+    function importMobileFiles(urls: var, autoplay: bool): void {
+        if (!urls || !urls.length || !videoArea.queue) return;
+        if (mobileUI && !mobileUI.inputsAllowed()) return;
+        if (mobileUI && autoplay && urls.length === 1) mobileUI.pendingOpenUrl = urls[0].toString();
+        videoArea.queue.dt.loadFiles(urls);
+    }
+    function rememberMobileDefaults(jobId: int, sourceUrl: string): void {
+        if (!useMobileWorkspace || jobId <= 0 || filesystem.get_filename(sourceUrl).toLowerCase().endsWith(".gyroflow")) return;
+        mobileDefaultJobs[jobId] = mobileGlobalParams();
+    }
+    Connections {
+        target: render_queue;
+        function onProcessing_done(job_id, by_preset): void {
+            if (!window.useMobileWorkspace || !window.mobileDefaultJobs[job_id]) return;
+            const params = window.mobileGlobalParams();
+            delete window.mobileDefaultJobs[job_id];
+            render_queue.batch_update_params(JSON.stringify([job_id]), JSON.stringify(params));
+        }
+    }
+    function mobileGlobalParams(): var {
+        return { smoothness: batchState.smoothness / 100,
+            horizon_lock_amount: batchState.horizonLock ? batchState.horizonLockAmount : 0,
+            zoom_mode: ["none", "dynamic", "static"][batchState.zoomMode],
+            lens_correction: batchState.lensCorrection };
+    }
+    function flushMobileSettings(): void {
+        if (!useMobileWorkspace || !mobileSettingsReady) return;
+        const params = mobilePendingParams;
+        mobilePendingParams = {};
+        if (!Object.keys(params).length) return;
+        const ids = JSON.parse(render_queue.get_all_video_job_ids_json());
+        if (ids.length) render_queue.batch_update_params(JSON.stringify(ids), JSON.stringify(params));
+        if (params.smoothness !== undefined) controller.set_smoothing_param("smoothness", params.smoothness);
+        if (params.horizon_lock_amount !== undefined) controller.set_horizon_lock(params.horizon_lock_amount, 0, false, 0, false, 5, 500, 1, Infinity);
+        if (params.zoom_mode !== undefined) controller.adaptive_zoom = params.zoom_mode === "none" ? 0 : params.zoom_mode === "static" ? -1 : 4;
+        if (params.lens_correction !== undefined) controller.lens_correction_amount = params.lens_correction * 100;
+        if (params.auto_rotate !== undefined) {
+            render_queue.auto_rotate = params.auto_rotate;
+            if (ids.length) {
+                render_queue.set_batch_auto_rotate(JSON.stringify(ids), params.auto_rotate);
+                if (render_queue.has_match_results()) render_queue.reapply_batch_auto_rotate(JSON.stringify(ids));
+            }
+        }
+        if (videoArea.queue) videoArea.queue.matchVersion++;
+    }
     // Simple-mode batch sync dirty flag (window-level because the AI sync toggle lives in
     // SimpleStabilization.qml). true = never synced / inputs changed since last sync.
     property bool syncDirty: true;
@@ -86,6 +184,7 @@ Rectangle {
         if (fallbackDialog.open2) fallbackDialog.open2(); else fallbackDialog.open();
     }
     function openMainFileDialog(): void {
+        if (useMobileWorkspace && videoArea.queue) { videoArea.queue.requestMobileFiles(); return; }
         // Routes the picked batch into videoArea.loadMultipleFiles, matching the
         // desktop "Open" UX.
         videoSourcePicker.open(Qt.platform.os, function(urls) {
@@ -123,6 +222,7 @@ Rectangle {
     // Desktop keeps them in simpleModeContainer.
     function reparentSimplePanels(): void {
         if (!simpleVideoInfoSection || !simpleModeContainer) return;
+        if (useMobileWorkspace) { Qt.callLater(attachMobileWorkspace); return; }
         const useTabs = isMobileLayout && isSimpleMode;
         const tab1 = useTabs ? simpleVideoGyroTab.inner : simpleModeContainer;
         const tab2 = useTabs ? simpleStabSettingsTab.inner : simpleModeContainer;
@@ -322,6 +422,7 @@ Rectangle {
 
     property bool isLandscape: width > height;
     onIsLandscapeChanged: {
+        if (useMobileWorkspace) return;
         if (isLandscape) {
             // Landscape layout
             leftPanel.y = 0;
@@ -346,7 +447,7 @@ Rectangle {
         }
     }
     // property bool isMobileLayout: width < (1500 * dpiScale);
-    property bool isMobileLayout: ((isMobile && screenSize < 7.0) || forceMobileLayout) && !forceDesktopLayout;
+    property bool isMobileLayout: useMobileWorkspace || (((isMobile && screenSize < 7.0) || forceMobileLayout) && !forceDesktopLayout);
     onIsMobileLayoutChanged: {
         if (isMobileLayout) {
             vidInfo      .parent = inputsTab.inner;
@@ -449,11 +550,12 @@ Rectangle {
         property real lensCorrection: 1.0;     // 0.0-1.0
         property real framerate: 0;            // 0=don't override
 
-        onSmoothnessChanged: window.scheduleApplyBatchParams()
-        onHorizonLockChanged: window.scheduleApplyBatchParams()
-        onHorizonLockAmountChanged: window.scheduleApplyBatchParams()
-        onZoomModeChanged: window.scheduleApplyBatchParams()
-        onLensCorrectionChanged: window.scheduleApplyBatchParams()
+        onSmoothnessChanged: window.scheduleApplyBatchParams("smoothness")
+        onHorizonLockChanged: window.scheduleApplyBatchParams("horizon_lock_amount")
+        onHorizonLockAmountChanged: window.scheduleApplyBatchParams("horizon_lock_amount")
+        onZoomModeChanged: window.scheduleApplyBatchParams("zoom_mode")
+        onLensCorrectionChanged: window.scheduleApplyBatchParams("lens_correction")
+        onAutoRotateChanged: if (window.useMobileWorkspace) window.scheduleApplyBatchParams("auto_rotate")
         onFramerateChanged: window.scheduleApplyBatchParams()
     }
 
@@ -467,16 +569,16 @@ Rectangle {
     }
 
 
-    property bool _queueBatchActive: videoArea.queue
+    property bool _queueBatchActive: useMobileWorkspace || (videoArea.queue
         && videoArea.queue.shown
         && (videoArea.queue.selectedCount > 0
-            || (window.isSimpleMode && render_queue.has_video_jobs))
+            || (window.isSimpleMode && render_queue.has_video_jobs)))
 
     // Narrow version of _queueBatchActive: only true when the user has an
     // explicit selection. Used by simple-mode peer panels' opacity/enabled
     // bindings so they fade only when the user is selection-batch-editing,
     // not just because the queue happens to be non-empty.
-    property bool _selectionDrivenBatch: videoArea.queue
+    property bool _selectionDrivenBatch: !useMobileWorkspace && videoArea.queue
         && videoArea.queue.shown
         && videoArea.queue.selectedCount > 0
 
@@ -542,6 +644,7 @@ Rectangle {
     }
 
     function loadBatchParams() {
+        if (useMobileWorkspace) return;
         if (!videoArea.queue) return;
         const keys = Object.keys(videoArea.queue.selectedJobs);
         let primaryJobId = 0;
@@ -594,7 +697,15 @@ Rectangle {
         }
     }
 
-    function scheduleApplyBatchParams() {
+    function scheduleApplyBatchParams(field) {
+        if (useMobileWorkspace) {
+            if (!mobileSettingsReady || !field || _batchApplySuppressed) return;
+            const values = mobileGlobalParams();
+            values.auto_rotate = batchState.autoRotate;
+            if (values[field] !== undefined) mobilePendingParams = Object.assign({}, mobilePendingParams, { [field]: values[field] });
+            batchApplyTimer.restart();
+            return;
+        }
         if (_batchApplySuppressed || !videoArea.queue) return;
         const hasSelection = videoArea.queue.selectedCount > 0;
         const hasSimpleGlobalTarget = window.isSimpleMode && render_queue.has_video_jobs;
@@ -604,6 +715,7 @@ Rectangle {
     }
 
     function applyBatchParams() {
+        if (useMobileWorkspace) { flushMobileSettings(); return; }
         if (!videoArea.queue) return;
         let params = {};
         params.smoothness = batchState.smoothness / 100.0;
@@ -658,52 +770,52 @@ Rectangle {
     // ── Task 8: Sync control changes back to batchState ──
     // Full mode: Stabilization.qml smoothness (via signal)
     Connections {
-        target: (window.stab && batchState.active) ? window.stab : null;
+        target: (!window.useMobileWorkspace && window.stab && batchState.active) ? window.stab : null;
         function onSmoothnessChanged(value) { batchState.smoothness = value * 100; }  // signal emits 0-1, batchState uses 0-100
     }
     // Full mode: horizonCb
     Connections {
-        target: (window.stab && batchState.active) ? window.stab.horizonCb.cb : null;
+        target: (!window.useMobileWorkspace && window.stab && batchState.active) ? window.stab.horizonCb.cb : null;
         function onCheckedChanged() { batchState.horizonLock = target.checked; }
     }
     // Full mode: croppingMode
     Connections {
-        target: (window.stab && batchState.active) ? window.stab.croppingMode : null;
+        target: (!window.useMobileWorkspace && window.stab && batchState.active) ? window.stab.croppingMode : null;
         function onCurrentIndexChanged() { batchState.zoomMode = target.currentIndex; }
     }
     // Simple mode: smoothnessSlider
     Connections {
-        target: (simpleStab && batchState.active) ? simpleStab.smoothnessSlider : null;
+        target: (!window.useMobileWorkspace && simpleStab && batchState.active) ? simpleStab.smoothnessSlider : null;
         function onValueChanged() { batchState.smoothness = target.value; }
     }
     // Simple mode: horizonCb
     Connections {
-        target: (simpleStab && batchState.active) ? simpleStab.horizonCb.cb : null;
+        target: (!window.useMobileWorkspace && simpleStab && batchState.active) ? simpleStab.horizonCb.cb : null;
         function onCheckedChanged() { batchState.horizonLock = target.checked; }
     }
     // Simple mode: croppingMode
     Connections {
-        target: (simpleStab && batchState.active) ? simpleStab.croppingMode : null;
+        target: (!window.useMobileWorkspace && simpleStab && batchState.active) ? simpleStab.croppingMode : null;
         function onCurrentIndexChanged() { batchState.zoomMode = target.currentIndex; }
     }
     // Full mode: horizonSlider → horizonLockAmount
     Connections {
-        target: (window.stab && batchState.active) ? window.stab.horizonSlider : null;
+        target: (!window.useMobileWorkspace && window.stab && batchState.active) ? window.stab.horizonSlider : null;
         function onValueChanged() { batchState.horizonLockAmount = target.value; }
     }
     // Full mode: correctionAmount → lensCorrection
     Connections {
-        target: (window.stab && batchState.active) ? window.stab.correctionAmount : null;
+        target: (!window.useMobileWorkspace && window.stab && batchState.active) ? window.stab.correctionAmount : null;
         function onValueChanged() { batchState.lensCorrection = target.value; }
     }
     // Simple mode: horizonSlider → horizonLockAmount
     Connections {
-        target: (simpleStab && batchState.active) ? simpleStab.horizonSlider : null;
+        target: (!window.useMobileWorkspace && simpleStab && batchState.active) ? simpleStab.horizonSlider : null;
         function onValueChanged() { batchState.horizonLockAmount = target.value; }
     }
     // Simple mode: lensCorrectionToggle → lensCorrection
     Connections {
-        target: (simpleStab && batchState.active) ? simpleStab.lensCorrectionToggle : null;
+        target: (!window.useMobileWorkspace && simpleStab && batchState.active) ? simpleStab.lensCorrectionToggle : null;
         function onCheckedChanged() { batchState.lensCorrection = target.checked ? 1.0 : 0.0; }
     }
 
@@ -798,7 +910,7 @@ Rectangle {
             if (treeUrls.length > 0) {
                 console.warn("onUrls_opened: no picker callback, routing " + treeUrls.length + " tree URI(s) to the render queue");
                 if (videoArea.queue) {
-                    Qt.callLater(function() { videoArea.queue.dt.loadFiles(treeUrls); });
+                    Qt.callLater(function() { if (window.useMobileWorkspace) window.importMobileFiles(treeUrls, false); else videoArea.queue.dt.loadFiles(treeUrls); });
                 }
             }
             if (fileUrls.length > 0) {
@@ -831,7 +943,8 @@ Rectangle {
         running: false;
         onTriggered: {
             if (pendingOpenFile.toString()) {
-                videoArea.loadFile(pendingOpenFile);
+                if (window.useMobileWorkspace) window.importMobileFiles([pendingOpenFile], true);
+                else videoArea.loadFile(pendingOpenFile);
                 pendingOpenFile = "";
             }
         }
@@ -846,6 +959,7 @@ Rectangle {
 
     Item {
         id: mainLayout;
+        visible: !window.useMobileWorkspace;
         width: parent.width;
         height: parent.height - y;
 
@@ -1354,6 +1468,7 @@ Rectangle {
                         anchors.verticalCenter: (window.isMobileLayout && window.isSimpleMode) ? undefined : parent.verticalCenter;
                         visible: videoArea.queue.shown;
                         LinkButton {
+                            id: resetPairingAction;
                             anchors.centerIn: parent;
                             leftPadding: 8 * dpiScale;
                             rightPadding: 8 * dpiScale;
@@ -1400,6 +1515,7 @@ Rectangle {
                         anchors.verticalCenter: (window.isMobileLayout && window.isSimpleMode) ? undefined : parent.verticalCenter;
                         visible: videoArea.queue.shown;
                         LinkButton {
+                            id: clearQueueAction;
                             anchors.centerIn: parent;
                             leftPadding: 8 * dpiScale;
                             rightPadding: 8 * dpiScale;
@@ -1788,6 +1904,7 @@ Rectangle {
                 // has its own visual border.
                 MenuItem {
                     id: simpleSensorLensSection;
+                    showBtn: !window.useMobileWorkspace;
                     width: parent ? parent.width : 0;
                     text: qsTr("Sensor && Lens");
                     iconName: "chart";
@@ -1797,22 +1914,22 @@ Rectangle {
                     BasicText {
                         width: parent.width;
                         wrapMode: Text.WordWrap;
-                        visible: text.length > 0;
+                        visible: text.length > 0 && !window.useMobileWorkspace;
                         text: window.motionData ? window.motionData.detectedFormat : "";
                         color: styleTextColor;
                         opacity: 0.7;
-                        font.pixelSize: 11 * dpiScale;
+                        font.pixelSize: (window.useMobileWorkspace ? 14 : 11) * dpiScale;
                     }
 
                     Rectangle {
                         id: simpleDeviceCard;
                         width: parent.width;
                         visible: simpleDevice.active;
-                        height: visible ? simpleDevice.height + 16 * dpiScale : 0;
-                        color: styleBackground2;
+                        height: visible ? simpleDevice.height + (window.useMobileWorkspace ? 24 : 16) * dpiScale : 0;
+                        color: window.useMobileWorkspace ? Mobile.MobileStyle.surface(style === "dark") : styleBackground2;
                         border.color: styleHrColor;
-                        border.width: Math.max(1, 1 * dpiScale);
-                        radius: 10 * dpiScale;
+                        border.width: window.useMobileWorkspace ? 0 : Math.max(1, 1 * dpiScale);
+                        radius: (window.useMobileWorkspace ? 5 : 10) * dpiScale;
                         opacity: _selectionDrivenBatch ? 0.4 : 1.0;
                         enabled: !_selectionDrivenBatch;
                         ItemLoader {
@@ -1822,30 +1939,31 @@ Rectangle {
                                 controller.device_connected,
                                 controller.ota_state,
                                 controller.device_connection_status);
-                            x: 8 * dpiScale;
-                            y: 8 * dpiScale;
-                            width: parent.width - 16 * dpiScale;
-                            sourceComponent: Component { Menu.SimpleDevice { locked: true; } }
+                            x: (window.useMobileWorkspace ? 16 : 8) * dpiScale;
+                            y: (window.useMobileWorkspace ? 12 : 8) * dpiScale;
+                            width: parent.width - 2 * x;
+                            sourceComponent: Component { Menu.SimpleDevice { locked: true; contentInset: window.useMobileWorkspace ? 0 : 15 * dpiScale; } }
                         }
                     }
 
                     Rectangle {
                         id: simpleMountingCard;
                         width: parent.width;
-                        height: simpleMounting.height + 16 * dpiScale;
-                        color: styleBackground2;
+                        height: simpleMounting.height + (window.useMobileWorkspace ? 24 : 16) * dpiScale;
+                        color: window.useMobileWorkspace ? Mobile.MobileStyle.surface(style === "dark") : styleBackground2;
                         border.color: styleHrColor;
-                        border.width: Math.max(1, 1 * dpiScale);
-                        radius: 10 * dpiScale;
+                        border.width: window.useMobileWorkspace ? 0 : Math.max(1, 1 * dpiScale);
+                        radius: (window.useMobileWorkspace ? 5 : 10) * dpiScale;
                         ItemLoader {
                             id: simpleMounting;
                             active: true;
-                            x: 8 * dpiScale;
-                            y: 8 * dpiScale;
-                            width: parent.width - 16 * dpiScale;
+                            x: (window.useMobileWorkspace ? 16 : 8) * dpiScale;
+                            y: (window.useMobileWorkspace ? 12 : 8) * dpiScale;
+                            width: parent.width - 2 * x;
                             sourceComponent: Component {
                                 Menu.MountingPresetSelector {
                                     locked: true;
+                                    contentInset: window.useMobileWorkspace ? 0 : 15 * dpiScale;
                                 }
                             }
                         }
@@ -1854,20 +1972,20 @@ Rectangle {
                     Rectangle {
                         id: lensGroupConfigCard;
                         width: parent.width;
-                        height: lensGroupConfig.height + 16 * dpiScale;
-                        color: styleBackground2;
+                        height: lensGroupConfig.height + (window.useMobileWorkspace ? 24 : 16) * dpiScale;
+                        color: window.useMobileWorkspace ? Mobile.MobileStyle.surface(style === "dark") : styleBackground2;
                         border.color: styleHrColor;
-                        border.width: Math.max(1, 1 * dpiScale);
-                        radius: 10 * dpiScale;
+                        border.width: window.useMobileWorkspace ? 0 : Math.max(1, 1 * dpiScale);
+                        radius: (window.useMobileWorkspace ? 5 : 10) * dpiScale;
                         ItemLoader {
                             id: lensGroupConfig;
                             // Always visible + interactive in Simple mode so users can configure
                             // lens groups for the multi-selected queue jobs.
                             active: true;
-                            x: 8 * dpiScale;
-                            y: 8 * dpiScale;
-                            width: parent.width - 16 * dpiScale;
-                            sourceComponent: Component { Menu.LensGroupConfig { locked: true; } }
+                            x: (window.useMobileWorkspace ? 16 : 8) * dpiScale;
+                            y: (window.useMobileWorkspace ? 12 : 8) * dpiScale;
+                            width: parent.width - 2 * x;
+                            sourceComponent: Component { Menu.LensGroupConfig { locked: true; contentInset: window.useMobileWorkspace ? 0 : 15 * dpiScale; } }
                         }
                     }
                 }
@@ -2059,7 +2177,23 @@ Rectangle {
     }
 
     Shortcuts {
+        enabled: !window.useMobileWorkspace;
         videoArea: videoArea;
+    }
+
+    Loader {
+        id: mobileWorkspaceLoader;
+        anchors.fill: parent;
+        active: window.useMobileWorkspace || window.mobileWorkspaceCreated;
+        visible: window.useMobileWorkspace;
+        onLoaded: window.mobileWorkspaceCreated = true;
+        sourceComponent: Mobile.MobileWorkspace {
+            host: window;
+            backend: render_queue;
+            filesystemService: filesystem;
+            unit: dpiScale;
+            dark: style === "dark";
+        }
     }
 
     // Simple-mode batch sync dispatch (queue mode). Shared by simpleAutoSyncBtn and by
@@ -2282,6 +2416,7 @@ Rectangle {
     // state. A missing baseline counts as dirty — losing an edit is worse than
     // an extra save.
     function saveEditingJobIfDirty(onDone: var): void {
+        if (useMobileWorkspace) { flushMobileSettings(); onDone(); return; }
         if (render_queue.editing_job_id <= 0
             || videoArea.queueEditLoading
             || controller.video_loading_in_progress
@@ -2323,7 +2458,7 @@ Rectangle {
     // bar button, the deep-match success dialog and the same-day deep-search
     // soft-intercept dialog all run the exact same decision tree.
     function runPluginStabilizeFlow(): void {
-        const queueMode = videoArea.queue && videoArea.queue.shown && render_queue.queue.rowCount() > 0;
+        const queueMode = videoArea.queue && (window.useMobileWorkspace || videoArea.queue.shown) && render_queue.queue.rowCount() > 0;
         if (!queueMode) {
             // Single video, no queue to write back to. No usable gyro data:
             // prompt to load gyro instead of a silent no-op.
@@ -2379,7 +2514,7 @@ Rectangle {
     // batch dispatched); false means the caller should continue with its
     // single-video path.
     function runStabilizedBatchExport(): bool {
-        const queueMode = videoArea.queue && videoArea.queue.shown && render_queue.queue.rowCount() > 0;
+        const queueMode = videoArea.queue && (window.useMobileWorkspace || videoArea.queue.shown) && render_queue.queue.rowCount() > 0;
         if (!queueMode) {
             // No usable gyro data on the single video: prompt to load gyro
             // instead of a silent no-op.

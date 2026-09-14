@@ -371,6 +371,20 @@ deploy *param:
             $ApkName = "apk\release\android-build-release-signed.apk"
         }
 
+        # Recreate only the generated APK files. Incremental ZIP replacement can
+        # retain large unused regions when the native library changes.
+        $ApkOutputsToRecreate = if ($UseReleaseSigning) {
+            @("apk\release\android-build-release-unsigned.apk", "apk\release\android-build-release-signed.apk")
+        } else {
+            @($ApkName)
+        }
+        foreach ($ApkOutput in $ApkOutputsToRecreate) {
+            $PreviousApk = Join-Path "$ProjectDir\target\android-build\build\outputs" $ApkOutput
+            if (Test-Path -LiteralPath $PreviousApk -PathType Leaf) {
+                Remove-Item -LiteralPath $PreviousApk
+            }
+        }
+
         $cmd = "androiddeployqt --input `"$ProjectDir\target\android-build\android-deploy.json`" --output `"$ProjectDir\target\android-build`" --deployment bundled $Sign --android-platform android-36 --jdk ${Env:JAVA_HOME} --gradle"
 
         iex "$cmd"

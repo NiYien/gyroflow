@@ -5,9 +5,11 @@ import QtQuick
 import QtQuick.Controls as QQC
 import QtQuick.Controls.impl as QQCI
 import QtQuick.Controls.Material.impl as QQCMI
+import "../mobile" as Mobile
 
 QQC.Popup {
     id: popup;
+    readonly property bool mobileStyle: typeof window !== "undefined" && window.useMobileWorkspace === true
     width: parent.width;
     margins: 8 * dpiScale;
     implicitHeight: Math.min(
@@ -22,9 +24,9 @@ QQC.Popup {
     property alias currentIndex: lv.currentIndex;
     property alias lv: lv;
     property int highlightedIndex: currentIndex;
-    property real itemHeight: 35 * dpiScale;
-    font.pixelSize: 12 * dpiScale;
-    font.family: styleFont;
+    property real itemHeight: (mobileStyle ? 48 : 35) * dpiScale;
+    font.pixelSize: (mobileStyle ? Mobile.MobileStyle.body : 12) * dpiScale;
+    font.family: mobileStyle ? Mobile.MobileStyle.fontFamily : styleFont;
     property real maxItemWidth: 0;
 
     property var icons: [];
@@ -50,7 +52,7 @@ QQC.Popup {
         color: styleButtonColor;
         border.width: 1 * dpiScale;
         border.color: stylePopupBorder
-        radius: 4 * dpiScale;
+        radius: (popup.mobileStyle ? 5 : 4) * dpiScale;
         layer.enabled: true;
         layer.effect: QQCMI.ElevationEffect { elevation: 8 }
     }
