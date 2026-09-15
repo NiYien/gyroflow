@@ -287,9 +287,8 @@ impl<'a> VideoTranscoder<'a> {
         encoder.set_gop(((gop * params.keyframe_distance_s) as u32).max(1));
 
         unsafe {
-            if !codec_name.contains("videotoolbox") {
-                (*encoder.as_mut_ptr()).color_trc = (*frame.as_ptr()).color_trc;
-            }
+            // VideoToolbox also needs the source transfer function to signal HLG/PQ correctly.
+            (*encoder.as_mut_ptr()).color_trc = (*frame.as_ptr()).color_trc;
             (*encoder.as_mut_ptr()).color_primaries = (*frame.as_ptr()).color_primaries;
         }
 
