@@ -17,6 +17,9 @@ Rectangle {
     focus: visible;
 
     // ---- public API ----
+    readonly property bool mobileLayout: typeof isMobile !== "undefined" && isMobile;
+    property string mobileDisclosure: "";
+    property bool sending: false;
     property bool crashMode: false;
     property int  pendingCrashCount: 0;
     // Paths of the crash zips this dialog instance is "covering". The Cancel
@@ -29,10 +32,13 @@ Rectangle {
     property bool _submitting: false;
 
     function open(): void {
+        // Read the current language each time the persistent dialog is opened.
+        root.mobileDisclosure = root.mobileLayout && typeof ui_tools !== "undefined"
+            ? ui_tools.mobile_document(root.crashMode ? "feedback_crash_notice" : "feedback_notice") : "";
         opacity = 0; visible = true; opAnim.start();
         statusLabel.text = "";
         progressBar.visible = false;
-        submitBtn.enabled = true;
+        root.sending = false;
         _submitting = false;
         if (root.crashMode) {
             descArea.text = "";
@@ -72,25 +78,50 @@ Rectangle {
         function onFeedbackCompleted(success, id, error) {
             // Just close — App.qml's Connections handles the user-facing toast.
             progressBar.visible = false;
-            submitBtn.enabled = true;
+            root.sending = false;
             root.close();
         }
     }
 
     Rectangle {
         id: card;
-        anchors.centerIn: parent;
-        width:  Math.min(parent.width  - 60 * dpiScale, 520 * dpiScale);
-        height: Math.min(parent.height - 80 * dpiScale, contentCol.implicitHeight + 60 * dpiScale);
+        objectName: "feedbackCard";
+        readonly property real availableHeight: root.mobileLayout && Qt.inputMethod.visible
+            ? Math.min(root.height, root.mapFromItem(null, 0, Qt.inputMethod.keyboardRectangle.y).y) : root.height;
+        x: (parent.width - width) / 2;
+        y: root.mobileLayout ? Math.max(8 * dpiScale, (availableHeight - height) / 2) : (parent.height - height) / 2;
+        width: Math.min(parent.width - (root.mobileLayout ? 24 : 60) * dpiScale, 520 * dpiScale);
+        height: root.mobileLayout
+            ? Math.max(0, Math.min(availableHeight - 24 * dpiScale, contentCol.implicitHeight + 40 * dpiScale))
+            : Math.min(parent.height - 80 * dpiScale, contentCol.implicitHeight + 60 * dpiScale);
         color: styleBackground2;
         radius: 8 * dpiScale;
         border.color: stylePopupBorder;
         border.width: 1;
 
-        ColumnLayout {
-            id: contentCol;
+        QQC.ScrollView {
+            id: feedbackScroll;
+            objectName: "feedbackMobileScroll";
+            visible: root.mobileLayout;
             anchors.fill: parent;
             anchors.margins: 20 * dpiScale;
+            clip: true;
+            Flickable {
+                id: feedbackFlickable;
+                contentWidth: feedbackScroll.availableWidth;
+                contentHeight: root.mobileLayout ? contentCol.implicitHeight : 0;
+                clip: true;
+            }
+        }
+        ColumnLayout {
+            id: contentCol;
+            objectName: "feedbackContent";
+            // Keep the original desktop geometry outside the mobile scroll view.
+            parent: root.mobileLayout ? feedbackFlickable.contentItem : card;
+            x: root.mobileLayout ? 0 : 20 * dpiScale;
+            y: root.mobileLayout ? 0 : 20 * dpiScale;
+            width: root.mobileLayout ? feedbackScroll.availableWidth : card.width - 40 * dpiScale;
+            height: root.mobileLayout ? implicitHeight : card.height - 40 * dpiScale;
             spacing: 14 * dpiScale;
 
             BasicText {
@@ -104,10 +135,10 @@ Rectangle {
 
             BasicText {
                 Layout.fillWidth: true;
-                text: root.crashMode
+                text: root.mobileDisclosure || (root.crashMode
                     ? qsTr("Last session crashed; the crash log is attached automatically. Description and email are optional.")
-                    : qsTr("Logs and project metadata will be uploaded to Niyien for analysis. Description and email are optional. No video files are uploaded.");
-                font.pixelSize: 11 * dpiScale;
+                    : qsTr("Logs and project metadata will be uploaded to Niyien for analysis. Description and email are optional. No video files are uploaded."));
+                font.pixelSize: (root.mobileLayout ? 14 : 11) * dpiScale;
                 wrapMode: Text.WordWrap;
                 opacity: 0.75;
             }
@@ -162,14 +193,15 @@ Rectangle {
                 }
                 Button {
                     id: submitBtn;
+                    objectName: "feedbackSubmit";
                     text: qsTr("Submit");
                     accent: true;
-                    enabled: root.isValidEmail(emailField.text);
+                    enabled: !root.sending && root.isValidEmail(emailField.text);
                     onClicked: {
-                        submitBtn.enabled = false;
+                        root.sending = true;
                         root._submitting = true;
                         statusLabel.text = qsTr("Packaging…");
-                        // Empty options JSON — Rust side defaults all toggles to true.
+                        // Restore the existing one-click diagnostic bundle defaults.
                         controller.submitFeedback(descArea.text, emailField.text, "{}");
                     }
                 }

@@ -8540,7 +8540,11 @@ impl RenderQueue {
                     .and_then(|x| x.as_str())
                     .map(|x| x.to_owned());
                 if let Ok(mut render_options) =
-                    serde_json::from_value(out.clone()) as serde_json::Result<RenderOptions>
+                    serde_json::from_value::<RenderOptions>(out.clone()).map_err(|error| {
+                        ::log::error!("Invalid queue export settings: {error}");
+                        err(("%1".to_owned(), format!("Invalid export settings: {error}")));
+                        error
+                    })
                 {
                     render_options.update_from_json(out);
                     let smoothing = stabilizer.smoothing.read().clone();

@@ -1,0 +1,5 @@
+Blackmagic RAW SDK
+Blackmagic Design Pty. Ltd.
+https://www.blackmagicdesign.com/products/blackmagicraw
+
+Blackmagic RAW is provided by Blackmagic Design under separate SDK terms. The GPL license of NiYien does not relicense the Blackmagic RAW SDK.

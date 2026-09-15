@@ -91,7 +91,7 @@ pub fn submit(args: SubmitArgs) -> JobOutcome {
     }
 
     let _ = events.send(FeedbackJobState::Cleanup);
-    cleanup(&inputs);
+    cleanup(&inputs, &options);
 
     let _ = events.send(FeedbackJobState::Done { id: id.clone() });
     JobOutcome { success: true, id: Some(id), error: None }
@@ -398,25 +398,25 @@ fn confirm(id: &str, size: u64, sha256: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn cleanup(inputs: &PackageInputs) {
+fn cleanup(inputs: &PackageInputs, options: &PackageOptions) {
     // Truncate incidents.log (design D5).
-    if let Some(p) = &inputs.incidents_log {
+    if let Some(p) = inputs.incidents_log.as_ref().filter(|_| options.include_incidents) {
         let _ = std::fs::OpenOptions::new()
             .write(true).truncate(true).open(p);
     }
     // Truncate OFX / Adobe plugin logs after a successful confirm
     // (feedback-include-plugin-logs §D4). Best-effort: a locked file is
     // tolerated, the rest of cleanup still runs.
-    if let Some(p) = &inputs.openfx_log {
+    if let Some(p) = inputs.openfx_log.as_ref().filter(|_| options.include_current_log) {
         let _ = std::fs::OpenOptions::new()
             .write(true).truncate(true).open(p);
     }
-    if let Some(p) = &inputs.adobe_log {
+    if let Some(p) = inputs.adobe_log.as_ref().filter(|_| options.include_current_log) {
         let _ = std::fs::OpenOptions::new()
             .write(true).truncate(true).open(p);
     }
     // Mark each crash zip uploaded.
-    for crash in &inputs.crash_zips {
+    for crash in inputs.crash_zips.iter().filter(|_| options.include_crashes) {
         let mut marker = crash.clone();
         marker.set_extension("uploaded");
         let _ = std::fs::write(&marker, b"");

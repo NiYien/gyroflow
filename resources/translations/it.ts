@@ -2120,6 +2120,18 @@ You can increase the sharpness limit in the Advanced section.</source>
         <source>Packaging…</source>
         <translation>Compressione…</translation>
     </message>
+    <message>
+        <source>Feedback includes your message, optional email, app version and submission time. Choose any attachments below. No videos are uploaded. See Privacy policy in Settings.</source>
+        <translation>Feedback includes your message, optional email, app version and submission time. Choose any attachments below. No videos are uploaded. See Privacy policy in Settings.</translation>
+    </message>
+    <message>
+        <source>Include logs and device information</source>
+        <translation>Include logs and device information</translation>
+    </message>
+    <message>
+        <source>Include project and lens settings</source>
+        <translation>Include project and lens settings</translation>
+    </message>
 </context>
 <context>
     <name>FrequencyChart</name>
@@ -6369,6 +6381,22 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <source>Zoom</source>
         <translation>Zoom</translation>
     </message>
+    <message>
+        <source>About NiYien</source>
+        <translation>About NiYien</translation>
+    </message>
+    <message>
+        <source>Help and support</source>
+        <translation>Help and support</translation>
+    </message>
+    <message>
+        <source>Open-source licenses</source>
+        <translation>Open-source licenses</translation>
+    </message>
+    <message>
+        <source>Privacy policy</source>
+        <translation>Privacy policy</translation>
+    </message>
 </context>
 <context>
     <name>MobileWorkspace</name>
@@ -6779,6 +6807,58 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
     <message>
         <source>Stopped manually</source>
         <translation>Interrotto manualmente</translation>
+    </message>
+    <message>
+        <source>About NiYien</source>
+        <translation>About NiYien</translation>
+    </message>
+    <message>
+        <source>Export editing project</source>
+        <translation>Export editing project</translation>
+    </message>
+    <message>
+        <source>Feedback</source>
+        <translation>Feedback</translation>
+    </message>
+    <message>
+        <source>Help and support</source>
+        <translation>Help and support</translation>
+    </message>
+    <message>
+        <source>How it works</source>
+        <translation>How it works</translation>
+    </message>
+    <message>
+        <source>Open-source licenses</source>
+        <translation>Open-source licenses</translation>
+    </message>
+    <message>
+        <source>Privacy policy</source>
+        <translation>Privacy policy</translation>
+    </message>
+    <message>
+        <source>Share / Save to Files</source>
+        <translation>Share / Save to Files</translation>
+    </message>
+    <message>
+        <source>Source code</source>
+        <translation>Source code</translation>
+    </message>
+    <message>
+        <source>The demo could not be prepared. Please try again.</source>
+        <translation>The demo could not be prepared. Please try again.</translation>
+    </message>
+    <message>
+        <source>The output file is unavailable. Check the output folder.</source>
+        <translation>The output file is unavailable. Check the output folder.</translation>
+    </message>
+    <message>
+        <source>Try a generated demo</source>
+        <translation>Try a generated demo</translation>
+    </message>
+    <message>
+        <source>Use a supported camera's gyroscope data or import a separate gyroscope file.</source>
+        <translation>Use a supported camera's gyroscope data or import a separate gyroscope file.</translation>
     </message>
 </context>
 <context>

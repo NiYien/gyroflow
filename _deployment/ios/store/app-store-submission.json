@@ -1,0 +1,138 @@
+{
+  "status": "prepared_not_submitted",
+  "prepared_on": "2026-09-15",
+  "app": {
+    "name": "NiYien",
+    "bundle_identifier": "com.niyien.stabilizer",
+    "version": "1.0.0",
+    "primary_category": "PHOTO_AND_VIDEO",
+    "support_email": "support@niyien.com"
+  },
+  "urls": {
+    "status": "awaiting_website_deployment",
+    "privacy_policy": "https://www.niyien.com/mobile/privacy.html",
+    "support": "https://www.niyien.com/mobile/help.html",
+    "marketing": "https://www.niyien.com/"
+  },
+  "app_privacy": {
+    "collects_data": true,
+    "tracking": false,
+    "categories": [
+      {
+        "type": "CoarseLocation",
+        "label_zh": "粗略位置",
+        "purpose": "APP_FUNCTIONALITY",
+        "linked_to_user": true,
+        "used_for_tracking": false,
+        "evidence_zh": "IP 推算的国家或城市，用于区域路由；反馈记录保留 cn/global 区域。"
+      },
+      {
+        "type": "EmailAddress",
+        "label_zh": "电子邮件地址",
+        "purpose": "APP_FUNCTIONALITY",
+        "linked_to_user": true,
+        "used_for_tracking": false,
+        "evidence_zh": "用户在反馈表单主动填写的可选邮箱。"
+      },
+      {
+        "type": "CustomerSupport",
+        "label_zh": "客户支持",
+        "purpose": "APP_FUNCTIONALITY",
+        "linked_to_user": true,
+        "used_for_tracking": false,
+        "evidence_zh": "问题描述、反馈编号、提交及处理记录。"
+      },
+      {
+        "type": "OtherUserContent",
+        "label_zh": "其他用户内容",
+        "purpose": "APP_FUNCTIONALITY",
+        "linked_to_user": true,
+        "used_for_tracking": false,
+        "evidence_zh": "可用的镜头、队列、应用设置及其中的文件名、路径和参数。"
+      },
+      {
+        "type": "CrashData",
+        "label_zh": "崩溃数据",
+        "purpose": "APP_FUNCTIONALITY",
+        "linked_to_user": true,
+        "used_for_tracking": false,
+        "evidence_zh": "用户点提交后附带的可用崩溃记录。"
+      },
+      {
+        "type": "PerformanceData",
+        "label_zh": "性能数据",
+        "purpose": "APP_FUNCTIONALITY",
+        "linked_to_user": true,
+        "used_for_tracking": false,
+        "evidence_zh": "诊断日志中记录的渲染耗时、性能信息。"
+      },
+      {
+        "type": "OtherDiagnosticData",
+        "label_zh": "其他诊断数据",
+        "purpose": "APP_FUNCTIONALITY",
+        "linked_to_user": true,
+        "used_for_tracking": false,
+        "evidence_zh": "操作系统、CPU、GPU、内存、应用版本、诊断日志及 IP 防滥用信息。"
+      }
+    ],
+    "not_collected_by_app": [
+      "Photos or Videos",
+      "Audio Data",
+      "Precise Location",
+      "Advertising Identifier"
+    ],
+    "notes_zh": "必须申报收集数据。关闭匿名统计不等于不收集反馈；同一报告可能包含邮箱，按关联用户申报。粗略位置来自真实官网 IP 区域路由，不是设备定位权限。SDK 和托管服务的实际配置仍需发布者确认。"
+  },
+  "localizations": {
+    "zh-Hans": {
+      "name": "NiYien",
+      "subtitle": "陀螺仪视频防抖与批量处理",
+      "keywords": "视频防抖,陀螺仪,稳定,批量处理,运动相机,镜头校正,滚动快门",
+      "description": "NiYien 利用相机记录的陀螺仪数据，对视频进行稳定处理。\n\n导入视频及配套运动数据，设置镜头和稳定参数，对比原始画面与稳定效果，并批量导出可播放的视频。处理在设备本地完成，导出结果可通过系统分享或存储到“文件”。“稳定（插件用）”可准备供兼容桌面插件使用的工程文件。\n\n请使用包含兼容陀螺仪数据的视频，或导入与视频对应的外置运动数据；普通手机视频可能不包含所需数据。部分相机需要匹配的镜头配置。\n\nNiYien 基于开源 Gyroflow 项目修改并独立维护。当前 iOS 版本通过文件导入外置陀螺仪数据，不提供 NiYien A1 实时 USB 连接或固件升级。"
+    },
+    "en-US": {
+      "name": "NiYien",
+      "subtitle": "Gyroscope video stabilization",
+      "keywords": "stabilization,gyroscope,video,stabilizer,lens,action camera,rolling shutter",
+      "description": "NiYien stabilizes video using motion data recorded by a compatible camera or external gyroscope.\n\nImport footage and matching motion data, choose lens and stabilization settings, compare the original and stabilized preview, and export videos in batches. Processing takes place on your device. Share completed videos or save them to Files. Stabilize (for plugins) prepares project files for compatible desktop plugins.\n\nCompatible gyroscope data is required. Ordinary phone footage may not contain the motion information needed for gyro stabilization, and some cameras require a matching lens profile.\n\nNiYien is an independently maintained modification of the open-source Gyroflow project. The current iOS version imports external motion-data files; it does not provide the NiYien A1 real-time USB connection or firmware update channel."
+    }
+  },
+  "review": {
+    "sign_in_required": false,
+    "notes_en": "No account or sign-in is required. Add compatible video and matching gyroscope data, configure the lens and stabilization settings, then export a stabilized video. Open the completed task and use Share / Save to Files to retrieve the result. The stabilization-for-plugins action produces a project for desktop plugins and is distinct from video export. Core processing is local. User-initiated feedback includes diagnostic attachments; background mobile usage analytics are disabled. The iOS app has no APK updater or real-time A1 USB channel.",
+    "contact_first_name": null,
+    "contact_last_name": null,
+    "contact_phone": null,
+    "contact_email": "support@niyien.com",
+    "review_media_attachment": "pending_upload"
+  },
+  "age_rating": {
+    "status": "answers_prepared_console_questionnaire_not_completed",
+    "advertising": false,
+    "messaging_between_users": false,
+    "public_user_generated_content": false,
+    "unrestricted_in_app_web_browsing": false,
+    "gambling": false,
+    "contests": false,
+    "mature_content": false,
+    "medical_treatment_information": false,
+    "notes_zh": "依据当前离线视频工具功能作答。最终分级由 App Store Connect 问卷计算，不手写保证 4+。"
+  },
+  "export_compliance": {
+    "info_plist_uses_non_exempt_encryption": false,
+    "status": "confirm_native_sdk_crypto_scope_before_submission",
+    "notes_zh": "现有配置为不使用非豁免加密。应用使用 HTTPS/标准传输加密；需确认随包原生 SDK 没有另行引入非豁免功能。"
+  },
+  "publisher_follow_up": [
+    "官网部署并核验两个公开 URL 返回实际页面",
+    "填写审核联系人的姓名和电话",
+    "确认 MDK 授权覆盖 NiYien iOS 与 Android 分发；核实 BRAW 条款及 Qt/FFmpeg 对应源码交付",
+    "在 App Store Connect 完成年龄分级、发行地区及适用的主体/合规字段",
+    "上传包含本次修改的新 iOS 构建与实机截图，再选择构建送审"
+  ],
+  "references": [
+    "https://developer.apple.com/app-store/app-privacy-details/",
+    "https://developer.apple.com/app-store/review/guidelines/",
+    "https://www.niyien.com/v2/zh/faq.html"
+  ]
+}

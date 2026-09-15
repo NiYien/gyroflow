@@ -1,0 +1,42 @@
+{
+  "Qt-LGPL-3.0.txt": {
+    "source": "https://raw.githubusercontent.com/qt/qtbase/v6.7.3/LICENSES/LGPL-3.0-only.txt",
+    "sha256": "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768"
+  },
+  "Qt-GPL-3.0.txt": {
+    "source": "https://raw.githubusercontent.com/qt/qtbase/v6.7.3/LICENSES/GPL-3.0-only.txt",
+    "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+  },
+  "FFmpeg-GPL-2.0.txt": {
+    "source": "https://raw.githubusercontent.com/FFmpeg/FFmpeg/n8.1/COPYING.GPLv2",
+    "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643"
+  },
+  "FFmpeg-LGPL-2.1.txt": {
+    "source": "https://raw.githubusercontent.com/FFmpeg/FFmpeg/n8.1/COPYING.LGPLv2.1",
+    "sha256": "246041b6ecf9bc32d718a62c57877c78b5eb397b6467e74ed7ae2626ab189c30"
+  },
+  "x264-GPL.txt": {
+    "source": "https://raw.githubusercontent.com/mirror/x264/master/COPYING",
+    "sha256": "32b1062f7da84967e7019d01ab805935caa7ab7321a7ced0e30ebe75e5df1670"
+  },
+  "MIT.txt": {
+    "source": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/MIT.txt",
+    "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+  },
+  "Apache-2.0.txt": {
+    "source": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/Apache-2.0.txt",
+    "sha256": "074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff"
+  },
+  "CC0-1.0.txt": {
+    "source": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/CC0-1.0.txt",
+    "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499"
+  },
+  "WTFPL.txt": {
+    "source": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/WTFPL.txt",
+    "sha256": "13d8825a59e5e546d41e8711405d0f335a9934362a47c04a3b4280fa7932dc4a"
+  },
+  "Zlib.txt": {
+    "source": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/Zlib.txt",
+    "sha256": "bfb1112d49db5b1daecdfef24bd7e2f3ea0bafb33aa67aa0ab51e2bf8407c03d"
+  }
+}

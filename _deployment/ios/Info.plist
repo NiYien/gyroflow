@@ -2,31 +2,50 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>CFBundleAllowMixedLocalizations</key>     <true/>
-	<key>CFBundleDevelopmentRegion</key>           <string>en_US</string>
-	<key>CFBundleDisplayName</key>                 <string>Gyroflow(NiYien)</string>
-	<key>CFBundleExecutable</key>                  <string>gyroflow</string>
-	<key>CFBundleIdentifier</key>                  <string>com.niyien.gyroflow</string>
-	<key>CFBundleName</key>                        <string>Gyroflow(NiYien)</string>
-	<key>CFBundlePackageType</key>                 <string>APPL</string>
-	<key>CFBundleShortVersionString</key>          <string>1.6.3</string>
-	<key>CFBundleVersion</key>                     <string>1.6.3</string>
-	<key>MinimumOSVersion</key>                    <string>14.0</string>
-	<key>UIRequiredDeviceCapabilities</key>        <array><string>arm64</string><string>metal</string></array>
-	<key>CFBundleSupportedPlatforms</key>          <array><string>iPhoneOS</string></array>
-	<key>UIDeviceFamily</key>                      <array><integer>1</integer><integer>2</integer></array>
-	<key>LSRequiresIPhoneOS</key>                  <true/>
-	<key>LSSupportsOpeningDocumentsInPlace</key>   <true/>
-	<key>NSPhotoLibraryUsageDescription</key>      <string>Permission needed to open file in Gyroflow</string>
-	<key>NSDownloadsFolderUsageDescription</key>   <string>Permission needed to open file in Gyroflow</string>
-	<key>NSDocumentsFolderUsageDescription</key>   <string>Permission needed to open file in Gyroflow</string>
-	<key>NSDesktopFolderUsageDescription</key>     <string>Permission needed to open file in Gyroflow</string>
-	<key>NSNetworkVolumesUsageDescription</key>    <string>Permission needed to open file in Gyroflow</string>
-	<key>NSRemovableVolumesUsageDescription</key>  <string>Permission needed to open file in Gyroflow</string>
-	<key>NSFileProviderDomainUsageDescription</key><string>Permission needed to open file in Gyroflow</string>
-	<key>NSCameraUsageDescription</key>			   <string>Permission needed to use Gyroflow</string>
-	<key>UILaunchStoryboardName</key>              <string>LaunchScreen</string>
-    <key>ITSAppUsesNonExemptEncryption</key>       <false/>
+	<key>CFBundleAllowMixedLocalizations</key>
+	<true/>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>NiYien</string>
+	<key>CFBundleExecutable</key>
+	<string>gyroflow</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.niyien.stabilizer</string>
+	<key>CFBundleName</key>
+	<string>NiYien</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>4</string>
+	<key>MinimumOSVersion</key>
+	<string>15.0</string>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+		<string>metal</string>
+	</array>
+	<key>CFBundleSupportedPlatforms</key>
+	<array>
+		<string>iPhoneOS</string>
+	</array>
+	<key>UIDeviceFamily</key>
+	<array>
+		<integer>1</integer>
+		<integer>2</integer>
+	</array>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Choose videos to stabilize in NiYien. Only videos you select are imported.</string>
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
@@ -50,42 +69,81 @@
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
-			<key>CFBundleTypeExtensions</key><array><string>gyroflow</string></array>
-			<key>CFBundleTypeIconFile</key>  <string>GyroflowDocument</string>
-			<key>CFBundleTypeName</key>      <string>Gyroflow Project</string>
-			<key>CFBundleTypeRole</key>      <string>Editor</string>
-			<key>LSHandlerRank</key>         <string>Owner</string>
-			<key>LSItemContentTypes</key>    <array><string>xyz.gyroflow.project</string></array>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>gyroflow</string>
+			</array>
+			<key>CFBundleTypeName</key>
+			<string>Gyroflow Project</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>xyz.gyroflow.project</string>
+			</array>
 		</dict>
 		<dict>
-			<key>CFBundleTypeName</key>  <string>mp4</string>
-			<key>CFBundleTypeRole</key>  <string>Viewer</string>
-			<key>LSHandlerRank</key>     <string>None</string>
-			<key>LSItemContentTypes</key><array><string>public.mpeg-4</string></array>
-			<key>LSTypeIsPackage</key>   <integer>0</integer>
+			<key>CFBundleTypeName</key>
+			<string>mp4</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>None</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.mpeg-4</string>
+			</array>
+			<key>LSTypeIsPackage</key>
+			<integer>0</integer>
 		</dict>
 		<dict>
-			<key>CFBundleTypeName</key>  <string>qt movie</string>
-			<key>CFBundleTypeRole</key>  <string>Viewer</string>
-			<key>LSHandlerRank</key>     <string>None</string>
-			<key>LSItemContentTypes</key><array><string>com.apple.quicktime-movie</string></array>
-			<key>LSTypeIsPackage</key>   <integer>0</integer>
+			<key>CFBundleTypeName</key>
+			<string>qt movie</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>None</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.apple.quicktime-movie</string>
+			</array>
+			<key>LSTypeIsPackage</key>
+			<integer>0</integer>
 		</dict>
 		<dict>
-			<key>CFBundleTypeExtensions</key><array><string>MXF</string></array>
-			<key>CFBundleTypeName</key>      <string>MXF</string>
-			<key>CFBundleTypeRole</key>      <string>Viewer</string>
-			<key>LSHandlerRank</key>         <string>None</string>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>MXF</string>
+			</array>
+			<key>CFBundleTypeName</key>
+			<string>MXF</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>None</string>
 		</dict>
 	</array>
-	<key>UTExportedTypeDeclarations</key>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>zh-Hans</string>
+		<string>zh-Hant</string>
+	</array>
+	<key>UTImportedTypeDeclarations</key>
 	<array>
 		<dict>
-			<key>UTTypeConformsTo</key>      <array><string>public.data</string></array>
-			<key>UTTypeDescription</key>     <string>Gyroflow Project</string>
-			<key>UTTypeIconFile</key>        <string>GyroflowDocument</string>
-			<key>UTTypeIcons</key>           <dict/>
-			<key>UTTypeIdentifier</key>      <string>xyz.gyroflow.project</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Gyroflow Project</string>
+			<key>UTTypeIcons</key>
+			<dict/>
+			<key>UTTypeIdentifier</key>
+			<string>xyz.gyroflow.project</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>

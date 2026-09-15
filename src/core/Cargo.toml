@@ -1,5 +1,6 @@
 [package]
 name = "gyroflow-core"
+license-file = "../../LICENSE"
 version.workspace = true
 authors = ["Adrian <adrian.eddy@gmail.com>", "Elvin Chen"]
 edition = "2024"

@@ -3908,6 +3908,9 @@ impl Controller {
     }
 
     fn start_app_update_for_version(&self, requested_version: Option<String>) {
+        if cfg!(target_os = "ios") {
+            return;
+        }
         let progress = util::qt_queued_callback_mut(
             QPointer::from(self as &Self),
             |this, (downloaded, total, message): (u64, u64, String)| {
@@ -5857,21 +5860,22 @@ impl Controller {
     }
 
     fn build_feedback_options(json: &str) -> crate::feedback::packager::PackageOptions {
+        let default = true;
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(json) {
             let g = |k: &str, default: bool| v.get(k).and_then(|x| x.as_bool()).unwrap_or(default);
             crate::feedback::packager::PackageOptions {
-                include_current_log: g("current_log", true),
-                include_history_logs: g("history_logs", true),
-                include_incidents: g("incidents", true),
-                include_project: g("project", true),
-                include_video_meta: g("video_meta", true),
-                include_lens: g("lens", true),
-                include_queue_settings: g("queue_settings", true),
-                include_system_info: g("system_info", true),
-                include_crashes: g("crashes", true),
+                include_current_log: g("current_log", default),
+                include_history_logs: g("history_logs", default),
+                include_incidents: g("incidents", default),
+                include_project: g("project", default),
+                include_video_meta: g("video_meta", default),
+                include_lens: g("lens", default),
+                include_queue_settings: g("queue_settings", default),
+                include_system_info: g("system_info", default),
+                include_crashes: g("crashes", default),
             }
         } else {
-            crate::feedback::packager::PackageOptions::default()
+            Self::build_feedback_options("{}")
         }
     }
 
@@ -5888,7 +5892,11 @@ impl Controller {
         let opts = Self::build_feedback_options(&options_json.to_string());
         let summary = description.to_string();
         let email = email.to_string();
-        let meta = crate::feedback::meta::Meta::collect();
+        let meta = if opts.include_system_info {
+            crate::feedback::meta::Meta::collect()
+        } else {
+            crate::feedback::meta::Meta::minimal()
+        };
 
         // Channel for state events. Forwarded to QML via Qt-queued callback.
         let (tx, rx) = std::sync::mpsc::channel::<crate::feedback::FeedbackJobState>();

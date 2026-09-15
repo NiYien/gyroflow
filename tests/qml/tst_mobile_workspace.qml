@@ -106,7 +106,7 @@ TestCase {
         verify(point.x <= workspace.width, "Settings must remain inside the viewport");
         let saved = false;
         workspace.grabToImage(function(result) {
-            saved = result.saveToFile(Qt.resolvedUrl("../../target/mobile-ui-" + data.tag + ".png").toString().replace("file:///", ""));
+            saved = result.saveToFile(Qt.resolvedUrl("../../target/mobile-ui-" + data.tag + ".png").toString().replace(Qt.platform.os === "windows" ? "file:///" : "file://", ""));
         });
         tryVerify(() => saved, 5000);
     }
@@ -313,7 +313,8 @@ TestCase {
         const position = percent.mapToItem(toggle, 0, 0);
         verify(position.x >= 0);
         verify(position.x + percent.width <= toggle.indicator.x - 12);
-        compare(position.y + percent.height / 2, toggle.height / 2);
+        verify(Math.abs(position.y + percent.height / 2 - toggle.height / 2) <= 0.5,
+            "Inline values stay centered within cross-platform font rounding");
         slider.value = 37; slider.moved();
         mouseClick(toggle, toggle.width - 20, toggle.height / 2);
         verify(!percent.visible); compare(previewService.batchState.horizonLockAmount, 37);
@@ -353,7 +354,8 @@ TestCase {
         verify(!photo.visible);
     }
     function swipeIosEdge(dx, dy) {
-        const edge = findChild(workspace, "mobileIosBackEdge");
+        const panelEdge = findChild(workspace, "mobileIosPanelBackEdge");
+        const edge = panelEdge && panelEdge.visible ? panelEdge : findChild(workspace, "mobileIosBackEdge");
         verify(edge.visible);
         const start = edge.mapToItem(workspace, 8, Math.min(100, edge.height / 2));
         const touch = touchEvent(workspace);
@@ -364,6 +366,103 @@ TestCase {
         }
         touch.release(0, workspace, start.x + dx, start.y + dy).commit();
         wait(20);
+    }
+    function touchTapAt(x, y) {
+        const touch = touchEvent(workspace);
+        touch.press(0, workspace, x, y).commit();
+        wait(16);
+        touch.release(0, workspace, x, y).commit();
+        wait(20);
+    }
+    function touchSwipeAt(x, y, dx, dy) {
+        touchSwipeOn(workspace, x, y, dx, dy);
+    }
+    function touchSwipeOn(item, x, y, dx, dy) {
+        const touch = touchEvent(item);
+        touch.press(0, item, x, y).commit();
+        for (let step = 1; step <= 8; ++step) {
+            touch.move(0, item, x + dx * step / 8, y + dy * step / 8).commit();
+            wait(16);
+        }
+        touch.release(0, item, x + dx, y + dy).commit();
+        wait(20);
+    }
+    function test_settings_toggle_by_touch_data() {
+        return [{tag: "portrait", w: 393, h: 759}, {tag: "landscape", w: 734, h: 372}];
+    }
+    function test_settings_toggle_by_touch(data) {
+        workspace.platformOs = "ios"; workspace.width = data.w; workspace.height = data.h;
+        const settings = findChild(workspace, "mobileSettingsButton");
+        waitForRendering(workspace);
+        const p = settings.mapToItem(workspace, settings.width / 2, settings.height / 2);
+        touchTapAt(p.x, p.y);
+        compare(workspace.panel, "settings");
+        touchTapAt(p.x, p.y);
+        compare(workspace.panel, "", "Tapping the settings position again must close it");
+    }
+    function test_settings_title_is_a_back_target() {
+        workspace.platformOs = "ios";
+        workspace.showPanel("settings");
+        waitForRendering(workspace);
+        const sheet = findChild(workspace, "mobileSheet");
+        const title = sheet.children.find(child => child.visible && child.text === "Settings");
+        verify(title !== undefined);
+        const p = title.mapToItem(workspace, title.width / 2, title.height / 2);
+        touchTapAt(p.x, p.y);
+        compare(workspace.panel, "", "The settings label must share the back button's hit area");
+    }
+    function test_ios_back_from_screen_edge_data() {
+        return [{tag: "portrait", w: 393, h: 759}, {tag: "landscape", w: 734, h: 372}];
+    }
+    function test_ios_back_from_screen_edge(data) {
+        workspace.platformOs = "ios"; workspace.width = data.w; workspace.height = data.h;
+        workspace.showPanel("settings");
+        waitForRendering(workspace);
+        touchSwipeAt(6, data.h / 2, 130, 0);
+        compare(workspace.panel, "", "Back gestures originate at the screen edge in both orientations");
+    }
+    function test_ios_back_crosses_left_safe_area() {
+        workspace.platformOs = "ios"; workspace.x = 44; workspace.width = 646; workspace.height = 372;
+        workspace.screenLeftInset = 44;
+        workspace.showPanel("settings");
+        waitForRendering(workspace);
+        touchSwipeOn(test, 6, 180, 130, 0);
+        compare(workspace.panel, "", "The landscape safe-area margin must not swallow edge touches");
+    }
+    function test_ios_settings_header_swipes_data() {
+        return [{tag: "right", dx: 110, dy: 0, closes: true},
+            {tag: "left", dx: -110, dy: 0, closes: true},
+            {tag: "short", dx: 30, dy: 0, closes: false},
+            {tag: "diagonal", dx: 90, dy: 110, closes: false}];
+    }
+    function test_ios_settings_header_swipes(data) {
+        workspace.platformOs = "ios"; workspace.width = 393; workspace.height = 759;
+        workspace.showPanel("settings");
+        waitForRendering(workspace);
+        touchSwipeAt(200, 28, data.dx, data.dy);
+        compare(workspace.panel, data.closes ? "" : "settings");
+    }
+    function test_ios_back_preserves_nested_navigation_and_controls() {
+        workspace.platformOs = "ios"; workspace.host = previewService;
+        workspace.width = 393; workspace.height = 759;
+        workspace.showPanel("settings"); workspace.showPanel("privacy");
+        waitForRendering(workspace);
+        touchSwipeAt(200, 28, 110, 0);
+        compare(workspace.panel, "settings");
+        compare(workspace.panelTrail.length, 0);
+        previewService.batchState.horizonLock = true;
+        previewService.batchState.horizonLockAmount = 50;
+        waitForRendering(workspace);
+        const slider = findChild(workspace, "mobileHorizonLockAmount");
+        verify(slider.visible);
+        const p = slider.mapToItem(workspace, slider.width / 2, slider.height / 2);
+        touchSwipeAt(p.x, p.y, 85, 0);
+        compare(workspace.panel, "settings", "Changing a parameter must not navigate away");
+        verify(previewService.batchState.horizonLockAmount > 50);
+        workspace.forceActiveFocus();
+        keyClick(Qt.Key_Escape);
+        compare(workspace.panel, "");
+        previewService.batchState.horizonLock = false;
     }
     function test_ios_edge_back_data() {
         return [{tag: "settings-phone", panel: "settings", w: 393, h: 759},
@@ -576,7 +675,7 @@ TestCase {
         const list = findChild(picker, "mobileFolderList");
         waitForRendering(workspace);
         let saved = false;
-        workspace.grabToImage(result => { saved = result.saveToFile(Qt.resolvedUrl("../../target/mobile-browser-" + data.kind + ".png").toString().replace("file:///", "")); });
+        workspace.grabToImage(result => { saved = result.saveToFile(Qt.resolvedUrl("../../target/mobile-browser-" + data.kind + ".png").toString().replace(Qt.platform.os === "windows" ? "file:///" : "file://", "")); });
         tryVerify(() => saved);
         mouseClick(list, 100, 78);
         compare(picker.selectedCount, 1);
@@ -617,7 +716,7 @@ TestCase {
         verify(workspace.panelFlickable.mapToItem(workspace, 0, workspace.panelFlickable.height).y <= actionTop);
         verify(actions.mapToItem(workspace, 0, actions.height).y <= workspace.height);
         let saved = false;
-        workspace.grabToImage(result => { saved = result.saveToFile(Qt.resolvedUrl("../../target/mobile-continue-" + data.tag + ".png").toString().replace("file:///", "")); });
+        workspace.grabToImage(result => { saved = result.saveToFile(Qt.resolvedUrl("../../target/mobile-continue-" + data.tag + ".png").toString().replace(Qt.platform.os === "windows" ? "file:///" : "file://", "")); });
         tryVerify(() => saved);
         mouseClick(exportButton, exportButton.width / 2, exportButton.height / 2);
         compare(workspace.panel, "");
@@ -674,7 +773,7 @@ TestCase {
         waitForRendering(workspace);
         compare(submitted.length, 0);
         let saved = false;
-        workspace.grabToImage(result => { saved = result.saveToFile(Qt.resolvedUrl("../../target/mobile-folder-confirm-" + data.tag + ".png").toString().replace("file:///", "")); });
+        workspace.grabToImage(result => { saved = result.saveToFile(Qt.resolvedUrl("../../target/mobile-folder-confirm-" + data.tag + ".png").toString().replace(Qt.platform.os === "windows" ? "file:///" : "file://", "")); });
         tryVerify(() => saved);
         if (data.close) {
             const cancel = findChild(workspace, "mobileCancelFolderImport");
@@ -719,13 +818,13 @@ TestCase {
         verify(workspace.continueAfterSummary);
         const stabilize = findChild(workspace, "mobilePrimaryStabilize");
         const exportButton = findChild(workspace, "mobilePrimaryExport");
-        verify(stabilize.visible && exportButton.visible && exportButton.emphasized && stabilize.emphasized);
-        compare(stabilize.background.color, exportButton.background.color);
+        verify(stabilize.visible && exportButton.visible && exportButton.emphasized && !stabilize.emphasized);
+        verify(stabilize.background.color !== exportButton.background.color);
         compare(stabilize.text, "Stabilize (for plugins)");
         verify(!findChild(workspace, "mobileTaskStatusAction").visible);
         compare(workspace.selectionCount, 0);
         let saved = false;
-        workspace.grabToImage(result => { saved = result.saveToFile(Qt.resolvedUrl("../../target/mobile-success-next-" + data.tag + ".png").toString().replace("file:///", "")); });
+        workspace.grabToImage(result => { saved = result.saveToFile(Qt.resolvedUrl("../../target/mobile-success-next-" + data.tag + ".png").toString().replace(Qt.platform.os === "windows" ? "file:///" : "file://", "")); });
         tryVerify(() => saved);
         mouseClick(stabilize, stabilize.width / 2, stabilize.height / 2);
         compare(workspace.operation.kind, "sync");
@@ -836,7 +935,7 @@ TestCase {
         verify(actions.y >= scroll.y + scroll.height);
         let saved = false;
         workspace.grabToImage(function(result) {
-            saved = result.saveToFile(Qt.resolvedUrl("../../target/mobile-deep-result-" + data.tag + ".png").toString().replace("file:///", ""));
+            saved = result.saveToFile(Qt.resolvedUrl("../../target/mobile-deep-result-" + data.tag + ".png").toString().replace(Qt.platform.os === "windows" ? "file:///" : "file://", ""));
         });
         tryVerify(() => saved, 5000);
     }
@@ -901,6 +1000,36 @@ TestCase {
             { tag: "selection", w: 360, h: 640, dark: false, scale: 1, panel: "", selection: true },
             { tag: "gyro", w: 360, h: 640, dark: false, scale: 1, panel: "sources" }];
     }
+    function test_mobile_privacy_and_update_entries_data() {
+        return [{tag: "ios", os: "ios", updates: false}, {tag: "android", os: "android", updates: true}];
+    }
+    function test_mobile_privacy_and_update_entries(data) {
+        const settings = createTemporaryObject(settingsFactory, test, {width: 360, section: "app", platformOs: data.os});
+        verify(settings !== null);
+        compare(findChild(settings, "mobileAppUpdates").visible, data.updates);
+        const privacy = findChild(settings, "mobilePrivacyPolicy");
+        verify(privacy.visible);
+        let document = "";
+        settings.documentRequested.connect(kind => document = kind);
+        privacy.clicked();
+        compare(document, "privacy");
+        workspace.showPanel("settings");
+        workspace.showPanel(document);
+        verify(workspace.documentPanel);
+        workspace.back();
+        compare(workspace.panel, "settings");
+    }
+    function test_large_type_metadata_remains_readable() {
+        workspace.width = 360; workspace.height = 760; workspace.unit = 1.4;
+        waitForRendering(workspace);
+        const metadata = findChild(workspace, "mobileVideoMetadata");
+        verify(!metadata.truncated);
+        const project = findChild(workspace, "mobilePrimaryStabilize");
+        const video = findChild(workspace, "mobilePrimaryExport");
+        verify(project.width > workspace.width * 0.7);
+        verify(video.y >= project.y + project.height);
+        verify(video.mapToItem(workspace, 0, video.height).y <= workspace.height);
+    }
     function test_visual_variants(data) {
         workspace.width = data.w; workspace.height = data.h; workspace.dark = data.dark; workspace.unit = data.scale;
         samples[0].filename = "超长文件名_Stabilisiertes_Video_mit_sehr_langem_Dateinamen_2026_09_08.mov";
@@ -912,7 +1041,7 @@ TestCase {
         const button = findChild(workspace, "mobileSettingsButton");
         verify(button.mapToItem(workspace, button.width, 0).x <= workspace.width);
         let saved = false;
-        workspace.grabToImage(function(result) { saved = result.saveToFile(Qt.resolvedUrl("../../target/mobile-ui-" + data.tag + ".png").toString().replace("file:///", "")); });
+        workspace.grabToImage(function(result) { saved = result.saveToFile(Qt.resolvedUrl("../../target/mobile-ui-" + data.tag + ".png").toString().replace(Qt.platform.os === "windows" ? "file:///" : "file://", "")); });
         tryVerify(() => saved, 5000);
     }
 }

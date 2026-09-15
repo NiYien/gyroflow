@@ -88,6 +88,10 @@ Rectangle {
     function openMobileOutput(jobId: int): void {
         filesystem.open_file_externally(filesystem.get_file_url(render_queue.get_job_output_folder(jobId), render_queue.get_job_output_filename(jobId), false));
     }
+    function shareMobileOutput(jobId: int): bool {
+        const url = filesystem.get_file_url(render_queue.get_job_output_folder(jobId), render_queue.get_job_output_filename(jobId), false);
+        return ui_tools.share_mobile_file(url);
+    }
     function importMobileFiles(urls: var, autoplay: bool): void {
         if (!urls || !urls.length || !videoArea.queue) return;
         if (mobileUI && !mobileUI.inputsAllowed()) return;
@@ -2190,6 +2194,7 @@ Rectangle {
         onLoaded: window.mobileWorkspaceCreated = true;
         sourceComponent: Mobile.MobileWorkspace {
             host: window;
+            screenLeftInset: main_window.applyMobileSafeArea ? (main_window.safeAreaMargins.left || 0) : 0;
             backend: render_queue;
             filesystemService: filesystem;
             unit: dpiScale;
@@ -2746,6 +2751,7 @@ Rectangle {
         }
     }
     function showAvailableAppVersions(): void {
+        if (Qt.platform.os === "ios") return;
         let updates = [];
         let error = "";
         try {
@@ -2839,22 +2845,6 @@ Rectangle {
         // mid-session - so clearing here cannot swallow a user edit.
         function onGyroflow_file_loaded(obj: var): void {
             window.deferClearProjectDirty();
-        }
-        function openUpdatePage(url: string): void {
-            if (url && url.length > 0) {
-                Qt.openUrlExternally(url);
-            } else if (Qt.platform.os == "android") {
-                Qt.openUrlExternally("https://play.google.com/store/apps/details?id=com.niyien.gyroflow");
-            } else if (Qt.platform.os == "ios") {
-                Qt.openUrlExternally("https://apps.apple.com/us/app/gyroflow/id6447994244");
-            } else if (Qt.platform.os == "osx" && isStorePackage) {
-                Qt.openUrlExternally("https://apps.apple.com/us/app/gyroflow/id6447994244");
-            } else if (Qt.platform.os == "windows" && isStorePackage) {
-                // https://apps.microsoft.com/store/detail/gyroflow/9NZG7T0JCG9H
-                Qt.openUrlExternally("ms-windows-store://pdp/?ProductId=9NZG7T0JCG9H");
-            } else {
-                Qt.openUrlExternally("https://github.com/gyroflow/gyroflow/releases");
-            }
         }
         function onUpdates_available(version: string, changelog: string, download_url: string, changelog_truncated: bool): void {
             const info = { channel: "auto", version: version, changelog: changelog, changelog_truncated: changelog_truncated === true };

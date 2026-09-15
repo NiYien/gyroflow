@@ -12,6 +12,7 @@ qrc!(pub rsrc,
 
         "resources/shadow.png",
         "resources/icon.png",
+        "_deployment/ios/NiYienIcon.png",
         "resources/tutorial/queue_row_thumb.png",
         "resources/tutorial/queue_row_thumb_0380.png",
         "resources/tutorial/queue_row_thumb_0385.png",

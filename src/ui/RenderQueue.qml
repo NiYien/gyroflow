@@ -15,6 +15,15 @@ Item {
     property alias isDragging: lv.isDragging;
     property bool shown: false;
     readonly property bool importBusy: window.mobilePhotoPickerBusy || loader.active || r3dSeqLoader.waiting || r3dSeqLoader.queue.length > 0;
+    function loadMobileDemoProject(url): bool {
+        if (importBusy || render_queue.status === "active") return false;
+        // The bundled project provides complete export settings before any video is open.
+        const jobId = render_queue.add_file(url.toString(), "", JSON.stringify({ output: {} }));
+        if (jobId <= 0) return false;
+        loader.pendingJobs[jobId] = true;
+        loader.updateStatus();
+        return true;
+    }
     function requestMobileFiles(): void {
         if (Qt.platform.os === "android") requestMobileDirectPicker(true, function(urls) { dt.loadFiles(urls); }, "video");
         else videoSourcePicker.openFiles(function(urls) { dt.loadFiles(urls); }, mobileAddFilesDialog);

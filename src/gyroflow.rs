@@ -10,6 +10,7 @@ use qml_video_rs::video_item::MDKVideoItem;
 use std::cell::RefCell;
 
 pub use gyroflow_core as core;
+mod mobile_content;
 mod cli;
 pub mod controller;
 pub mod distribution;
@@ -89,6 +90,10 @@ fn entry() {
     util::invalidate_qt_cache_if_version_changed();
     util::update_rlimit();
     util::set_android_context();
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    for key in ["telemetryAnonId", "telemetryAnonIdCreatedAt", "telemetryIdentityOrigin"] {
+        gyroflow_core::settings::remove(key);
+    }
     // Keep the base hook independent of Rust thread metadata. Qt and MDK can
     // panic while destroying a foreign render thread after Rust TLS is gone.
     std::panic::set_hook(Box::new(|info| {
@@ -120,6 +125,20 @@ fn entry() {
     core::neuflow_burn::init_cubecl_cache();
 
     let brand = gyroflow_core::distribution::config().brand.clone();
+    #[cfg(target_os = "ios")]
+    let brand = {
+        let mut brand = brand;
+        brand.display_name = env!("NIYIEN_IOS_DISPLAY_NAME").to_owned();
+        brand.application_name = "NiYien".to_owned();
+        brand
+    };
+    #[cfg(target_os = "android")]
+    let brand = {
+        let mut brand = brand;
+        brand.display_name = env!("NIYIEN_ANDROID_DISPLAY_NAME").to_owned();
+        brand.application_name = "NiYien".to_owned();
+        brand
+    };
     let organization_name = QString::from(brand.organization_name.as_str());
     let organization_domain = QString::from(brand.organization_domain.as_str());
     let application_name = QString::from(brand.application_name.as_str());
@@ -283,13 +302,7 @@ fn entry() {
     engine.set_property("version".into(), QString::from(util::get_version()).into());
     engine.set_property(
         "brandDisplayName".into(),
-        QString::from(
-            gyroflow_core::distribution::config()
-                .brand
-                .display_name
-                .as_str(),
-        )
-        .into(),
+        QString::from(brand.display_name.as_str()).into(),
     );
     engine.set_property("graphics_api".into(), util::qt_graphics_api().into());
     engine.set_object_property("main_controller".into(), ctlpinned);

@@ -27,6 +27,11 @@ pub fn set_gpu(s: String) {
 }
 
 impl Meta {
+    pub fn minimal() -> Self {
+        Self { app_version: crate::util::get_version(), os: String::new(), gpu: String::new(),
+            cpu: String::new(), memory_total: 0, display_scale: None }
+    }
+
     pub fn collect() -> Self {
         let mut sys = sysinfo::System::new();
         sys.refresh_memory();
@@ -51,7 +56,7 @@ impl Meta {
         let gpu = GPU_OVERRIDE.get().cloned().unwrap_or_else(|| "?".to_string());
 
         Self {
-            app_version: env!("CARGO_PKG_VERSION").to_string(),
+            app_version: crate::util::get_version(),
             os,
             gpu,
             cpu,

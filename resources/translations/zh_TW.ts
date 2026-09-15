@@ -2122,6 +2122,18 @@ You can increase the sharpness limit in the Advanced section.</source>
         <source>Packaging…</source>
         <translation>打包中…</translation>
     </message>
+    <message>
+        <source>Feedback includes your message, optional email, app version and submission time. Choose any attachments below. No videos are uploaded. See Privacy policy in Settings.</source>
+        <translation>意見回報包含問題描述、選填信箱、應用程式版本和提交時間。您可自行選擇下方附件，不會上傳影片。詳見設定中的隱私權政策。</translation>
+    </message>
+    <message>
+        <source>Include logs and device information</source>
+        <translation>附加記錄及裝置資訊</translation>
+    </message>
+    <message>
+        <source>Include project and lens settings</source>
+        <translation>附加專案及鏡頭設定</translation>
+    </message>
 </context>
 <context>
     <name>FrequencyChart</name>
@@ -6425,6 +6437,22 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <source>Zoom</source>
         <translation>縮放</translation>
     </message>
+    <message>
+        <source>About NiYien</source>
+        <translation>關於 NiYien</translation>
+    </message>
+    <message>
+        <source>Help and support</source>
+        <translation>說明與支援</translation>
+    </message>
+    <message>
+        <source>Open-source licenses</source>
+        <translation>開源授權</translation>
+    </message>
+    <message>
+        <source>Privacy policy</source>
+        <translation>隱私權政策</translation>
+    </message>
 </context>
 <context>
     <name>MobileWorkspace</name>
@@ -6835,6 +6863,58 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
     <message>
         <source>Stopped manually</source>
         <translation>已手動停止</translation>
+    </message>
+    <message>
+        <source>About NiYien</source>
+        <translation>關於 NiYien</translation>
+    </message>
+    <message>
+        <source>Export editing project</source>
+        <translation>匯出剪輯專案</translation>
+    </message>
+    <message>
+        <source>Feedback</source>
+        <translation>意見回饋</translation>
+    </message>
+    <message>
+        <source>Help and support</source>
+        <translation>說明與支援</translation>
+    </message>
+    <message>
+        <source>How it works</source>
+        <translation>使用說明</translation>
+    </message>
+    <message>
+        <source>Open-source licenses</source>
+        <translation>開源授權</translation>
+    </message>
+    <message>
+        <source>Privacy policy</source>
+        <translation>隱私權政策</translation>
+    </message>
+    <message>
+        <source>Share / Save to Files</source>
+        <translation>分享／儲存到檔案</translation>
+    </message>
+    <message>
+        <source>Source code</source>
+        <translation>原始碼</translation>
+    </message>
+    <message>
+        <source>The demo could not be prepared. Please try again.</source>
+        <translation>無法準備範例，請重試。</translation>
+    </message>
+    <message>
+        <source>The output file is unavailable. Check the output folder.</source>
+        <translation>輸出檔案無法使用，請檢查輸出資料夾。</translation>
+    </message>
+    <message>
+        <source>Try a generated demo</source>
+        <translation>體驗內建範例</translation>
+    </message>
+    <message>
+        <source>Use a supported camera's gyroscope data or import a separate gyroscope file.</source>
+        <translation>使用支援的相機陀螺儀資料，或匯入獨立的陀螺儀檔案。</translation>
     </message>
 </context>
 <context>

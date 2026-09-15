@@ -83,6 +83,9 @@ pub struct UITools {
     modify_digit:
         qt_method!(fn(&self, value: String, cursor_position: usize, increase: bool) -> QString),
     closing: qt_method!(fn(&mut self)),
+    mobile_document: qt_method!(fn(&self, kind: QString) -> QString),
+    share_mobile_file: qt_method!(fn(&self, url: QUrl) -> bool),
+    prepare_mobile_demo: qt_method!(fn(&self) -> QString),
 
     // Carries the language code so listeners never re-read settings: the
     // Advanced-panel switch writes its Settings alias with deferred store
@@ -103,6 +106,21 @@ pub struct UITools {
     pub engine_ptr: Option<*mut QmlEngine>,
 }
 impl UITools {
+    pub fn prepare_mobile_demo(&self) -> QString {
+        match crate::mobile_content::prepare_demo() {
+            Ok(url) => url.into(),
+            Err(error) => { ::log::warn!("Unable to prepare mobile demo: {error}"); QString::default() }
+        }
+    }
+
+    pub fn share_mobile_file(&self, url: QUrl) -> bool {
+        crate::util::share_ios_file(url)
+    }
+
+    pub fn mobile_document(&self, kind: QString) -> QString {
+        crate::mobile_content::document(&kind.to_string(), &gyroflow_core::settings::get_str("lang", "en")).into()
+    }
+
     pub fn accelerate_startup(&self, wnd: QJSValue) {
         if let Some(engine) = self.engine_ptr {
             let engine_ptr = unsafe { (&*engine).cpp_ptr() };

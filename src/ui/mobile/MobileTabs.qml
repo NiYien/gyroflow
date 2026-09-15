@@ -11,7 +11,7 @@ Rectangle {
     property int currentIndex: 0
     property bool navigation: false
     signal activated(int index)
-    implicitHeight: (navigation ? 44 : 48) * unit
+    implicitHeight: (navigation ? 44 : 50) * unit
     color: navigation ? "transparent" : MobileStyle.fill(dark); radius: 5 * unit
     Rectangle { visible: root.navigation; width: parent.width; height: root.unit; anchors.bottom: parent.bottom; color: MobileStyle.separator(root.dark) }
     Row {

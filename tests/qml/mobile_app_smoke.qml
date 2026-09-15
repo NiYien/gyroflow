@@ -45,7 +45,7 @@ Item {
         capturedStage = stage;
         screenshotPending = true;
         app.grabToImage(function(result) {
-            check(result.saveToFile(Qt.resolvedUrl("../../../target/mobile-smoke-" + name + ".png").toString().replace("file:///", "")), "screenshot");
+            check(result.saveToFile(Qt.resolvedUrl("../../../target/mobile-smoke-" + name + ".png").toString().replace(Qt.platform.os === "windows" ? "file:///" : "file://", "")), "screenshot");
             screenshotPending = false;
         });
         return false;

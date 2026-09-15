@@ -1,4 +1,4 @@
-package com.niyien.gyroflow;
+package com.niyien.stabilizer;
 
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
@@ -29,7 +29,7 @@ import java.util.Map;
 
 public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
     private static final String TAG = "GyroflowNiYienUsb";
-    private static final String ACTION_USB_PERMISSION = "com.niyien.gyroflow.USB_PERMISSION";
+    private static final String ACTION_USB_PERMISSION = "com.niyien.stabilizer.USB_PERMISSION";
     private static final int NIYIEN_VENDOR_ID = 0xffff;
     private static final int NIYIEN_PRODUCT_ID = 0xffff;
     private static final int READ_TIMEOUT_MS = 50;
@@ -78,7 +78,7 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
 
     private static final String UPDATE_TAG = "GyroflowNiYienUpdate";
     // Must match the <provider android:authorities=...> entry in AndroidManifest.xml.
-    private static final String UPDATE_PROVIDER_AUTHORITY = "com.niyien.gyroflow.updateprovider";
+    private static final String UPDATE_PROVIDER_AUTHORITY = "com.niyien.stabilizer.updateprovider";
 
     private static MainActivity instance;
 

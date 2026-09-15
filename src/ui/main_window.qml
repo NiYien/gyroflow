@@ -141,8 +141,8 @@ Window {
     Image {
         id: loadingImage;
         objectName: "startupLogo";
-        source: "qrc:/resources/logo" + (style === "dark"? "_white" : "_black") + ".svg";
-        sourceSize.width: Math.min(400 * dpiScale, parent.width * 0.7);
+        source: Qt.platform.os === "ios" ? "qrc:/_deployment/ios/NiYienIcon.png" : "qrc:/resources/logo" + (style === "dark"? "_white" : "_black") + ".svg";
+        sourceSize.width: Math.min((Qt.platform.os === "ios" ? 104 : 400) * dpiScale, parent.width * 0.7);
         visible: !main_window.fastMobileStartup || !appLoader || appLoader.status !== Loader.Ready;
         opacity: main_window.fastMobileStartup ? 1 : 0;
         YAnimator       on y       { id: liy; running: !main_window.fastMobileStartup; from: -1000; to: -1000; duration: 1000; easing.type: Easing.OutExpo; }

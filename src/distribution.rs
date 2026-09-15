@@ -647,6 +647,9 @@ fn parse_legacy_tool_anon_id(contents: &str) -> Option<String> {
 /// within a session would add nothing — which is also why this needs no
 /// persisted queue or cooldown.
 pub fn report_camera_open_event(brand: &str, model: &str) {
+    if cfg!(any(target_os = "ios", target_os = "android")) {
+        return;
+    }
     let brand = brand.trim();
     let model = model.trim();
     if brand.is_empty() && model.is_empty() {
@@ -701,6 +704,9 @@ fn report_event_internal(
     camera_brand: &str,
     camera_model: &str,
 ) {
+    if cfg!(any(target_os = "ios", target_os = "android")) {
+        return;
+    }
     let endpoint = gyroflow_core::distribution::telemetry_api().to_owned();
     if endpoint.is_empty() {
         return;
@@ -929,7 +935,7 @@ pub fn platform_name() -> &'static str {
 }
 
 pub fn has_app_update(manifest: &Manifest) -> bool {
-    app_version_is_newer_than_current(&manifest.app.version)
+    !cfg!(target_os = "ios") && app_version_is_newer_than_current(&manifest.app.version)
 }
 
 /// Pick the release-notes string that matches the given UI locale, with
@@ -1967,6 +1973,9 @@ fn sha256_file_hex(path: &Path) -> Result<(String, u64), std::io::Error> {
 pub const INSTALL_PERMISSION_REQUIRED_ERROR: &str = "install-permission-required";
 
 pub fn open_downloaded_update(prepared: &PreparedAppUpdate) -> Result<(), String> {
+    if cfg!(target_os = "ios") {
+        return Err("NiYien for iOS is updated through the App Store".to_owned());
+    }
     if prepared.selection.platform == "macos" {
         return open_macos_update(&prepared.path);
     }
@@ -2463,6 +2472,9 @@ pub fn fetch_app_update_candidates(
     force: bool,
     locale: &str,
 ) -> Result<Vec<AppUpdateCandidate>, String> {
+    if cfg!(target_os = "ios") {
+        return Ok(Vec::new());
+    }
     match fetch_manifest(force) {
         Ok(manifest) => Ok(app_update_candidates(&manifest, locale)),
         Err(first_err) if force => cached_manifest()

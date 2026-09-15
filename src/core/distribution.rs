@@ -95,7 +95,11 @@ pub fn manifest_api() -> &'static str {
 }
 
 pub fn telemetry_api() -> &'static str {
-    config().endpoints.telemetry_api.as_str()
+    // Mobile builds never generate an analytics identity or send usage events.
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    { "" }
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    { config().endpoints.telemetry_api.as_str() }
 }
 
 pub fn package_install_root(name: &str) -> Option<PathBuf> {
@@ -238,28 +242,28 @@ mod tests {
         assert!(!mac_plist.contains("xyz.gyroflow"));
 
         let android_manifest = include_str!("../../_deployment/android/AndroidManifest.xml");
-        assert!(android_manifest.contains(r#"package="com.niyien.gyroflow""#));
-        assert!(android_manifest.contains(r#"android:name="com.niyien.gyroflow.MainActivity""#));
-        assert!(android_manifest.contains(r#"android:label="Gyroflow(NiYien)""#));
+        assert!(android_manifest.contains(r#"package="com.niyien.stabilizer""#));
+        assert!(android_manifest.contains(r#"android:name="com.niyien.stabilizer.MainActivity""#));
+        assert!(android_manifest.contains(r#"android:label="NiYien""#));
         assert!(!android_manifest.contains("xyz.gyroflow"));
 
         let main_activity = include_str!(
-            "../../_deployment/android/src/com/niyien/gyroflow/MainActivity.java"
+            "../../_deployment/android/src/com/niyien/stabilizer/MainActivity.java"
         );
-        assert!(main_activity.contains("package com.niyien.gyroflow;"));
+        assert!(main_activity.contains("package com.niyien.stabilizer;"));
 
         let util_rs = include_str!("../util.rs");
-        assert!(util_rs.contains("Java_com_niyien_gyroflow_MainActivity_urlReceived"));
+        assert!(util_rs.contains("Java_com_niyien_stabilizer_MainActivity_urlReceived"));
         assert!(!util_rs.contains("Java_xyz_gyroflow_MainActivity_urlReceived"));
 
         let android_just = include_str!("../../_scripts/android.just");
         assert!(
-            android_just.contains("com.niyien.gyroflow/com.niyien.gyroflow.MainActivity")
+            android_just.contains("com.niyien.stabilizer/com.niyien.stabilizer.MainActivity")
         );
 
         let app_qml = include_str!("../ui/App.qml");
         assert!(
-            app_qml.contains("https://play.google.com/store/apps/details?id=com.niyien.gyroflow")
+            !app_qml.contains("https://play.google.com/store/apps/details?id=com.niyien.gyroflow")
         );
         assert!(app_qml.contains("After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder."));
         assert!(!app_qml.contains("id=xyz.gyroflow"));

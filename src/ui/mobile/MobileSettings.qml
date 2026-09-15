@@ -10,6 +10,8 @@ Column {
     property bool dark: true
     property bool busy: false
     property string section: "stabilization"
+    property string platformOs: Qt.platform.os
+    signal documentRequested(string kind)
     property color accentColor: MobileStyle.accent(dark)
     spacing: 24 * unit
     component Divider: Rectangle {
@@ -119,7 +121,11 @@ Column {
         }
         Item { width: 1; height: 4 * root.unit }
         Divider {}
-        MobileActionRow { width: parent.width; unit: root.unit; dark: root.dark; navigation: true; text: qsTr("Updates"); iconName: "update"; divider: true; onClicked: if (root.host) root.host.showAvailableAppVersions() }
+        MobileActionRow { objectName: "mobileAppUpdates"; visible: root.platformOs !== "ios"; width: parent.width; unit: root.unit; dark: root.dark; navigation: true; text: qsTr("Updates"); iconName: "update"; divider: true; onClicked: if (root.host) root.host.showAvailableAppVersions() }
+        MobileActionRow { width: parent.width; unit: root.unit; dark: root.dark; navigation: true; text: qsTr("About NiYien"); iconName: "info"; divider: true; onClicked: root.documentRequested("about") }
+        MobileActionRow { objectName: "mobilePrivacyPolicy"; width: parent.width; unit: root.unit; dark: root.dark; navigation: true; text: qsTr("Privacy policy"); iconName: "info"; divider: true; onClicked: root.documentRequested("privacy") }
+        MobileActionRow { width: parent.width; unit: root.unit; dark: root.dark; navigation: true; text: qsTr("Open-source licenses"); iconName: "info"; divider: true; onClicked: root.documentRequested("licenses") }
+        MobileActionRow { width: parent.width; unit: root.unit; dark: root.dark; navigation: true; text: qsTr("Help and support"); iconName: "info"; divider: true; onClicked: root.documentRequested("help") }
         MobileActionRow { width: parent.width; unit: root.unit; dark: root.dark; navigation: true; text: qsTr("Feedback"); iconName: "message"; onClicked: if (root.host) root.host.feedbackDialog.open() }
     }
 }

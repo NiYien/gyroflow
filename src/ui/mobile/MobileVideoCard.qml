@@ -14,6 +14,7 @@ Rectangle {
     property bool selected: false
     property bool selecting: false
     property bool scrolling: false
+    readonly property bool compact: width / unit < 320
     property color accentColor: MobileStyle.accent(dark)
     property bool first: false
     property bool last: false
@@ -44,6 +45,7 @@ Rectangle {
     }
     Item {
         id: thumbnail
+        visible: !root.compact
         x: 48 * root.unit
         width: 64 * root.unit; height: 44 * root.unit
         anchors.verticalCenter: parent.verticalCenter
@@ -51,7 +53,8 @@ Rectangle {
         Image { anchors.fill: parent; source: root.record.thumbnail || ""; fillMode: Image.PreserveAspectCrop }
     }
     Column {
-        x: thumbnail.x + thumbnail.width + 12 * root.unit
+        id: textColumn
+        x: root.compact ? 48 * root.unit : thumbnail.x + thumbnail.width + 12 * root.unit
         width: parent.width - x - 48 * root.unit
         anchors.verticalCenter: parent.verticalCenter
         spacing: 3 * root.unit
@@ -60,13 +63,16 @@ Rectangle {
             width: parent.width
             text: root.record.filename || ""
             font.weight: Font.DemiBold
-            elide: Text.ElideMiddle
-            maximumLineCount: 1
+            objectName: "mobileVideoFilename"
+            wrapMode: root.compact ? Text.WrapAnywhere : Text.NoWrap
+            elide: root.compact ? Text.ElideRight : Text.ElideMiddle
+            maximumLineCount: root.compact ? 2 : 1
         }
         MobileText {
             unit: root.unit; dark: root.dark; secondary: true
             width: parent.width
             text: root.metadataText
+            objectName: "mobileVideoMetadata"
             elide: Text.ElideRight
         }
         MobileText {
@@ -81,7 +87,7 @@ Rectangle {
     }
     Rectangle {
         visible: !root.last
-        x: thumbnail.x + thumbnail.width + 12 * root.unit; width: parent.width - x
+        x: textColumn.x; width: parent.width - x
         height: 0.5 * root.unit; anchors.bottom: parent.bottom; color: MobileStyle.separator(root.dark)
     }
     Rectangle {
@@ -138,6 +144,7 @@ Rectangle {
     }
     Item {
         objectName: "mobileCardPlay"
+        visible: thumbnail.visible
         x: thumbnail.x; y: thumbnail.y; width: thumbnail.width; height: thumbnail.height
         Accessible.role: Accessible.Button
         Accessible.name: qsTranslate("MobileWorkspace", "Play")

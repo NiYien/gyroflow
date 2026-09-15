@@ -19,6 +19,8 @@ def sources():
     result["App"] = ["This video is still loading."]
     result["RenderQueue"] = ["Search stage %1 of %2", "Scanning segment %1 of %2"]
     result["VideoArea"] = ["Not stabilized yet. Return to Videos and tap Stabilize."]
+    feedback = (ROOT / "src/ui/components/FeedbackDialog.qml").read_text(encoding="utf-8")
+    result["FeedbackDialog"] = sorted(set(json.loads('"' + text + '"') for text in re.findall(r'qsTr\("((?:[^"\\]|\\.)*)"\)', feedback)))
     return result
 
 
@@ -30,7 +32,11 @@ def main():
     supplied = {}
     if DATA.exists():
         data = json.loads(DATA.read_text(encoding="utf-8"))
-        supplied = {source: dict(zip(data["languages"], translations.split("|"), strict=True)) for source, translations in data["messages"].items()}
+        for source, translations in data["messages"].items():
+            values = translations.split("|")
+            if len(values) != len(data["languages"]):
+                raise ValueError("Translation column count does not match languages: " + source)
+            supplied[source] = dict(zip(data["languages"], values))
     missing = {}
     updates = []
     for path in sorted(TRANSLATIONS.glob("*.ts")):

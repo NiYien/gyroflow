@@ -140,6 +140,17 @@ deploy *param:
     $OriginalCargoToml = [System.IO.File]::ReadAllText($CargoTomlPath)
     $OriginalModalQml = [System.IO.File]::ReadAllText($ModalQmlPath)
     $OriginalAndroidManifest = [System.IO.File]::ReadAllText($AndroidManifestPath)
+    $AndroidIdentity = Get-Content -Raw -LiteralPath "$ProjectDir\_deployment\android\app.json" | ConvertFrom-Json
+    if ($AndroidIdentity.version -notmatch '^\d+\.\d+\.\d+$') { throw "Android version must contain three integers" }
+    foreach ($IdentityField in @(@("package", $AndroidIdentity.bundle_identifier), @("android:label", $AndroidIdentity.display_name), @("android:versionName", $AndroidIdentity.version))) {
+        $ExpectedAttribute = $IdentityField[0] + '="' + $IdentityField[1] + '"'
+        if (-not $OriginalAndroidManifest.Contains($ExpectedAttribute)) { throw "Android manifest does not match app.json: $($IdentityField[0])" }
+    }
+    $VersionCode = [string]$AndroidIdentity.version_code
+    if ($Env:GITHUB_RUN_NUMBER) { $VersionCode = $Env:GITHUB_RUN_NUMBER }
+    if ($Env:NIYIEN_ANDROID_VERSION_CODE) { $VersionCode = $Env:NIYIEN_ANDROID_VERSION_CODE }
+    if ($VersionCode -notmatch '^[1-9][0-9]*$' -or [decimal]$VersionCode -gt 2100000000) { throw "Invalid Android version code" }
+    $BuildStoreBundle = "$Env:BUILD_APP_STORE_BUNDLE" -eq "true"
 
     function Restore-TemporarySourceEdits {
         [System.IO.File]::WriteAllText($CargoTomlPath, $OriginalCargoToml)
@@ -215,12 +226,10 @@ deploy *param:
         $UseReleaseSigning = $true
     }
     $CargoApkProfile = $Env:BUILD_PROFILE
+    if ($BuildStoreBundle -and -not $UseReleaseSigning) { throw "An app-store AAB requires release signing" }
 
     try {
-        if ("$Env:GITHUB_RUN_NUMBER") {
-            $runNumber = $Env:GITHUB_RUN_NUMBER
-            [System.IO.File]::WriteAllText($AndroidManifestPath, [regex]::Replace([System.IO.File]::ReadAllText($AndroidManifestPath), 'versionCode="\d+"', "versionCode=""$runNumber"""))
-        }
+        [System.IO.File]::WriteAllText($AndroidManifestPath, [regex]::Replace([System.IO.File]::ReadAllText($AndroidManifestPath), 'versionCode="\d+"', "versionCode=""$VersionCode"""))
 
         Copy-Item -Path "$QT_LIBS\libQt6Core_arm64-v8a.so"           -Destination "$QT_LIBS\libQt6Core.so"           -ErrorAction SilentlyContinue
         Copy-Item -Path "$QT_LIBS\libQt6Gui_arm64-v8a.so"            -Destination "$QT_LIBS\libQt6Gui.so"            -ErrorAction SilentlyContinue
@@ -389,7 +398,7 @@ deploy *param:
 
         iex "$cmd"
         Assert-NativeCommandSucceeded "androiddeployqt apk"
-        if ("$Env:BUILD_APP_STORE_BUNDLE" -eq "true") {
+        if ($BuildStoreBundle) {
             iex "$cmd --aab"
             Assert-NativeCommandSucceeded "androiddeployqt aab"
         }
@@ -404,14 +413,20 @@ deploy *param:
         if (-not (Test-Path -LiteralPath $FinalApkPath)) {
             throw "Expected APK was not copied: $FinalApkPath"
         }
-        Copy-Item -Path "$ProjectDir\target\android-build\build\outputs\bundle\release\android-build-release.aab" -Destination "$ProjectDir\_deployment\_binaries\{{ArtifactPrefix}}.aab" -Force -ErrorAction SilentlyContinue
+        if ($BuildStoreBundle) {
+            $BuiltAabPath = "$ProjectDir\target\android-build\build\outputs\bundle\release\android-build-release.aab"
+            $FinalAabPath = "$ProjectDir\_deployment\_binaries\{{ArtifactPrefix}}.aab"
+            if (-not (Test-Path -LiteralPath $BuiltAabPath -PathType Leaf)) { throw "Expected AAB was not produced: $BuiltAabPath" }
+            Copy-Item -LiteralPath $BuiltAabPath -Destination $FinalAabPath -Force -ErrorAction Stop
+            if (-not (Test-Path -LiteralPath $FinalAabPath -PathType Leaf)) { throw "Expected AAB was not copied: $FinalAabPath" }
+        }
 
         if ("{{param}}" -eq "install") {
             adb install "$ProjectDir\_deployment\_binaries\{{ArtifactPrefix}}.apk"
             Assert-NativeCommandSucceeded "adb install"
             adb logcat -c
             Assert-NativeCommandSucceeded "adb logcat clear"
-            adb shell am start -n com.niyien.gyroflow/com.niyien.gyroflow.MainActivity
+            adb shell am start -n com.niyien.stabilizer/com.niyien.stabilizer.MainActivity
             Assert-NativeCommandSucceeded "adb start"
             adb logcat -s Gyroflow
             Assert-NativeCommandSucceeded "adb logcat"

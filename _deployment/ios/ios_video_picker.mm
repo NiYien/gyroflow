@@ -7,6 +7,7 @@
 #import <objc/runtime.h>
 
 #include <QtCore/QDir>
+#include <QtCore/QFileInfo>
 #include <QtCore/QMetaObject>
 #include <QtCore/QObject>
 #include <QtCore/QPointer>
@@ -360,4 +361,33 @@ void gyroflowIosCleanupVideoImports()
     if (root.exists())
         root.removeRecursively();
     QDir().mkpath(rootPath);
+}
+
+bool gyroflowIosShareFile(const QUrl &url)
+{
+    if (!NSThread.isMainThread || !url.isLocalFile())
+        return false;
+    UIViewController *controller = topViewController(activeWindow().rootViewController);
+    if (!controller)
+        return false;
+    NSURL *file = [NSURL fileURLWithPath:[NSString stringWithUTF8String:url.toLocalFile().toUtf8().constData()]];
+    const BOOL scopedAccess = [file startAccessingSecurityScopedResource];
+    if (!QFileInfo(url.toLocalFile()).isFile()) {
+        if (scopedAccess)
+            [file stopAccessingSecurityScopedResource];
+        return false;
+    }
+    UIActivityViewController *activity = [[[UIActivityViewController alloc]
+        initWithActivityItems:@[file] applicationActivities:nil] autorelease];
+    activity.excludedActivityTypes = @[UIActivityTypeSaveToCameraRoll];
+    activity.completionWithItemsHandler = ^(UIActivityType, BOOL, NSArray *, NSError *) {
+        if (scopedAccess)
+            [file stopAccessingSecurityScopedResource];
+    };
+    UIPopoverPresentationController *popover = activity.popoverPresentationController;
+    popover.sourceView = controller.view;
+    popover.sourceRect = CGRectMake(CGRectGetMidX(controller.view.bounds), CGRectGetMidY(controller.view.bounds), 1, 1);
+    popover.permittedArrowDirections = 0;
+    [controller presentViewController:activity animated:YES completion:nil];
+    return true;
 }

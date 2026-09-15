@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-package com.niyien.gyroflow;
+package com.niyien.stabilizer;
 
 import java.io.File;
 import java.util.ArrayList;

@@ -159,7 +159,7 @@ cpp! {{
 #[cfg(target_os = "android")]
 #[allow(non_snake_case)]
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_niyien_gyroflow_MainActivity_urlReceived(
+pub extern "system" fn Java_com_niyien_stabilizer_MainActivity_urlReceived(
     _vm: *mut c_void,
     _: *mut c_void,
     jstr: *mut c_void,
@@ -180,7 +180,7 @@ pub extern "system" fn Java_com_niyien_gyroflow_MainActivity_urlReceived(
 #[cfg(target_os = "android")]
 #[allow(non_snake_case)]
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_niyien_gyroflow_MainActivity_urlsReceived(
+pub extern "system" fn Java_com_niyien_stabilizer_MainActivity_urlsReceived(
     _vm: *mut c_void,
     _: *mut c_void,
     jstr: *mut c_void,
@@ -207,7 +207,7 @@ pub extern "system" fn Java_com_niyien_gyroflow_MainActivity_urlsReceived(
 #[cfg(target_os = "android")]
 #[allow(non_snake_case)]
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_niyien_gyroflow_MainActivity_pickerCancelled(
+pub extern "system" fn Java_com_niyien_stabilizer_MainActivity_pickerCancelled(
     _vm: *mut c_void,
     _: *mut c_void,
 ) {
@@ -249,6 +249,15 @@ pub fn cleanup_ios_video_imports() {
             gyroflowIosCleanupVideoImports();
         #endif
     });
+}
+pub fn share_ios_file(url: QUrl) -> bool {
+    cpp!(unsafe [url as "QUrl"] -> bool as "bool" {
+        #ifdef Q_OS_IOS
+            return gyroflowIosShareFile(url);
+        #else
+            return false;
+        #endif
+    })
 }
 pub fn register_url_handlers() {
     cpp!(unsafe [] {
@@ -665,7 +674,7 @@ pub fn android_open_picker(mode: i32, allow_multiple: bool, initial_uri: &str) -
             };
             let activity_class = env.get_object_class(&activity)?;
             let class_loader = activity_class.get_class_loader(env)?;
-            let class_name = env.new_string("com.niyien.gyroflow.MainActivity")?;
+            let class_name = env.new_string("com.niyien.stabilizer.MainActivity")?;
             let class = JClass::for_name_with_loader(env, class_name, true, class_loader)?;
             let jinitial = env.new_string(initial_uri)?;
             let result = env
@@ -708,7 +717,7 @@ pub fn android_install_apk(path: &str) -> Result<(), String> {
             };
             let activity_class = env.get_object_class(&activity)?;
             let class_loader = activity_class.get_class_loader(env)?;
-            let class_name = env.new_string("com.niyien.gyroflow.MainActivity")?;
+            let class_name = env.new_string("com.niyien.stabilizer.MainActivity")?;
             let class = JClass::for_name_with_loader(env, class_name, true, class_loader)?;
             let jpath = env.new_string(path)?;
             let result = env

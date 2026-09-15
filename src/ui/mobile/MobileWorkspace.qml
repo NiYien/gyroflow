@@ -15,6 +15,7 @@ Rectangle {
     property var filesystemService: null
     property var queueService: host && host.videoArea ? host.videoArea.queue : null
     property real unit: 1
+    property real screenLeftInset: 0
     property bool dark: true
     property color accentColor: MobileStyle.accent(dark)
     readonly property color textColor: MobileStyle.text(dark)
@@ -27,6 +28,7 @@ Rectangle {
     readonly property var gyroRecords: queueService && queueService.gyroFilesInfo ? queueService.gyroFilesInfo : []
     readonly property bool showLibraryActions: page === "library" && rows.length > 0 && !busy && !footerSelectionMode && (!summary || continueAfterSummary)
     readonly property bool wideFooter: showLibraryActions && !summary && landscape && width >= 640 * unit
+    readonly property bool stackedActions: !landscape && width / unit < 320
     readonly property bool continueAfterSummary: !busy && !!summary && !!operation && ((operation.kind === "deep" && deepSucceeded) || (operation.kind === "sync" && taskCounts.success > 0))
     readonly property bool footerSelectionMode: selectionMode && !continueAfterSummary
     readonly property real footerHeight: busy ? Math.max(taskStatus.implicitHeight, taskStatusAction.height) + 44 * unit : !rows.length && !summary ? 0 : Math.max((landscape ? 56 : 64) * unit, footerActions.implicitHeight + (continueAfterSummary ? 108 : footerSelectionMode && !summary ? 64 : showLibraryActions && !wideFooter ? 80 : landscape ? 8 : 16) * unit)
@@ -37,6 +39,7 @@ Rectangle {
     }
     property string page: "library"
     property string panel: ""
+    readonly property bool documentPanel: ["about", "privacy", "licenses", "help"].indexOf(panel) >= 0
     property var panelTrail: []
     property int importTab: 0
     property bool browseFilesInApp: false
@@ -271,6 +274,8 @@ Rectangle {
         if (name === "info" && host) host.videoArea.vid.pause();
     }
     function closePanel() {
+        Qt.inputMethod.hide();
+        root.forceActiveFocus();
         if (!panelTrail.length) { panel = ""; return; }
         const history = panelTrail.slice();
         const previous = history.pop();
@@ -279,11 +284,13 @@ Rectangle {
     }
     onPanelChanged: if (!panel) { panelTrail = []; pendingFolderImport = null; }
     function dismissPanel() {
+        Qt.inputMethod.hide();
+        root.forceActiveFocus();
         if (panel === "add" || panel === "folders" || panel === "files") returnToList();
         else panel = "";
     }
-    function back() {
-        if (Qt.inputMethod.visible) { Qt.inputMethod.hide(); return true; }
+    function back(hideKeyboardOnly = true) {
+        if (Qt.inputMethod.visible) { Qt.inputMethod.hide(); if (hideKeyboardOnly) return true; }
         if (panel === "add" || panel === "folders" || panel === "files") { dismissPanel(); return true; }
         if (panel) { closePanel(); return true; }
         if (page === "preview") { returnToList(); return true; }
@@ -460,6 +467,7 @@ Rectangle {
         MobileActionRow { visible: parent.record.skipReason === "user_stopped"; width: parent.width; unit: root.unit; dark: root.dark; text: qsTr("Retry"); iconName: "reset"; enabled: !root.busy; onClicked: root.retryJob(parent.record.id) }
         MobileActionRow { visible: parent.record.skipReason === "no_gyro"; width: parent.width; unit: root.unit; dark: root.dark; text: qsTr("Add gyroscope data"); iconName: "plus"; enabled: !root.busy; onClicked: root.requestGyro() }
         MobileActionRow { visible: parent.record.status === "Finished" && (parent.record.lastExport === 4 || parent.record.lastExport === 0) && root.platformOs !== "ios"; width: parent.width; unit: root.unit; dark: root.dark; navigation: true; iconName: "play"; text: qsTranslate("RenderQueue", "Open rendered file"); onClicked: if (root.host) root.host.openMobileOutput(parent.record.id) }
+        MobileActionRow { objectName: "mobileShareOutput"; visible: parent.record.status === "Finished" && (parent.record.lastExport === 4 || parent.record.lastExport === 0) && root.platformOs === "ios"; width: parent.width; unit: root.unit; dark: root.dark; navigation: true; iconName: "folder"; text: qsTr("Share / Save to Files"); onClicked: if (root.host && !root.host.shareMobileOutput(parent.record.id)) root.notify(qsTr("The output file is unavailable. Check the output folder.")) }
         MobileActionRow { visible: !!parent.record.paired; width: parent.width; unit: root.unit; dark: root.dark; iconName: "reset"; text: qsTranslate("RenderQueue", "Unpair gyro"); enabled: !root.busy; onClicked: { if (root.inputsAllowed()) { root.backend.unpair_video(parent.record.id); root.refresh(); } } }
     }
     function taskTitle() {
@@ -588,7 +596,7 @@ Rectangle {
                 unit: root.unit; dark: root.dark; quiet: true
                 text: qsTr("Settings")
                 iconOnly: true; iconName: "settings"
-                onClicked: root.showPanel("settings")
+                onClicked: { if (root.panel === "settings") root.back(false); else root.showPanel("settings"); }
             }
         }
     }
@@ -630,7 +638,7 @@ Rectangle {
         onContentYChanged: if (!root.layoutRestoring && root.page === "library" && (moving || root.dragSelecting)) root.rememberList()
         onMovementEnded: if (!root.layoutRestoring && root.page === "library") root.rememberList()
         cellWidth: width / root.columns
-        cellHeight: 72 * root.unit
+        cellHeight: (cellWidth / root.unit < 320 ? 96 : 72) * root.unit
         model: cards
         QQC.ScrollIndicator.vertical: QQC.ScrollIndicator {}
         delegate: MobileVideoCard {
@@ -762,7 +770,7 @@ Rectangle {
             MobileButton { id: allSelected; objectName: "mobileSelectAll"; width: Math.min(implicitWidth, parent.width * 0.3); unit: root.unit; dark: root.dark; quiet: true; text: qsTr("All"); enabled: root.selectionCount < root.rows.length; onClicked: root.selectAll() }
             MobileButton { id: cancelSelection; objectName: "mobileCancelSelection"; width: Math.min(implicitWidth, parent.width * 0.25); unit: root.unit; dark: root.dark; quiet: true; text: qsTr("Cancel"); onClicked: root.finishSelection() }
         }
-        Row {
+        Flow {
             id: footerActions
             visible: !root.busy && (!root.summary || root.continueAfterSummary)
             x: root.wideFooter ? libraryActions.x + libraryActions.width + 12 * root.unit : (parent.width - width) / 2
@@ -771,10 +779,10 @@ Rectangle {
             spacing: 12 * root.unit
             MobileButton {
                 id: stabilizeAction
-                unit: root.unit; dark: root.dark; accentColor: root.accentColor; emphasized: !root.footerSelectionMode
+                unit: root.unit; dark: root.dark; accentColor: root.accentColor; emphasized: false
                 multiline: true
                 height: Math.max(implicitHeight, exportAction.implicitHeight)
-                width: (parent.width - parent.spacing) / 2
+                width: root.stackedActions ? parent.width : (parent.width - parent.spacing) / 2
                 objectName: "mobilePrimaryStabilize"
                 visible: !root.footerSelectionMode || root.selectionCount === 1
                 text: root.footerSelectionMode ? qsTr("Deep search") : qsTr("Stabilize (for plugins)")
@@ -787,7 +795,7 @@ Rectangle {
                 unit: root.unit; dark: root.dark; emphasized: !root.footerSelectionMode; destructive: root.footerSelectionMode; accentColor: root.accentColor
                 multiline: true
                 height: Math.max(implicitHeight, stabilizeAction.implicitHeight)
-                width: root.footerSelectionMode && root.selectionCount !== 1 ? parent.width : (parent.width - parent.spacing) / 2
+                width: root.stackedActions || (root.footerSelectionMode && root.selectionCount !== 1) ? parent.width : (parent.width - parent.spacing) / 2
                 text: root.footerSelectionMode ? qsTr("Remove") : qsTr("Export stabilized video")
                 enabled: root.footerSelectionMode ? root.selectionCount > 0 : root.rows.length > 0
                 onClicked: { if (root.footerSelectionMode) root.removeSelected(); else root.startAction("export"); }
@@ -863,14 +871,23 @@ Rectangle {
             MouseArea { anchors.fill: parent; onPressed: mouse => mouse.accepted = true; onWheel: wheel => wheel.accepted = true }
             MobileButton {
                 id: panelBack
+                objectName: "mobilePanelBack"
                 visible: root.panelTrail.length > 0 || root.panel === "settings"
                 x: 4 * root.unit; y: 4 * root.unit
-                unit: root.unit; dark: root.dark; quiet: true; iconOnly: true; iconName: "back"; text: qsTr("Back")
-                onClicked: root.back()
+                width: Math.min(implicitWidth, parent.width - 64 * root.unit)
+                unit: root.unit; dark: root.dark; quiet: true; iconOnly: root.panel !== "settings"; iconName: "back"
+                text: root.panel === "settings" ? qsTr("Settings") : qsTr("Back")
+                font.pixelSize: (root.panel === "settings" ? MobileStyle.title : MobileStyle.body) * root.unit
+                font.weight: root.panel === "settings" ? Font.DemiBold : Font.Normal
+                Accessible.name: qsTr("Back")
+                onClicked: root.back(false)
             }
             MobileText { unit: root.unit; dark: root.dark;
+                visible: root.panel !== "settings"
                 x: panelBack.visible ? 52 * root.unit : 20 * root.unit; y: 18 * root.unit; width: parent.width - x - 64 * root.unit
                 text: root.panel === "settings" ? qsTr("Settings") : root.panel === "info" ? qsTr("Video information")
+                    : root.panel === "about" ? qsTr("About NiYien") : root.panel === "privacy" ? qsTr("Privacy policy")
+                    : root.panel === "licenses" ? qsTr("Open-source licenses") : root.panel === "help" ? qsTr("Help and support")
                     : root.panel === "folderConfirm" ? qsTr("Confirm folder import")
                     : root.panel === "folders" ? qsTr("Choose folders")
                     : root.panel === "files" ? qsTr("Choose files")
@@ -879,11 +896,17 @@ Rectangle {
                 heading: true; color: root.textColor; elide: Text.ElideRight
             }
             MobileButton {
-                visible: root.panel !== "settings"
+                objectName: "mobilePanelClose"
                 anchors.right: parent.right; anchors.rightMargin: 8 * root.unit; y: 4 * root.unit
                 unit: root.unit; dark: root.dark; quiet: true; text: qsTr("Close"); iconOnly: true; iconName: "close"
                 Accessible.name: qsTr("Close")
                 onClicked: root.dismissPanel()
+            }
+            Item {
+                objectName: "mobilePanelHeaderSwipe"
+                width: parent.width; height: 56 * root.unit; z: 5
+                // Header swipes cannot compete with parameter sliders in the content area.
+                BackSwipe { enabled: root.platformOs === "ios"; bidirectional: true }
             }
             MobileTabs {
                 id: panelTabs
@@ -933,8 +956,23 @@ Rectangle {
                         spacing: 16 * root.unit
                         MobileText { unit: root.unit; dark: root.dark; visible: root.busy; width: parent.width; text: qsTr("Stop the current task to adjust processing settings."); wrapMode: Text.WordWrap; color: root.mutedColor; secondary: true; }
                         MobileText { unit: root.unit; dark: root.dark; visible: root.settingsTab < 2; width: parent.width; text: qsTr("Changes apply to all videos."); wrapMode: Text.WordWrap; secondary: true }
-                        MobileSettings { visible: root.settingsTab !== 1; width: parent.width; host: root.host; unit: root.unit; dark: root.dark; busy: root.busy; section: ["stabilization", "lens", "app"][root.settingsTab] }
+                        MobileSettings { visible: root.settingsTab !== 1; width: parent.width; host: root.host; unit: root.unit; dark: root.dark; busy: root.busy; platformOs: root.platformOs; section: ["stabilization", "lens", "app"][root.settingsTab]; onDocumentRequested: kind => root.showPanel(kind) }
                         Column { id: settingsContent; visible: root.settingsTab === 1; width: parent.width; spacing: 16 * root.unit; enabled: !root.busy; opacity: enabled ? 1 : 0.55 }
+                    }
+                    Column {
+                        visible: root.documentPanel
+                        width: parent.width; spacing: 16 * root.unit
+                        TextEdit {
+                            width: parent.width; height: contentHeight
+                            readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap
+                            textFormat: TextEdit.PlainText
+                            font.family: MobileStyle.fontFamily; font.pixelSize: 16 * root.unit
+                            color: root.textColor
+                            text: root.documentPanel && typeof ui_tools !== "undefined" ? ui_tools.mobile_document(root.panel) : ""
+                            Accessible.name: text
+                        }
+                        MobileActionRow { visible: root.panel === "about" || root.panel === "licenses"; width: parent.width; unit: root.unit; dark: root.dark; text: qsTr("Source code"); navigation: true; iconName: "info"; onClicked: Qt.openUrlExternally("https://github.com/NiYien/gyroflow") }
+                        MobileActionRow { visible: root.panel === "help" || root.panel === "privacy"; width: parent.width; unit: root.unit; dark: root.dark; text: qsTr("Feedback"); navigation: true; iconName: "message"; onClicked: if (root.host) root.host.feedbackDialog.open() }
                     }
                     Column {
                         visible: root.panel === "info"
@@ -1006,7 +1044,7 @@ Rectangle {
                     id: continueStabilize
                     objectName: "mobileContinueStabilize"
                     width: (parent.width - parent.spacing) / 2; height: Math.max(implicitHeight, continueExport.implicitHeight)
-                    unit: root.unit; dark: root.dark; multiline: true; emphasized: true; text: qsTr("Stabilize (for plugins)"); onClicked: root.startAction("sync")
+                    unit: root.unit; dark: root.dark; multiline: true; text: qsTr("Stabilize (for plugins)"); onClicked: root.startAction("sync")
                 }
                 MobileButton {
                     id: continueExport
@@ -1038,30 +1076,52 @@ Rectangle {
     Item {
         objectName: "mobileIosBackEdge"
         visible: root.platformOs === "ios" && (root.page === "preview" || root.panel.length > 0)
-        x: root.panel ? sheet.x : 0
-        y: root.panel ? sheet.y + 56 * root.unit : root.headerHeight
-        width: 20 * root.unit
-        height: Math.max(0, root.panel ? sheet.height - 56 * root.unit : root.height - y)
+        // Reach the physical screen edge, including the landscape safe-area inset.
+        x: -root.screenLeftInset
+        y: root.headerHeight
+        width: root.screenLeftInset + 32 * root.unit
+        height: Math.max(0, root.height - y)
         z: 30
-        DragHandler {
-            objectName: "mobileIosBackDrag"
-            target: null
-            acceptedDevices: PointerDevice.TouchScreen
-            yAxis.enabled: false
-            property real initialWidth: 0
-            property real initialHeight: 0
-            property bool cancelled: false
-            property string initialPage: ""
-            property string initialPanel: ""
-            property real initialTranslation: 0
-            onCanceled: cancelled = true
-            onActiveChanged: {
-                if (active) { initialWidth = root.width; initialHeight = root.height; initialPage = root.page; initialPanel = root.panel; initialTranslation = persistentTranslation.x; cancelled = false; }
-                // activeTranslation is already reset when the touch ends.
-                else if (!cancelled && initialWidth === root.width && initialHeight === root.height
-                         && initialPage === root.page && initialPanel === root.panel
-                         && persistentTranslation.x - initialTranslation > 60 * root.unit) root.back();
+        BackSwipe { objectName: "mobileIosBackDrag" }
+    }
+    Item {
+        objectName: "mobileIosPanelBackEdge"
+        visible: root.platformOs === "ios" && root.panel.length > 0 && (sheet.x > 0 || sheet.y > 0)
+        x: sheet.x; y: sheet.y + 56 * root.unit
+        width: 32 * root.unit; height: Math.max(0, sheet.height - 56 * root.unit)
+        z: 30
+        BackSwipe {}
+    }
+    component BackSwipe: DragHandler {
+        target: null
+        acceptedDevices: PointerDevice.TouchScreen
+        yAxis.enabled: false
+        dragThreshold: 12 * root.unit
+        property bool bidirectional: false
+        property real initialWidth: 0
+        property real initialHeight: 0
+        property bool cancelled: false
+        property string initialPage: ""
+        property string initialPanel: ""
+        property real horizontalDistance: 0
+        property real verticalDistance: 0
+        onCanceled: cancelled = true
+        onActiveTranslationChanged: if (active) {
+            horizontalDistance = activeTranslation.x;
+            verticalDistance = centroid.position.y - centroid.pressPosition.y;
+        }
+        onActiveChanged: {
+            if (active) {
+                initialWidth = root.width; initialHeight = root.height;
+                initialPage = root.page; initialPanel = root.panel;
+                horizontalDistance = 0; verticalDistance = 0; cancelled = false;
             }
+            // Keep the last active distance: Qt resets activeTranslation on release.
+            else if (!cancelled && initialWidth === root.width && initialHeight === root.height
+                     && initialPage === root.page && initialPanel === root.panel
+                     && Math.abs(verticalDistance) < Math.abs(horizontalDistance) / 2
+                     && (bidirectional ? Math.abs(horizontalDistance) : horizontalDistance) > 60 * root.unit)
+                root.back(false);
         }
     }
 }

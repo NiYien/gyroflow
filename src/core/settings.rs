@@ -173,6 +173,13 @@ pub fn contains(key: &str) -> bool {
     map().read().contains_key(key)
 }
 
+pub fn remove(key: &str) {
+    let changed = map().write().remove(key).is_some();
+    if changed {
+        spawn_store_thread();
+    }
+}
+
 pub fn clear() {
     map().write().clear();
     store();
