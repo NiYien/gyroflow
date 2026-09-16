@@ -140,15 +140,15 @@ Rectangle {
                     ? Math.max(30 * dpiScale, window.height * 0.95 - 25 * dpiScale - (icon.visible? icon.height : 0) - btnsBand.height)
                     : root.height - icon.height - btnsRow.height - 150 * dpiScale);
                 boundsBehavior: Flickable.StopAtBounds;
-                contentWidth: width;
+                contentWidth: Math.max(width, t.paintedWidth + 30 * dpiScale);
                 contentHeight: mainColumn.height + 25 * dpiScale;
-                onWidthChanged: contentWidth = Math.max(t.paintedWidth + 30 * dpiScale, width);
                 clip: true;
                 QQC.ScrollBar.vertical: QQC.ScrollBar { }
                 Column {
                     id: mainColumn;
                     x: 15 * dpiScale;
-                    width: parent.width - 2*x;
+                    // Keep controls tied to the viewport even when text needs horizontal scrolling.
+                    width: flick.width - 2*x;
                     spacing: 10 * dpiScale;
                     BasicText {
                         id: t;
@@ -157,12 +157,6 @@ Rectangle {
                         wrapMode: Text.WordWrap;
                         font.pixelSize: (root.isWide && screenSize < 7.0? 12 : 14) * dpiScale;
                         rightPadding: 10 * dpiScale;
-                        onPaintedWidthChanged: {
-                            if (paintedWidth > width) {
-                                flick.contentWidth = paintedWidth + 30 * dpiScale;
-                            }
-                        }
-
                         MouseArea {
                             anchors.fill: parent;
                             cursorShape: parent.hoveredLink? Qt.PointingHandCursor : Qt.ArrowCursor;
