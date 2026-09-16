@@ -360,7 +360,7 @@ pub fn run(open_file: &mut String, open_preset: &mut String) -> bool {
                 if !path.contains(&suffix) {
                     log::info!("New file detected: {}", path);
                     let extensions = [
-                        "mp4", "mov", "mxf", "mkv", "webm", "insv", "gyroflow", "png", "exr",
+                        "mp4", "mov", "mts", "m2ts", "mxf", "mkv", "webm", "insv", "gyroflow", "png", "exr",
                         "dng", "braw",
                     ];
                     let ext = std::path::Path::new(&path)

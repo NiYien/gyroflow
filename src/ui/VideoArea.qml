@@ -782,7 +782,7 @@ Item {
         return dot >= 0 ? filename.substring(dot + 1) : "";
     }
     function isVideoOrProjectFile(url: url): bool {
-        const videoFirstExtensions = ["mp4", "mov", "mxf", "insv", "braw", "r3d", "nev", "crm", "gyroflow"];
+        const videoFirstExtensions = ["mp4", "mov", "mts", "m2ts", "mxf", "insv", "braw", "r3d", "nev", "crm", "gyroflow"];
         return videoFirstExtensions.indexOf(fileExtension(url)) >= 0;
     }
     // NOTE: this returns true for `*_mix.bin` as well, because it *is* motion data.

@@ -6485,7 +6485,7 @@ impl Filesystem {
         let filename = filesystem::get_filename(&current_url);
 
         let extensions = [
-            "mp4", "mov", "mxf", "mkv", "webm", "insv", "braw", "r3d", "nev",
+            "mp4", "mov", "mts", "m2ts", "mxf", "mkv", "webm", "insv", "braw", "r3d", "nev",
         ];
 
         let list: Vec<(String, String)> = filesystem::list_folder(&folder)

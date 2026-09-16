@@ -726,7 +726,7 @@ Rectangle {
 
     FileDialog {
         id: fileDialog;
-        property var extensions: [ "mp4", "mov", "mxf", "mkv", "webm", "insv", "gyroflow", "png", "jpg", "exr", "dng", "braw", "r3d", "nev", "crm" ];
+        property var extensions: [ "mp4", "mov", "mts", "m2ts", "mxf", "mkv", "webm", "insv", "gyroflow", "png", "jpg", "exr", "dng", "braw", "r3d", "nev", "crm" ];
         property var motionDataExtensions: window.motionData ? window.motionData.extensions : [];
         function selectableExtensions(): var {
             let result = [];
