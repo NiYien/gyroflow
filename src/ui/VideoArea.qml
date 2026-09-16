@@ -409,7 +409,6 @@ Item {
                     }
                 }
                 vidInfo.updateEntry("Detected lens", lens || "---");
-                vidInfo.updateEntry("Contains gyro", additional_data.contains_motion? "Yes" : "No");
                 // If source was detected, but gyro data is empty
                 if (camera) {
                     if (additional_data.unsupported_lens) {
@@ -730,7 +729,6 @@ Item {
         vidInfo.updateEntry("File name", filename);
         vidInfo.updateEntry("Detected camera", "---");
         vidInfo.updateEntry("Detected lens", "---");
-        vidInfo.updateEntry("Contains gyro", "---");
         timeline.editingSyncPoint = false;
     }
     // Sibling-`.gyroflow` prompt logic, deferred from loadFile() to fileLoaded().

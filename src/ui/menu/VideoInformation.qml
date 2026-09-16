@@ -37,7 +37,6 @@ MenuItem {
             QT_TRANSLATE_NOOP("TableList", "Pixel format"),
             QT_TRANSLATE_NOOP("TableList", "Audio"),
             QT_TRANSLATE_NOOP("TableList", "Rotation"),
-            QT_TRANSLATE_NOOP("TableList", "Contains gyro"),
         ];
         let model = {};
         for (const x of fields) model[x] = "---";
