@@ -483,8 +483,12 @@ deploy:
         xcopy /Y "C:\Windows\System32\msvcp140.dll"         "$TargetDir\"
         xcopy /Y "C:\Windows\System32\msvcp140_1.dll"       "$TargetDir\"
         xcopy /Y "C:\Windows\System32\msvcp140_2.dll"       "$TargetDir\"
+        # LibRaw's Windows x64 decoder uses the MSVC OpenMP runtime.
+        Copy-Item -LiteralPath "C:\Windows\System32\vcomp140.dll" -Destination "$TargetDir\" -ErrorAction Stop
     }
     if (-not $Env:SDK_BASE) { $Env:SDK_BASE = "https://www.niyien.com/api/sdk" }
+    New-Item -ItemType Directory -Force -Path "$TargetDir\licenses" | Out-Null
+    Copy-Item -Path "{{ProjectDir}}\resources\third_party\*" -Destination "$TargetDir\licenses" -Force -ErrorAction Stop
 
     # Vulkan shaderc
     if ("{{Arch}}" -eq "x86_64") {

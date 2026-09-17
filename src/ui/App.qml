@@ -3297,7 +3297,7 @@ Rectangle {
     }
 
     function showCanonCrmProjectOnlyMessage(): void {
-        messageBox(Modal.Info, qsTr("Canon CRM files are supported through the proxy workflow only.\nExport a project file and use it with your RAW workflow."), [
+        messageBox(Modal.Info, qsTr("This format cannot be exported directly. Use \"Stabilize\" with the video editor plugins instead."), [
             { text: qsTr("Ok"), accent: true }
         ]);
     }

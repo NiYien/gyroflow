@@ -6165,7 +6165,7 @@ impl RenderQueue {
     // the original file to ffmpeg anyway.
     fn plugin_only_extension_always(filename: &str) -> bool {
         let lower = filename.to_ascii_lowercase();
-        lower.ends_with(".braw") || lower.ends_with(".dng")
+        lower.ends_with(".braw") || lower.ends_with(".dng") || lower.ends_with(".crm")
     }
     // `.r3d` (Nikon NR3D) / `.nev` (N-RAW) are exempt when a same-name `.mov`
     // sits next to them (the legacy converted-file redirect). This tier MUST
@@ -8657,6 +8657,11 @@ impl RenderQueue {
                                         filesystem::get_filename(video_url),
                                         t_proc.elapsed().as_secs_f64() * 1000.0
                                     );
+                                    // CRM honors cancellation before decoding. Request its
+                                    // first frame, then cancel after producing the thumbnail.
+                                    let native_crm = crate::crm::available() && filesystem::get_filename(video_url).to_ascii_lowercase().ends_with(".crm");
+                                    let thumbnail_cancel = Arc::new(AtomicBool::new(!native_crm));
+                                    let cancel_after_frame = thumbnail_cancel.clone();
                                     proc.on_frame(move |_timestamp_us, input_frame, _output_frame, converter, _rate_control| {
                                     let sf = converter.scale(input_frame, ffmpeg_next::format::Pixel::RGBA, (50.0 * ratio).round() as u32, 50)?;
 
@@ -8664,6 +8669,7 @@ impl RenderQueue {
                                         thumb_fetched(util::image_data_to_base64(sf.plane_width(0), sf.plane_height(0), sf.stride(0) as u32, sf.data(0)));
                                         fetched = true;
                                     }
+                                    cancel_after_frame.store(true, std::sync::atomic::Ordering::Relaxed);
 
                                     Ok(())
                                 });
@@ -8676,7 +8682,7 @@ impl RenderQueue {
                                     );
                                     proc.start_decoder_only(
                                         vec![(0.0, 50.0)],
-                                        Arc::new(AtomicBool::new(true)),
+                                        thumbnail_cancel,
                                     )
                                     .map_err(|e| {
                                         ::log::warn!(
@@ -10828,7 +10834,7 @@ impl RenderQueue {
             .unwrap_or_default()
             .into_iter()
             .map(|e| e.to_ascii_lowercase())
-            .filter(|e| e != "gyroflow" && e != "crm")
+            .filter(|e| e != "gyroflow" && (e != "crm" || crate::crm::available()))
             .collect();
 
         let suffix_lower = self.default_suffix.to_string().to_ascii_lowercase();
@@ -11130,7 +11136,7 @@ impl RenderQueue {
             .unwrap_or_default()
             .into_iter()
             .map(|e| e.to_ascii_lowercase())
-            .filter(|e| e != "gyroflow" && e != "crm")
+            .filter(|e| e != "gyroflow" && (e != "crm" || crate::crm::available()))
             .collect();
         let suffix_lower = self.default_suffix.to_string().to_ascii_lowercase();
 
@@ -11291,7 +11297,7 @@ impl RenderQueue {
                 .and_then(|e| e.to_str())
                 .map(|e| {
                     let el = e.to_ascii_lowercase();
-                    if el == "gyroflow" || el == "crm" {
+                    if el == "gyroflow" || (el == "crm" && !crate::crm::available()) {
                         return false;
                     }
                     if is_non_source_image_ext(&el) {
@@ -17321,6 +17327,7 @@ struct RawProxyPairKey {
 enum RawProxyRawKind {
     NikonNev,
     RedR3d,
+    CanonCrm,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -17344,6 +17351,7 @@ fn filter_raw_proxy_siblings_impl(urls: &[String], extensions: &[String]) -> Vec
     let accepted_exts = accepted_raw_proxy_extensions(extensions);
     let protected_crm_proxies: HashSet<String> = crm_proxy_pairs_impl(&urls)
         .into_iter()
+        .filter(|_| !crate::crm::available())
         .map(|pair| pair.proxy_url)
         .collect();
 
@@ -17441,6 +17449,7 @@ fn raw_proxy_raw_key_for_url(url: &str) -> Option<RawProxyPairKey> {
     let raw_kind = match ext.as_str() {
         "nev" => RawProxyRawKind::NikonNev,
         "r3d" => RawProxyRawKind::RedR3d,
+        "crm" if crate::crm::available() => RawProxyRawKind::CanonCrm,
         _ => return None,
     };
     Some(RawProxyPairKey {
@@ -17467,7 +17476,11 @@ fn raw_proxy_proxy_key_for_url(
         .get(stem.len().saturating_sub("_Proxy".len())..)
         .filter(|suffix| suffix.eq_ignore_ascii_case("_Proxy"))
         .map(|_| stem[..stem.len() - "_Proxy".len()].to_string())
-        .unwrap_or(stem);
+        .unwrap_or(stem.clone());
+    if crate::crm::available() {
+        keys.push(RawProxyPairKey { folder: folder.clone(), stem: stem.clone(), raw_kind: RawProxyRawKind::CanonCrm });
+        if red_stem != stem { keys.push(RawProxyPairKey { folder: folder.clone(), stem: red_stem.clone(), raw_kind: RawProxyRawKind::CanonCrm }); }
+    }
     keys.push(RawProxyPairKey {
         folder,
         stem: red_stem,
@@ -17549,7 +17562,7 @@ where
     let video_exts: HashSet<String> = extensions
         .iter()
         .map(|e| e.trim_start_matches('.').to_ascii_lowercase())
-        .filter(|e| e != "gyroflow" && e != "crm")
+        .filter(|e| e != "gyroflow" && (e != "crm" || crate::crm::available()))
         .collect();
 
     let mut groups: HashMap<String, (Option<String>, Option<String>)> = HashMap::new();
@@ -17750,6 +17763,7 @@ fn project_uses_crm_gyro(data: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(data)
         .ok()
         .and_then(|v| {
+            if v.get("videofile").and_then(|v| v.as_str()).is_some_and(|v| v.to_ascii_lowercase().ends_with(".crm")) { return Some(false); }
             v.get("gyro_source")?
                 .get("filepath")?
                 .as_str()
@@ -17766,6 +17780,7 @@ fn job_uses_crm_proxy(job: &Job) -> bool {
 }
 
 fn stab_uses_crm_proxy(stab: &StabilizationManager) -> bool {
+    if filesystem::get_filename(&stab.input_file.read().url).to_ascii_lowercase().ends_with(".crm") { return false; }
     stab.gyro
         .read()
         .file_url
@@ -17777,7 +17792,7 @@ fn first_renderable_video_file_impl(urls: &[String], extensions: &[String]) -> O
     let video_exts: std::collections::HashSet<String> = extensions
         .iter()
         .map(|e| e.trim_start_matches('.').to_ascii_lowercase())
-        .filter(|e| e != "gyroflow" && e != "crm")
+        .filter(|e| e != "gyroflow" && (e != "crm" || crate::crm::available()))
         .collect();
 
     urls.iter().find_map(|url| {
@@ -17857,7 +17872,7 @@ fn accepted_drop_extensions(extensions: &[String]) -> HashSet<String> {
     extensions
         .iter()
         .map(|e| e.trim_start_matches('.').to_ascii_lowercase())
-        .filter(|e| e != "crm")
+        .filter(|e| e != "crm" || crate::crm::available())
         .collect()
 }
 
@@ -19390,12 +19405,13 @@ mod tests {
         assert!(RenderQueue::plugin_only_extension_always("CAM.BRAW"));
         assert!(RenderQueue::plugin_only_extension_always("raw.dng"));
         assert!(RenderQueue::plugin_only_extension_always("RAW.DNG"));
+        assert!(RenderQueue::plugin_only_extension_always("clip.CRM"));
         // A collapsed image sequence keeps the extension on the pattern name.
         assert!(RenderQueue::plugin_only_extension_always("A001_%06d.dng"));
         assert!(!RenderQueue::plugin_only_extension_always("clip.r3d"));
 
         // Ordinary and other raw formats pass through untouched in both tiers.
-        for name in ["clip.mp4", "clip.mov", "clip.mxf", "clip.crm", "r3d", "braw"] {
+        for name in ["clip.mp4", "clip.mov", "clip.mxf", "r3d", "braw"] {
             assert!(!RenderQueue::plugin_only_extension_always(name), "{name}");
             assert!(
                 !RenderQueue::plugin_only_extension_unless_sibling_mov(name),
@@ -26703,7 +26719,7 @@ mod tests {
     }
 
     #[test]
-    fn raw_proxy_input_deduplication_protects_crm_proxy_pairs() {
+    fn raw_proxy_input_deduplication_respects_native_crm_support() {
         let urls = vec![
             "file:///C:/clips/A001.CRM".to_string(),
             "file:///C:/clips/A001_Proxy.MP4".to_string(),
@@ -26712,7 +26728,8 @@ mod tests {
 
         let out = filter_raw_proxy_siblings_impl(&urls, &default_exts());
 
-        assert_eq!(out, urls);
+        let expected = if crate::crm::available() { vec![urls[0].clone(),urls[2].clone()] } else { urls };
+        assert_eq!(out, expected);
     }
 
     #[test]
@@ -27045,7 +27062,7 @@ mod tests {
     }
 
     #[test]
-    fn crm_proxy_first_renderable_video_file_ignores_crm_extension() {
+    fn crm_first_video_depends_on_native_decoder_availability() {
         let urls = vec![
             "file:///C:/clips/A.crm".to_string(),
             "file:///C:/clips/A.mp4".to_string(),
@@ -27053,7 +27070,7 @@ mod tests {
 
         let out = first_renderable_video_file_impl(&urls, &default_exts());
 
-        assert_eq!(out, Some("file:///C:/clips/A.mp4".to_string()));
+        assert_eq!(out, Some(urls[if crate::crm::available() {0} else {1}].clone()));
     }
 
     #[test]
@@ -27239,7 +27256,7 @@ mod tests {
     }
 
     #[test]
-    fn crm_proxy_folder_scan_does_not_treat_crm_as_video() {
+    fn crm_folder_scan_depends_on_native_decoder_availability() {
         let dir = tempfile::tempdir().unwrap();
         let video_path = dir.path().join("A.mp4");
         let crm_path = dir.path().join("B.crm");
@@ -27249,7 +27266,9 @@ mod tests {
         let mut found = Vec::new();
         RenderQueue::scan_video_folder(dir.path(), 0, 3, 600, &default_exts(), "", &mut found);
 
-        assert_eq!(found, vec![video_path]);
+        let mut expected=vec![video_path];
+        if crate::crm::available() { expected.push(crm_path); }
+        assert_eq!(found, expected);
     }
 
     #[test]
@@ -27295,13 +27314,8 @@ mod tests {
             .map(|v| v["url"].as_str().unwrap().to_string())
             .collect();
 
-        assert_eq!(
-            urls,
-            vec![
-                filesystem::path_to_url(&crm_path.to_string_lossy()),
-                filesystem::path_to_url(&video_path.to_string_lossy()),
-            ]
-        );
+        let second = if crate::crm::available() { &unrelated_crm_path } else { &video_path };
+        assert_eq!(urls,vec![filesystem::path_to_url(&crm_path.to_string_lossy()),filesystem::path_to_url(&second.to_string_lossy())]);
     }
 
     #[test]
@@ -28653,10 +28667,27 @@ mod tests {
     }
 
     #[test]
-    fn crm_proxy_supported_drop_item_rejects_standalone_crm() {
+    fn crm_supported_drop_item_depends_on_native_decoder_availability() {
         let urls = vec!["file:///C:/clips/A.crm".to_string()];
 
-        assert!(!has_supported_drop_item_impl(&urls, &default_exts()));
+        assert_eq!(has_supported_drop_item_impl(&urls, &default_exts()),crate::crm::available());
+    }
+
+    #[test]
+    fn crm_native_project_is_not_a_legacy_proxy_job() {
+        let native=serde_json::json!({"videofile":"file:///clips/A.CRM","gyro_source":{"filepath":"file:///clips/A.CRM"}}).to_string();
+        let proxy=serde_json::json!({"videofile":"file:///clips/A.MP4","gyro_source":{"filepath":"file:///clips/A.CRM"}}).to_string();
+        assert!(!project_uses_crm_gyro(&native));
+        assert!(project_uses_crm_gyro(&proxy));
+    }
+
+    #[test]
+    fn crm_direct_video_export_stays_blocked_with_sibling_mov() {
+        let dir=tempfile::tempdir().unwrap();
+        let crm=dir.path().join("clip.CRM");
+        std::fs::write(&crm,b"fixture").unwrap();
+        std::fs::write(dir.path().join("clip.mov"),b"fixture").unwrap();
+        assert!(RenderQueue::is_plugin_only_source(&filesystem::path_to_url(&crm.to_string_lossy())));
     }
 
     #[test]

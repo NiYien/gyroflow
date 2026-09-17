@@ -30,6 +30,7 @@ impl<'a> VideoProcessor<'a> {
         if filename.to_lowercase().ends_with(".braw")
             || filename.to_lowercase().ends_with(".r3d")
             || filename.to_lowercase().ends_with(".nev")
+            || (crate::crm::available() && filename.to_ascii_lowercase().ends_with(".crm"))
         {
             Ok(Self {
                 inner: Processor::Mdk(MDKProcessor::from_file(url, decoder_options, gpu_decoding)),
@@ -50,6 +51,10 @@ impl<'a> VideoProcessor<'a> {
         url: &str,
     ) -> Result<crate::rendering::ffmpeg_processor::VideoInfo, ffmpeg_next::Error> {
         let filename = gyroflow_core::filesystem::get_filename(url);
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        if filename.to_ascii_lowercase().ends_with(".crm") {
+            return crate::crm::video_info(url);
+        }
         if filename.to_lowercase().ends_with(".braw")
             || filename.to_lowercase().ends_with(".r3d")
             || filename.to_lowercase().ends_with(".nev")

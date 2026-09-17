@@ -281,6 +281,8 @@ deploy *param:
     fi
 
     cp -af "$QT_DIR/lib/QtCore.framework"                     "$CARGO_TARGET/../Frameworks/"
+    mkdir -p "$CARGO_TARGET/../Resources/licenses"
+    cp -R "$PROJECT_DIR/resources/third_party/." "$CARGO_TARGET/../Resources/licenses/"
     cp -af "$QT_DIR/lib/QtDBus.framework"                     "$CARGO_TARGET/../Frameworks/"
     cp -af "$QT_DIR/lib/QtGui.framework"                      "$CARGO_TARGET/../Frameworks/"
     cp -af "$QT_DIR/lib/QtNetwork.framework"                  "$CARGO_TARGET/../Frameworks/"

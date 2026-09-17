@@ -444,6 +444,7 @@ pub struct Controller {
     update_keyframe_values: qt_method!(fn(&self, timestamp_ms: f64)),
 
     check_external_sdk: qt_method!(fn(&self, filename: QString) -> bool),
+    supports_native_crm: qt_method!(fn supports_native_crm(&self) -> bool { crate::crm::available() }),
     install_external_sdk: qt_method!(fn(&self, url: QString)),
     external_sdk_progress: qt_signal!(percent: f64, sdk_name: QString, error_string: QString, url: QString),
 
@@ -557,6 +558,8 @@ fn video_log_decoder_label(custom_decoder: &str) -> &'static str {
         "BRAW"
     } else if custom_decoder.starts_with("R3D:") {
         "R3D"
+    } else if custom_decoder.starts_with("CRM:") {
+        "CRM"
     } else {
         "custom"
     }
@@ -791,7 +794,7 @@ impl Controller {
         // Build the MDK custom decoder string deterministically from the URL
         // so the worker can hand it to MDK without re-reading any
         // self.* state.
-        let custom_decoder = self.make_custom_decoder(&filename);
+        let custom_decoder = self.make_custom_decoder(&filename, &url);
         if !custom_decoder.is_empty() {
             ::log::debug!(target: "video.load", "Custom decoder: {custom_decoder}");
         }
@@ -930,6 +933,7 @@ impl Controller {
                     )
                     .unwrap_or_else(|| encoded_url.clone());
                     let dng_curve = core::dng_tone_curve::DngToneCurve::from_url(&curve_url);
+                    crate::crm::configure_player(vid, &encoded_url);
                     vid.setUrl(
                         QUrl::from(QString::from(encoded_url)),
                         QString::from(custom_decoder),
@@ -3136,7 +3140,10 @@ impl Controller {
     // and current controller state. Shared by load_video and
     // restore_video_after_resume so a post-suspend reload picks the same
     // decoder as the original load.
-    fn make_custom_decoder(&self, filename: &str) -> String {
+    fn make_custom_decoder(&self, filename: &str, url: &str) -> String {
+        if let Some(decoder) = crate::crm::decoder_for_url(url) {
+            return decoder;
+        }
         let mut custom_decoder = String::new();
         if self.image_sequence_start > 0 {
             custom_decoder = format!(
@@ -3183,9 +3190,10 @@ impl Controller {
             return false;
         }
         let filename = filesystem::get_filename(&url);
-        let custom_decoder = self.make_custom_decoder(&filename);
+        let custom_decoder = self.make_custom_decoder(&filename, &url);
         if let Some(vid) = player.to_qobject::<MDKVideoItem>() {
             let vid = unsafe { &mut *vid.as_ptr() };
+            crate::crm::configure_player(vid, &url);
             ::log::info!(
                 target: "lifecycle",
                 "resume_restore: re-issuing MDK setUrl filename={} decoder={}",

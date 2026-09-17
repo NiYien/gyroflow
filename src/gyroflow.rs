@@ -10,6 +10,7 @@ use qml_video_rs::video_item::MDKVideoItem;
 use std::cell::RefCell;
 
 pub use gyroflow_core as core;
+mod crm;
 mod cli;
 pub mod controller;
 pub mod distribution;

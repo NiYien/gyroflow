@@ -80,6 +80,10 @@ impl MDKProcessor {
             format = ffmpeg_next::format::Pixel::BGRA;
             custom_decoder = format!("R3D:gpu=auto{}", options);
         }
+        if let Some(decoder) = crate::crm::decoder_for_url(url) {
+            custom_decoder = decoder;
+            crate::crm::configure_player(&mut mdk, url);
+        }
         ::log::info!("Custom decoder: {custom_decoder}");
 
         // Take the global BRAW lock BEFORE setUrl (which spins up the native
@@ -124,6 +128,17 @@ impl MDKProcessor {
         ranges: Vec<(f64, f64)>,
         cancel_flag: Arc<AtomicBool>,
     ) -> Result<(), FFmpegError> {
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        if self.custom_decoder.starts_with("CRM:") {
+            let mut callback = self.on_frame_callback.take();
+            let mut converter = Converter::default();
+            return crate::crm::process(&self.url, ranges, cancel_flag, move |timestamp, frame| {
+                if let Some(cb) = callback.as_mut() {
+                    cb(timestamp, frame, None, &mut converter, &mut RateControl::default())?;
+                }
+                Ok(())
+            });
+        }
         let ranges_ms = ranges
             .into_iter()
             .map(|(from, to)| (from as usize, to as usize))

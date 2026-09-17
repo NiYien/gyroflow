@@ -2901,7 +2901,7 @@ Item {
             try {
                 const crmCount = urls.filter(u => filesystem.get_filename(u).toLowerCase().endsWith(".crm")).length;
                 const pairs = JSON.parse(render_queue.crm_proxy_pairs(JSON.stringify(urls.map(u => u.toString()))));
-                if (crmCount > 0 && pairs.length !== crmCount) {
+                if (!controller.supports_native_crm() && crmCount > 0 && pairs.length !== crmCount) {
                     const proxySet = {};
                     const pairedCrmUrls = {};
                     for (const pair of pairs) {
@@ -2919,7 +2919,7 @@ Item {
                     }
                 }
                 for (const pair of pairs) {
-                    crmProxyGyroByProxy[pair.proxy_url] = pair.crm_url;
+                    if (!controller.supports_native_crm()) crmProxyGyroByProxy[pair.proxy_url] = pair.crm_url;
                 }
                 try {
                     const filteredJson = render_queue.filter_raw_proxy_siblings(
@@ -2930,7 +2930,7 @@ Item {
                 } catch (e) {
                     console.log("filter_raw_proxy_siblings failed:", e);
                 }
-                urls = urls.filter(u => !filesystem.get_filename(u).toLowerCase().endsWith(".crm"));
+                if (!controller.supports_native_crm()) urls = urls.filter(u => !filesystem.get_filename(u).toLowerCase().endsWith(".crm"));
             } catch (e) {
                 console.log("crm_proxy_pairs failed:", e);
             }

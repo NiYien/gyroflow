@@ -6,6 +6,8 @@ use std::fmt::Write;
 use std::path::Path;
 use std::process::Command;
 use walkdir::WalkDir;
+#[path = "_scripts/build_crm.rs"]
+mod crm;
 
 #[derive(Debug, Clone)]
 struct NiyienVersionInfo {
@@ -221,6 +223,7 @@ fn main() {
     let qt_version = env::var("DEP_QT_VERSION").unwrap();
 
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
+    crm::build(&target_os);
 
     // Synthetic cfg `neuflow_burn_enabled`. Must mirror the same logic in
     // src/core/build.rs since cfg flags from build.rs are per-crate. See

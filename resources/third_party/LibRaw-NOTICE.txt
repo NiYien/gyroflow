@@ -1,0 +1,23 @@
+LibRaw 0.22.2 — Canon CRM preview and synchronization decoding
+Copyright (C) 2008-2025 LibRaw LLC (https://www.libraw.org/)
+
+This application uses LibRaw under LGPL version 2.1. See the accompanying
+LibRaw-LICENSE.LGPL.txt and LibRaw-COPYRIGHT.txt for terms and acknowledgements.
+
+Unmodified upstream source is available from:
+https://www.libraw.org/data/LibRaw-0.22.2-Win64.zip
+SHA-256: ac64fa12bb00a7581332d4c6ab918c0533fb3f119d6b668d47a6875410dca948
+
+The archive contains source code for both Windows and macOS; its prebuilt
+Windows binaries are not used in the application. The application's source
+repository includes reproducible fetching/build instructions in
+_scripts/install_crm_deps.py and _scripts/build_crm.rs. LibRaw is statically
+linked with LIBRAW_NODLL and LIBRAW_MAX_CR3_RAW_FILE_SIZE=1099511627776LL.
+OpenMP is enabled on Windows x64 only. No upstream source changes are applied.
+
+The MDK decoder adapter is part of the application's GPL-3.0-or-later source.
+The MDK 0.36 ABI headers are obtained from the upstream SDK:
+https://github.com/wang-bin/mdk-sdk/releases/download/v0.36.0/mdk-abi-sdk.zip
+Copyright (c) 2016-2026 WangBin. https://github.com/wang-bin/mdk-sdk
+The SDK notice permits use in open-source software or non-commercial use and
+requires preservation of its copyright and permission notice.

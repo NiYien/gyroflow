@@ -569,7 +569,7 @@ Item {
             filename = filesystem.get_filename(url);
             folder = filesystem.get_folder(url);
         }
-        if (filename.toLowerCase().endsWith(".crm")) {
+        if (filename.toLowerCase().endsWith(".crm") && !controller.supports_native_crm()) {
             messageBox(Modal.Error, qsTr("Canon CRM files must be loaded together with a same-name proxy video."), [ { text: qsTr("Ok") } ]);
             return;
         }
@@ -584,7 +584,7 @@ Item {
             return;
         }
 
-        if (isMobile || filename.toLowerCase().endsWith(".r3d") || filename.toLowerCase().endsWith(".nev") || filename.toLowerCase().endsWith(".braw")) {
+        if (isMobile || filename.toLowerCase().endsWith(".r3d") || filename.toLowerCase().endsWith(".nev") || filename.toLowerCase().endsWith(".braw") || filename.toLowerCase().endsWith(".crm")) {
             // Preview resolution to 1080p
             if (isCalibrator && calibrator_window.lensCalib) {
                 if (calibrator_window.lensCalib.previewResolution == 0) {
@@ -856,7 +856,7 @@ Item {
                     crmCount++;
                 }
             }
-            if (hasCrm) {
+            if (hasCrm && !controller.supports_native_crm()) {
                 try {
                     const pairs = JSON.parse(render_queue.crm_proxy_pairs(JSON.stringify(urlStrings)));
                     const firstVideoUrl = render_queue.first_renderable_video_file(
@@ -1280,8 +1280,14 @@ Item {
                         onTriggered: {
                             if (!vid.videoWidth) bufferTrigger.start();
                             Qt.callLater(() => {
-                                vid.currentFrame++;
-                                Qt.callLater(() => vid.currentFrame = 0);
+                                if (controller.supports_native_crm() && root.fileExtension(root.loadedFileUrl) === "crm") {
+                                    // CRM already has a complete first frame; a warm-up seek
+                                    // can overwrite a user's seek immediately after loading.
+                                    vid.forceRedraw();
+                                } else {
+                                    vid.currentFrame++;
+                                    Qt.callLater(() => vid.currentFrame = 0);
+                                }
                                 if (vid.videoWidth) {
                                     root.applyDefaultPreview();
                                     vid.volume = volumeSlider.value / 100.0;
