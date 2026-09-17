@@ -1506,9 +1506,8 @@ fn activate_canon_frame_time_offsets(md: &mut FileMetadata) -> Option<(f64, usiz
 ///
 /// RED Komodo and Sony bodies keep the historical unconditional skip. Canon
 /// skips only after a batch assignment has activated an intrinsic series whose
-/// first frame carries a finite value. camera_db is not consulted here; its
-/// Canon offset table only selects additional residual corrections such as the
-/// R5 Mark II one-frame offset.
+/// first frame carries a finite value. All Canon bodies use this same timing
+/// estimate without an additional model-specific fixed offset.
 ///
 /// This is the single predicate behind every auto-sync gate (`do_autosync`'s
 /// early exit *and* its sync gate, `batch_sync_job_ids` admission,
@@ -1609,27 +1608,12 @@ fn batch_sync_preparation_integration_method(policy: BuiltinGyroSyncPolicy) -> u
 /// actually change the currently loaded main-preview clip. This is the playback
 /// hint predicate for deep-match users who picked "Later" and pressed play
 /// (play-hint-after-deep-match); it lives next to the auto-sync gates on purpose
-/// so both read the same data sources (camera_db classification, the
+/// so both read the same data sources (active intrinsic timing, the
 /// accurate-timestamp waiver, existing offsets) and cannot drift apart.
-///
-/// [`BuiltinGyroSyncPolicy`] alone cannot express the R5 Mark II residual: its
-/// intrinsic series must be activated and the one-frame fixed offset must also
-/// land. The camera_db classification is consulted only for that extra step.
 pub(crate) fn stabilize_step_pending(
     md: &FileMetadata,
     has_motion: bool,
     has_offsets: bool,
-) -> bool {
-    stabilize_step_pending_with(md, has_motion, has_offsets, core::canon_builtin_gyro::offset_table)
-}
-
-/// Table-injecting inner form of [`stabilize_step_pending`], unit-testable
-/// without a camera_db on disk.
-fn stabilize_step_pending_with(
-    md: &FileMetadata,
-    has_motion: bool,
-    has_offsets: bool,
-    load_table: impl FnOnce() -> Arc<core::canon_builtin_gyro::OffsetTable>,
 ) -> bool {
     // Sync offsets already present (project round-trip, manual sync point, or a
     // completed batch apply): the step already landed for this clip.
@@ -1644,15 +1628,7 @@ fn stabilize_step_pending_with(
     if md.keep_video_gyro {
         match md.detected_source.as_deref() {
             Some(src) if src.starts_with("Canon") => {
-                match core::canon_builtin_gyro::classify(src, &load_table()) {
-                    // The fixed offset is only written at batch apply, so
-                    // playback before the stabilize step is one frame off.
-                    core::canon_builtin_gyro::CanonGyroOffset::OneFrame => true,
-                    // Every other Canon body relies only on the intrinsic series.
-                    // Legacy `none` / `frame_compensation` rows and unlisted
-                    // models therefore share the same activation gate.
-                    _ => canon_active_frame_time_offset_ms(md).is_none(),
-                }
+                canon_active_frame_time_offset_ms(md).is_none()
             }
             // Komodo / Sony / anything else promoted by `compute_keep_video_gyro`:
             // unconditional skip, playback is already correct.
@@ -9499,8 +9475,7 @@ impl RenderQueue {
         // as its motion. Whether it still needs an auto-sync pass depends on the
         // body: RED Komodo and Sony are treated as frame-aligned unconditionally,
         // while Canon skips only after batch apply activates intrinsic frame
-        // timing. camera_db selects additional Canon residuals but does not decide
-        // whether the intrinsic series exists.
+        // timing. No model-specific fixed correction is added.
         let (keep_video_gyro, is_komodo, detected_source, policy) = {
             let gyro = stab.gyro.read();
             let fm = gyro.file_metadata.read();
@@ -9522,11 +9497,8 @@ impl RenderQueue {
                 .filter(|s| s.starts_with("Canon"));
             if skips_autosync {
                 if let Some(src) = canon_source {
-                    let class = core::canon_builtin_gyro::classify_detected_source(src);
                     ::log::info!(
-                        "[canon_arbitration] Canon built-in gyro with active intrinsic frame timing, skipping auto-sync: detected_source='{src}' key='{}' extra_class={} url={url}",
-                        core::canon_builtin_gyro::model_key(src).unwrap_or(""),
-                        class.as_str()
+                        "[canon_arbitration] Canon built-in gyro with active intrinsic frame timing, skipping auto-sync: detected_source='{src}' url={url}"
                     );
                 } else if is_komodo {
                     ::log::info!("[red_arbitration] Komodo main video, skipping auto-sync: {url}");
@@ -9545,11 +9517,8 @@ impl RenderQueue {
             // A Canon body requiring fallback reaches here: no early exit, it
             // continues into the same auto-sync path an external-IMU clip takes.
             let src = canon_source.unwrap_or_default();
-            let class = core::canon_builtin_gyro::classify_detected_source(src);
             ::log::warn!(
-                "[canon_arbitration] Canon intrinsic frame timing inactive or unavailable, running auto-sync: detected_source='{src}' key='{}' extra_class={} url={url}",
-                core::canon_builtin_gyro::model_key(src).unwrap_or(""),
-                class.as_str()
+                "[canon_arbitration] Canon intrinsic frame timing inactive or unavailable, running auto-sync: detected_source='{src}' url={url}"
             );
         }
 
@@ -13450,8 +13419,8 @@ impl RenderQueue {
 
                             // Every Canon clip with trusted built-in gyro activates its
                             // deferred intrinsic frame timing only at this external-gyro
-                            // batch-assignment seam. camera_db selects only an additional
-                            // residual correction; currently R5 Mark II adds one frame.
+                            // batch-assignment seam. The estimate already includes the
+                            // frame period, so no separate one-frame offset is needed.
                             // Missing timing data leaves the active series empty so the
                             // downstream policy safely falls back to auto-sync.
                             if main_is_canon {
@@ -13460,10 +13429,6 @@ impl RenderQueue {
                                     let fm = gyro.file_metadata.read();
                                     fm.detected_source.clone()
                                 };
-                                let class = detected.as_deref().map_or(
-                                    core::canon_builtin_gyro::CanonGyroOffset::Unknown,
-                                    core::canon_builtin_gyro::classify_detected_source,
-                                );
                                 let activated_intrinsic_timing = {
                                     let gyro = item.stab.gyro.read();
                                     let mut fm = gyro.file_metadata.write();
@@ -13472,69 +13437,18 @@ impl RenderQueue {
                                 if let Some((first_offset_ms, active_count)) =
                                     activated_intrinsic_timing
                                 {
-                                    if class
-                                        == core::canon_builtin_gyro::CanonGyroOffset::OneFrame
-                                    {
-                                        let (fps, duration_ms) = {
-                                            let p = item.stab.params.read();
-                                            (p.fps, p.duration_ms)
-                                        };
-                                        if fps > 0.0 {
-                                            let offset_ms = -(1000.0 / fps);
-                                            let ts_us = (((duration_ms / 2.0) - offset_ms)
-                                                * 1000.0)
-                                                .round()
-                                                as i64;
-                                            item.stab.set_offset(ts_us, offset_ms);
-                                            ::log::info!(
-                                                "[canon_r5m2] intrinsic timing activated and additional 1-frame offset applied at batch assignment: active_count={} first_frame_time_offset_ms={:.3} fixed_offset_ms={:.3} fps={:.6} ts_us={} key='{}' extra_class=one_frame",
-                                                active_count,
-                                                first_offset_ms,
-                                                offset_ms,
-                                                fps,
-                                                ts_us,
-                                                detected
-                                                    .as_deref()
-                                                    .and_then(core::canon_builtin_gyro::model_key)
-                                                    .unwrap_or("")
-                                            );
-                                        } else {
-                                            let gyro = item.stab.gyro.read();
-                                            gyro.file_metadata.write().per_frame_time_offsets.clear();
-                                            ::log::warn!(
-                                                "[canon_r5m2] invalid fps after intrinsic timing activation; cleared active series so auto-sync can fall back: job[{}] fps={} key='{}'",
-                                                idx,
-                                                fps,
-                                                detected
-                                                    .as_deref()
-                                                    .and_then(core::canon_builtin_gyro::model_key)
-                                                    .unwrap_or("")
-                                            );
-                                        }
-                                    } else {
-                                        ::log::info!(
-                                            "[canon_intrinsic_timing] deferred series activated by batch assignment: job[{}] active_count={} first_frame_time_offset_ms={:.3} fixed_offset_ms=0 detected_source='{}' key='{}' extra_class={}",
-                                            idx,
-                                            active_count,
-                                            first_offset_ms,
-                                            detected.as_deref().unwrap_or(""),
-                                            detected
-                                                .as_deref()
-                                                .and_then(core::canon_builtin_gyro::model_key)
-                                                .unwrap_or(""),
-                                            class.as_str()
-                                        );
-                                    }
+                                    ::log::info!(
+                                        "[canon_intrinsic_timing] deferred series activated by batch assignment: job[{}] active_count={} first_frame_time_offset_ms={:.3} fixed_offset_ms=0 detected_source='{}'",
+                                        idx,
+                                        active_count,
+                                        first_offset_ms,
+                                        detected.as_deref().unwrap_or("")
+                                    );
                                 } else {
                                     ::log::warn!(
-                                        "[canon_intrinsic_timing] job[{}] intrinsic per-frame series unavailable; auto-sync fallback required: detected_source='{}' key='{}' extra_class={}",
+                                        "[canon_intrinsic_timing] job[{}] intrinsic per-frame series unavailable; auto-sync fallback required: detected_source='{}'",
                                         idx,
-                                        detected.as_deref().unwrap_or(""),
-                                        detected
-                                            .as_deref()
-                                            .and_then(core::canon_builtin_gyro::model_key)
-                                            .unwrap_or(""),
-                                        class.as_str()
+                                        detected.as_deref().unwrap_or("")
                                     );
                                 }
                             }
@@ -30255,17 +30169,15 @@ mod tests {
         md
     }
 
-    fn canon_offset_table() -> Arc<core::canon_builtin_gyro::OffsetTable> {
-        Arc::new(core::canon_builtin_gyro::parse_table(
-            r#"{"builtin_gyro_offset":{
-                "R5 Mark II":"one_frame"
-            }}"#,
-        ))
-    }
-
     #[test]
     fn canon_intrinsic_timing_is_deferred_until_batch_activation() {
-        for src in ["Canon C50", "Canon R50 V", "Canon R6 Mark III"] {
+        for src in [
+            "Canon R5 Mark II",
+            "Canon EOS R5 Mark II",
+            "Canon C50",
+            "Canon R50 V",
+            "Canon R6 Mark III",
+        ] {
             let mut md = builtin_gyro_md(true, Some(src));
             md.canon_deferred_frame_time_offsets = vec![21.44, 22.0];
             assert_eq!(canon_active_frame_time_offset_ms(&md), None, "{src}");
@@ -30342,22 +30254,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn camera_db_selects_only_the_r5m2_additional_residual() {
-        let table = canon_offset_table();
-        for src in [
-            "Canon R5 Mark II",
-            "Canon EOS R5 Mark II",
-            "Canon C50",
-            "Canon R50 V",
-            "Canon R50",
-        ] {
-            let class = core::canon_builtin_gyro::classify(src, &table);
-            let adds_one_frame = class == core::canon_builtin_gyro::CanonGyroOffset::OneFrame;
-            assert_eq!(adds_one_frame, src.contains("R5 Mark II"), "{src}");
-        }
-    }
-
     // ---- play-hint-after-deep-match: playback-hint predicate ----
 
     fn hint_md(
@@ -30371,94 +30267,54 @@ mod tests {
         }
     }
 
-    // Canon clips wait while intrinsic timing is deferred and become correct only
-    // after batch activation. R5 Mark II additionally waits for its one-frame
-    // residual; existing offsets mean the whole step already landed.
+    // Every Canon body finishes this step when its intrinsic timing is activated.
+    // Existing sync offsets also end the hint without changing those offsets.
     #[test]
     fn stabilize_pending_matches_field_report_anchors() {
-        let table = canon_offset_table();
         // No motion data: waiting for the external-gyro distribution.
-        assert!(stabilize_step_pending_with(
+        assert!(stabilize_step_pending(
             &hint_md(false, None, false),
             false,
-            false,
-            || table.clone()
+            false
         ));
-        // R5 Mark II: the fixed one-frame offset only lands at batch apply.
-        assert!(stabilize_step_pending_with(
-            &hint_md(true, Some("Canon EOS R5 Mark II"), true),
-            true,
-            false,
-            || table.clone()
-        ));
-        // R50 V plain load: parsed data is deferred until batch apply.
-        let mut r50v = hint_md(true, Some("Canon R50 V"), true);
-        r50v.canon_deferred_frame_time_offsets.push(21.44);
-        assert!(stabilize_step_pending_with(
-            &r50v,
-            true,
-            false,
-            || table.clone()
-        ));
-        // The batch assignment activates the series and clears the hint.
-        assert_eq!(activate_canon_frame_time_offsets(&mut r50v), Some((21.44, 1)));
-        assert!(!stabilize_step_pending_with(
-            &r50v,
-            true,
-            false,
-            || table.clone()
-        ));
-        // If that series is missing, the fallback sync is still pending.
-        assert!(stabilize_step_pending_with(
-            &hint_md(true, Some("Canon R50 V"), true),
-            true,
-            false,
-            || table.clone()
-        ));
-        // C50 follows the same deferred activation rule despite having no
-        // additional camera_db residual.
-        let mut c50 = hint_md(true, Some("Canon C50"), true);
-        c50.canon_deferred_frame_time_offsets.push(20.0);
-        assert!(stabilize_step_pending_with(
-            &c50,
-            true,
-            false,
-            || table.clone()
-        ));
-        assert_eq!(activate_canon_frame_time_offsets(&mut c50), Some((20.0, 1)));
-        assert!(!stabilize_step_pending_with(
-            &c50,
-            true,
-            false,
-            || table.clone()
-        ));
+        for (src, estimate) in [
+            ("Canon R5 Mark II", 19.85),
+            ("Canon EOS R5 Mark II", 27.34),
+            ("Canon R50 V", 21.44),
+            ("Canon C50", 20.0),
+        ] {
+            let mut md = hint_md(true, Some(src), true);
+            assert!(stabilize_step_pending(&md, true, false), "{src}");
+            md.canon_deferred_frame_time_offsets.push(estimate);
+            assert!(stabilize_step_pending(&md, true, false), "{src}");
+            assert_eq!(activate_canon_frame_time_offsets(&mut md), Some((estimate, 1)));
+            // No fixed offset is needed to complete stabilization for R5 II.
+            assert!(!stabilize_step_pending(&md, true, false), "{src}");
+            assert_eq!(activate_canon_frame_time_offsets(&mut md), Some((estimate, 1)));
+            assert_eq!(md.per_frame_time_offsets, vec![estimate]);
+        }
     }
 
     #[test]
     fn stabilize_pending_offsets_short_circuit_everything() {
-        // Existing sync offsets end the question before the source is even
-        // inspected — the panicking thunk proves the table is never loaded.
+        // Existing sync offsets end the question before the source is inspected.
         for (keep, src, motion) in [
             (true, Some("Canon R5 Mark II"), true),
             (true, Some("Canon R50 V"), true),
             (false, None, false),
         ] {
             assert!(
-                !stabilize_step_pending_with(&hint_md(keep, src, false), motion, true, || {
-                    panic!("offsets short-circuit must not load the table")
-                }),
+                !stabilize_step_pending(&hint_md(keep, src, false), motion, true),
                 "{src:?} with offsets must not hint"
             );
         }
     }
 
     #[test]
-    fn stabilize_pending_skips_sony_komodo_without_table() {
+    fn stabilize_pending_skips_sony_komodo() {
         for src in [Some("Sony ILCE-7SM3"), Some("RED KOMODO"), None] {
             assert!(
-                !stabilize_step_pending_with(&hint_md(true, src, true), true, false, || {
-                    panic!("non-Canon source must not load the classification table")
-                }),
+                !stabilize_step_pending(&hint_md(true, src, true), true, false),
                 "{src:?} keeps the unconditional skip and must not hint"
             );
         }
@@ -30467,19 +30323,17 @@ mod tests {
     #[test]
     fn stabilize_pending_external_imu_follows_timestamp_waiver() {
         // Accurate timestamps (GoPro/DJI style telemetry): playback is correct.
-        assert!(!stabilize_step_pending_with(
+        assert!(!stabilize_step_pending(
             &hint_md(false, Some("GoPro HERO11 Black"), true),
             true,
-            false,
-            || panic!("external-IMU arm must not load the table")
+            false
         ));
         // No accurate timestamps (e.g. a manually loaded external .bin that was
         // never synced): the sync stage would still change this clip.
-        assert!(stabilize_step_pending_with(
+        assert!(stabilize_step_pending(
             &hint_md(false, None, false),
             true,
-            false,
-            || panic!("external-IMU arm must not load the table")
+            false
         ));
     }
 

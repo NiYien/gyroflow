@@ -5,7 +5,6 @@
 #[cfg(feature = "opencv")]
 pub mod calibration;
 pub mod camera_identifier;
-pub mod canon_builtin_gyro;
 pub mod distribution;
 pub mod dng_tone_curve;
 pub mod gyro_source;
@@ -1428,9 +1427,9 @@ impl StabilizationManager {
                 is_komodo
             );
 
-            // R5 Mark II built-in-gyro 1-frame offset is no longer applied on plain
-            // load. It is deferred to the batch senseflow apply (render_queue
-            // apply_match) so single-video loads stay bare. The proxy<->CRM display
+            // Canon intrinsic frame timing is activated by batch senseflow apply
+            // (render_queue apply_match), without an additional fixed offset.
+            // Single-video loads stay bare. The proxy<->CRM display
             // anchor (video_display_anchor_us) is a separate, orthogonal mechanism
             // and is unaffected.
         } else {
