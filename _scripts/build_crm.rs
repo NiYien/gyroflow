@@ -80,7 +80,8 @@ pub fn build(target_os: &str) {
             decoder.flag("/openmp");
         }
     } else {
-        decoder.flag("-std=c++23").flag("-fno-rtti");
+        // Xcode 15.4 accepts C++23 under its draft name.
+        decoder.flag("-std=c++2b").flag("-fno-rtti");
     }
     decoder.compile("crm_decoder");
 }
