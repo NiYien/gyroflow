@@ -4,6 +4,27 @@
 use crate::gyro_source::FileMetadata;
 use telemetry_parser::tags_impl::{GetWithType, GroupId, GroupedTagMap, TagId};
 
+/// Map full-frame CMT metadata to an aspect-preserving proxy canvas.
+pub(super) fn cmt_proxy_scale(input: &telemetry_parser::Input, size: (usize, usize)) -> Option<(f64, f64)> {
+    if input.camera_type() != "Canon" { return None; }
+    let map = input.samples.as_ref()?.first()?.tag_map.as_ref()?.get(&GroupId::Default)?;
+    if map.get_t(TagId::Custom("canon_cmt".into())) as Option<&bool> != Some(&true) {
+        return None;
+    }
+    let width = *(map.get_t(TagId::Custom("video_width".into())) as Option<&u32>)?;
+    let height = *(map.get_t(TagId::Custom("video_height".into())) as Option<&u32>)?;
+    proxy_canvas_scale((width as usize, height as usize), size)
+}
+
+fn proxy_canvas_scale(source: (usize, usize), target: (usize, usize)) -> Option<(f64, f64)> {
+    if source.0 == 0 || source.1 == 0 || target.0 == 0 || target.1 == 0 || source == target {
+        return None;
+    }
+    let scale = (target.0 as f64 / source.0 as f64).min(target.1 as f64 / source.1 as f64);
+    // Readout is expressed across the target canvas; padded rows contain no exposure.
+    Some((scale, target.1 as f64 / (source.1 as f64 * scale)))
+}
+
 pub fn init_lens_profile(
     md: &mut FileMetadata,
     input: &telemetry_parser::Input,
@@ -224,6 +245,52 @@ fn build_canon_lens_json(
 #[cfg(test)]
 mod tests {
     use super::{build_canon_lens_json, shutter_speed_ms};
+
+    #[test]
+    fn crm_proxy_canvas_preserves_focal_length_and_scan_time() {
+        let (pixel_scale, readout_scale) = super::proxy_canvas_scale((6000, 3164), (1920, 1080)).unwrap();
+        assert_eq!(pixel_scale, 0.32);
+        let source_focal_px = 24.0 * 6000.0 / 35.9;
+        assert!((source_focal_px * pixel_scale - 24.0 * 1920.0 / 35.9).abs() < 1e-9);
+        let active_height = 3164.0 * pixel_scale;
+        assert!((9.5 * readout_scale * active_height / 1080.0 - 9.5).abs() < 1e-9);
+        assert_eq!(super::proxy_canvas_scale((6000, 3164), (6000, 3164)), None);
+        assert_eq!(super::proxy_canvas_scale((6000, 3164), (0, 0)), None);
+        assert_eq!(super::proxy_canvas_scale((0, 0), (1920, 1080)), None);
+        assert_eq!(super::proxy_canvas_scale((3840, 2160), (1920, 1080)), Some((0.5, 1.0)));
+        assert_eq!(super::proxy_canvas_scale((3840, 2160), (2048, 1080)), Some((0.5, 1.0)));
+    }
+
+    #[test]
+    #[ignore = "Requires the R3 CRM fixture in GYROFLOW_CRM_FIXTURE"]
+    fn crm_cmt_fixture_reaches_proxy_metadata() {
+        use crate::gyro_source::{FileLoadOptions, GyroSource};
+        use std::sync::{Arc, atomic::AtomicBool};
+        let path = std::env::var("GYROFLOW_CRM_FIXTURE").unwrap();
+        let parse = |size| {
+            let mut file = std::io::BufReader::new(std::fs::File::open(&path).unwrap());
+            let len = file.get_ref().metadata().unwrap().len() as usize;
+            GyroSource::parse_telemetry_file(&mut file, len, &path, &FileLoadOptions::default(), size,
+                60000.0 / 1001.0, |_| {}, Arc::new(AtomicBool::new(false))).unwrap()
+        };
+        let raw = parse((6000, 3164));
+        let proxy = parse((1920, 1080));
+        assert_eq!(proxy.camera_identifier.as_ref().unwrap().model, "R3");
+        assert!(proxy.creation_date_utc.as_deref().unwrap().starts_with("2026:09:13 09:33:14"));
+        assert!(proxy.lens_params.len() > 1);
+        assert_eq!(proxy.lens_params.len(), raw.lens_params.len());
+        let raw_focal = raw.lens_params.first_key_value().unwrap().1;
+        let proxy_focal = proxy.lens_params.first_key_value().unwrap().1;
+        assert_eq!(proxy_focal.focal_length, Some(24.0));
+        assert!((proxy_focal.pixel_focal_length.unwrap().0 as f64 - 24.0 * 1920.0 / 35.9).abs() < 0.01);
+        assert!((proxy_focal.pixel_focal_length.unwrap().0 / raw_focal.pixel_focal_length.unwrap().0 - 0.32).abs() < 1e-6);
+        assert!((proxy.unit_pixel_focal_length.unwrap() - 1920.0 / 35.9).abs() < 1e-4);
+        assert_eq!(raw.frame_readout_time, Some(9.5));
+        assert!((proxy.frame_readout_time.unwrap() * 3164.0 * 0.32 / 1080.0 - 9.5).abs() < 1e-9);
+        assert!(!proxy.keep_video_gyro);
+        println!("CRM_PROXY_FIXTURE_PASS model=R3 focal=24mm samples={} upfl={:?} readout={:?} utc={:?}",
+            proxy.lens_params.len(), proxy.unit_pixel_focal_length, proxy.frame_readout_time, proxy.creation_date_utc);
+    }
 
     #[test]
     fn shutter_speed_ratio_is_converted_to_milliseconds() {

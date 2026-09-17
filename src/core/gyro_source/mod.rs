@@ -770,6 +770,10 @@ impl GyroSource {
 
         let camera_identifier =
             CameraIdentifier::from_telemetry_parser(&input, size.0, size.1, fps).ok();
+        let crm_proxy_scale = canon::cmt_proxy_scale(&input, size);
+        if let Some((pixel_scale, readout_scale)) = crm_proxy_scale {
+            log::info!(target: "video.load", "Canon CMT proxy: size={size:?} pixel_scale={pixel_scale:.6} readout_canvas_scale={readout_scale:.6}");
+        }
 
         let mut detected_source = input.camera_type();
         if let Some(m) = input.camera_model() {
@@ -938,7 +942,7 @@ impl GyroSource {
                                         < 0.02;
                                     (size.0 as f32 / aw as f32, aspect_matches)
                                 }
-                                _ => (1.0, true),
+                                _ => (crm_proxy_scale.map_or(1.0, |s| s.0 as f32), true),
                             };
                         if !pfl_valid {
                             lens_info.pixel_focal_length = None;
@@ -971,7 +975,7 @@ impl GyroSource {
                         if let Some(v) = map.get_t(TagId::Custom("unit_pixel_focal_length".into()))
                             as Option<&f64>
                         {
-                            unit_pixel_focal_length = Some(*v);
+                            unit_pixel_focal_length = Some(*v * crm_proxy_scale.map_or(1.0, |s| s.0));
                         }
                     }
                     if lens_info.focal_length.is_none() {
@@ -1310,7 +1314,7 @@ impl GyroSource {
             lens_positions,
             lens_params,
             raw_imu,
-            frame_readout_time,
+            frame_readout_time: frame_readout_time.map(|v| v * crm_proxy_scale.map_or(1.0, |s| s.1)),
             frame_readout_direction: if fr < 0.0 {
                 if fr.abs() > 10000.0 {
                     ReadoutDirection::RightToLeft
