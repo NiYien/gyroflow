@@ -1610,7 +1610,7 @@ impl StabilizationManager {
         if width > 0 && height > 0 {
             let input_stretch = {
                 let lens = self.lens.read();
-                (lens.input_horizontal_stretch, lens.input_vertical_stretch)
+                (lens.horizontal_stretch_normalized(), lens.vertical_stretch_normalized())
             };
             let params = self.params.upgradable_read();
             let output_size = constrained_output_size(
@@ -2699,15 +2699,29 @@ impl StabilizationManager {
             )
         };
         if x_stretch != 1.0 || y_stretch != 1.0 {
+            let mut size_scale = [1.0; 2];
             if adjust_size {
                 let mut params = self.params.write();
+                let original = params.size;
                 params.size.0 = (params.size.0 as f64 * x_stretch).round() as usize;
                 params.size.1 = (params.size.1 as f64 * y_stretch).round() as usize;
+                size_scale = [
+                    params.size.0 as f64 / original.0.max(1) as f64,
+                    params.size.1 as f64 / original.1.max(1) as f64,
+                ];
             }
             {
                 let mut lens = self.lens.write();
-                lens.input_horizontal_stretch = 1.0;
-                lens.input_vertical_stretch = 1.0;
+                let applied = lens.applied_input_stretch();
+                lens.input_stretch_applied = Some([
+                    applied[0] * x_stretch,
+                    applied[1] * y_stretch,
+                ]);
+                let previous_size_scale = lens.input_size_scale();
+                lens.input_stretch_size_scale = Some([
+                    previous_size_scale[0] * size_scale[0],
+                    previous_size_scale[1] * size_scale[1],
+                ]);
             }
         }
     }
@@ -3474,6 +3488,14 @@ impl StabilizationManager {
         let params = self.params.read();
         let record_frame_rate = gyro.file_metadata.read().record_frame_rate;
 
+        // A project describes the source video, not an NLE's rescaled input
+        // buffer. Keep host-only coordinate state out of the version-4 format.
+        let input_size_scale = self.lens.read().input_size_scale();
+        let source_size = (
+            (params.size.0 as f64 / input_size_scale[0]).round() as usize,
+            (params.size.1 as f64 / input_size_scale[1]).round() as usize,
+        );
+
         let (smoothing_name, smoothing_params, horizon_amount, horizon_lock) = {
             let smoothing_lock = self.smoothing.read();
             let smoothing = smoothing_lock.current();
@@ -3549,8 +3571,8 @@ impl StabilizationManager {
             "light_refraction_coefficient": params.light_refraction_coefficient,
 
             "video_info": {
-                "width":       params.size.0,
-                "height":      params.size.1,
+                "width":       source_size.0,
+                "height":      source_size.1,
                 "rotation":    params.video_rotation,
                 "num_frames":  params.frame_count,
                 "fps":         params.fps,
@@ -5436,8 +5458,63 @@ mod tests {
 
         assert_eq!(manager.params.read().size, (1920, 1620));
         let lens = manager.lens.read();
-        assert_eq!(lens.input_horizontal_stretch, 1.0);
-        assert_eq!(lens.input_vertical_stretch, 1.0);
+        assert_eq!(lens.horizontal_stretch_normalized(), 1.0);
+        assert_eq!(lens.vertical_stretch_normalized(), 1.0);
+        assert_eq!(lens.input_vertical_stretch, 1.5);
+    }
+
+    #[test]
+    fn applied_stretch_is_not_counted_twice_when_constraining_output() {
+        for stretch in [(1.8, 1.0), (1.0, 1.5), (1.8, 1.5)] {
+            for rotation in [0.0, 90.0, 180.0, 270.0] {
+                for requested in [(8000, 1000), (1000, 8000), (1920, 1080)] {
+                    let a = manager_for_stretch_bake(stretch);
+                    let b = manager_for_stretch_bake(stretch);
+                    a.params.write().video_rotation = rotation;
+                    b.params.write().video_rotation = rotation;
+                    a.set_output_size(requested.0, requested.1);
+                    b.disable_lens_stretch(true);
+                    b.set_output_size(requested.0, requested.1);
+                    assert_eq!(a.params.read().output_size, b.params.read().output_size,
+                        "stretch={stretch:?} rotation={rotation} requested={requested:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn host_input_coordinates_do_not_change_exported_v4_project() {
+        for stretch in [(1.8, 1.0), (1.0, 1.33), (1.8, 1.5)] {
+            for adjust_size in [false, true] {
+                let manager = manager_for_stretch_bake(stretch);
+                manager.input_file.write().url = "file:///source.mp4".into();
+                manager.gyro.write().file_metadata.write().lens_positions =
+                    (0..404).map(|i| (i * 20000, 137.0)).collect();
+                manager.recompute_blocking();
+                let before: serde_json::Value = serde_json::from_str(&manager.export_gyroflow_data(
+                    GyroflowProjectType::WithGyroData, "{}", None).unwrap()).unwrap();
+                manager.disable_lens_stretch(adjust_size);
+                manager.init_size();
+                manager.recompute_blocking();
+                let after: serde_json::Value = serde_json::from_str(&manager.export_gyroflow_data(
+                    GyroflowProjectType::WithGyroData, "{}", None).unwrap()).unwrap();
+                assert_eq!(before, after, "stretch={stretch:?} adjust_size={adjust_size}");
+                assert_eq!(after["version"], 4);
+                assert!(after["calibration_data"].get("input_stretch_applied").is_none());
+                assert!(after["calibration_data"].get("input_stretch_size_scale").is_none());
+
+                // Reload the exported source project, then adapt it for another host.
+                // The host's scale must be applied once, not inherited from the save.
+                let restored = StabilizationManager::default();
+                let mut is_preset = false;
+                restored.import_gyroflow_data(after.to_string().as_bytes(), true, None, |_| (),
+                    Arc::new(AtomicBool::new(false)), &mut is_preset, false).unwrap();
+                assert_eq!(restored.params.read().size, (1920, 1080));
+                assert_eq!(restored.lens.read().applied_input_stretch(), [1.0, 1.0]);
+                restored.disable_lens_stretch(adjust_size);
+                assert_eq!(restored.params.read().size, manager.params.read().size);
+            }
+        }
     }
 
     #[test]

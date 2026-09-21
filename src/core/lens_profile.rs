@@ -50,11 +50,18 @@ pub struct LensProfile {
 
     pub input_horizontal_stretch: f64,
     pub input_vertical_stretch: f64,
-    // Non-mutating mirror of the import-time stretch values. Used ONLY by
-    // `apply_anamorphic_decay` to keep `α = 2/(1+λ²)` invariant under
-    // `disable_lens_stretch(adjust_size=true)`. Other read sites SHALL keep
-    // using the mutating fields above so `scaling_factor`, `set_fovs`, and
-    // rendering math are unaffected.
+    /// Stretch already applied to the input pixels by the caller, in storage axes.
+    /// Optical calibration stays in its original coordinates, including every
+    /// interpolation knot. Rendering uses optical / applied stretch instead.
+    #[serde(skip)]
+    pub input_stretch_applied: Option<[f64; 2]>,
+    /// Input dimension changes, tracked separately for callers that retain
+    /// their original buffer dimensions while changing the stretch mapping.
+    #[serde(skip)]
+    pub input_stretch_size_scale: Option<[f64; 2]>,
+    // Import-time optical stretch used by anamorphic correction decay and
+    // host geometry. Projection consumers use the normalized getters, which
+    // remove the stretch already applied to the incoming pixels.
     #[serde(skip)]
     pub(crate) input_horizontal_stretch_raw: Option<f64>,
     #[serde(skip)]
@@ -139,10 +146,24 @@ impl LensProfile {
     // so consumers don't have to re-implement the guard. Threshold matches
     // compute_params.rs:153 and set_from_calibrator above.
     pub fn horizontal_stretch_normalized(&self) -> f64 {
-        if self.input_horizontal_stretch > 0.01 { self.input_horizontal_stretch } else { 1.0 }
+        let optical = if self.input_horizontal_stretch > 0.01 { self.input_horizontal_stretch } else { 1.0 };
+        optical / self.applied_input_stretch()[0]
     }
     pub fn vertical_stretch_normalized(&self) -> f64 {
-        if self.input_vertical_stretch > 0.01 { self.input_vertical_stretch } else { 1.0 }
+        let optical = if self.input_vertical_stretch > 0.01 { self.input_vertical_stretch } else { 1.0 };
+        optical / self.applied_input_stretch()[1]
+    }
+
+    pub fn applied_input_stretch(&self) -> [f64; 2] {
+        self.input_stretch_applied.unwrap_or([1.0; 2]).map(|v| {
+            if v.is_finite() && v > 0.01 { v } else { 1.0 }
+        })
+    }
+
+    pub fn input_size_scale(&self) -> [f64; 2] {
+        self.input_stretch_size_scale.unwrap_or([1.0; 2]).map(|v| {
+            if v.is_finite() && v > 0.01 { v } else { 1.0 }
+        })
     }
     // Read-only access to the raw stretch mirror for cross-crate diagnostics
     // (e.g. gyroflow-plugins ComputeInputsSnapshot). Most call sites should
@@ -391,6 +412,12 @@ impl LensProfile {
             &mut ret.input_horizontal_stretch_raw,
             &mut ret.input_vertical_stretch_raw,
         );
+        if let Some(scale) = &mut ret.input_stretch_applied {
+            scale.swap(0, 1);
+        }
+        if let Some(scale) = &mut ret.input_stretch_size_scale {
+            scale.swap(0, 1);
+        }
 
         if ret.fisheye_params.camera_matrix.len() == 3 {
             let mut mtrx0 = ret.fisheye_params.camera_matrix[0];
@@ -750,6 +777,12 @@ impl LensProfile {
         opt_f64(&mut h, self.fisheye_params.radial_distortion_limit);
         h.write_u64(self.input_horizontal_stretch.to_bits());
         h.write_u64(self.input_vertical_stretch.to_bits());
+        for scale in self.applied_input_stretch() {
+            h.write_u64(scale.to_bits());
+        }
+        for scale in self.input_size_scale() {
+            h.write_u64(scale.to_bits());
+        }
         h.write_u8(self.asymmetrical as u8);
         opt_f64(&mut h, self.crop);
         opt_f64(&mut h, self.focal_length);
@@ -777,7 +810,10 @@ impl LensProfile {
             let key = (val * 1000000.0).round() as i64;
 
             if let Some(v) = self.parsed_interpolations.get(&key) {
-                return v.clone();
+                let mut selected = v.clone();
+                selected.input_stretch_applied = self.input_stretch_applied;
+                selected.input_stretch_size_scale = self.input_stretch_size_scale;
+                return selected;
             }
 
             if let Some(&first) = self.parsed_interpolations.keys().next() {
@@ -785,7 +821,10 @@ impl LensProfile {
                     let lookup = (key).min(last - 1).max(first + 1);
                     if let Some(p1) = self.parsed_interpolations.range(..=lookup).next_back() {
                         if *p1.0 == lookup {
-                            return p1.1.clone();
+                            let mut selected = p1.1.clone();
+                            selected.input_stretch_applied = self.input_stretch_applied;
+                            selected.input_stretch_size_scale = self.input_stretch_size_scale;
+                            return selected;
                         }
                         if let Some(p2) = self.parsed_interpolations.range(lookup..).next() {
                             let time_delta = (p2.0 - p1.0) as f64;
@@ -928,6 +967,52 @@ pub(crate) fn with_parsed_interpolations_for_test(
 mod tests {
     use super::*;
 
+    #[test]
+    fn applied_input_stretch_is_runtime_only_and_follows_interpolation_and_rotation() {
+        let mut lens = LensProfile::default();
+        lens.set_input_stretch(1.8, 1.0);
+        lens.input_stretch_applied = Some([1.8, 1.0]);
+        lens.input_stretch_size_scale = Some([1.8001, 1.0]);
+        lens.fisheye_params.camera_matrix = vec![[1000.0, 0.0, 900.0], [0.0, 1000.0, 400.0], [0.0, 0.0, 1.0]];
+        lens.interpolations = Some(serde_json::json!({"0.0": {}, "1.0": {"focal_length": 85.0}}));
+        lens.resolve_interpolations(&crate::lens_profile_database::LensProfileDatabase::default());
+        for position in [0.0, 0.5, 1.0] {
+            let selected = lens.get_interpolated_lens_at(position);
+            assert_eq!(selected.input_horizontal_stretch, 1.8);
+            assert_eq!(selected.horizontal_stretch_normalized(), 1.0);
+            assert_eq!(selected.input_size_scale(), [1.8001, 1.0]);
+        }
+        let rotated = lens.swapped();
+        assert_eq!(rotated.applied_input_stretch(), [1.0, 1.8]);
+        assert_eq!(rotated.input_size_scale(), [1.0, 1.8001]);
+        assert_eq!(rotated.vertical_stretch_normalized(), 1.0);
+
+        let value = lens.get_json_value().unwrap();
+        assert!(value.get("input_stretch_applied").is_none());
+        assert!(value.get("input_stretch_size_scale").is_none());
+        let mut restored = LensProfile::default();
+        restored.load_from_json_value(&value).unwrap();
+        restored.resolve_interpolations(&crate::lens_profile_database::LensProfileDatabase::default());
+        for position in [0.0, 0.5, 1.0] {
+            let selected = restored.get_interpolated_lens_at(position);
+            assert_eq!(selected.horizontal_stretch_normalized(), 1.8);
+            assert_eq!(selected.input_size_scale(), [1.0, 1.0]);
+        }
+    }
+
+    #[test]
+    fn applied_stretch_changes_projection_checksum_without_changing_optics() {
+        let mut lens = LensProfile::default();
+        lens.set_input_stretch(1.8, 1.0);
+        let original = lens.get_checksum();
+        lens.input_stretch_applied = Some([1.8, 1.0]);
+        let applied = lens.get_checksum();
+        assert_ne!(original, applied);
+        lens.input_stretch_size_scale = Some([1.8, 1.0]);
+        assert_ne!(applied, lens.get_checksum());
+        assert_eq!(lens.input_horizontal_stretch, 1.8);
+    }
+
     // focal-length-override-effective: the focal-source guard must cross the
     // project boundary. Without it every consumer of an exported .gyroflow
     // rebuilds the camera matrix from the embedded per-frame telemetry and
@@ -974,5 +1059,7 @@ mod tests {
 
         assert!(!restored.lens_group_override);
         assert_eq!(restored.focal_length, Some(24.0));
+        assert_eq!(restored.applied_input_stretch(), [1.0, 1.0]);
+        assert_eq!(restored.input_size_scale(), [1.0, 1.0]);
     }
 }

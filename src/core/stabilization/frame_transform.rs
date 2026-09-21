@@ -105,11 +105,7 @@ impl FrameTransform {
         frame_readout_time * scale
     }
     fn get_new_k(params: &ComputeParams, camera_matrix: &Matrix3<f64>, fov: f64) -> Matrix3<f64> {
-        let horizontal_ratio = if params.lens.input_horizontal_stretch > 0.01 {
-            params.lens.input_horizontal_stretch
-        } else {
-            1.0
-        };
+        let horizontal_ratio = params.lens.horizontal_stretch_normalized();
 
         let img_dim_ratio = 1.0 / horizontal_ratio;
 
@@ -272,23 +268,48 @@ impl FrameTransform {
         )
     }
 
+    fn interpolated_lens_at(
+        params: &ComputeParams,
+        metadata: &FileMetadata,
+        lens_timestamp_us: i64,
+    ) -> Option<crate::lens_profile::LensProfile> {
+        if !params.lens.has_interpolations() {
+            return None;
+        }
+        metadata.lens_positions.get_closest(&lens_timestamp_us, 100000)
+            .map(|position| params.lens.get_interpolated_lens_at(*position))
+    }
+
+    pub fn input_stretch_at_timestamp(params: &ComputeParams, timestamp_ms: f64) -> (f64, f64) {
+        // Ordinary point batches need no metadata lock or camera reconstruction.
+        let selected = if params.lens.has_interpolations() {
+            let gyro = params.gyro.read();
+            let metadata = gyro.file_metadata.read();
+            Self::interpolated_lens_at(params, &metadata, params.lens_timestamp_us(timestamp_ms))
+        } else {
+            None
+        };
+        let lens = selected.as_ref().unwrap_or(&params.lens);
+        (lens.horizontal_stretch_normalized(), lens.vertical_stretch_normalized())
+    }
+
     /// `get_lens_data_at_timestamp_with_metadata` at a lens metadata time already shifted by the delay
     /// (`ComputeParams::lens_timestamp_us`), for callers that apply a delay of their own choosing (the focal length
     /// curves are extracted without one and shifted by frames afterwards)
     pub fn get_lens_data_at_lens_timestamp(params: &ComputeParams, file_metadata: &FileMetadata, lens_timestamp_us: i64, invert_asym_lens: bool) -> (Matrix3<f64>, [f64; 24], f64, f64, f64, Option<f64>, bool) {
-        let mut interpolated_lens = None;
-        let mut per_frame = false;
-        if !file_metadata.lens_positions.is_empty() && params.lens.has_interpolations() {
-            if let Some(val) = file_metadata.lens_positions.get_closest(&lens_timestamp_us, 100000) { // closest within 100ms
-                interpolated_lens = Some(params.lens.get_interpolated_lens_at(*val));
-                per_frame = true;
-            }
-        }
+        let interpolated_lens = Self::interpolated_lens_at(params, file_metadata, lens_timestamp_us);
+        let mut per_frame = interpolated_lens.is_some();
         let lens = interpolated_lens.as_ref().unwrap_or(&params.lens);
+
+        // Telemetry focal lengths and principal points describe the original
+        // sensor pixels, even when a host has rescaled the incoming image.
+        let size_scale = lens.input_size_scale();
+        let sensor_width = params.width as f64 / size_scale[0];
+        let sensor_height = params.height as f64 / size_scale[1];
 
         let mut focal_length = lens.focal_length;
 
-        let mut camera_matrix = lens.get_camera_matrix((params.width, params.height), invert_asym_lens);
+        let mut camera_matrix = lens.get_camera_matrix((sensor_width.round() as usize, sensor_height.round() as usize), invert_asym_lens);
         let mut distortion_coeffs = lens.get_distortion_coeffs();
 
         let mut radial_distortion_limit = lens.fisheye_params.radial_distortion_limit.unwrap_or_default();
@@ -305,8 +326,8 @@ impl FrameTransform {
                     let pp = val.pixel_pitch?;
                     let crop = val.capture_area_size?;
                     if pp.0 == 0 || pp.1 == 0 || crop.0 <= 0.0 || crop.1 <= 0.0 { return None; }
-                    let fx = (fl_mm / ((pp.0 as f64 / 1_000_000.0) * crop.0 as f64)) * params.width  as f64;
-                    let fy = (fl_mm / ((pp.1 as f64 / 1_000_000.0) * crop.1 as f64)) * params.height as f64;
+                    let fx = (fl_mm / ((pp.0 as f64 / 1_000_000.0) * crop.0 as f64)) * sensor_width;
+                    let fy = (fl_mm / ((pp.1 as f64 / 1_000_000.0) * crop.1 as f64)) * sensor_height;
                     Some((fx, fy))
                 });
                 if let Some((fx, fy)) = pixel_focal_length.filter(|_| !lens.lens_group_override) {
@@ -314,7 +335,7 @@ impl FrameTransform {
                     camera_matrix[(1, 1)] = fy;
                     if let Some((cx, cy)) = val.principal_point {
                         camera_matrix[(0, 2)] = cx as f64;
-                        camera_matrix[(1, 2)] = if invert_asym_lens { params.height as f64 - cy as f64 } else { cy as f64 };
+                        camera_matrix[(1, 2)] = if invert_asym_lens { sensor_height - cy as f64 } else { cy as f64 };
                     }
                     stretch_lens = false;
                     per_frame = true;
@@ -365,11 +386,11 @@ impl FrameTransform {
         let (calib_width, calib_height) = if lens.calib_dimension.w > 0 && lens.calib_dimension.h > 0 {
             (lens.calib_dimension.w as f64, lens.calib_dimension.h as f64)
         } else {
-            (params.width.max(1) as f64, params.height.max(1) as f64)
+            (sensor_width.max(1.0), sensor_height.max(1.0))
         };
 
-        let input_horizontal_stretch = if lens.input_horizontal_stretch > 0.01 { lens.input_horizontal_stretch } else { 1.0 };
-        let input_vertical_stretch = if lens.input_vertical_stretch > 0.01 { lens.input_vertical_stretch } else { 1.0 };
+        let input_horizontal_stretch = lens.horizontal_stretch_normalized();
+        let input_vertical_stretch = lens.vertical_stretch_normalized();
 
         if stretch_lens {
             let lens_ratiox = (params.width as f64 / calib_width) * input_horizontal_stretch;
@@ -1218,5 +1239,128 @@ mod tests {
         };
         assert_eq!(at(&on, false), at(&off, false));
         assert_ne!(at(&on, true), at(&off, true));
+    }
+
+    #[test]
+    fn host_input_stretch_preserves_every_sampled_projection() {
+        use crate::lens_profile::{Dimensions, with_parsed_interpolations_for_test};
+        for host in [[1.8, 1.0], [1.0, 1.5], [1.8, 1.5]] {
+            for sample_count in [0, 1, 404] {
+                for interpolated in [false, true] {
+                    let manager = crate::StabilizationManager::default();
+                    {
+                        let mut p = manager.params.write();
+                        p.size = (1000, 800);
+                        p.output_size = ((1000.0 * host[0]) as usize, (800.0 * host[1]) as usize);
+                        p.frame_count = 3;
+                        p.fps = 50.0;
+                        p.duration_ms = 60.0;
+                    }
+                    let mut lens = crate::lens_profile::LensProfile::default();
+                    lens.calib_dimension = Dimensions { w: 1800, h: 1200 };
+                    lens.orig_dimension = lens.calib_dimension.clone();
+                    lens.fisheye_params.camera_matrix = vec![
+                        [1200.0, 0.0, 900.0], [0.0, 1300.0, 600.0], [0.0, 0.0, 1.0],
+                    ];
+                    lens.fisheye_params.distortion_coeffs = vec![0.0; 4];
+                    lens.set_input_stretch(host[0], host[1]);
+                    if interpolated {
+                        let mut second = lens.clone();
+                        second.set_input_stretch(host[0] * 1.2, host[1] * 1.1);
+                        second.fisheye_params.camera_matrix[0][0] = 1600.0;
+                        lens = with_parsed_interpolations_for_test(lens.clone(), [(0.0, lens), (1.0, second)]);
+                    }
+                    *manager.lens.write() = lens;
+                    {
+                        let gyro = manager.gyro.read();
+                        let mut md = gyro.file_metadata.write();
+                        for i in 0..sample_count {
+                            md.lens_positions.insert(i * 20000, (i % 3) as f64 / 2.0);
+                            md.lens_params.insert(i * 20000, LensParams { focal_length: Some(85.0), ..Default::default() });
+                        }
+                    }
+                    let before = ComputeParams::from_manager(&manager);
+                    let metadata_before = manager.gyro.read().file_metadata.read().clone();
+                    manager.disable_lens_stretch(true);
+                    let after = ComputeParams::from_manager(&manager);
+                    // Repeating the same input declaration must never compound the scale.
+                    manager.disable_lens_stretch(true);
+                    assert_eq!(manager.params.read().size, (after.width, after.height));
+                    assert_eq!(manager.lens.read().input_horizontal_stretch, host[0]);
+                    assert_eq!(manager.gyro.read().file_metadata.read().lens_positions, metadata_before.lens_positions);
+                    for t in [0.0, 20.0, 40.0] {
+                        let a = FrameTransform::get_lens_data_at_timestamp(&before, t, false);
+                        let b = FrameTransform::get_lens_data_at_timestamp(&after, t, false);
+                        assert!((a.0 - b.0).norm() < 1e-9, "host={host:?} samples={sample_count} interp={interpolated} t={t}");
+                        assert!((a.3 - b.3 * host[0]).abs() < 1e-12);
+                        assert!((a.4 - b.4 * host[1]).abs() < 1e-12);
+                        let ka = FrameTransform::get_new_k(&before, &a.0, before.width as f64 / before.output_width as f64);
+                        let kb = FrameTransform::get_new_k(&after, &b.0, after.width as f64 / after.output_width as f64);
+                        assert!((ka - kb).norm() < 1e-9);
+                    }
+                    let mut a = before;
+                    let mut b = after;
+                    if interpolated && sample_count > 1 {
+                        // Test the actual render/point maps at a non-base lens knot.
+                        // Matrix equality alone misses a point path using base stretch.
+                        for delay in [0, 1] {
+                            let mut render_params = b.clone();
+                            render_params.lens_metadata_delay_frames = delay;
+                            for timestamp in [0.0, 20.0, 40.0, 9000.0] {
+                                let out = (b.output_width as f32 * 0.42, b.output_height as f32 * 0.43);
+                                let transform = FrameTransform::at_timestamp(&render_params, timestamp, 0);
+                                let mut kp = transform.kernel_params;
+                                kp.width = b.width as i32;
+                                kp.height = b.height as i32;
+                                kp.output_width = b.output_width as i32;
+                                kp.output_height = b.output_height as i32;
+                                let source = Stabilization::rotate_and_distort(out, 0, &kp,
+                                    &transform.matrices, &b.distortion_model, None, 0.0, &[]).unwrap();
+                                let back = crate::stabilization::undistort_points_with_rolling_shutter(
+                                    &[source], timestamp, Some(0), &render_params, 1.0, true, false)[0];
+                                assert!((back.0 - out.0).abs() < 0.05 && (back.1 - out.1).abs() < 0.05,
+                                    "host={host:?} delay={delay} t={timestamp} output={out:?} source={source:?} recovered={back:?}");
+                            }
+                        }
+                    }
+                    a.calculate_camera_fovs();
+                    b.calculate_camera_fovs();
+                    for (x, y) in a.camera_diagonal_fovs.iter().zip(&b.camera_diagonal_fovs) {
+                        assert!((x - y).abs() < 1e-9, "FOV changed: {x} vs {y}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn host_input_stretch_keeps_telemetry_in_sensor_coordinates() {
+        for adjust_size in [false, true] {
+            for pixel_focal_length in [None, Some((14000.0, 14000.0))] {
+                let manager = crate::StabilizationManager::default();
+                {
+                    let mut p = manager.params.write();
+                    p.size = (1000, 800);
+                    p.output_size = (1800, 1200);
+                }
+                manager.lens.write().set_input_stretch(1.8, 1.5);
+                manager.gyro.write().file_metadata.write().lens_params.insert(0, LensParams {
+                    pixel_focal_length,
+                    focal_length: Some(85.0),
+                    principal_point: Some((500.0, 400.0)),
+                    pixel_pitch: Some((6000, 6000)),
+                    capture_area_size: Some((1000.0, 800.0)),
+                    ..Default::default()
+                });
+                let before = ComputeParams::from_manager(&manager);
+                manager.disable_lens_stretch(adjust_size);
+                let after = ComputeParams::from_manager(&manager);
+                for inverted in [false, true] {
+                    let a = FrameTransform::get_lens_data_at_timestamp(&before, 0.0, inverted);
+                    let b = FrameTransform::get_lens_data_at_timestamp(&after, 0.0, inverted);
+                    assert!((a.0 - b.0).norm() < 1e-9, "adjust={adjust_size} inverted={inverted}");
+                }
+            }
+        }
     }
 }

@@ -1166,6 +1166,12 @@ pub fn undistort_points_for_optical_flow(
 }
 // Ported from OpenCV: https://github.com/opencv/opencv/blob/4.x/modules/calib3d/src/fisheye.cpp#L321
 pub fn undistort_points(distorted: &[(f32, f32)], camera_matrix: Matrix3<f64>, distortion_coeffs: &[f64; 24], rotation: Matrix3<f64>, p: Option<Matrix3<f64>>, rot_per_point: Option<Vec<Matrix3<f64>>>, params: &ComputeParams, lens_correction_amount: f64, fov: f64, timestamp_ms: f64, shift_per_point: Option<Vec<(f32, f32, f32, f32, f32)>>, mesh: Option<Vec<f64>>, r_limit: f64) -> Vec<(f32, f32)> {
+    // The render samples stretch from the timestamp-selected calibration.
+    // Its inverse must use that same sample, including the host conversion;
+    // the base profile can have a different stretch at an interpolation knot.
+    let host_stretch = params.lens.input_stretch_applied.map(|_| {
+        FrameTransform::input_stretch_at_timestamp(params, timestamp_ms)
+    });
     let f = (camera_matrix[(0, 0)] as f32, camera_matrix[(1, 1)] as f32);
     let c = (camera_matrix[(0, 2)] as f32, camera_matrix[(1, 2)] as f32);
     let r_limit = r_limit as f32;
@@ -1197,7 +1203,8 @@ pub fn undistort_points(distorted: &[(f32, f32)], camera_matrix: Matrix3<f64>, d
         light_refraction_coefficient,
         fov: fov as f32,
         lens_correction_amount: lens_correction_amount as f32,
-        input_horizontal_stretch: params.lens.horizontal_stretch_normalized() as f32,
+        input_horizontal_stretch: host_stretch.map(|s| s.0).unwrap_or_else(|| params.lens.horizontal_stretch_normalized()) as f32,
+        input_vertical_stretch: host_stretch.map(|s| s.1).unwrap_or(0.0) as f32,
         // The model has to reach exactly as far here as it does in the render, or the lens-correction
         // solve below measures a field the picture doesn't have
         r_limit,
@@ -1233,8 +1240,14 @@ pub fn undistort_points(distorted: &[(f32, f32)], camera_matrix: Matrix3<f64>, d
     distorted.iter().enumerate().map(|(index, pi)| {
         let mut x = pi.0;
         let mut y = pi.1;
-        if params.lens.input_horizontal_stretch > 0.001 { x *= params.lens.input_horizontal_stretch as f32; }
-        if params.lens.input_vertical_stretch   > 0.001 { y *= params.lens.input_vertical_stretch as f32; }
+        if let Some((stretch_h, stretch_v)) = host_stretch {
+            x *= stretch_h as f32;
+            y *= stretch_v as f32;
+        } else {
+            // Preserve the desktop point path when no host conversion is active.
+            if params.lens.input_horizontal_stretch > 0.001 { x *= params.lens.input_horizontal_stretch as f32; }
+            if params.lens.input_vertical_stretch > 0.001 { y *= params.lens.input_vertical_stretch as f32; }
+        }
 
         if let Some(digital) = &params.digital_lens {
             if let Some(pt2) = digital.undistort_point((x, y), &kernel_params) {
