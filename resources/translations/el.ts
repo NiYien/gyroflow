@@ -187,6 +187,15 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="2144"/>
+        <source>The export folder does not exist:
+%1
+Choose an existing folder before processing.</source>
+        <translation>Ο φάκελος εξαγωγής δεν υπάρχει:
+%1
+Επιλέξτε έναν υπάρχοντα φάκελο πριν από την επεξεργασία.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2151"/>
         <source>These videos cannot be exported directly. Use &quot;%1&quot; instead.</source>
         <translation>Αυτά τα βίντεο δεν μπορούν να εξαχθούν απευθείας. Χρησιμοποιήστε &quot;%1&quot;.</translation>

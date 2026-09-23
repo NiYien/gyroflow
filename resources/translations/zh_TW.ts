@@ -187,6 +187,15 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="2144"/>
+        <source>The export folder does not exist:
+%1
+Choose an existing folder before processing.</source>
+        <translation>匯出資料夾不存在：
+%1
+請先選擇一個存在的資料夾，再開始處理。</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2151"/>
         <source>These videos cannot be exported directly. Use &quot;%1&quot; instead.</source>
         <translation>這些影片不支援直接匯出。請改用&quot;%1&quot;。</translation>

@@ -187,6 +187,15 @@ Ten obszar jest tylko wizualizacją i nie wpływa na końcowy render.</translati
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="2144"/>
+        <source>The export folder does not exist:
+%1
+Choose an existing folder before processing.</source>
+        <translation>Folder eksportu nie istnieje:
+%1
+Przed rozpoczęciem przetwarzania wybierz istniejący folder.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2151"/>
         <source>These videos cannot be exported directly. Use &quot;%1&quot; instead.</source>
         <translation>Tych filmów nie można wyeksportować bezpośrednio. Użyj zamiast tego &quot;%1&quot;.</translation>

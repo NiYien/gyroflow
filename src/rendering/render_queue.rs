@@ -1950,6 +1950,7 @@ pub struct RenderQueue {
     pub processing_done: qt_signal!(job_id: u32, by_preset: bool),
     pub processing_progress: qt_signal!(job_id: u32, progress: f64),
     pub output_folder_required: qt_signal!(intent: QString, job_id: u32),
+    pub output_folder_missing: qt_signal!(folder: QString),
 
     get_prev_item_id: qt_method!(fn(&self, job_id: u32) -> u32),
     get_next_item_id: qt_method!(fn(&self, job_id: u32) -> u32),
@@ -1969,6 +1970,7 @@ pub struct RenderQueue {
     // from QML into queue_output_mode / queue_fixed_output_path. Called on every
     // setting change and at panel init; consumed by reapply_queue_output_path.
     set_queue_output_path: qt_method!(fn(&mut self, mode: u32, fixed_path: QString)),
+    missing_video_output_folder: qt_method!(fn(&self, include_finished: bool) -> QString),
     ios_photo_jobs_need_output_folder: qt_method!(fn(&self) -> bool),
     finish_output_folder_request: qt_method!(fn(&mut self, accepted: bool)),
     clear_output_folder_block: qt_method!(fn(&mut self)),
@@ -2876,6 +2878,50 @@ impl RenderQueue {
             mode,
             self.queue_fixed_output_path
         );
+    }
+
+    fn prospective_video_output_folder(&self, job: &Job) -> String {
+        if self.queue_output_mode == 1 && !self.queue_fixed_output_path.is_empty() {
+            self.queue_fixed_output_path.clone()
+        } else if !job.render_options.input_url.is_empty()
+            && !job.render_options.input_url.starts_with("content://")
+        {
+            filesystem::get_folder(&job.render_options.input_url)
+        } else {
+            job.render_options.output_folder.clone()
+        }
+    }
+
+    fn first_missing_video_output_folder(
+        &self,
+        include_finished: bool,
+        requested_job: Option<u32>,
+    ) -> Option<String> {
+        let queue = self.queue.try_borrow().ok()?;
+        queue.iter().find_map(|item| {
+            if requested_job.is_some_and(|job_id| item.job_id != job_id)
+                || !(item.status == JobStatus::Queued
+                    || (requested_job.is_some() && item.status == JobStatus::Error)
+                    || (include_finished && item.status == JobStatus::Finished))
+            {
+                return None;
+            }
+            let job = self.jobs.get(&item.job_id)?;
+            if job.plugin_only
+                || self.ios_photo_import_job_needs_output_folder(item.job_id, cfg!(target_os = "ios"))
+            {
+                return None;
+            }
+            let folder = self.prospective_video_output_folder(job);
+            (!folder.is_empty() && !filesystem::is_dir(&folder)).then_some(folder)
+        })
+    }
+
+    pub fn missing_video_output_folder(&self, include_finished: bool) -> QString {
+        QString::from(
+            self.first_missing_video_output_folder(include_finished, None)
+                .unwrap_or_default(),
+        )
     }
 
     fn ios_photo_import_job_needs_output_folder(&self, job_id: u32, is_ios: bool) -> bool {
@@ -5357,6 +5403,12 @@ impl RenderQueue {
         if self.request_photo_output_folder(None, cfg!(target_os = "ios"), "start") {
             return;
         }
+        if self.status.to_string() != "active" && matches!(self.export_project, 0 | 4) {
+            if let Some(folder) = self.first_missing_video_output_folder(false, None) {
+                self.output_folder_missing(QString::from(folder));
+                return;
+            }
+        }
 
         for (_id, job) in self.jobs.iter() {
             job.cancel_flag.store(false, SeqCst);
@@ -5585,6 +5637,12 @@ impl RenderQueue {
         self.reapply_queue_output_path();
         if self.request_photo_output_folder(None, is_ios, "resume") {
             return;
+        }
+        if matches!(self.export_project, 0 | 4) {
+            if let Some(folder) = self.first_missing_video_output_folder(false, None) {
+                self.output_folder_missing(QString::from(folder));
+                return;
+            }
         }
         for (_id, job) in self.jobs.iter() {
             job.cancel_flag.store(false, SeqCst);
@@ -7224,6 +7282,12 @@ impl RenderQueue {
             "render_job",
         ) {
             return;
+        }
+        if matches!(self.export_project, 0 | 4) {
+            if let Some(folder) = self.first_missing_video_output_folder(false, Some(job_id)) {
+                self.output_folder_missing(QString::from(folder));
+                return;
+            }
         }
         // plugin-only-export-gate: refuse to enter a video encode for sources
         // ffmpeg cannot decode. Batch starts are swept in start(); this guard
@@ -26644,6 +26708,31 @@ mod tests {
             queue.jobs.get(&1).unwrap().render_options.output_folder,
             filesystem::get_folder("file:///C:/footage/a.mp4")
         );
+    }
+
+    #[test]
+    fn missing_video_output_folder_uses_current_setting_before_dispatch() {
+        let source = tempfile::tempdir().unwrap();
+        let input_url = filesystem::path_to_url(&source.path().join("clip.mp4").to_string_lossy());
+        let mut queue = queue_with_input_job(1, &input_url);
+        let missing = source.path().join("missing");
+        let missing_url = filesystem::path_to_url(&missing.to_string_lossy());
+
+        queue.set_queue_output_path(1, QString::from(missing_url.as_str()));
+        assert_eq!(queue.missing_video_output_folder(false).to_string(), missing_url);
+
+        queue.set_queue_output_path(0, QString::from(""));
+        assert!(queue.missing_video_output_folder(false).to_string().is_empty());
+
+        queue.set_queue_output_path(1, QString::from(missing_url.as_str()));
+        {
+            let mut items = queue.queue.borrow_mut();
+            let mut item = items[0].clone();
+            item.status = JobStatus::Finished;
+            items.change_line(0, item);
+        }
+        assert!(queue.missing_video_output_folder(false).to_string().is_empty());
+        assert_eq!(queue.missing_video_output_folder(true).to_string(), missing_url);
     }
 
     #[test]

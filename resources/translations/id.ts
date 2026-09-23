@@ -188,6 +188,15 @@ Sebagai catatan, ini hanya indikator visual, tidak akan berpengaruh pada renderi
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="2144"/>
+        <source>The export folder does not exist:
+%1
+Choose an existing folder before processing.</source>
+        <translation>Folder ekspor tidak ada:
+%1
+Pilih folder yang sudah ada sebelum pemrosesan.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2151"/>
         <source>These videos cannot be exported directly. Use &quot;%1&quot; instead.</source>
         <translation>Video ini tidak dapat diekspor langsung. Gunakan &quot;%1&quot; sebagai gantinya.</translation>

@@ -187,6 +187,15 @@ Merk at dette bare en en visuel indikator, den påvirker ikke resultatet.</trans
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="2144"/>
+        <source>The export folder does not exist:
+%1
+Choose an existing folder before processing.</source>
+        <translation>Eksportmappen finnes ikke:
+%1
+Velg en eksisterende mappe før behandlingen starter.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2151"/>
         <source>These videos cannot be exported directly. Use &quot;%1&quot; instead.</source>
         <translation>Disse videoene kan ikke eksporteres direkte. Bruk &quot;%1&quot; i stedet.</translation>

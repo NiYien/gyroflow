@@ -186,6 +186,15 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="2144"/>
+        <source>The export folder does not exist:
+%1
+Choose an existing folder before processing.</source>
+        <translation>내보내기 폴더가 존재하지 않습니다:
+%1
+처리를 시작하기 전에 기존 폴더를 선택하세요.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2151"/>
         <source>These videos cannot be exported directly. Use &quot;%1&quot; instead.</source>
         <translation>이 영상들은 직접 내보낼 수 없습니다. 대신 &quot;%1&quot;을(를) 사용하세요.</translation>

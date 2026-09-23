@@ -187,6 +187,15 @@ Je to len vizuálny indikátor - neovplyvňuje výsledný render.</translation>
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="2144"/>
+        <source>The export folder does not exist:
+%1
+Choose an existing folder before processing.</source>
+        <translation>Priečinok na export neexistuje:
+%1
+Pred spracovaním vyberte existujúci priečinok.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2151"/>
         <source>These videos cannot be exported directly. Use &quot;%1&quot; instead.</source>
         <translation>Tieto videá nie je možné exportovať priamo. Použite namiesto toho &quot;%1&quot;.</translation>

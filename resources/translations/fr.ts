@@ -187,6 +187,15 @@ Notez que ce n&apos;est qu&apos;un indicateur visuel, il n&apos;affecte pas le r
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="2144"/>
+        <source>The export folder does not exist:
+%1
+Choose an existing folder before processing.</source>
+        <translation>Le dossier d’exportation n’existe pas :
+%1
+Choisissez un dossier existant avant de lancer le traitement.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2151"/>
         <source>These videos cannot be exported directly. Use &quot;%1&quot; instead.</source>
         <translation>Ces vidéos ne peuvent pas être exportées directement. Utilisez &quot;%1&quot; à la place.</translation>

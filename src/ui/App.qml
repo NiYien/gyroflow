@@ -539,6 +539,9 @@ Rectangle {
                 render_queue.finish_output_folder_request(false);
             });
         }
+        function onOutput_folder_missing(folder: string): void {
+            window.showMissingOutputFolder(folder);
+        }
     }
 
     function loadBatchParams() {
@@ -1055,6 +1058,7 @@ Rectangle {
                             if (window.runStabilizedBatchExport()) return;
                             // Single-video path — auto-sync first if needed, then render
                             if (!window.videoArea.vid.loaded) return;
+                            if (!window.singleVideoOutputFolderGatePasses()) return;
                             const md = motionData.item;
                             const vi = vidInfo.item;
                             // Require filename match (same as Full mode Line ~624): motionData may
@@ -1155,6 +1159,7 @@ Rectangle {
                                 window.showCanonCrmProjectOnlyMessage();
                                 return;
                             }
+                            if (!isAddToQueue && !tempIsAddToQueue && !window.singleVideoOutputFolderGatePasses()) return;
                             const fname = vidInfo.item.filename.toLowerCase();
                             // plugin-only-export-gate: single source of truth for "ffmpeg cannot
                             // encode this". Do NOT inline extension literals in this branch --
@@ -2134,6 +2139,24 @@ Rectangle {
     function runQueueOutputAction(callback: var): void {
         iosQueueOutputPolicy.runBeforeAction(callback);
     }
+    function showMissingOutputFolder(folder: string): void {
+        const path = filesystem.url_to_path(folder) || folder;
+        messageBox(Modal.Warning, qsTr("The export folder does not exist:\n%1\nChoose an existing folder before processing.").arg(path), [
+            { text: qsTr("Ok"), accent: true }
+        ], undefined, Text.PlainText);
+    }
+    function singleVideoOutputFolderGatePasses(): bool {
+        const folder = outputFile.folderUrl.toString();
+        if (isSandboxed || !folder || filesystem.is_dir(outputFile.folderUrl)) return true;
+        showMissingOutputFolder(folder);
+        return false;
+    }
+    function queueVideoOutputFolderGatePasses(includeFinished: bool): bool {
+        const folder = render_queue.missing_video_output_folder(includeFinished);
+        if (!folder) return true;
+        showMissingOutputFolder(folder);
+        return false;
+    }
     function runSimpleBatchSync(): void {
         if (!lensDataGatePasses()) return;
         // queue-stuck-state-recovery: the batch-sync entry point returns without
@@ -2163,6 +2186,7 @@ Rectangle {
     // Simple-mode batch export dispatch (queue mode). Shared by simpleExportStabilizedBtn and
     // by RenderQueue's match-then-sync orchestration. Batch render auto-syncs not-yet-synced jobs.
     function runSimpleBatchExport(): void {
+        if (!queueVideoOutputFolderGatePasses(false)) return;
         if (!lensDataGatePasses()) return;
         if (render_queue.has_crm_proxy_jobs()) {
             window.showCanonCrmProjectOnlyMessage();
@@ -2183,6 +2207,7 @@ Rectangle {
         messageBox(Modal.Question, qsTr("Already exported. Re-export?"), [
             { text: qsTr("Yes"), clicked: function() {
                 if (kind === "video") {
+                    if (!window.queueVideoOutputFolderGatePasses(true)) return;
                     // Mirror runSimpleBatchExport's lens-data gate + CRM-proxy guard
                     // + export_project, but requeue already-rendered video exports
                     // for re-render. This branch dispatches inline (not via
@@ -2397,6 +2422,7 @@ Rectangle {
             // this deliberately leaves plugin-only skips in place (an encode can never
             // consume those sources), so the blocker below explains them instead.
             render_queue.revive_stuck_jobs("export");
+            if (!window.queueVideoOutputFolderGatePasses(false)) return;
             const hasGyroFiles = videoArea.queue ? videoArea.queue.hasGyroFiles : false;
             // No usable gyro/motion data at all: prompt to load gyro instead of a
             // silent no-op. Gyro files present but still parsing fall through to the

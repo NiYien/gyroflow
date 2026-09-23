@@ -187,6 +187,15 @@ Not: Bu yalnızca görsel bir işarettir, render işlemini etkilemez.</translati
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="2144"/>
+        <source>The export folder does not exist:
+%1
+Choose an existing folder before processing.</source>
+        <translation>Dışa aktarma klasörü mevcut değil:
+%1
+İşlemeye başlamadan önce mevcut bir klasör seçin.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2151"/>
         <source>These videos cannot be exported directly. Use &quot;%1&quot; instead.</source>
         <translation>Bu videolar doğrudan dışa aktarılamaz. Bunun yerine &quot;%1&quot; kullanın.</translation>
