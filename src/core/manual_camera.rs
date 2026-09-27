@@ -110,14 +110,30 @@ impl ManualCameraCatalog {
                 let mut models = brand_data
                     .models
                     .iter()
-                    .map(|(model, _)| ManualCameraModel {
+                    .map(|(model, data)| ManualCameraModel {
                         id: model.clone(),
                         label: model.clone(),
                         enabled: brand_data
                             .readout
                             .data
                             .get(model)
-                            .is_some_and(|row| row.iter().any(Option::is_some)),
+                            .is_some_and(|row| row.iter().any(Option::is_some))
+                            || (brand_id == "KINEFINITY"
+                                && data
+                                    .extra
+                                    .get("kinefinity")
+                                    .and_then(|v| v.get("readout"))
+                                    .and_then(serde_json::Value::as_array)
+                                    .is_some_and(|refs| {
+                                        refs.iter().any(|r| {
+                                            r.get("height")
+                                                .and_then(serde_json::Value::as_u64)
+                                                .is_some_and(|h| h > 0)
+                                                && r.get("ms")
+                                                    .and_then(serde_json::Value::as_f64)
+                                                    .is_some_and(|t| t.is_finite() && t != 0.0)
+                                        })
+                                    })),
                     })
                     .collect::<Vec<_>>();
                 models.sort_by(|left, right| left.label.cmp(&right.label));
@@ -221,6 +237,24 @@ impl ManualCameraCatalog {
             view_angle = Some(if model_data.sw < 30.0 { "APSC" } else { "FULL" }.to_owned());
         }
 
+        let kinefinity_geometry = if brand.id == "KINEFINITY" {
+            Some(telemetry_parser::kinefinity::resolve_camera_geometry(
+                &self.database,
+                model_name,
+                (res_w, res_h),
+                numeric_hint(&input.additional_data, &["sensor_fps"])
+                    .filter(|fps| fps.is_finite() && *fps > 0.0)
+                    .unwrap_or(input.fps),
+                view_angle.as_deref(),
+                input
+                    .additional_data
+                    .get("oversampling")
+                    .and_then(serde_json::Value::as_bool),
+            )?)
+        } else {
+            None
+        };
+
         let (crop_factor, unit_pixel_focal_length) = if brand.id == "BLACKMAGIC" {
             let native_width = blackmagic_native_width(model_name)? as f64;
             (native_width / res_w as f64, native_width / sensor_w)
@@ -232,29 +266,8 @@ impl ManualCameraCatalog {
                 1.0
             };
             (crop, res_w as f64 * crop / sensor_w)
-        } else if brand.id == "KINEFINITY" {
-            if let Some(effective_sensor_w) =
-                kinefinity_sensor_width(model_name, view_angle.as_deref())
-            {
-                (
-                    sensor_w / effective_sensor_w,
-                    res_w as f64 / effective_sensor_w,
-                )
-            } else {
-                let crop = self
-                    .database
-                    .match_crop(
-                        &brand.id,
-                        model_name,
-                        res_w,
-                        res_h,
-                        input.fps,
-                        view_angle.as_deref(),
-                        &tags,
-                    )
-                    .unwrap_or(1.0);
-                (crop, res_w as f64 * crop / sensor_w)
-            }
+        } else if let Some(geometry) = &kinefinity_geometry {
+            (geometry.crop_factor, geometry.unit_pixel_focal_length)
         } else if let Some(scale) = scale_35mm.filter(|scale| (*scale - 1.0).abs() > 0.01) {
             let unit_pixel_focal_length = if brand.id == "NIKON" {
                 res_w as f64 * scale / sensor_w
@@ -304,20 +317,33 @@ impl ManualCameraCatalog {
         } else {
             scale_35mm.unwrap_or(0.0)
         };
-        let readout = self.database.lookup_readout(
-            &brand.id,
-            model_name,
-            readout_w,
-            readout_h,
-            input.fps,
-            readout_scale,
-            model_data.sw,
-            nraw_subsampled_ratio,
-            &tags,
-        );
+        let readout = if let Some(geometry) = &kinefinity_geometry {
+            geometry.readout.clone()
+        } else {
+            self.database.lookup_readout(
+                &brand.id,
+                model_name,
+                readout_w,
+                readout_h,
+                input.fps,
+                readout_scale,
+                model_data.sw,
+                nraw_subsampled_ratio,
+                &tags,
+            )
+        };
         let (frame_readout_time, readout_estimated) = match readout {
             Some(result) => (result.readout_time_ms, result.is_estimated),
-            None => (half_frame_readout_time(input.fps)?, true),
+            None => (
+                half_frame_readout_time(if kinefinity_geometry.is_some() {
+                    numeric_hint(&input.additional_data, &["sensor_fps"])
+                        .filter(|fps| fps.is_finite() && *fps > 0.0)
+                        .unwrap_or(input.fps)
+                } else {
+                    input.fps
+                })?,
+                true,
+            ),
         };
         if !frame_readout_time.is_finite() || frame_readout_time < 0.0 {
             return None;
@@ -466,26 +492,6 @@ fn red_native_width(model: &str) -> Option<u32> {
             "SCARLET" => Some(4096),
             _ => None,
         }
-    }
-}
-
-fn kinefinity_sensor_width(model: &str, view_angle: Option<&str>) -> Option<f64> {
-    let view_angle = view_angle?;
-    match (model, view_angle) {
-        ("MAVO Edge 8K", "FULL") => Some(36.0),
-        ("MAVO Edge 8K", "S35") => Some(27.0),
-        ("MAVO Edge 6K", "FULL") => Some(36.0),
-        ("MAVO Edge 6K", "S35") => Some(24.5),
-        ("MAVO", "S35") | ("MAVO2 S35", "S35") => Some(24.0),
-        ("MAVO", "M43") | ("MAVO2 S35", "M43") => Some(16.0),
-        ("MAVO", "S16") | ("MAVO2 S35", "S16") => Some(12.0),
-        ("MAVO", "16mm") | ("MAVO2 S35", "16mm") => Some(8.0),
-        ("MAVO LF", "FULL") | ("MAVO2 LF", "FULL") => Some(36.0),
-        ("MAVO LF", "S35") | ("MAVO2 LF", "S35") => Some(24.5),
-        ("TERRA 4K", "S35") => Some(19.5),
-        ("TERRA 4K", "M43") => Some(14.62),
-        ("TERRA 4K", "S16") => Some(9.7),
-        _ => None,
     }
 }
 
@@ -920,6 +926,61 @@ mod tests {
 
         assert!((resolved.crop_factor - 36.0 / 27.0).abs() < 1e-9);
         assert!((resolved.unit_pixel_focal_length - 4096.0 / 27.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn manual_kinefinity_uses_shared_scan_geometry_and_recording_fps() {
+        let tmp = tempfile::tempdir().unwrap();
+        let database = serde_json::json!({
+            "models": { "VISTA": { "sw": 36.0, "kinefinity": {
+                "sensor_size": [6016,3984],
+                "sensor_widths": { "5760":34.5, "3840":23.0 },
+                "oversampling": [{"format":"FULL", "output":[3840,2160], "source":[5760,3240]}],
+                "readout": [{"height":3984, "ms":-18.0, "fps":[40,120]}]
+            }}}
+        });
+        std::fs::write(tmp.path().join("kinefinity.json"), database.to_string()).unwrap();
+        let catalog = ManualCameraCatalog::load(tmp.path().to_str().unwrap()).unwrap();
+        let selection = ManualCameraSelection::new("KINEFINITY", "VISTA");
+        let mut manual_input = input((3840, 2160), 30.0);
+        manual_input.additional_data =
+            serde_json::json!({"image_format":"FF", "oversampling":true, "sensor_fps":60.0});
+        let full = catalog.resolve(&selection, &manual_input).unwrap();
+        assert!((full.unit_pixel_focal_length - 3840.0 / 34.5).abs() < 1e-9);
+        assert!((full.frame_readout_time - 18.0 * 3240.0 / 3984.0).abs() < 1e-9);
+        assert!(full.readout_estimated);
+        manual_input.additional_data =
+            serde_json::json!({"image_format":"S35", "oversampling":false, "sensor_fps":60.0});
+        let crop = catalog.resolve(&selection, &manual_input).unwrap();
+        assert!((crop.unit_pixel_focal_length - 3840.0 / 23.0).abs() < 1e-9);
+        assert!((crop.frame_readout_time * 1.5 - full.frame_readout_time).abs() < 1e-9);
+        let config = crate::niyien_lens_presets::LensGroupConfig {
+            focal_length_mm: Some(50.0),
+            ..Default::default()
+        };
+        for geometry in [&full, &crop] {
+            let metadata = crate::gyro_source::FileMetadata {
+                unit_pixel_focal_length: Some(geometry.unit_pixel_focal_length),
+                ..Default::default()
+            };
+            let lens = crate::niyien_lens_presets::build_lens_profile(
+                &metadata,
+                (3840, 2160),
+                Some(&config),
+                None,
+                None,
+            )
+            .unwrap();
+            assert!(
+                (lens.fisheye_params.camera_matrix[0][0] - 50.0 * geometry.unit_pixel_focal_length)
+                    .abs()
+                    < 1e-6
+            );
+            assert_eq!(lens.focal_length, Some(50.0));
+            assert!(lens.lens_group_override);
+        }
+        manual_input.additional_data = serde_json::json!({});
+        assert!(catalog.resolve(&selection, &manual_input).is_none());
     }
 
     #[test]
