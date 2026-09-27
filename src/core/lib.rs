@@ -4841,6 +4841,7 @@ impl StabilizationManager {
                 frame_count,
                 video_size,
             );
+            self.set_video_rotation(((360 - metadata.rotation) % 360) as f64);
             let _ = self.load_gyro_data(
                 stream,
                 filesize,
@@ -4907,6 +4908,9 @@ impl StabilizationManager {
                 output_width = output_dim.w;
                 output_height = output_dim.h;
             }
+            let (output_width, output_height) = rotated_output_dim(
+                (output_width, output_height), self.params.read().video_rotation,
+            );
             self.set_size(video_size.0, video_size.1);
             self.set_output_size(output_width, output_height);
 

@@ -87,7 +87,7 @@ pub fn init_lens_profile(
             }
         };
         if let Some((fx, fy)) = fxfy {
-            build_synthetic_canon_lens_profile(md, input, tag_map, size, info, fx, fy);
+            build_synthetic_canon_lens_profile(md, input, tag_map, size, fx, fy);
         }
     }
 }
@@ -101,13 +101,9 @@ fn build_synthetic_canon_lens_profile(
     input: &telemetry_parser::Input,
     tag_map: &GroupedTagMap,
     size: (usize, usize),
-    info: &telemetry_parser::util::SampleInfo,
     fx: f32,
     fy: f32,
 ) {
-    let video_rotation = info.video_rotation.unwrap_or_default().abs();
-    let is_vertical = video_rotation == 90 || video_rotation == 270;
-
     let focal_length = tag_map
         .get(&GroupId::Lens)
         .and_then(|x| x.get_t(TagId::FocalLength) as Option<&f32>)
@@ -131,7 +127,6 @@ fn build_synthetic_canon_lens_profile(
         &lens_name,
         focal_length,
         size,
-        is_vertical,
         md.frame_readout_time,
         fx,
         fy,
@@ -194,7 +189,6 @@ fn build_canon_lens_json(
     lens_name: &str,
     focal_length_mm: Option<f32>,
     size: (usize, usize),
-    is_vertical: bool,
     frame_readout_time: Option<f64>,
     fx: f32,
     fy: f32,
@@ -215,7 +209,6 @@ fn build_canon_lens_json(
         "lens_model": lens_model,
         "calib_dimension":  { "w": size.0, "h": size.1 },
         "orig_dimension":   { "w": size.0, "h": size.1 },
-        "output_dimension": { "w": if is_vertical { size.1 } else { size.0 }, "h": if is_vertical { size.0 } else { size.1 } },
         "frame_readout_time": frame_readout_time,
         "official": true,
         "asymmetrical": false,
@@ -307,7 +300,6 @@ mod tests {
             "RF24-70mm F2.8",
             Some(50.0),
             (1920, 1080),
-            false,
             Some(15.0),
             1000.0,
             1000.0,
@@ -325,19 +317,17 @@ mod tests {
     }
 
     #[test]
-    fn canon_lens_json_vertical_swaps_output_dimension() {
+    fn canon_lens_json_leaves_output_dimensions_to_video() {
         let v = build_canon_lens_json(
             "EOS R5 Mark II",
             "",
             None,
             (1920, 1080),
-            true,
             None,
             1000.0,
             1000.0,
         );
-        assert_eq!(v["output_dimension"]["w"], 1080);
-        assert_eq!(v["output_dimension"]["h"], 1920);
+        assert!(v.get("output_dimension").is_none());
         // Empty lens name + no focal: lens_model degrades to an empty string.
         assert_eq!(v["lens_model"], "");
     }

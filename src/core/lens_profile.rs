@@ -42,6 +42,8 @@ pub struct LensProfile {
     pub calib_dimension: Dimensions,
     pub orig_dimension: Dimensions,
 
+    /// Optional lens-specific output size in sensor axes, before video rotation.
+    /// Ordinary camera auto profiles leave this unset and use the video size.
     pub output_dimension: Option<Dimensions>,
 
     pub frame_readout_time: Option<f64>,
@@ -117,6 +119,7 @@ pub struct LensProfile {
 
 impl LensProfile {
     pub fn init(&mut self) {
+        self.clear_legacy_camera_output_dimension();
         if !self.fisheye_params.distortion_coeffs.is_empty() {
             let distortion_model = DistortionModel::from_name(
                 self.distortion_model.as_deref().unwrap_or("opencv_fisheye"),
@@ -139,6 +142,39 @@ impl LensProfile {
         }
         if self.input_vertical_stretch_raw.is_none() {
             self.input_vertical_stretch_raw = Some(self.input_vertical_stretch);
+        }
+    }
+
+    fn clear_legacy_camera_output_dimension(&mut self) {
+        let Some(output) = self.output_dimension.as_ref() else {
+            return;
+        };
+        let generated_camera = matches!(
+            (self.camera_brand.as_str(), self.calibrated_by.as_str(), self.distortion_model.as_deref()),
+            ("Sony", "Sony", Some("sony"))
+                | ("Sony", "Not calibrated", None)
+                | ("Canon", "Canon", Some("opencv_standard"))
+        );
+        let source = (self.orig_dimension.w, self.orig_dimension.h);
+        let output = (output.w, output.h);
+        // Old camera-generated profiles copied the source size after rotation.
+        // That is not an optical crop: retaining it makes queue/Now consumers
+        // rotate it twice. Keep authored profiles, crops and anamorphic sizes.
+        if generated_camera
+            && self.calibrator_version == "---"
+            && self.num_images == 0
+            && !self.lens_group_override
+            && self.crop.is_none()
+            && self.interpolations.is_none()
+            && self.digital_lens.is_none()
+            && (self.input_horizontal_stretch <= 0.01 || self.input_horizontal_stretch == 1.0)
+            && (self.input_vertical_stretch <= 0.01 || self.input_vertical_stretch == 1.0)
+            && source.0 > 0 && source.1 > 0
+            && source == (self.calib_dimension.w, self.calib_dimension.h)
+            && (output == source || output == (source.1, source.0))
+        {
+            self.output_dimension = None;
+            log::debug!(target: "lens", "Cleared legacy camera output dimension: camera={} {} source={source:?} output={output:?}", self.camera_brand, self.camera_model);
         }
     }
 
@@ -966,6 +1002,33 @@ pub(crate) fn with_parsed_interpolations_for_test(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_camera_output_dimensions_preserve_authored_geometry() {
+        let legacy = serde_json::json!({
+            "camera_brand": "Canon", "calibrated_by": "Canon",
+            "calibrator_version": "---", "distortion_model": "opencv_standard",
+            "calib_dimension": {"w":3840,"h":2160},
+            "orig_dimension": {"w":3840,"h":2160},
+            "output_dimension": {"w":2160,"h":3840}
+        });
+        assert!(LensProfile::from_value(legacy.clone()).unwrap().output_dimension.is_none());
+        for (key, value) in [
+            ("calibrated_by", serde_json::json!("Lens calibration author")),
+            ("calibrator_version", serde_json::json!("1.6.3")),
+            ("output_dimension", serde_json::json!({"w":1920,"h":1920})),
+            ("input_horizontal_stretch", serde_json::json!(1.8)),
+            ("input_vertical_stretch", serde_json::json!(1.5)),
+            ("lens_group_override", serde_json::json!(true)),
+            ("crop", serde_json::json!(0.8)),
+        ] {
+            let mut authored = legacy.clone();
+            authored[key] = value;
+            let expected = authored["output_dimension"].clone();
+            let loaded = LensProfile::from_value(authored).unwrap();
+            assert_eq!(loaded.get_json_value().unwrap()["output_dimension"], expected, "{key}");
+        }
+    }
 
     #[test]
     fn applied_input_stretch_is_runtime_only_and_follows_interpolation_and_rotation() {

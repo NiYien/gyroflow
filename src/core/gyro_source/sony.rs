@@ -108,9 +108,6 @@ pub fn init_lens_profile(
                 let pixel_pitch = pixel_pitch?;
                 let crop_size = crop_size?;
 
-                let video_rotation = info.video_rotation.unwrap_or_default().abs();
-                let is_vertical = video_rotation == 90 || video_rotation == 270;
-
                 let focal_length_str = tag_map
                     .get(&GroupId::Lens)
                     .and_then(|x| x.get_t(TagId::FocalLength) as Option<&f32>)
@@ -192,7 +189,6 @@ pub fn init_lens_profile(
                                 "lens_model":   if !lens_name.is_empty() && focal_length_str.is_some() { format!("{lens_name} ({})", focal_length_str.unwrap()) } else if !lens_name.is_empty() { lens_name } else { focal_length_str.unwrap_or_default() },
                                 "calib_dimension":  { "w": size.0, "h": size.1 },
                                 "orig_dimension":   { "w": size.0, "h": size.1 },
-                                "output_dimension": { "w": if is_vertical { size.1 } else { size.0 }, "h": if is_vertical { size.0 } else { size.1 } },
                                 "frame_readout_time": md.frame_readout_time,
                                 "official": false,
                                 "asymmetrical": false,
@@ -266,7 +262,6 @@ pub fn init_lens_profile(
                         "lens_model":   if !lens_name.is_empty() && focal_length_str.is_some() { format!("{lens_name} ({})", focal_length_str.unwrap()) } else if !lens_name.is_empty() { lens_name } else { focal_length_str.unwrap_or_default() },
                         "calib_dimension":  { "w": size.0, "h": size.1 },
                         "orig_dimension":   { "w": size.0, "h": size.1 },
-                        "output_dimension": { "w": if is_vertical { size.1 } else { size.0 }, "h": if is_vertical { size.0 } else { size.1 } },
                         "frame_readout_time": md.frame_readout_time,
                         "official": true,
                         "asymmetrical": false,

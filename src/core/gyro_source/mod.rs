@@ -5,6 +5,8 @@ mod canon;
 mod file_metadata;
 mod imu_transforms;
 mod sony;
+#[cfg(test)]
+mod output_dimensions_tests;
 pub mod splines;
 pub use file_metadata::*;
 pub use imu_transforms::*;
