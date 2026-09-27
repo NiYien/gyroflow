@@ -142,7 +142,7 @@ MenuItem {
     // [queue-batch-streamline T3] 队列输出路径设置
     property alias queueOutputMode: queueOutputModeBox.currentIndex
     property alias queueFixedOutputPath: queueFixedOutputPathField.folderUrl
-    property string outCodecOptions: "";
+    property alias outCodecOptions: codecOptions.currentText;
     property real originalWidth: outWidth;
     property real originalHeight: outHeight;
     // Source bitrate of the currently loaded video, recorded in
@@ -415,6 +415,7 @@ MenuItem {
         }
         onCurrentIndexChanged: {
             const format = exportFormats[currentIndex];
+            if (codecOptions) codecOptions.updateFormat();
             audio.enabled2 = format.audio;
             if (!audio.enabled2) audio.checked = false;
 
@@ -424,16 +425,19 @@ MenuItem {
     }
     ComboBox {
         id: codecOptions;
-        model: exportFormats[codec.currentIndex].variants;
+        model: [];
         width: parent.width;
         visible: model.length > 0;
-        onVisibleChanged: if (!visible) { root.outCodecOptions = ""; } else { root.outCodecOptions = currentText; }
-        onCurrentTextChanged: root.outCodecOptions = currentText;
-        onModelChanged: {
+        property int formatIndex: -1;
+        function updateFormat(): void {
+            if (formatIndex === codec.currentIndex) return;
+            formatIndex = codec.currentIndex;
             const format = exportFormats[codec.currentIndex];
-            if (format.name == "ProRes") currentIndex = 3; // ProRes HQ by default
-            if (format.name == "DNxHD") currentIndex = 2; // DNxHR HQ by default
+            // Set the default after the model resets its selection.
+            model = format.variants;
+            currentIndex = format.name === "ProRes" ? 3 : format.name === "DNxHD" ? 2 : count > 0 ? 0 : -1;
         }
+        Component.onCompleted: updateFormat();
     }
     Label {
         position: Label.LeftPosition;

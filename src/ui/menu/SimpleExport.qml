@@ -13,6 +13,12 @@ Column {
 
     property var exportSettings: window.exportSettings;
 
+    function applyOutputFormat(): void {
+        if (Qt.platform.os === "osx" && window.isSimpleMode && exportSettings) {
+            render_queue.set_pending_output_format(JSON.stringify(exportSettings.getExportOptions()));
+        }
+    }
+
     // ── Output Path Mode (at top) ──
     Label {
         position: Label.LeftPosition;
@@ -74,41 +80,32 @@ Column {
     // ── Codec ──
     ComboBox {
         id: codec;
-        enabled: window.videoArea.vid.loaded;
+        enabled: !!exportSettings && render_queue.status !== "active";
         opacity: enabled ? 1.0 : 0.5;
-        // Hidden in simple-mode-ux-overhaul: simple mode runs preserve-original.
-        visible: false;
+        visible: Qt.platform.os === "osx";
         model: exportSettings ? exportSettings.exportFormats.map(x => x.name) : [];
         width: parent.width;
-        currentIndex: exportSettings ? exportSettings.outCodec === "H.264/AVC" ? 0 : exportSettings.outCodec === "H.265/HEVC" ? 1 : 0 : 1;
-        onCurrentIndexChanged: {
+        currentIndex: exportSettings ? exportSettings.codec.currentIndex : -1;
+        onActivated: {
             if (exportSettings) {
                 exportSettings.codec.currentIndex = currentIndex;
-            }
-        }
-        Component.onCompleted: {
-            if (exportSettings) {
-                currentIndex = exportSettings.codec.currentIndex;
+                Qt.callLater(root.applyOutputFormat);
             }
         }
     }
     // ── Codec Sub-options ──
     ComboBox {
         id: codecOptions;
-        enabled: window.videoArea.vid.loaded;
+        enabled: codec.enabled;
         opacity: enabled ? 1.0 : 0.5;
-        model: exportSettings ? exportSettings.exportFormats[codec.currentIndex].variants : [];
+        model: exportSettings ? exportSettings.codecOptions.model : [];
         width: parent.width;
-        // Hidden in simple-mode-ux-overhaul: simple mode runs preserve-original.
-        visible: false;
-        onCurrentIndexChanged: {
+        visible: codec.visible && count > 0;
+        currentIndex: exportSettings ? exportSettings.codecOptions.currentIndex : -1;
+        onActivated: {
             if (exportSettings) {
                 exportSettings.codecOptions.currentIndex = currentIndex;
-            }
-        }
-        Component.onCompleted: {
-            if (exportSettings && exportSettings.codecOptions) {
-                currentIndex = exportSettings.codecOptions.currentIndex;
+                Qt.callLater(root.applyOutputFormat);
             }
         }
     }

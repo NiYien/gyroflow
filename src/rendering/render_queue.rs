@@ -747,6 +747,16 @@ pub struct RenderOptions {
     pub interpolation: String,
 }
 impl RenderOptions {
+    fn output_extension(&self) -> &str {
+        match self.codec.as_str() {
+            "ProRes" | "DNxHD" | "CineForm" => ".mov",
+            "EXR Sequence" => "_%05d.exr",
+            "PNG Sequence" => "_%05d.png",
+            _ if self.preserve_other_tracks => ".mov",
+            _ => ".mp4",
+        }
+    }
+
     pub fn settings_string(&self, fps: f64) -> String {
         let codec_info = match self.codec.as_ref() {
             "H.264/AVC" | "H.265/HEVC" | "AV1" => {
@@ -1960,6 +1970,7 @@ pub struct RenderQueue {
     get_active_render_count: qt_method!(fn(&self) -> usize),
 
     apply_to_all: qt_method!(fn(&mut self, data: String, additional_data: String, to_job_id: u32)),
+    set_pending_output_format: qt_method!(fn(&mut self, options_json: String)),
     // mounting-rotation-propagation: called by MountingPresetSelector on every
     // mounting change so already-queued jobs follow the new device orientation
     // (the add_file snapshot only covers jobs enqueued after the change).
@@ -8305,14 +8316,7 @@ impl RenderQueue {
         }
         let mut filename = filesystem::get_filename(input_url);
 
-        let mut ext = override_ext.unwrap_or(match render_options.codec.as_ref() {
-            "ProRes" => ".mov",
-            "DNxHD" => ".mov",
-            "CineForm" => ".mov",
-            "EXR Sequence" => "_%05d.exr",
-            "PNG Sequence" => "_%05d.png",
-            _ => ".mp4",
-        });
+        let mut ext = override_ext.unwrap_or(render_options.output_extension());
         if ext == ".mp4" && render_options.preserve_other_tracks {
             ext = ".mov";
         }
@@ -10368,6 +10372,85 @@ impl RenderQueue {
         core::run_threaded(move || {
             apply_mounting_rotation_to_stabs(&stabs, pitch_deg, roll_deg, yaw_deg);
         });
+    }
+
+    pub fn set_pending_output_format(&mut self, options_json: String) {
+        let Ok(options) = serde_json::from_str::<serde_json::Value>(&options_json) else { return; };
+        let Some(codec) = options.get("codec").and_then(|v| v.as_str()) else { return; };
+        if !matches!(codec, "H.264/AVC" | "H.265/HEVC" | "ProRes" | "DNxHD" | "CineForm" | "EXR Sequence" | "PNG Sequence") {
+            return;
+        }
+        // Only explicit format choices reach this method. Keep each clip's size,
+        // bitrate, timing and stabilization settings, including completed sync.
+        let mut format_options = serde_json::json!({ "codec": codec, "pixel_format": "" });
+        for key in ["codec_options", "use_gpu", "encoder_options", "audio"] {
+            if let Some(value) = options.get(key) {
+                format_options[key] = value.clone();
+            }
+        }
+        let filename_extension = Regex::new(r"(_%[0-9]+d)?\.[^./\\]+$").unwrap();
+        let mut queue = self.queue.borrow_mut();
+        for (job_id, job) in self.jobs.iter_mut() {
+            if job.queue_index >= queue.row_count() as usize { continue; }
+            let mut item = queue[job.queue_index].clone();
+            if item.status == JobStatus::Rendering
+                || (item.status == JobStatus::Finished && matches!(job.last_finished_export_project, Some(0 | 4)))
+                || job.pending_reset_requeue
+                || (item.status == JobStatus::Error && Self::error_string_is_pending_question(&item.error_string.to_string()))
+            {
+                continue;
+            }
+            job.render_options.update_from_json(&format_options);
+            if job.render_options.codec == "H.264/AVC" && job.render_options.use_gpu {
+                let source_pix_fmt = rendering::VideoProcessor::get_video_info(&item.input_file.to_string())
+                    .ok().map(|info| info.pix_fmt);
+                normalize_render_options_for_bit_depth(&mut job.render_options, source_pix_fmt, *job_id);
+            }
+            let opts = &mut job.render_options;
+            opts.output_filename = if opts.output_filename.is_empty() {
+                Self::get_output_filename(&item.input_file.to_string(), &self.default_suffix.to_string(), opts, None)
+            } else {
+                let stem = filename_extension.replace(&opts.output_filename, "");
+                format!("{stem}{}", opts.output_extension())
+            };
+
+            // Keep in-memory project snapshots consistent with the renderer, so
+            // previewing or restoring a synchronized job retains the new format.
+            let output = serde_json::to_value(&*opts).unwrap();
+            if let Some(data) = job.project_data.as_mut() {
+                deref_project_file_reference(data);
+            }
+            for data in std::iter::once(&mut job.additional_data).chain(job.project_data.iter_mut()) {
+                let mut snapshot = serde_json::from_str::<serde_json::Value>(data)
+                    .unwrap_or_else(|_| serde_json::json!({}));
+                if !snapshot.is_object() { continue; }
+                if !snapshot.get("output").is_some_and(|v| v.is_object()) {
+                    snapshot["output"] = serde_json::json!({});
+                }
+                for key in ["codec", "codec_options", "use_gpu", "encoder_options", "audio", "pixel_format", "output_filename"] {
+                    snapshot["output"][key] = output[key].clone();
+                }
+                *data = snapshot.to_string();
+            }
+            let display = if let Some(stab) = &job.stab {
+                opts.settings_string(stab.params.read().get_scaled_fps())
+            } else {
+                let previous = item.export_settings.to_string();
+                let updated = opts.settings_string(0.0);
+                match (previous.split_once(" | "), updated.split_once(" | ")) {
+                    (Some((prefix, _)), Some((_, codec))) => format!("{prefix} | {codec}"),
+                    _ => updated,
+                }
+            };
+            item.export_settings = QString::from(display);
+            item.output_filename = QString::from(opts.output_filename.as_str());
+            item.display_output_path = QString::from(filesystem::display_folder_filename(
+                &opts.output_folder, &opts.output_filename,
+            ));
+            queue.change_line(job.queue_index, item);
+        }
+        drop(queue);
+        self.queue_changed();
     }
 
     pub fn apply_to_all(&mut self, data: String, additional_data: String, to_job_id: u32) {
@@ -20253,6 +20336,101 @@ mod tests {
             },
         );
         queue
+    }
+
+    #[test]
+    fn pending_output_format_preserves_clip_settings_and_completed_sync() {
+        let mut queue = queue_with_eta_job(JobStatus::Finished);
+        let job = queue.jobs.get_mut(&1).unwrap();
+        job.last_finished_export_project = Some(2);
+        job.render_options = RenderOptions {
+            codec: "H.265/HEVC".into(),
+            output_filename: "custom-name.mp4".into(),
+            output_width: 2160,
+            output_height: 3840,
+            bitrate: 123.0,
+            ..Default::default()
+        };
+        job.additional_data = serde_json::json!({ "synchronization": { "do_autosync": false } }).to_string();
+        job.project_data = Some(serde_json::json!({
+            "stabilization": { "smoothness": 0.42 },
+            "offsets": { "1000": 12.5 },
+            "output": { "output_width": 2160, "output_height": 3840, "bitrate": 123.0 }
+        }).to_string());
+        let sync_settings = job.stab.as_ref().unwrap().lens.read().sync_settings.clone();
+        add_eta_job(&mut queue, 2, 1);
+        queue.jobs.get_mut(&2).unwrap().render_options = RenderOptions {
+            output_filename: "landscape.mp4".into(),
+            output_width: 4096,
+            output_height: 2160,
+            bitrate: 80.0,
+            ..Default::default()
+        };
+
+        queue.set_pending_output_format(serde_json::json!({
+            "codec": "ProRes", "codec_options": "HQ", "use_gpu": true, "audio": true,
+            "encoder_options": "", "output_width": 1920, "output_height": 1080, "bitrate": 20
+        }).to_string());
+
+        let job = &queue.jobs[&1];
+        let opts = &job.render_options;
+        assert_eq!((&opts.codec[..], &opts.codec_options[..]), ("ProRes", "HQ"));
+        assert_eq!(opts.output_filename, "custom-name.mov");
+        assert_eq!((opts.output_width, opts.output_height, opts.bitrate), (2160, 3840, 123.0));
+        assert_eq!(job.last_finished_export_project, Some(2));
+        assert_eq!(job.stab.as_ref().unwrap().lens.read().sync_settings, sync_settings);
+        assert_eq!(queue.queue.borrow()[0].status, JobStatus::Finished);
+        assert!(queue.queue.borrow()[0].export_settings.to_string().contains("ProRes HQ"));
+        let project: serde_json::Value = serde_json::from_str(job.project_data.as_ref().unwrap()).unwrap();
+        assert_eq!(project["offsets"]["1000"], 12.5);
+        assert_eq!(project["stabilization"]["smoothness"], 0.42);
+        assert_eq!(project["output"]["output_filename"], "custom-name.mov");
+        assert_eq!(project["output"]["output_width"], 2160);
+        let additional: serde_json::Value = serde_json::from_str(&job.additional_data).unwrap();
+        assert_eq!(additional["synchronization"]["do_autosync"], false);
+        assert_eq!(additional["output"]["codec_options"], "HQ");
+        let other = &queue.jobs[&2].render_options;
+        assert_eq!((other.output_width, other.output_height, other.bitrate), (4096, 2160, 80.0));
+        assert_eq!(other.codec, "ProRes");
+        assert_eq!(other.output_filename, "landscape.mov");
+    }
+
+    #[test]
+    fn pending_output_format_skips_running_and_exported_videos() {
+        for (status, finished_mode, should_update) in [
+            (JobStatus::Queued, None, true),
+            (JobStatus::Error, None, true),
+            (JobStatus::Skipped, None, true),
+            (JobStatus::Rendering, None, false),
+            (JobStatus::Finished, Some(0), false),
+            (JobStatus::Finished, Some(4), false),
+            (JobStatus::Finished, Some(2), true),
+        ] {
+            let mut queue = queue_with_eta_job(status.clone());
+            let job = queue.jobs.get_mut(&1).unwrap();
+            job.last_finished_export_project = finished_mode;
+            job.render_options.codec = "H.265/HEVC".into();
+            job.render_options.output_filename = "clip.mp4".into();
+            queue.set_pending_output_format(serde_json::json!({ "codec": "ProRes", "codec_options": "LT" }).to_string());
+            assert_eq!(queue.jobs[&1].render_options.codec, if should_update { "ProRes" } else { "H.265/HEVC" });
+            assert_eq!(queue.queue.borrow()[0].status, status);
+            assert_eq!(queue.jobs[&1].last_finished_export_project, finished_mode);
+        }
+    }
+
+    #[test]
+    fn pending_output_format_switches_sequence_extensions_without_changing_stem() {
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        queue.jobs.get_mut(&1).unwrap().render_options.output_filename = "my.clip.mov".into();
+        for (codec, filename) in [
+            ("PNG Sequence", "my.clip_%05d.png"),
+            ("EXR Sequence", "my.clip_%05d.exr"),
+            ("H.265/HEVC", "my.clip.mp4"),
+            ("ProRes", "my.clip.mov"),
+        ] {
+            queue.set_pending_output_format(serde_json::json!({ "codec": codec }).to_string());
+            assert_eq!(queue.jobs[&1].render_options.output_filename, filename);
+        }
     }
 
     fn add_eta_job(queue: &mut RenderQueue, job_id: u32, queue_index: usize) {
