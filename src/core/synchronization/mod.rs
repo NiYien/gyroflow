@@ -77,6 +77,17 @@ pub struct SyncParams {
     pub offset_is_anchor: bool,
 }
 
+impl SyncParams {
+    /// Selects the decode format only: the optical offset method (3) never uses
+    /// DIS, so a plain `synchronize` run is pinned to of_method 2. Other modes
+    /// and offset methods are left untouched.
+    pub fn normalize_for_mode(&mut self, mode: &str) {
+        if self.offset_method == 3 && mode == "synchronize" {
+            self.of_method = 2;
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct FrameResult {
     pub of_method: OpticalFlowMethod,
@@ -724,6 +735,26 @@ impl PoseEstimator {
                 log::error!("Unknown offset method: {v}");
                 Vec::new()
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_for_mode_only_touches_optical_synchronize() {
+        let mk = |offset_method, of_method| SyncParams { offset_method, of_method, ..Default::default() };
+        let mut p = mk(3, 4); p.normalize_for_mode("synchronize");
+        assert_eq!(p.of_method, 2);
+        for mode in ["guess_imu_orientation", "estimate_rolling_shutter", "estimate_lens_delay"] {
+            let mut p = mk(3, 4); p.normalize_for_mode(mode);
+            assert_eq!(p.of_method, 4, "{mode}");
+        }
+        for om in [0, 1, 2] {
+            let mut p = mk(om, 4); p.normalize_for_mode("synchronize");
+            assert_eq!(p.of_method, 4, "offset_method {om}");
         }
     }
 }
