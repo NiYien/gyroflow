@@ -3342,6 +3342,11 @@ Pred použitím efektu zatvorte a znova otvorte Final Cut Pro.</translation>
         <translation>Rolling - shutter synchr.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="450"/>
+        <source>Optical motion</source>
+        <translation>Optický pohyb</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="447"/>
         <source>Essential matrix</source>
         <translation>Essential matrix</translation>
@@ -5270,6 +5275,13 @@ Výsledná odchýlka je tá, kde sú segmenty najkratšie, kde sa video vizuáln
 Make sure you have proper rolling shutter value set before syncing.</source>
         <translation>Algoritmus synchronizácie rolling-shutter voči gyroskopu.
 Pred synchronizáciou sa uisti, že je nastavená správna hodnota rolling-shutter.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="458"/>
+        <source>Tracks image features and matches their motion directly to the gyroscope.
+Needs some camera shake; very smooth motion may produce no sync points.</source>
+        <translation>Sleduje prvky obrazu a ich pohyb priamo porovnáva s gyroskopom.
+Vyžaduje určité chvenie kamery; veľmi plynulý pohyb nemusí poskytnúť žiadne synchronizačné body.</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="461"/>

@@ -3342,6 +3342,11 @@ Close and reopen Final Cut Pro before using the effect.</source>
         <translation>rs-συγχρονισμός</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="450"/>
+        <source>Optical motion</source>
+        <translation>Οπτική κίνηση</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="447"/>
         <source>Essential matrix</source>
         <translation>Βασική μήτρα</translation>
@@ -5271,6 +5276,13 @@ Resulting offset is the one where lines were the shortest, meaning the video was
 Make sure you have proper rolling shutter value set before syncing.</source>
         <translation>Βίντεο κυλιόμενου κλείστρου στον αλγόριθμο συγχρονισμού γυροσκοπίου.
 Βεβαιωθείτε ότι έχετε ορίσει την κατάλληλη τιμή κυλιόμενου κλείστρου πριν από τον συγχρονισμό.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="458"/>
+        <source>Tracks image features and matches their motion directly to the gyroscope.
+Needs some camera shake; very smooth motion may produce no sync points.</source>
+        <translation>Παρακολουθεί χαρακτηριστικά της εικόνας και ταιριάζει απευθείας την κίνησή τους με το γυροσκόπιο.
+Απαιτεί κάποιο τρέμουλο της κάμερας· πολύ ομαλή κίνηση μπορεί να μην δώσει σημεία συγχρονισμού.</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="461"/>

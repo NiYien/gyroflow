@@ -3341,6 +3341,11 @@ Fermez puis rouvrez Final Cut Pro avant d’utiliser l’effet.</translation>
         <translation>rs-sync</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="450"/>
+        <source>Optical motion</source>
+        <translation>Mouvement optique</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="447"/>
         <source>Essential matrix</source>
         <translation>Matrice essentielle</translation>
@@ -5269,6 +5274,13 @@ Le résultat du décalage est celui où les lignes ont été les plus courtes, c
 Make sure you have proper rolling shutter value set before syncing.</source>
         <translation>Mouvement d&apos;obturateur pour l&apos;algorithme de synchronisation du gyro.
 Assurez-vous d&apos;avoir une valeur d&apos;e mouvement d&apos;obturateur correcte avant de synchroniser.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="458"/>
+        <source>Tracks image features and matches their motion directly to the gyroscope.
+Needs some camera shake; very smooth motion may produce no sync points.</source>
+        <translation>Suit les caractéristiques de l'image et fait correspondre directement leur mouvement au gyroscope.
+Nécessite un peu de tremblement de la caméra ; un mouvement très fluide peut ne produire aucun point de synchronisation.</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="461"/>

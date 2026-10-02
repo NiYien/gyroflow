@@ -3343,6 +3343,11 @@ Close and reopen Final Cut Pro before using the effect.</source>
         <translation>ローリングシャッター同期</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="450"/>
+        <source>Optical motion</source>
+        <translation>オプティカルモーション</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="447"/>
         <source>Essential matrix</source>
         <translation>マトリックス</translation>
@@ -5272,6 +5277,13 @@ Resulting offset is the one where lines were the shortest, meaning the video was
 Make sure you have proper rolling shutter value set before syncing.</source>
         <translation>ローリングシャッターのあるビデオをジャイロに同期させるアルゴリズムです。
 同期する前に、適切なローリングシャッター値を設定してください。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="458"/>
+        <source>Tracks image features and matches their motion directly to the gyroscope.
+Needs some camera shake; very smooth motion may produce no sync points.</source>
+        <translation>画像の特徴点を追跡し、その動きをジャイロスコープと直接照合します。
+ある程度のカメラの揺れが必要です。非常に滑らかな動きでは同期ポイントが得られない場合があります。</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="461"/>

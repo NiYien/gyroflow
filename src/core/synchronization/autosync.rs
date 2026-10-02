@@ -1573,4 +1573,11 @@ mod tests {
         let p_end: f64 = (2400.0_f64 + half).min(2400.0);
         assert!((p_start - 1150.0).abs() < 1e-6 && (p_end - 2400.0).abs() < 1e-6);
     }
+
+    #[test]
+    fn simple_mode_never_sends_the_optical_offset_method() {
+        let qml = include_str!("../../ui/menu/Synchronization.qml");
+        assert!(qml.contains("\"offset_method\":      (isSimple && offsetMethod.currentIndex === 3) ? 2 : offsetMethod.currentIndex,"));
+        assert!(qml.contains("QT_TRANSLATE_NOOP(\"Popup\", \"Optical motion\")"));
+    }
 }

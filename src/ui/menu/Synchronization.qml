@@ -149,7 +149,7 @@ MenuItem {
             "every_nth_frame":    everyNthFrame.value,
             "time_per_syncpoint": timePerSyncpoint.value,
             "of_method":          ofMethod,
-            "offset_method":      offsetMethod.currentIndex,
+            "offset_method":      (isSimple && offsetMethod.currentIndex === 3) ? 2 : offsetMethod.currentIndex,
             "pose_method":        poseMethod.currentIndex,
             "auto_sync_points":   experimentalAutoSyncPoints.checked,
         };
@@ -311,6 +311,7 @@ MenuItem {
         }
         CheckBox {
             id: calculateInitialOffsetFirst;
+            enabled: offsetMethod.currentIndex !== 3;
             anchors.left: syncSearchSize.right;
             anchors.leftMargin: 5 * dpiScale;
             anchors.verticalCenter: parent.verticalCenter;
@@ -397,6 +398,7 @@ MenuItem {
 
             ComboBox {
                 id: syncMethod;
+                enabled: offsetMethod.currentIndex !== 3;
                 // Method ids: 0=AKAZE, 1=PyrLK, 2=DIS, 3=NeuFlow-CUDA (removed), 4=NeuFlow-Burn.
                 // The NeuFlow v2 CUDA option (id 3) was dropped — Burn replaces it.
                 // Legacy .gyroflow projects with of_method=3 are silently mapped to Burn
@@ -431,6 +433,7 @@ MenuItem {
 
             ComboBox {
                 id: poseMethod;
+                enabled: offsetMethod.currentIndex !== 3;
                 model: ["findEssentialMat", "Almeida", "EightPoint", "findHomography"];
                 font.pixelSize: 12 * dpiScale;
                 width: parent.width;
@@ -444,14 +447,15 @@ MenuItem {
 
             ComboBox {
                 id: offsetMethod;
-                model: [QT_TRANSLATE_NOOP("Popup", "Essential matrix"), QT_TRANSLATE_NOOP("Popup", "Visual features"), QT_TRANSLATE_NOOP("Popup", "rs-sync")];
+                model: [QT_TRANSLATE_NOOP("Popup", "Essential matrix"), QT_TRANSLATE_NOOP("Popup", "Visual features"), QT_TRANSLATE_NOOP("Popup", "rs-sync"), QT_TRANSLATE_NOOP("Popup", "Optical motion")];
                 font.pixelSize: 12 * dpiScale;
                 width: parent.width;
                 currentIndex: 2;
                 property var tooltips: ([
                     qsTr("Calculate camera transformation matrix from optical flow to get the rotation angles of the camera.\nThen try to match these angles to gyroscope angles."),
                     qsTr("Undistort optical flow points using gyro and candidate offset.\nThen calculate lengths of the optical flow lines.\nResulting offset is the one where lines were the shortest, meaning the video was moving the least visually."),
-                    qsTr("Rolling shutter video to gyro synchronization algorithm.\nMake sure you have proper rolling shutter value set before syncing.")
+                    qsTr("Rolling shutter video to gyro synchronization algorithm.\nMake sure you have proper rolling shutter value set before syncing."),
+                    qsTr("Tracks image features and matches their motion directly to the gyroscope.\nNeeds some camera shake; very smooth motion may produce no sync points.")
                 ]);
                 tooltip: tooltips[currentIndex];
             }

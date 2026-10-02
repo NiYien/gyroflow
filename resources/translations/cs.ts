@@ -3342,6 +3342,11 @@ Před použitím efektu zavřete a znovu otevřete Final Cut Pro.</translation>
         <translation>rs-synchronizace</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="450"/>
+        <source>Optical motion</source>
+        <translation>Optický pohyb</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="447"/>
         <source>Essential matrix</source>
         <translation>Základní matice</translation>
@@ -5270,6 +5275,13 @@ Výsledný posun je ten, kde byly linie nejkratší, což znamená, že se video
 Make sure you have proper rolling shutter value set before syncing.</source>
         <translation>Pohybová neostrost závěrky do gyroskopického synchronizačního algoritmu.
 Před synchronizací se ujistěte, že máte nastavenou hodnotu pohybové neostrosti.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="458"/>
+        <source>Tracks image features and matches their motion directly to the gyroscope.
+Needs some camera shake; very smooth motion may produce no sync points.</source>
+        <translation>Sleduje prvky obrazu a jejich pohyb přímo porovnává s gyroskopem.
+Vyžaduje určité chvění kamery; velmi plynulý pohyb nemusí poskytnout žádné synchronizační body.</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="461"/>

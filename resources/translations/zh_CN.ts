@@ -3378,6 +3378,11 @@ Close and reopen Final Cut Pro before using the effect.</source>
         <translation>卷帘快门同步</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="450"/>
+        <source>Optical motion</source>
+        <translation>光学运动</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="447"/>
         <source>Essential matrix</source>
         <translation>本质矩阵</translation>
@@ -5334,6 +5339,13 @@ Resulting offset is the one where lines were the shortest, meaning the video was
 Make sure you have proper rolling shutter value set before syncing.</source>
         <translation>卷帘快门视频到陀螺仪同步算法。
 在同步之前请确保你已设置了正确的卷帘快门值。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="458"/>
+        <source>Tracks image features and matches their motion directly to the gyroscope.
+Needs some camera shake; very smooth motion may produce no sync points.</source>
+        <translation>跟踪画面特征点，直接将其运动与陀螺仪匹配。
+需要一定的相机抖动；非常平滑的运动可能得不到同步点。</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="461"/>

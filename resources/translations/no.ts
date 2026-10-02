@@ -3342,6 +3342,11 @@ Lukk og åpne Final Cut Pro på nytt før du bruker effekten.</translation>
         <translation>rs-sync</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="450"/>
+        <source>Optical motion</source>
+        <translation>Optisk bevegelse</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="447"/>
         <source>Essential matrix</source>
         <translation>Essensiell matrise</translation>
@@ -5270,6 +5275,13 @@ Resulterende offset er den hvor linjene er kortest, altså der videoen beveget s
 Make sure you have proper rolling shutter value set before syncing.</source>
         <translation>Rolling shutter video til gyro synkroniseringsalgoritme.
 Sørg for at du har angitt riktig rullende lukkerverdi før synkronisering.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="458"/>
+        <source>Tracks image features and matches their motion directly to the gyroscope.
+Needs some camera shake; very smooth motion may produce no sync points.</source>
+        <translation>Sporer bildefunksjoner og matcher bevegelsen deres direkte mot gyroskopet.
+Krever noe kamerarystelse; svært jevn bevegelse gir kanskje ingen synkroniseringspunkter.</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="461"/>
