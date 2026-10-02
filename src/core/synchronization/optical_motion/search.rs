@@ -596,30 +596,33 @@ mod tests {
         let ctx = CostContext { window: &w, quats: &table, sg: &sg };
         let coarse_points = crate::synchronization::optical_motion::config::config().coarse_points;
         let subset = select_tracks(&w, coarse_points);
-        let coarse = |d: f64| eval_coarse(&ctx, &subset, d, 5);
-        let full = |d: f64| eval_full(&ctx, d).filter(|r| r.bands > 0).map(|r| FullEval { cost: r.cost_px, pairs_measured: r.pairs_measured });
+        let coarse_calls = AtomicUsize::new(0);
+        let full_calls = AtomicUsize::new(0);
+        let full_ns = AtomicUsize::new(0);
+        let coarse = |d: f64| { coarse_calls.fetch_add(1, SeqCst); eval_coarse(&ctx, &subset, d, 5) };
+        // Full evaluations run one after another at search level, so their summed wall time is the refinement time
+        let full = |d: f64| {
+            let t = Instant::now();
+            let r = eval_full(&ctx, d).filter(|r| r.bands > 0).map(|r| FullEval { cost: r.cost_px, pairs_measured: r.pairs_measured });
+            full_ns.fetch_add(t.elapsed().as_nanos() as usize, SeqCst);
+            full_calls.fetch_add(1, SeqCst);
+            r
+        };
         let pool = rayon::ThreadPoolBuilder::new().build().unwrap();
         let cancel = AtomicBool::new(false);
 
-        // The coarse scan timed on its own: the same parallel grid evaluation run_search does, on the same pool
-        let xs = grid(&intervals, p.step_ms);
-        let t = Instant::now();
-        let scanned = pool.install(|| xs.par_iter().filter(|&&x| coarse(x).is_some()).count());
-        let coarse_ms = t.elapsed().as_secs_f64() * 1000.0;
-        // One full evaluation at the truth, on the same pool
-        let t = Instant::now();
-        let one = pool.install(|| full(spec.true_offset_ms));
-        let full_ms = t.elapsed().as_secs_f64() * 1000.0;
-        // The whole search
+        // One cold run_search, measured from inside: refinement = sum of full-evaluation wall time, coarse = the rest
         let t = Instant::now();
         let o = run_search(&p, &coarse, &full, &pool, &cancel).unwrap();
         let total_ms = t.elapsed().as_secs_f64() * 1000.0;
+        let refine_ms = full_ns.load(SeqCst) as f64 / 1e6;
+        let coarse_ms = total_ms - refine_ms;
+        let n_full = full_calls.load(SeqCst);
 
         println!("cores {}", pool.current_num_threads());
         println!("pairs {}, pts/pair {}, coarse_pts/pair {}", w.pairs.len(), w.pairs[0].ids.len(), subset.per_pair[0].len());
-        println!("coarse total {coarse_ms:.0} ms ({} evals, {scanned} covered), one full eval {full_ms:.1} ms (measured {:?})", xs.len(), one.map(|e| e.pairs_measured));
-        println!("run_search total {total_ms:.0} ms, refinement {:.0} ms ({} full evals)", total_ms - coarse_ms, o.fine.len());
+        println!("in-search coarse {coarse_ms:.0} ms ({} evals), refinement {refine_ms:.0} ms ({n_full} full evals, {:.1} ms each), run_search total {total_ms:.0} ms", coarse_calls.load(SeqCst), refine_ms / n_full as f64);
         println!("result offset {:.2} conf {:.2} fail {:?}", o.offset_ms, o.conf, o.fail);
-        println!("budget: coarse <= 1500 ms: {}, refinement <= 1000 ms: {}", coarse_ms <= 1500.0, total_ms - coarse_ms <= 1000.0);
+        println!("budget: coarse <= 1500 ms: {}, refinement <= 1000 ms: {}", coarse_ms <= 1500.0, refine_ms <= 1000.0);
     }
 }
