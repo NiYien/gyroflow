@@ -20,6 +20,9 @@ use telemetry_parser::tags_impl::{
 pub mod breathing;
 
 #[cfg(test)]
+mod gyro_calibration_tests;
+
+#[cfg(test)]
 mod packet_timing_tests {
     use super::*;
 
@@ -375,6 +378,64 @@ pub fn gyro_packet_timing(gyro: &TagMap) -> Option<GyroPacketTiming> {
         offset_ms: offset_us / 1000.0,
         frequency: frequency as f64,
     })
+}
+
+/// Applies each packet's valid factory zero-rate offset in the sensor's native axes.
+/// Call before re-timing can sort the samples. Rebuild the rates from raw counts so
+/// repeating the calibration, or a parser that already applies it, cannot subtract it twice.
+pub fn calibrate_gyro_from_packets(
+    imu: &mut [TimeIMU],
+    samples: &[telemetry_parser::util::SampleInfo],
+) -> usize {
+    let mut packets = Vec::with_capacity(samples.len());
+    let mut total = 0usize;
+    for gyro in samples.iter().filter_map(|info| {
+        info.tag_map.as_ref().and_then(|map| map.get(&GroupId::Gyroscope))
+    }) {
+        let Some(tag) = gyro.get(&TagId::Data) else { continue; };
+        let TagValue::Vec_Vector3_i16(data) = &tag.value else {
+            // Other layouts cannot be matched to this packet's native i16 offset.
+            return 0;
+        };
+        let data = data.get();
+        total += data.len();
+        let calibration = (|| {
+            let flags = *(gyro.get_t(TagId::Unknown(0xe43e)) as Option<&u16>)?;
+            if flags & 0x8000 == 0 { return None; }
+            let bias = gyro.get_t(TagId::Unknown(0xe43d))
+                as Option<&telemetry_parser::tags_impl::Vector3<i16>>;
+            let bias = bias?;
+            let scale = *(gyro.get_t(TagId::Scale) as Option<&f32>)? as f64;
+            if !scale.is_finite() || scale <= 0.0 { return None; }
+            let radians = (gyro.get_t(TagId::Unknown(0xe438)) as Option<&bool>)
+                .copied()
+                .unwrap_or(false);
+            Some(([bias.x as f64, bias.y as f64, bias.z as f64], scale, radians))
+        })();
+        packets.push((data, calibration));
+    }
+    // The normalizer supplies one entry per gyro sample in packet order.
+    // Validate that contract before changing anything, including malformed inputs.
+    if total == 0 || total != imu.len() || imu.iter().any(|sample| sample.gyro.is_none()) {
+        return 0;
+    }
+    let mut applied = 0;
+    let mut imu = imu.iter_mut();
+    for (data, calibration) in packets {
+        for raw in data {
+            let sample = imu.next().unwrap();
+            if let Some((bias, scale, radians)) = calibration {
+                let unit = if radians { 180.0 / std::f64::consts::PI } else { 1.0 };
+                sample.gyro = Some([
+                    (raw.x as f64 - bias[0]) / scale * unit,
+                    (raw.y as f64 - bias[1]) / scale * unit,
+                    (raw.z as f64 - bias[2]) / scale * unit,
+                ]);
+                applied += 1;
+            }
+        }
+    }
+    applied
 }
 
 /// Puts the merged IMU samples on the camera's own packet timeline, like the reference SDK (`ImuGL::read_imu_data`): sample `i`

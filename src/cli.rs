@@ -593,7 +593,10 @@ pub fn run(open_file: &mut String, open_preset: &mut String) -> bool {
                     }
 
                     let fname = queue.get_job_output_filename(*job_id).to_string();
-                    pbs.get(job_id).unwrap().set_message(fname);
+                    // Project imports can finish processing before the added signal creates the progress bar.
+                    if let Some(pb) = pbs.get(job_id) {
+                        pb.set_message(fname);
+                    }
 
                     queue.jobs_added.remove(job_id);
 

@@ -309,18 +309,19 @@ impl ComplementaryFilterV2 {
         let acc_magnitude = (ax * ax + ay * ay + az * az).sqrt();
 
         let acc_th = (acc_magnitude - self.gravity).abs() < ACCELERATION_THRESHOLD;
+        // Every axis must be quiet before learning bias or boosting the acceleration correction.
         let acc_component_steady = (ax - self.a_filt.0).abs() < DELTA_ACCELERATION_THRESHOLD
-            || (ay - self.a_filt.1).abs() < DELTA_ACCELERATION_THRESHOLD
-            || (az - self.a_filt.2).abs() < DELTA_ACCELERATION_THRESHOLD;
+            && (ay - self.a_filt.1).abs() < DELTA_ACCELERATION_THRESHOLD
+            && (az - self.a_filt.2).abs() < DELTA_ACCELERATION_THRESHOLD;
         let acc_delta_th = (ax - self.a_prev.0).abs() < DELTA_ACCELERATION_THRESHOLD
-            || (ay - self.a_prev.1).abs() < DELTA_ACCELERATION_THRESHOLD
-            || (az - self.a_prev.2).abs() < DELTA_ACCELERATION_THRESHOLD;
+            && (ay - self.a_prev.1).abs() < DELTA_ACCELERATION_THRESHOLD
+            && (az - self.a_prev.2).abs() < DELTA_ACCELERATION_THRESHOLD;
         let gyro_delta_th = (wx - self.w_prev.0).abs() < DELTA_ANGULAR_VELOCITY_THRESHOLD
-            || (wy - self.w_prev.1).abs() < DELTA_ANGULAR_VELOCITY_THRESHOLD
-            || (wz - self.w_prev.2).abs() < DELTA_ANGULAR_VELOCITY_THRESHOLD;
+            && (wy - self.w_prev.1).abs() < DELTA_ANGULAR_VELOCITY_THRESHOLD
+            && (wz - self.w_prev.2).abs() < DELTA_ANGULAR_VELOCITY_THRESHOLD;
         let gyro_th = (wx - self.w_bias.0).abs() < ANGULAR_VELOCITY_THRESHOLD
-            || (wy - self.w_bias.1).abs() < ANGULAR_VELOCITY_THRESHOLD
-            || (wz - self.w_bias.2).abs() < ANGULAR_VELOCITY_THRESHOLD;
+            && (wy - self.w_bias.1).abs() < ANGULAR_VELOCITY_THRESHOLD
+            && (wz - self.w_bias.2).abs() < ANGULAR_VELOCITY_THRESHOLD;
 
         self.w_prev = (wx, wy, wz);
         self.a_prev = (ax, ay, az);
@@ -586,4 +587,85 @@ fn rotate_vector_by_quaternion(
             + 2.0 * (q2 * q3 + q0 * q1) * y
             + (q0 * q0 - q1 * q1 - q2 * q2 + q3 * q3) * z,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn resting_filter() -> ComplementaryFilterV2 {
+        let mut filter = ComplementaryFilterV2::default();
+        filter.a_filt = (0.0, 0.0, GRAVITY);
+        filter.a_prev = filter.a_filt;
+        filter
+    }
+
+    #[test]
+    fn single_axis_rotation_never_becomes_steady() {
+        for axis in 0..3 {
+            let mut filter = ComplementaryFilterV2::default();
+            filter.set_initial_settle_time(0.0);
+            let mut gyro = [0.0; 3];
+            gyro[axis] = 3.0 * ANGULAR_VELOCITY_THRESHOLD;
+            for _ in 0..1000 {
+                filter.update(0.0, 0.0, GRAVITY, gyro[0], gyro[1], gyro[2], 0.001);
+            }
+            assert!(!filter.steady_state, "rotation on axis {axis} was treated as rest");
+            assert_eq!(filter.w_bias, (0.0, 0.0, 0.0), "real rotation must not become bias");
+            assert!(filter.prev_gain_acc <= filter.gain_acc, "motion must not activate the rest gain boost");
+        }
+    }
+
+    #[test]
+    fn one_axis_gyro_change_rejects_steady_state() {
+        for axis in 0..3 {
+            let mut filter = resting_filter();
+            let mut previous = [0.0; 3];
+            let mut current = [0.0; 3];
+            previous[axis] = -0.009;
+            current[axis] = 0.009;
+            filter.w_prev = (previous[0], previous[1], previous[2]);
+            assert!(!filter.check_state(0.0, 0.0, GRAVITY, current[0], current[1], current[2]));
+            assert!(!filter.partial_steady_state);
+        }
+    }
+
+    #[test]
+    fn one_axis_accel_deviation_rejects_steady_state() {
+        for axis in 0..3 {
+            let mut filter = resting_filter();
+            let mut current = [0.0, 0.0, GRAVITY];
+            current[axis] += 0.08;
+            filter.a_prev = (current[0], current[1], current[2]);
+            assert!(!filter.check_state(current[0], current[1], current[2], 0.0, 0.0, 0.0));
+            assert!(!filter.partial_steady_state);
+        }
+    }
+
+    #[test]
+    fn one_axis_accel_change_rejects_steady_state() {
+        for axis in 0..3 {
+            let mut filter = resting_filter();
+            let mut current = [0.0, 0.0, GRAVITY];
+            current[axis] += 0.08;
+            filter.a_filt = (current[0], current[1], current[2]);
+            assert!(!filter.check_state(current[0], current[1], current[2], 0.0, 0.0, 0.0));
+            assert!(!filter.partial_steady_state);
+        }
+    }
+
+    #[test]
+    fn stationary_sensor_still_estimates_bias() {
+        let mut filter = ComplementaryFilterV2::default();
+        filter.set_initial_settle_time(0.0);
+        let bias = [0.001, -0.002, 0.0005];
+        for _ in 0..2000 {
+            filter.update(0.0, 0.0, GRAVITY, bias[0], bias[1], bias[2], 0.001);
+        }
+        assert!(filter.steady_state);
+        assert!(filter.prev_gain_acc > filter.gain_acc);
+        for (estimated, expected) in [filter.w_bias.0, filter.w_bias.1, filter.w_bias.2].into_iter().zip(bias) {
+            assert!((estimated - expected).abs() < expected.abs() * 0.25);
+        }
+    }
 }

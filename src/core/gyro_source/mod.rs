@@ -1220,6 +1220,15 @@ impl GyroSource {
         let mut raw_imu =
             util::normalized_imu_interpolated(&input, Some("XYZ".into())).unwrap_or_default();
 
+        if input.camera_type() == "Sony" {
+            if let Some(samples) = input.samples.as_ref() {
+                let calibrated = sony::calibrate_gyro_from_packets(&mut raw_imu, samples);
+                if calibrated > 0 {
+                    log::debug!(target: "gyro", "Sony factory zero-rate offset applied to {calibrated} gyro samples");
+                }
+            }
+        }
+
         // Sony: the metadata packets carry the gyro timing (offset and rate per frame), use it instead of a uniform spacing
         let sony_packet_timed = input.camera_type() == "Sony"
             && input
