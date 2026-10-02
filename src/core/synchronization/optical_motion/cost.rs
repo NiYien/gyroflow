@@ -27,6 +27,8 @@ pub const HP_MIN: usize = 15;
 pub const HP_MAX: usize = 61;
 /// The fewest points a band is fitted with
 pub const MIN_BAND_POINTS: usize = 25;
+/// The fewest bearings a frame pair's rotation rate is fitted with
+pub const MIN_RATE_POINTS: usize = 25;
 /// Reweighting rounds of the band fit
 const IRLS_ROUNDS: usize = 5;
 /// The smallest odd SG window length
@@ -198,27 +200,8 @@ fn fit_band(derived: &[Derived], r: &[Option<Vector3<f64>>], idx: &[usize], seq:
 /// `fit_band` with `rounds` reweighting rounds
 fn fit_band_rounds(derived: &[Derived], r: &[Option<Vector3<f64>>], idx: &[usize], seq: usize, band: u8, rounds: usize) -> Option<BandFit> {
     if idx.len() < MIN_BAND_POINTS { return None; }
-    let mut w = vec![1.0f64; idx.len()];
-    let mut rho = Vector3::zeros();
-    let mut h = Matrix3::zeros();
-    let mut res = vec![0.0f64; idx.len()];
-    for _ in 0..rounds {
-        h = Matrix3::zeros();
-        let mut g = Vector3::zeros();
-        for (k, &i) in idx.iter().enumerate() {
-            let (p, ri) = (derived[i].p, r[i]?);
-            h += (Matrix3::identity() - p * p.transpose()) * w[k];
-            g += p.cross(&ri) * w[k];
-        }
-        rho = h.try_inverse()? * g;
-        for (k, &i) in idx.iter().enumerate() {
-            res[k] = (r[i]? - rho.cross(&derived[i].p)).norm();
-        }
-        let mut sorted = res.clone();
-        sorted.sort_unstable_by(f64::total_cmp);
-        let scale = (1.4826 * sorted[sorted.len() / 2]).max(1e-9);
-        for (w, e) in w.iter_mut().zip(&res) { *w = 1.0 / (1.0 + (e / (2.5 * scale)).powi(2)); }
-    }
+    if idx.iter().any(|&i| r[i].is_none()) { return None; }
+    let (rho, h, w, res) = irls_rotation(idx.len(), |k| (derived[idx[k]].p, r[idx[k]].unwrap()), rounds)?;
     let sw: f64 = w.iter().sum();
     if sw < MIN_BAND_POINTS as f64 * 0.5 { return None; }
     let var = res.iter().zip(&w).map(|(e, w)| w * e * e).sum::<f64>() / sw / 2.0;
@@ -229,6 +212,46 @@ fn fit_band_rounds(derived: &[Derived], r: &[Option<Vector3<f64>>], idx: &[usize
     Some(BandFit { seq, band, rho, n: idx.len(), weight_sum: sw, h, var, ta_ms, tb_ms, disp2 })
 }
 
+/// IRLS of r ≈ ρ × p over `n` points, `point(k)` giving the k-th (p, r): ρ, the normal matrix of the last solve, the
+/// final weights and the residuals. None when the normal matrix cannot be inverted.
+fn irls_rotation(n: usize, point: impl Fn(usize) -> (Vector3<f64>, Vector3<f64>), rounds: usize) -> Option<(Vector3<f64>, Matrix3<f64>, Vec<f64>, Vec<f64>)> {
+    let mut w = vec![1.0f64; n];
+    let mut rho = Vector3::zeros();
+    let mut h = Matrix3::zeros();
+    let mut res = vec![0.0f64; n];
+    for _ in 0..rounds {
+        h = Matrix3::zeros();
+        let mut g = Vector3::zeros();
+        for k in 0..n {
+            let (p, ri) = point(k);
+            h += (Matrix3::identity() - p * p.transpose()) * w[k];
+            g += p.cross(&ri) * w[k];
+        }
+        rho = h.try_inverse()? * g;
+        for k in 0..n {
+            let (p, ri) = point(k);
+            res[k] = (ri - rho.cross(&p)).norm();
+        }
+        let mut sorted = res.clone();
+        sorted.sort_unstable_by(f64::total_cmp);
+        let scale = (1.4826 * sorted[sorted.len() / 2]).max(1e-9);
+        for (w, e) in w.iter_mut().zip(&res) { *w = 1.0 / (1.0 + (e / (2.5 * scale)).powi(2)); }
+    }
+    Some((rho, h, w, res))
+}
+
+/// Pure rotation between the two frames of a pair, fitted to all of its bearings without the high-pass, as an
+/// angular velocity in the quaternions' frame (rad/s). None with fewer than MIN_RATE_POINTS bearings or a degenerate fit.
+pub fn pair_rotation_rate(pair: &PairData) -> Option<Vector3<f64>> {
+    if pair.va.len() < MIN_RATE_POINTS { return None; }
+    let dt = (pair.b.mid_ms - pair.a.mid_ms) / 1000.0;
+    if dt <= 0.0 { return None; }
+    let (rho, _, w, _) = irls_rotation(pair.va.len(), |k| (pair.va[k], pair.vb[k] - pair.va[k]), IRLS_ROUNDS)?;
+    let sw: f64 = w.iter().sum();
+    if sw < MIN_RATE_POINTS as f64 * 0.5 { return None; }
+    let rate = rho / dt;
+    if rate.iter().all(|v| v.is_finite()) { Some(rate) } else { None }
+}
 /// Gyro time = video time − offset_ms. None when the window's time span minus the offset is not fully covered by gyro
 /// data. A window without observations has nothing to cover and gives Some(empty). The fits are sorted by (seq, band).
 pub fn band_fits_full(ctx: &CostContext, offset_ms: f64) -> Option<Vec<BandFit>> {
@@ -387,6 +410,41 @@ mod tests {
             }
         }
         assert_eq!((fits.len(), h), (GOLDEN_LEN, GOLDEN_HASH));
+    }
+    #[test]
+    fn pair_rotation_rate_matches_quaternion_rate() {
+        // The fit r ≈ ρ × p is a linearization: its second-order bias is about half the rotation between the two frames
+        // times an axis factor, up to ~1.2 % for this fixture's motion. Hence 3 %, not 1 %.
+        let spec = SynthSpec { noise_px: 0.0, parallax: 0.0, readout_ms: 0.0, ..Default::default() };
+        let (window, quats) = synth_window(&spec);
+        let table = QuatTable::build(&quats, -3000.0, 15000.0);
+        for pd in &window.pairs {
+            let dt = (pd.b.mid_ms - pd.a.mid_ms) / 1000.0;
+            let m = table.at(pd.b.mid_ms - spec.true_offset_ms).inverse() * table.at(pd.a.mid_ms - spec.true_offset_ms);
+            let expected = m.scaled_axis() / dt;
+            let got = pair_rotation_rate(pd).expect("enough points");
+            assert!((got - expected).norm() <= 0.03 * expected.norm() + 1e-4, "seq {}: {got:?} vs {expected:?}", pd.seq);
+        }
+    }
+
+    #[test]
+    fn pair_rotation_rate_needs_min_points() {
+        let (window, _) = synth_window(&SynthSpec::default());
+        let mut pd = window.pairs[0].clone();
+        let n = MIN_RATE_POINTS - 1;
+        pd.ids.truncate(n); pd.va.truncate(n); pd.vb.truncate(n); pd.fa.truncate(n); pd.fb.truncate(n);
+        assert!(pair_rotation_rate(&pd).is_none());
+    }
+
+    #[test]
+    fn pair_rotation_rate_uses_the_pair_time_span() {
+        let (window, _) = synth_window(&SynthSpec::default());
+        let pd = window.pairs[3].clone();
+        let base = pair_rotation_rate(&pd).unwrap();
+        let mut wide = pd.clone();
+        wide.b.mid_ms = wide.a.mid_ms + 2.0 * (pd.b.mid_ms - pd.a.mid_ms);
+        let half = pair_rotation_rate(&wide).unwrap();
+        assert!((half * 2.0 - base).norm() <= 1e-12 * base.norm().max(1.0));
     }
     #[test] fn sg_removes_quadratics_keeps_high_frequency() {
         let p = sg_projection(31);
