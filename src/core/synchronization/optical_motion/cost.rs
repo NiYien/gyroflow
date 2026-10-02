@@ -4,12 +4,17 @@
 //! temporal high-pass along each track (local quadratic, Savitzky-Golay) that takes the slow parallax out, and a
 //! robust per-band rotation fit `r ≈ ρ × p`. The cost is the rms displacement the band rotations cause at their own
 //! points. The band fits are kept as such for the optical correction (layer A) to reuse.
+//!
+//! The coarse scan (spec §6.2) runs the same math on a fixed subset of whole track segments, with one rotation per
+//! timing band and COARSE_FIT_BANDS fit bands per pair, and without parallelism inside one evaluation.
 
 use std::collections::HashMap;
+use std::ops::Range;
 
 use nalgebra::{ DMatrix, Matrix3, Vector3 };
 use rayon::prelude::*;
 
+use crate::gyro_source::Quat64;
 use super::quat_table::QuatTable;
 use super::tracks::{ row_time_ms, PairData, WindowTracks };
 
@@ -84,12 +89,23 @@ pub struct CostContext<'a> { pub window: &'a WindowTracks, pub quats: &'a QuatTa
 impl CostContext<'_> {
     /// Min / max row time (video ms) over both frames of every observation; (+inf, -inf) when there are none
     pub fn time_span_ms(&self) -> (f64, f64) {
-        self.window.pairs.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |span, pd| {
-            let a = pd.fa.iter().map(|&f| row_time_ms(&pd.a, f));
-            let b = pd.fb.iter().map(|&f| row_time_ms(&pd.b, f));
-            a.chain(b).fold(span, |(lo, hi), t| (lo.min(t), hi.max(t)))
-        })
+        window_time_span_ms(self.window)
     }
+}
+
+/// Min / max row time (video ms) over both frames of every observation; (+inf, -inf) when there are none
+fn window_time_span_ms(window: &WindowTracks) -> (f64, f64) {
+    window.pairs.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |span, pd| {
+        let a = pd.fa.iter().map(|&f| row_time_ms(&pd.a, f));
+        let b = pd.fb.iter().map(|&f| row_time_ms(&pd.b, f));
+        a.chain(b).fold(span, |(lo, hi), t| (lo.min(t), hi.max(t)))
+    })
+}
+
+/// Whether the gyro data covers the row-time span `(lo, hi)` minus `offset_ms`. An empty span (a window without
+/// observations) has nothing to cover.
+fn span_covered(quats: &QuatTable, (lo, hi): (f64, f64), offset_ms: f64) -> bool {
+    if lo <= hi { quats.covers(lo - offset_ms, hi - offset_ms) } else { true }
 }
 
 /// One observation against the quaternions at a given offset
@@ -110,14 +126,36 @@ fn timing_band(pos: f32) -> u8 {
     (pos * BANDS as f32).floor().clamp(0.0, (BANDS - 1) as f32) as u8
 }
 
+/// The rotation `m = qb⁻¹·qa` from frame a at row time `ta_ms` to frame b at `tb_ms`; gyro time = video time − `offset_ms`
+fn relative_rotation(quats: &QuatTable, ta_ms: f64, tb_ms: f64, offset_ms: f64) -> Quat64 {
+    quats.at(tb_ms - offset_ms).inverse() * quats.at(ta_ms - offset_ms)
+}
+
+/// Observation `i` of a pair against the rotation `m`: `p = m·va`, `r = vb − p`
+fn observe(pd: &PairData, i: usize, band: u8, m: &Quat64, ta_ms: f64, tb_ms: f64) -> Derived {
+    let p = m * pd.va[i];
+    Derived { id: pd.ids[i], seq: pd.seq, band, p, r: pd.vb[i] - p, ta_ms, tb_ms }
+}
+
 /// Every observation of a pair at its own row times; gyro time = video time − `offset_ms`. The band is frame a's.
 fn derive_pair(pd: &PairData, quats: &QuatTable, offset_ms: f64) -> Vec<Derived> {
     (0..pd.ids.len()).map(|i| {
         let (ta, tb) = (row_time_ms(&pd.a, pd.fa[i]), row_time_ms(&pd.b, pd.fb[i]));
-        let m = quats.at(tb - offset_ms).inverse() * quats.at(ta - offset_ms);
-        let p = m * pd.va[i];
-        Derived { id: pd.ids[i], seq: pd.seq, band: timing_band(pd.fa[i]), p, r: pd.vb[i] - p, ta_ms: ta, tb_ms: tb }
+        observe(pd, i, timing_band(pd.fa[i]), &relative_rotation(quats, ta, tb, offset_ms), ta, tb)
     }).collect()
+}
+
+/// Splits `n` observations sorted by (id, seq), `key(k)` being the k-th one's, into runs of one id in consecutive pairs
+fn split_runs(n: usize, key: impl Fn(usize) -> (u32, usize)) -> Vec<Range<usize>> {
+    let mut runs = Vec::new();
+    let mut s = 0;
+    while s < n {
+        let mut e = s + 1;
+        while e < n && key(e).0 == key(s).0 && key(e).1 == key(e - 1).1 + 1 { e += 1; }
+        runs.push(s..e);
+        s = e;
+    }
+    runs
 }
 
 /// Takes the slow part out of each track's residuals: a local quadratic fit (Savitzky-Golay, the fit of the window's
@@ -126,24 +164,26 @@ fn derive_pair(pd: &PairData, quats: &QuatTable, offset_ms: f64) -> Vec<Derived>
 fn high_pass(derived: &[Derived], sg: &SgCache) -> Vec<Option<Vector3<f64>>> {
     let mut order: Vec<usize> = (0..derived.len()).collect();
     order.par_sort_unstable_by_key(|&i| (derived[i].id, derived[i].seq));
+    let runs = split_runs(order.len(), |k| (derived[order[k]].id, derived[order[k]].seq));
+    high_pass_runs(derived, &order, &runs, sg)
+}
+
+/// The high-pass of `high_pass` over runs given as ranges of `order` (indices into `derived`, each run one track in
+/// consecutive pairs, in seq order). Points outside a run of at least HP_MIN pairs stay None.
+fn high_pass_runs(derived: &[Derived], order: &[usize], runs: &[Range<usize>], sg: &SgCache) -> Vec<Option<Vector3<f64>>> {
     let mut out = vec![None; derived.len()];
-    let mut s = 0;
-    while s < order.len() {
-        let mut e = s + 1;
-        while e < order.len() && derived[order[e]].id == derived[order[s]].id && derived[order[e]].seq == derived[order[e - 1]].seq + 1 { e += 1; }
-        let len = e - s;
-        if len >= HP_MIN {
-            let l = { let l = len.min(HP_MAX); if l % 2 == 0 { l - 1 } else { l } };
-            let proj = sg.get(l);
-            for k in 0..len {
-                let w0 = (k as isize - (l / 2) as isize).clamp(0, (len - l) as isize) as usize;
-                let pos = k - w0;
-                let mut smooth = Vector3::zeros();
-                for j in 0..l { smooth += derived[order[s + w0 + j]].r * proj[(pos, j)]; }
-                out[order[s + k]] = Some(derived[order[s + k]].r - smooth);
-            }
+    for run in runs {
+        let (s, len) = (run.start, run.len());
+        if len < HP_MIN { continue; }
+        let l = { let l = len.min(HP_MAX); if l % 2 == 0 { l - 1 } else { l } };
+        let proj = sg.get(l);
+        for k in 0..len {
+            let w0 = (k as isize - (l / 2) as isize).clamp(0, (len - l) as isize) as usize;
+            let pos = k - w0;
+            let mut smooth = Vector3::zeros();
+            for j in 0..l { smooth += derived[order[s + w0 + j]].r * proj[(pos, j)]; }
+            out[order[s + k]] = Some(derived[order[s + k]].r - smooth);
         }
-        s = e;
     }
     out
 }
@@ -152,12 +192,17 @@ fn high_pass(derived: &[Derived], sg: &SgCache) -> Vec<Option<Vector3<f64>>> {
 /// (weights 1/(1+(e/2.5s)²), s = 1.4826·MAD). None with fewer than MIN_BAND_POINTS points, a point without a
 /// residual, a singular system or an effective weight sum below MIN_BAND_POINTS / 2.
 fn fit_band(derived: &[Derived], r: &[Option<Vector3<f64>>], idx: &[usize], seq: usize, band: u8) -> Option<BandFit> {
+    fit_band_rounds(derived, r, idx, seq, band, IRLS_ROUNDS)
+}
+
+/// `fit_band` with `rounds` reweighting rounds
+fn fit_band_rounds(derived: &[Derived], r: &[Option<Vector3<f64>>], idx: &[usize], seq: usize, band: u8, rounds: usize) -> Option<BandFit> {
     if idx.len() < MIN_BAND_POINTS { return None; }
     let mut w = vec![1.0f64; idx.len()];
     let mut rho = Vector3::zeros();
     let mut h = Matrix3::zeros();
     let mut res = vec![0.0f64; idx.len()];
-    for _ in 0..IRLS_ROUNDS {
+    for _ in 0..rounds {
         h = Matrix3::zeros();
         let mut g = Vector3::zeros();
         for (k, &i) in idx.iter().enumerate() {
@@ -187,8 +232,7 @@ fn fit_band(derived: &[Derived], r: &[Option<Vector3<f64>>], idx: &[usize], seq:
 /// Gyro time = video time − offset_ms. None when the window's time span minus the offset is not fully covered by gyro
 /// data. A window without observations has nothing to cover and gives Some(empty). The fits are sorted by (seq, band).
 pub fn band_fits_full(ctx: &CostContext, offset_ms: f64) -> Option<Vec<BandFit>> {
-    let (lo, hi) = ctx.time_span_ms();
-    if lo <= hi && !ctx.quats.covers(lo - offset_ms, hi - offset_ms) { return None; }
+    if !span_covered(ctx.quats, ctx.time_span_ms(), offset_ms) { return None; }
 
     let derived: Vec<Derived> = ctx.window.pairs.par_iter().flat_map_iter(|pd| derive_pair(pd, ctx.quats, offset_ms)).collect();
     let rhp = high_pass(&derived, ctx.sg);
@@ -218,6 +262,104 @@ pub fn summarize(fits: &[BandFit], focal_px: f64) -> CostResult {
 /// bands, pairs and points and a cost of 0: callers judge it by `pairs_measured`.
 pub fn eval_full(ctx: &CostContext, offset_ms: f64) -> Option<CostResult> {
     band_fits_full(ctx, offset_ms).map(|fits| summarize(&fits, ctx.window.focal_px))
+}
+
+/// Per pair, the indices (into PairData::ids) of the points kept for the coarse scan. Fixed for every offset.
+pub struct TrackSubset {
+    pub per_pair: Vec<Vec<u32>>,
+    /// The window's row-time span, video ms (as `CostContext::time_span_ms`)
+    span_ms: (f64, f64),
+    /// The subset's points are numbered pair by pair in `per_pair` order, the order `eval_coarse` derives them in.
+    /// `hp_order` lists them by (id, seq) and `hp_runs` are its runs of one track in consecutive pairs.
+    hp_order: Vec<usize>,
+    hp_runs: Vec<Range<usize>>,
+    /// (seq, fit band, point numbers) per pair and fit band, by (seq, fit band)
+    groups: Vec<(usize, u8, Vec<usize>)>,
+}
+
+/// Fit band of the coarse evaluation: BANDS / COARSE_FIT_BANDS adjacent timing bands each
+fn coarse_fit_band(pos: f32) -> u8 {
+    timing_band(pos) / (BANDS / COARSE_FIT_BANDS) as u8
+}
+
+/// Picks the coarse scan's points by whole track segments (spec §6.2), so that the high-pass keeps its runs: a segment
+/// is a track's observations in consecutive pairs, and only segments of at least HP_MIN pairs count. Longest first (then
+/// by id), a segment is taken whole when any (pair, fit band) it passes through has fewer than
+/// `coarse_points / COARSE_FIT_BANDS` points so far.
+pub fn select_tracks(window: &WindowTracks, coarse_points: usize) -> TrackSubset {
+    // Every observation as (id, seq, pair, index in pair); sorted, a track's observations follow each other
+    let mut obs: Vec<(u32, usize, usize, u32)> = window.pairs.iter().enumerate()
+        .flat_map(|(p, pd)| pd.ids.iter().enumerate().map(move |(i, &id)| (id, pd.seq, p, i as u32)))
+        .collect();
+    obs.sort_unstable();
+    let mut segments = split_runs(obs.len(), |k| (obs[k].0, obs[k].1));
+    segments.retain(|s| s.len() >= HP_MIN);
+    // A track split by a gap has several segments: the start seq orders those of equal length
+    segments.sort_unstable_by_key(|s| (std::cmp::Reverse(s.len()), obs[s.start].0, obs[s.start].1));
+
+    let quota = coarse_points / COARSE_FIT_BANDS;
+    let band_of = |&(_, _, p, i): &(u32, usize, usize, u32)| coarse_fit_band(window.pairs[p].fa[i as usize]) as usize;
+    let mut count = vec![[0usize; COARSE_FIT_BANDS]; window.pairs.len()];
+    let mut per_pair = vec![Vec::new(); window.pairs.len()];
+    for seg in segments {
+        let seg = &obs[seg];
+        if seg.iter().any(|o| count[o.2][band_of(o)] < quota) {
+            for o in seg {
+                count[o.2][band_of(o)] += 1;
+                per_pair[o.2].push(o.3);
+            }
+        }
+    }
+    for sel in &mut per_pair { sel.sort_unstable(); }
+
+    // The layout `eval_coarse` reuses for every offset
+    let mut keys: Vec<(u32, usize)> = Vec::new();
+    let mut groups = Vec::new();
+    for (pd, sel) in window.pairs.iter().zip(&per_pair) {
+        let mut by_band: [Vec<usize>; COARSE_FIT_BANDS] = Default::default();
+        for &i in sel {
+            by_band[coarse_fit_band(pd.fa[i as usize]) as usize].push(keys.len());
+            keys.push((pd.ids[i as usize], pd.seq));
+        }
+        groups.extend(by_band.into_iter().enumerate().map(|(band, idx)| (pd.seq, band as u8, idx)));
+    }
+    let mut hp_order: Vec<usize> = (0..keys.len()).collect();
+    hp_order.sort_unstable_by_key(|&k| (keys[k], k));
+    let hp_runs = split_runs(hp_order.len(), |k| keys[hp_order[k]]);
+
+    TrackSubset { per_pair, span_ms: window_time_span_ms(window), hp_order, hp_runs, groups }
+}
+
+/// Coarse evaluation: subset only, one quaternion pair per (pair, timing band) at the band's centre row time, COARSE_FIT_BANDS fit bands, no inner parallelism.
+///
+/// The band is the point's frame a position as in the full evaluation, and both frames of the pair take their row
+/// time at that band's centre. Otherwise the residual, high-pass and band fit are those of the full evaluation, with
+/// `irls_iters` reweighting rounds (at least 1). `subset` must come from `ctx.window`. Returns the cost in px; None
+/// when the window's row-time span minus `offset_ms` is not fully covered by gyro data (the full evaluation's rule)
+/// or when no fit band could be fitted.
+pub fn eval_coarse(ctx: &CostContext, subset: &TrackSubset, offset_ms: f64, irls_iters: usize) -> Option<f64> {
+    debug_assert_eq!(subset.per_pair.len(), ctx.window.pairs.len(), "subset of another window");
+    if !span_covered(ctx.quats, subset.span_ms, offset_ms) { return None; }
+
+    let mut derived = Vec::with_capacity(subset.hp_order.len());
+    for (pd, sel) in ctx.window.pairs.iter().zip(&subset.per_pair) {
+        if sel.is_empty() { continue; }
+        let rot: [(Quat64, f64, f64); BANDS] = std::array::from_fn(|band| {
+            let pos = (band as f32 + 0.5) / BANDS as f32;
+            let (ta, tb) = (row_time_ms(&pd.a, pos), row_time_ms(&pd.b, pos));
+            (relative_rotation(ctx.quats, ta, tb, offset_ms), ta, tb)
+        });
+        for &i in sel {
+            let band = timing_band(pd.fa[i as usize]);
+            let (m, ta, tb) = &rot[band as usize];
+            derived.push(observe(pd, i as usize, band, m, *ta, *tb));
+        }
+    }
+    let rhp = high_pass_runs(&derived, &subset.hp_order, &subset.hp_runs, ctx.sg);
+    let fits: Vec<BandFit> = subset.groups.iter()
+        .filter_map(|(seq, band, idx)| fit_band_rounds(&derived, &rhp, idx, *seq, *band, irls_iters.max(1)))
+        .collect();
+    if fits.is_empty() { None } else { Some(summarize(&fits, ctx.window.focal_px).cost_px) }
 }
 
 #[cfg(test)]
@@ -287,5 +429,74 @@ mod tests {
         let ctx = CostContext { window: &w, quats: &table, sg: &SgCache::new() };
         let c = eval_full(&ctx, 0.0).expect("nothing to cover");
         assert_eq!((c.cost_px, c.bands, c.pairs_measured, c.points), (0.0, 0, 0, 0));
+    }
+    #[test] fn subset_keeps_tracks_continuous_and_is_deterministic() {
+        let (w, _) = synth_window(&SynthSpec { tracks: 1200, ..Default::default() });
+        let s = select_tracks(&w, 200);
+        assert_eq!(s.per_pair, select_tracks(&w, 200).per_pair);
+        // every selected id appears in >= HP_MIN consecutive pairs
+        let mut runs: std::collections::HashMap<u32, usize> = Default::default();
+        for (pd, sel) in w.pairs.iter().zip(&s.per_pair) { for &i in sel { *runs.entry(pd.ids[i as usize]).or_default() += 1; } }
+        assert!(runs.values().all(|&n| n >= HP_MIN));
+        let per_pair = s.per_pair.iter().map(|v| v.len()).max().unwrap();
+        assert!(per_pair >= 200 && per_pair < 400, "{per_pair}");
+    }
+    #[test] fn coarse_cost_agrees_with_full_near_truth() {
+        let spec = SynthSpec { tracks: 1200, ..Default::default() };
+        let (w, quats) = synth_window(&spec);
+        let table = QuatTable::build(&quats, -3000.0, 15000.0);
+        let ctx = CostContext { window: &w, quats: &table, sg: &SgCache::new() };
+        let s = select_tracks(&w, 200);
+        let c = |d: f64| eval_coarse(&ctx, &s, spec.true_offset_ms + d, 5).unwrap();
+        assert!(c(0.0) < 0.3 * c(30.0) && c(0.0) < 0.3 * c(-30.0));
+        assert!(c(5.0) < c(30.0));          // a grid point 5 ms off the truth still sits inside the basin
+    }
+    /// Drops the observations `drop(id, seq)` picks from every pair of `w`
+    fn drop_obs(w: &mut WindowTracks, drop: impl Fn(u32, usize) -> bool) {
+        for pd in &mut w.pairs {
+            let keep: Vec<usize> = (0..pd.ids.len()).filter(|&i| !drop(pd.ids[i], pd.seq)).collect();
+            pd.ids = keep.iter().map(|&i| pd.ids[i]).collect();
+            pd.va = keep.iter().map(|&i| pd.va[i]).collect();
+            pd.vb = keep.iter().map(|&i| pd.vb[i]).collect();
+            pd.fa = keep.iter().map(|&i| pd.fa[i]).collect();
+            pd.fb = keep.iter().map(|&i| pd.fb[i]).collect();
+        }
+    }
+    #[test] fn subset_takes_whole_segments_of_hp_min_or_more() {
+        // Every track breaks at seq 20 + id % 7, leaving a 20..26 pair head and a 152..158 pair tail; every fifth track
+        // also breaks at seq 5, which splits its head into 5 and 14..20 pairs
+        let (mut w, _) = synth_window(&SynthSpec::default());
+        drop_obs(&mut w, |id, seq| seq == 20 + id as usize % 7 || (id % 5 == 0 && seq == 5));
+        let s = select_tracks(&w, 200);
+        let present: std::collections::HashSet<(u32, usize)> = w.pairs.iter().flat_map(|pd| pd.ids.iter().map(move |&id| (id, pd.seq))).collect();
+        let selected: std::collections::HashSet<(u32, usize)> = w.pairs.iter().zip(&s.per_pair)
+            .flat_map(|(pd, sel)| sel.iter().map(move |&i| (pd.ids[i as usize], pd.seq))).collect();
+        assert_eq!(selected.len(), s.per_pair.iter().map(Vec::len).sum::<usize>());   // no point twice
+        for &(id, seq) in &selected {
+            // The maximal segment of consecutive pairs the observation belongs to is taken whole and is long enough
+            let first = (0..=seq).rev().take_while(|&q| present.contains(&(id, q))).last().unwrap();
+            let last = (seq..).take_while(|&q| present.contains(&(id, q))).last().unwrap();
+            assert!(last + 1 - first >= HP_MIN, "id {id}: segment {first}..={last}");
+            assert!((first..=last).all(|q| selected.contains(&(id, q))), "id {id}: segment {first}..={last} taken in part");
+        }
+        // There are enough eligible points everywhere, so every (pair, fit band) reaches the quota
+        for (pd, sel) in w.pairs.iter().zip(&s.per_pair) {
+            let mut n = [0usize; COARSE_FIT_BANDS];
+            for &i in sel { n[timing_band(pd.fa[i as usize]) as usize / (BANDS / COARSE_FIT_BANDS)] += 1; }
+            assert!(n.iter().all(|&n| n >= 200 / COARSE_FIT_BANDS), "seq {}: {n:?}", pd.seq);
+        }
+    }
+    #[test] fn coarse_is_none_when_uncovered_or_empty() {
+        let (w, quats) = synth_window(&SynthSpec::default());
+        let table = QuatTable::build(&quats, -8000.0, 20000.0);
+        let ctx = CostContext { window: &w, quats: &table, sg: &SgCache::new() };
+        let s = select_tracks(&w, 200);
+        // Gyro data spans -8000..20000 ms and the window about 5000..8000 ms of video time
+        assert!(eval_coarse(&ctx, &s, -12000.0, 5).is_some());
+        assert!(eval_coarse(&ctx, &s, -12500.0, 5).is_none());   // partly past the gyro end
+        assert!(eval_coarse(&ctx, &s, 14000.0, 5).is_none());    // wholly before the gyro start
+        let empty = WindowTracks { pairs: Vec::new(), focal_px: 1500.0 };
+        let ctx = CostContext { window: &empty, quats: &table, sg: &SgCache::new() };
+        assert!(eval_coarse(&ctx, &select_tracks(&empty, 200), 0.0, 5).is_none());   // nothing to cover, nothing fitted
     }
 }
