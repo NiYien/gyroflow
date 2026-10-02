@@ -1,0 +1,19 @@
+{
+  "out_dir": "target/sync_regress",
+  "known_fixes": ["02_C50_C081", "16_P1032805"],
+  "clips": [
+    {"name": "02_C50_C081", "project": "D:/Gyroflow_NiYien/Test_function/SyncError/1/A_0051C081H260519_154814Y1_C50AW.gyroflow", "video": "D:/Gyroflow_NiYien/Test_function/SyncError/1/A_0051C081H260519_154814Y1_C50AW.MP4", "truth": -949, "sync_points_ms": [7440]},
+    {"name": "07_A001_040", "project": "D:/Gyroflow_NiYien/Test_function/SyncError/1/Failed_A001_040_20260109.gyroflow", "video": "D:/Gyroflow_NiYien/Test_function/SyncError/1/A001_040_20260109.MOV", "truth": -677, "sync_points_ms": [3750]},
+    {"name": "08_DSC_9556", "project": "D:/Gyroflow_NiYien/Test_function/SyncError/1/Failed_DSC_9556.gyroflow", "video": "D:/Gyroflow_NiYien/Test_function/SyncError/1/DSC_9556.MOV", "truth": -693, "sync_points_ms": [4554]},
+    {"name": "09_R3A_1620", "project": "D:/Gyroflow_NiYien/Test_function/SyncError/1/Failed_R3A_1620.gyroflow", "video": "D:/Gyroflow_NiYien/Test_function/SyncError/1/R3A_1620.MP4", "truth": -812, "gate": false, "sync_points_ms": [2252]},
+    {"name": "10_MVI_5502", "project": "D:/Gyroflow_NiYien/Test_function/SyncError/1/MVI_5502.gyroflow", "video": "D:/Gyroflow_NiYien/Test_function/SyncError/1/MVI_5502.MP4", "truth": -1205, "sync_points_ms": [4640]},
+    {"name": "11_MVI_6085", "project": "D:/Gyroflow_NiYien/Test_function/SyncError/1/MVI_6085.gyroflow", "video": "D:/Gyroflow_NiYien/Test_function/SyncError/1/MVI_6085.MP4", "truth": -1928, "sync_points_ms": [5672]},
+    {"name": "12_C50_C950", "project": "D:/Gyroflow_NiYien/Test_function/SyncError/2/A_0041C950H260507_155623QX_C50AW.gyroflow", "video": "D:/Gyroflow_NiYien/Test_function/SyncError/2/A_0041C950H260507_155623QX_C50AW.MP4", "truth": -2291, "sync_points_ms": [2252]},
+    {"name": "13_P1032767", "project": "D:/Gyroflow_NiYien/Test_function/SyncError/4/P1032767.gyroflow", "video": "D:/Gyroflow_NiYien/Test_function/SyncError/4/P1032767.MOV", "truth": -1664, "sync_points_ms": [960]},
+    {"name": "14_P1032775", "project": "D:/Gyroflow_NiYien/Test_function/SyncError/4/P1032775.gyroflow", "video": "D:/Gyroflow_NiYien/Test_function/SyncError/4/P1032775.MOV", "truth": -1661, "sync_points_ms": [2160]},
+    {"name": "15_P1032787", "project": "D:/Gyroflow_NiYien/Test_function/SyncError/4/P1032787.gyroflow", "video": "D:/Gyroflow_NiYien/Test_function/SyncError/4/P1032787.MOV", "truth": -1650, "sync_points_ms": [4320]},
+    {"name": "16_P1032805", "project": "D:/Gyroflow_NiYien/Test_function/SyncError/4/P1032805.gyroflow", "video": "D:/Gyroflow_NiYien/Test_function/SyncError/4/P1032805.MOV", "truth": -1637, "sync_points_ms": [2160]},
+    {"name": "obs_C50_C952", "project": "D:/Gyroflow_NiYien/Test_function/SyncError/2/A_0041C952H260507_155743IM_C50AW.gyroflow", "video": "D:/Gyroflow_NiYien/Test_function/SyncError/2/A_0041C952H260507_155743IM_C50AW.MP4", "gate": false, "sync_points_ms": [2252]},
+    {"name": "obs_P1032801", "project": "D:/Gyroflow_NiYien/Test_function/SyncError/4/P1032801.gyroflow", "video": "D:/Gyroflow_NiYien/Test_function/SyncError/4/P1032801.MOV", "gate": false, "sync_points_ms": [1200]}
+  ]
+}
