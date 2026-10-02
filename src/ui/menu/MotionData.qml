@@ -53,10 +53,17 @@ MenuItem {
 
     function loadGyroflow(obj: var): void {
         const gyro = obj.gyro_source || { };
+        // Rebuilding the model resets the selection to its first entry (Complementary without quaternions),
+        // so keep the current method unless the payload explicitly sets one.
+        const currentMethod = integrator.hasQuaternions? integrator.currentIndex : integrator.currentIndex + 1;
         integrator.hasRawGyro = controller.gyro_has_raw_imu;
         integrator.hasQuaternions = !controller.gyro_has_quaternions;
         integrator.hasQuaternions = controller.gyro_has_quaternions;
         root.hasAccurateTimestamps = controller.gyro_has_accurate_timestamps;
+        let method = gyro.hasOwnProperty("integration_method")? +gyro.integration_method : currentMethod;
+        // Built-in quaternions ("None") only exist in the list when the motion source provides them.
+        if (!integrator.hasQuaternions && method < 1) method = 2; // VQF
+        integrator.currentIndex = integrator.hasQuaternions? method : method - 1;
         if (gyro && Object.keys(gyro).length > 0) {
             if (gyro.rotation && gyro.rotation.length == 3) {
                 p.value = gyro.rotation[0];
@@ -72,10 +79,6 @@ MenuItem {
                 arot_action.checked = arot.checked;
             }
             if (gyro.imu_orientation) orientation.text = gyro.imu_orientation;
-            if (gyro.hasOwnProperty("integration_method")) {
-                const index = +gyro.integration_method;
-                integrator.currentIndex = integrator.hasQuaternions? index : index - 1;
-            }
             if (+gyro.lpf > 0) {
                 lpf.value = +gyro.lpf;
                 lpfcb.checked = lpf.value > 0;
