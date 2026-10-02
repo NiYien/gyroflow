@@ -171,7 +171,12 @@ impl OpticalSession {
                 log::error!(target: "sync", "[optical] a tracking thread panicked");
             }
         }
-        self.slots.iter().map(|slot| std::mem::take(&mut slot.lock().0.raw)).collect()
+        let raw: Vec<RawWindow> = self.slots.iter().map(|slot| std::mem::take(&mut slot.lock().0.raw)).collect();
+        for (i, w) in raw.iter().enumerate() {
+            log::debug!(target: "sync", "[optical] seg {}: tracked frames={} pairs={} restarts={} dropped_pairs={} duplicates={}",
+                i, w.frames, w.pairs.len(), w.restarts, w.dropped_pairs, w.duplicates);
+        }
+        raw
     }
 
     pub fn has_tracker(&self) -> bool { self.has_tracker }
@@ -196,13 +201,16 @@ fn track_queue(rx: Receiver<Job>, slots: &[Mutex<WindowSlot>], scaled_fps: f64, 
     }
 }
 
-/// One frame of a window: continuity check (the tracker starts over after a gap or a decode retry), tracking, and the
-/// pair with the previous frame. A tracking error leaves the frame without observations.
+/// One frame of a window: continuity check (`tracks::classify_step`), tracking, and the pair with the previous frame.
+/// The tracker starts over after a gap or a decode retry (Restart). A frame the window has seen already (Duplicate:
+/// the overlap with the next window delivered again, or a repeated frame index) is skipped: the tracker never sees
+/// it and the window stays as it was. A tracking error leaves the frame without observations.
 fn track_frame(slot: &mut WindowSlot, window: usize, ts_us: i64, img: &GrayImage, scaled_fps: f64, counters: &Counters) {
     let (builder, tracker) = slot;
     let index = frame_index(ts_us, scaled_fps);
     let pairs_before = builder.raw.pairs.len();
     let step = builder.begin_frame(index);
+    if step == FrameStep::Duplicate { return; }
     if matches!(step, FrameStep::Gap | FrameStep::Restart) {
         if let Some(t) = tracker.as_mut() { t.reset(); }
     }
@@ -380,12 +388,14 @@ mod tests {
     use std::sync::atomic::Ordering::SeqCst;
     use crate::synchronization::optical_motion::testutil::{ synth_window, SynthSpec };
 
-    /// First call after a reset: no observations; every later call: 30 observations with ids 0..30
-    struct FakeTracker { n: u32 }
+    /// First call after a reset: no observations; every later call: 30 observations with ids 0..30. `calls` counts
+    /// the frames tracked.
+    struct FakeTracker { n: u32, calls: Arc<AtomicUsize> }
     impl FrameTracker for FakeTracker {
         fn reset(&mut self) { self.n = 0; }
         fn track(&mut self, _img: &GrayImage) -> Result<(Vec<Observation>, (u32, u32)), String> {
             self.n += 1;
+            self.calls.fetch_add(1, SeqCst);
             let obs = if self.n == 1 {
                 Vec::new()
             } else {
@@ -394,7 +404,7 @@ mod tests {
             Ok((obs, (960, 540)))
         }
     }
-    fn fake() -> Option<Box<dyn FrameTracker>> { Some(Box::new(FakeTracker { n: 0 })) }
+    fn fake() -> Option<Box<dyn FrameTracker>> { Some(Box::new(FakeTracker { n: 0, calls: Default::default() })) }
     fn counter(done: Arc<AtomicUsize>) -> Arc<dyn Fn() + Send + Sync> { Arc::new(move || { done.fetch_add(1, SeqCst); }) }
     fn session(windows: usize, done: Arc<AtomicUsize>) -> OpticalSession {
         OpticalSession::new(windows, 50.0, 1, Arc::new(AtomicBool::new(false)), &fake, counter(done))
@@ -426,6 +436,34 @@ mod tests {
         assert_eq!(windows_containing(&[(0, 1_500_000), (1_000_000, 2_500_000)], 2_000_000), vec![1]);
         assert!(windows_containing(&[(0, 1_500_000)], 1_600_000).is_empty());
         assert_eq!(windows_containing(&[(0, 1_500_000)], 1_500_000), vec![0]);   // inclusive, like the existing window test
+    }
+    #[test] fn overlapping_ranges_in_decoder_order_keep_both_windows() {
+        // Windows 200..600 ms and 400..800 ms at 50 fps: frames 10..=30 and 20..=40. The decoder delivers the first
+        // range, whose frames 20..=30 go to both windows, then seeks back to the second range's start and delivers
+        // it, the overlap a second time
+        let ranges = [(200_000, 600_000), (400_000, 800_000)];
+        let done = Arc::new(AtomicUsize::new(0));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let make = || -> Option<Box<dyn FrameTracker>> { Some(Box::new(FakeTracker { n: 0, calls: calls.clone() })) };
+        let s = OpticalSession::new(2, 50.0, 1, Arc::new(AtomicBool::new(false)), &make, counter(done.clone()));
+        let mut jobs = 0;
+        for (from, to) in ranges {
+            for i in from / 20_000..=to / 20_000 {
+                for w in windows_containing(&ranges, i * 20_000) {
+                    s.feed(w, i * 20_000, img());
+                    jobs += 1;
+                }
+            }
+        }
+        let raw = s.finish();
+        assert_eq!((jobs, done.load(SeqCst)), (64, 64));   // every frame reported done, the skipped ones too
+        assert_eq!(calls.load(SeqCst), 64 - 11);              // the overlap delivered again never reaches window 0's tracker
+        let pairs = |w: &RawWindow| w.pairs.iter().map(|p| (p.a.index, p.b.index)).collect::<Vec<_>>();
+        let consecutive = |from: usize, to: usize| (from..to).map(|i| (i, i + 1)).collect::<Vec<_>>();
+        assert_eq!(pairs(&raw[0]), consecutive(10, 30));
+        assert_eq!((raw[0].restarts, raw[0].duplicates), (0, 11));
+        assert_eq!(pairs(&raw[1]), consecutive(20, 40));
+        assert_eq!((raw[1].restarts, raw[1].duplicates), (1, 0));
     }
     #[test] fn cancelled_session_drains_without_tracking() {
         let done = Arc::new(AtomicUsize::new(0));

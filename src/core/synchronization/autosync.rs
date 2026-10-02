@@ -1475,6 +1475,33 @@ mod tests {
     }
 
     #[test]
+    fn optical_run_with_overlapping_windows_in_decoder_order() {
+        use std::sync::Mutex;
+        let stab = manager_with_motion();
+        // Windows 500..1000 ms (frames 15..=30) and 650..1150 ms (frames 20..=34)
+        let mut sync = AutosyncProcess::from_manager(&stab, &[0.25, 0.3], optical_params(), "synchronize".into(), Arc::new(AtomicBool::new(false))).unwrap();
+        assert_eq!(sync.get_ranges(), vec![(500.0, 1000.0), (650.0, 1150.0)]);
+        let rows = Arc::new(Mutex::new(None));
+        let progress = Arc::new(Mutex::new(Vec::new()));
+        let (rows2, progress2) = (rows.clone(), progress.clone());
+        sync.on_finished(move |r| if let AutosyncResult::Offsets(o) = r { *rows2.lock().unwrap() = Some(o); });
+        sync.on_progress(move |p, d, t| progress2.lock().unwrap().push((p, d, t)));
+        // The decoder's order: the first range, then a seek back to the second range's start, so frames 20..=30 come
+        // twice and each time go to both windows
+        let mut accepted = 0;
+        for i in (15..=30i64).chain(20..=34) {
+            if sync.feed_frame(i * 1_000_000 / 30, i as usize, 64, 64, 64, &[128; 64 * 64]) { accepted += 1; }
+        }
+        assert_eq!(accepted, 16 + 15);
+        // One job per (frame, window): 16 + 11 in the first range, 11 + 15 in the second
+        assert_eq!(sync.total_read_frames.load(SeqCst), 1 + 53);
+        sync.finished_feeding_frames();
+        assert_eq!(sync.total_detected_frames.load(SeqCst), 53);
+        assert_eq!(*rows.lock().unwrap(), Some(vec![(750.0, 12.0, 0.0, 0.0), (900.0, 12.0, 0.0, 0.0)]));
+        assert_eq!(*progress.lock().unwrap().last().unwrap(), (1.0, 53, 53));
+    }
+
+    #[test]
     fn cancelled_optical_run_delivers_nothing() {
         use std::sync::Mutex;
         let stab = manager_with_motion();

@@ -15,17 +15,36 @@ pub struct RawFrame { pub index: usize, pub ts_ms: f64 }
 
 pub struct RawPair { pub a: RawFrame, pub b: RawFrame, pub obs: Vec<Observation> }
 
+/// `frames`: frames recorded (duplicates not counted); `duplicates`: frames skipped as `FrameStep::Duplicate`
 #[derive(Default)]
-pub struct RawWindow { pub pairs: Vec<RawPair>, pub track_size: (u32, u32), pub frames: usize, pub restarts: usize, pub dropped_pairs: usize }
+pub struct RawWindow { pub pairs: Vec<RawPair>, pub track_size: (u32, u32), pub frames: usize, pub restarts: usize, pub dropped_pairs: usize, pub duplicates: usize }
 
+/// How a frame continues a window, by its frame index against the window's frames since its last restart
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FrameStep { First, Continuous, Gap, Restart }
+pub enum FrameStep {
+    /// The window's first frame
+    First,
+    /// The next frame after the last one (`last + every_nth`)
+    Continuous,
+    /// Later than that: the tracker starts over, the pairs so far stay
+    Gap,
+    /// At or before the first frame since the last restart: a decode retry feeds the window again from its start,
+    /// so the pairs so far are dropped and the window starts over with this frame
+    Restart,
+    /// After the first and at or before the last frame: a frame seen already, skipped. The decoder delivers the
+    /// overlap of two windows twice (it seeks back to the next range's start after each range), and a variable
+    /// frame rate clip can map two frames to the same index.
+    Duplicate,
+}
 
-pub fn classify_step(last_index: Option<usize>, index: usize, every_nth: usize) -> FrameStep {
-    match last_index {
+/// `span`: (first, last) frame index since the window's last restart, None before its first frame. `every_nth` is
+/// clamped to at least 1.
+pub fn classify_step(span: Option<(usize, usize)>, index: usize, every_nth: usize) -> FrameStep {
+    match span {
         None => FrameStep::First,
-        Some(last) if index == last + every_nth => FrameStep::Continuous,
-        Some(last) if index <= last => FrameStep::Restart,
+        Some((_, last)) if index == last + every_nth.max(1) => FrameStep::Continuous,
+        Some((first, _)) if index <= first => FrameStep::Restart,
+        Some((_, last)) if index <= last => FrameStep::Duplicate,
         Some(_) => FrameStep::Gap,
     }
 }
@@ -37,28 +56,41 @@ pub fn frame_index(ts_us: i64, scaled_fps: f64) -> usize {
 
 pub struct WindowBuilder {
     pub raw: RawWindow,
+    /// Frame index of the window's first frame since its last restart
+    first: Option<usize>,
     last: Option<RawFrame>,
     every_nth: usize,
 }
 
 impl WindowBuilder {
     pub fn new(every_nth: usize) -> Self {
-        Self { raw: RawWindow::default(), last: None, every_nth: every_nth.max(1) }
+        Self { raw: RawWindow::default(), first: None, last: None, every_nth: every_nth.max(1) }
     }
 
-    /// Restart clears `raw.pairs` (adds their count to `dropped_pairs`, bumps `restarts`). Caller resets the tracker on Gap and Restart.
+    /// Classifies the frame (see `classify_step`). Restart clears `raw.pairs` (adds their count to `dropped_pairs`,
+    /// bumps `restarts`); First and Restart make the frame the window's first. Duplicate only bumps `duplicates`: the
+    /// caller skips the frame, neither tracking it nor calling `end_frame`. Caller resets the tracker on Gap and Restart.
     pub fn begin_frame(&mut self, index: usize) -> FrameStep {
-        let step = classify_step(self.last.map(|f| f.index), index, self.every_nth);
-        if step == FrameStep::Restart {
-            self.raw.dropped_pairs += self.raw.pairs.len();
-            self.raw.pairs.clear();
-            self.raw.restarts += 1;
+        let span = self.first.zip(self.last.map(|f| f.index));
+        let step = classify_step(span, index, self.every_nth);
+        match step {
+            FrameStep::First => self.first = Some(index),
+            FrameStep::Restart => {
+                self.raw.dropped_pairs += self.raw.pairs.len();
+                self.raw.pairs.clear();
+                self.raw.restarts += 1;
+                self.first = Some(index);
+            }
+            FrameStep::Duplicate => self.raw.duplicates += 1,
+            FrameStep::Continuous | FrameStep::Gap => {}
         }
         step
     }
 
-    /// Pushes a pair only for Continuous with non-empty `obs`; always records `frame` as the last one.
+    /// Pushes a pair only for Continuous with non-empty `obs`; records `frame` as the last one for every step but
+    /// Duplicate, which leaves the window untouched.
     pub fn end_frame(&mut self, frame: RawFrame, step: FrameStep, obs: Vec<Observation>) {
+        if step == FrameStep::Duplicate { return; }
         self.raw.frames += 1;
         if step == FrameStep::Continuous && !obs.is_empty() {
             if let Some(a) = self.last {
@@ -128,28 +160,105 @@ pub fn round_robin_ids(counts: &[usize], first_id: u32) -> Vec<u32> {
 mod tests {
     use super::*;
     #[test] fn classify_step_stride_1_and_2() {
-        assert_eq!(classify_step(None, 7, 1), FrameStep::First);
-        assert_eq!(classify_step(Some(7), 8, 1), FrameStep::Continuous);
-        assert_eq!(classify_step(Some(7), 9, 1), FrameStep::Gap);
-        assert_eq!(classify_step(Some(8), 10, 2), FrameStep::Continuous);
-        assert_eq!(classify_step(Some(8), 9, 2), FrameStep::Gap);
-        assert_eq!(classify_step(Some(8), 8, 2), FrameStep::Restart);
-        assert_eq!(classify_step(Some(8), 2, 2), FrameStep::Restart);
+        use FrameStep::*;
+        assert_eq!(classify_step(None, 7, 1), First);
+        assert_eq!(classify_step(Some((7, 7)), 8, 1), Continuous);
+        assert_eq!(classify_step(Some((7, 7)), 9, 1), Gap);
+        assert_eq!(classify_step(Some((2, 8)), 10, 2), Continuous);
+        assert_eq!(classify_step(Some((2, 8)), 9, 2), Gap);
+        // At or before the first frame since the last restart: a decode retry
+        assert_eq!(classify_step(Some((8, 8)), 8, 2), Restart);
+        assert_eq!(classify_step(Some((4, 8)), 4, 2), Restart);
+        assert_eq!(classify_step(Some((4, 8)), 2, 2), Restart);
+        // After the first, at or before the last: seen already
+        assert_eq!(classify_step(Some((4, 8)), 5, 2), Duplicate);
+        assert_eq!(classify_step(Some((4, 8)), 8, 2), Duplicate);
+        // A stride of 0 counts as 1
+        assert_eq!(classify_step(Some((7, 7)), 8, 0), Continuous);
+        assert_eq!(classify_step(Some((7, 7)), 7, 0), Restart);
+        assert_eq!(classify_step(Some((7, 9)), 8, 0), Duplicate);
     }
+    fn obs() -> Vec<Observation> { vec![Observation { id: 1, a: [0.0; 2], b: [1.0; 2] }] }
+    /// One frame as the tracking thread handles it: a Duplicate is skipped, everything else is recorded
+    fn feed(w: &mut WindowBuilder, index: usize, ts_ms: f64) -> FrameStep {
+        let s = w.begin_frame(index);
+        if s != FrameStep::Duplicate { w.end_frame(RawFrame { index, ts_ms }, s, obs()); }
+        s
+    }
+    /// (a, b) frame indices of every pair
+    fn pair_indices(w: &WindowBuilder) -> Vec<(usize, usize)> { w.raw.pairs.iter().map(|p| (p.a.index, p.b.index)).collect() }
+    fn consecutive(from: usize, to: usize) -> Vec<(usize, usize)> { (from..to).map(|i| (i, i + 1)).collect() }
     #[test] fn restart_drops_pairs_without_duplicates() {
-        let obs = || vec![Observation { id: 1, a: [0.0; 2], b: [1.0; 2] }];
         let mut w = WindowBuilder::new(1);
-        for i in 10..14 { let s = w.begin_frame(i); w.end_frame(RawFrame { index: i, ts_ms: i as f64 }, s, obs()); }
+        for i in 10..14 { feed(&mut w, i, i as f64); }
         assert_eq!(w.raw.pairs.len(), 3);
-        for i in 10..13 { let s = w.begin_frame(i); w.end_frame(RawFrame { index: i, ts_ms: i as f64 }, s, obs()); }  // software retry
-        assert_eq!((w.raw.restarts, w.raw.dropped_pairs, w.raw.pairs.len()), (1, 3, 2));
+        for i in 10..13 { feed(&mut w, i, i as f64); }  // software retry
+        assert_eq!((w.raw.restarts, w.raw.dropped_pairs, w.raw.pairs.len(), w.raw.duplicates), (1, 3, 2, 0));
         let idx: Vec<usize> = w.raw.pairs.iter().map(|p| p.a.index).collect();
         assert_eq!(idx, vec![10, 11]);
     }
-    #[test] fn gap_keeps_existing_pairs() {
-        let obs = || vec![Observation { id: 1, a: [0.0; 2], b: [1.0; 2] }];
+    /// Windows A = frames 10..=30 and B = 20..=40 in the decoder's order: A's range (its overlap with B goes to both),
+    /// then B's range, which delivers the overlap 20..=30 again
+    fn decode_overlapping(a: &mut WindowBuilder, b: &mut WindowBuilder) {
+        for i in 10..=30 {
+            feed(a, i, i as f64);
+            if i >= 20 { feed(b, i, i as f64); }
+        }
+        for i in 20..=40 {
+            if i <= 30 { assert_eq!(feed(a, i, i as f64), FrameStep::Duplicate, "frame {i}"); }
+            feed(b, i, i as f64);
+        }
+    }
+    #[test] fn overlap_delivered_again_is_skipped_not_restarted() {
+        let (mut a, mut b) = (WindowBuilder::new(1), WindowBuilder::new(1));
+        decode_overlapping(&mut a, &mut b);
+        // A keeps every pair of its range, once
+        assert_eq!(pair_indices(&a), consecutive(10, 30));
+        assert_eq!((a.raw.restarts, a.raw.dropped_pairs, a.raw.duplicates, a.raw.frames), (0, 0, 11, 21));
+        // B restarts at its own first frame and ends with its whole range
+        assert_eq!(pair_indices(&b), consecutive(20, 40));
+        assert_eq!((b.raw.restarts, b.raw.dropped_pairs, b.raw.duplicates), (1, 10, 0));
+    }
+    #[test] fn decode_retry_of_overlapping_windows_starts_both_over() {
+        let (mut a, mut b) = (WindowBuilder::new(1), WindowBuilder::new(1));
+        decode_overlapping(&mut a, &mut b);
+        // A software retry on the same process feeds both ranges again from the start
+        decode_overlapping(&mut a, &mut b);
+        assert_eq!(pair_indices(&a), consecutive(10, 30));
+        assert_eq!((a.raw.restarts, a.raw.dropped_pairs), (1, 20));
+        assert_eq!(pair_indices(&b), consecutive(20, 40));
+        assert_eq!((b.raw.restarts, b.raw.dropped_pairs), (3, 10 + 20 + 10));
+    }
+    #[test] fn repeated_frame_index_is_a_duplicate() {
+        // A variable frame rate clip maps two frames to index 12; the second is skipped and the pairs stay
         let mut w = WindowBuilder::new(1);
-        for i in [10, 11, 15, 16] { let s = w.begin_frame(i); w.end_frame(RawFrame { index: i, ts_ms: i as f64 }, s, obs()); }
+        let steps: Vec<FrameStep> = [(10, 0.0), (11, 1.0), (12, 2.0), (12, 2.4), (13, 3.0), (14, 4.0)].iter().map(|&(i, t)| feed(&mut w, i, t)).collect();
+        use FrameStep::*;
+        assert_eq!(steps, vec![First, Continuous, Continuous, Duplicate, Continuous, Continuous]);
+        assert_eq!(pair_indices(&w), consecutive(10, 14));
+        assert_eq!((w.raw.restarts, w.raw.duplicates, w.raw.frames), (0, 1, 5));
+        assert_eq!(w.raw.pairs[2].a.ts_ms, 2.0);   // the pair 12-13 starts at the frame recorded first
+    }
+    #[test] fn overlap_with_the_other_stride_phase_keeps_the_pairs() {
+        // Every 2nd frame: B's range delivers the overlap at the odd frames A's range skipped. Those are duplicates
+        // for both windows; B then resumes after a gap.
+        let (mut a, mut b) = (WindowBuilder::new(2), WindowBuilder::new(2));
+        for i in (10..=30).step_by(2) {
+            feed(&mut a, i, i as f64);
+            if i >= 20 { feed(&mut b, i, i as f64); }
+        }
+        for i in (21..=41).step_by(2) {
+            if i <= 30 { assert_eq!(feed(&mut a, i, i as f64), FrameStep::Duplicate); }
+            let s = feed(&mut b, i, i as f64);
+            assert_eq!(s, if i <= 29 { FrameStep::Duplicate } else if i == 31 { FrameStep::Gap } else { FrameStep::Continuous }, "frame {i}");
+        }
+        assert_eq!(pair_indices(&a), (10..30).step_by(2).map(|i| (i, i + 2)).collect::<Vec<_>>());
+        let b_pairs: Vec<(usize, usize)> = (20..30).step_by(2).chain((31..41).step_by(2)).map(|i| (i, i + 2)).collect();
+        assert_eq!((pair_indices(&b), b.raw.restarts), (b_pairs, 0));
+    }
+    #[test] fn gap_keeps_existing_pairs() {
+        let mut w = WindowBuilder::new(1);
+        for i in [10, 11, 15, 16] { feed(&mut w, i, i as f64); }
         assert_eq!(w.raw.pairs.len(), 2);   // 10-11 and 15-16, nothing across the gap
     }
     #[test] fn frame_index_uses_scaled_time() {
