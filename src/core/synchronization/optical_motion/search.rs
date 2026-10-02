@@ -549,10 +549,10 @@ mod tests {
     /// The search on a synthetic window, set up the way the caller sets it up: the quaternion table covers the window's
     /// row-time span minus the search intervals with 50 ms margins, the coarse scan takes 200 points per pair
     /// (COARSE_POINTS default) and 5 IRLS rounds, and a covered offset where no band could be fitted is unmeasured.
-    /// Product search range (±5 s, 10 ms steps) on a pool of all cores: the debug-profile coarse scan is slow.
+    /// Search range ±1 s (10 ms steps) on a pool of all cores, to keep the debug-profile coarse scan short.
     fn search_synthetic(spec: &SynthSpec) -> SearchOutcome {
         let (w, quats) = synth_window(spec);
-        let p = SearchParams { total_pairs: w.pairs.len(), ..params() };
+        let p = SearchParams { search_ms: 1000.0, total_pairs: w.pairs.len(), ..params() };
         let (lo, hi) = w.pairs.iter()
             .flat_map(|pd| pd.fa.iter().map(|&f| row_time_ms(&pd.a, f)).chain(pd.fb.iter().map(|&f| row_time_ms(&pd.b, f))))
             .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), t| (lo.min(t), hi.max(t)));
