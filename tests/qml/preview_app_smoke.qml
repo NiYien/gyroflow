@@ -34,6 +34,7 @@ Item {
             app.onboardingActive = true;
             const video = app.videoArea;
             if (smoke.stage === 0) {
+                smoke.check(video.stabPreviewBtn.previewState === 1, "startup defaults to stabilized preview");
                 app.deepMatchStabilizePending = true;
                 video.loadFile(Qt.resolvedUrl("../../../target/mobile-folder-fixtures/A/clip1.mp4"), true, 0, "", true);
                 smoke.check(!video.shouldShowStabilizeHint(), "loading must not report missing stabilization");
@@ -41,8 +42,12 @@ Item {
             } else if (smoke.stage === 1) {
                 if (video.previewLoading || video.defaultPreviewPending || video.videoLoader.active) return;
                 smoke.check(!app.controller.gyro_loaded && !app.controller.lens_loaded, "fixture has no stabilization metadata");
-                smoke.check(!video.stabEnabledBtn.checked, "plain video defaults to original playback");
-                smoke.check(!video.infoMessages.children[0].visible, "plain playback has no missing-lens warning");
+                smoke.check(video.stabPreviewBtn.previewState === 1, "plain video defaults to stabilized preview");
+                smoke.check(video.infoMessages.children[0].visible, "stabilized preview retains missing-lens warning");
+                video.stabEnabledBtn.checked = false;
+                video.applyDefaultPreview();
+                smoke.check(!video.stabEnabledBtn.checked, "completed load does not override manual comparison");
+                smoke.check(!video.infoMessages.children[0].visible, "original playback has no missing-lens warning");
                 video.vid.play();
                 smoke.check(!video.shouldShowStabilizeHint(), "plain playback ignores another clip's deep match");
                 video.stabEnabledBtn.checked = true;
@@ -55,21 +60,26 @@ Item {
             } else if (smoke.stage === 2) {
                 const data = render_queue.get_gyroflow_data(smoke.jobId);
                 if (!data) return;
+                video.fovOverviewBtn.checked = true;
                 video.loadGyroflowData(JSON.parse(data), smoke.jobId);
                 smoke.check(!video.shouldShowStabilizeHint(), "queue project import suppresses transient reminder");
                 smoke.stage++;
-            } else {
+            } else if (smoke.stage === 3) {
                 if (video.previewLoading || video.defaultPreviewPending || video.videoLoader.active) return;
-                smoke.check(!video.stabEnabledBtn.checked, "queue video without gyro also defaults to original");
-                smoke.check(!video.infoMessages.children[0].visible, "queue original has no lens warning");
-                video.stabEnabledBtn.checked = true;
+                smoke.check(video.stabPreviewBtn.previewState === 1, "queue preview resets overview to stabilized");
+                smoke.check(!video.secondPreview.show, "queue preview resets split view");
                 smoke.check(video.shouldShowStabilizeHint(), "unfinished queue work still receives reminder in stabilization view");
                 video.queueEditLoading = true;
                 smoke.check(!video.shouldShowStabilizeHint(), "incomplete project data cannot trigger reminder");
                 video.queueEditLoading = false;
                 video.stabEnabledBtn.checked = false;
                 smoke.check(!video.shouldShowStabilizeHint(), "original playback remains quiet");
-                console.warn("PREVIEW_SMOKE_PASS plain video, queue project, load guards, original playback, explicit stabilization warnings");
+                video.loadGyroflowData(JSON.parse(render_queue.get_gyroflow_data(smoke.jobId)), smoke.jobId);
+                smoke.stage++;
+            } else {
+                if (video.previewLoading || video.defaultPreviewPending || video.videoLoader.active) return;
+                smoke.check(video.stabPreviewBtn.previewState === 1, "reopening the same queue video restores stabilization");
+                console.warn("PREVIEW_SMOKE_PASS startup, default stabilization, queue replay, overview reset, load guards, manual comparison");
                 smoke.completed = true;
                 smoke.applicationWindow.closeConfirmed = true;
                 Qt.quit();

@@ -56,8 +56,10 @@ Item {
         root.defaultPreviewPending = false;
         // MobileWorkspace owns its comparison state and applies it after project import.
         if (window.hasOwnProperty("useMobileWorkspace") && window.useMobileWorkspace) return;
-        // A video without motion data is ordinary playback until the user enables stabilization.
-        stabEnabledBtn.checked = root.isCalibrator || controller.gyro_loaded;
+        // Each new preview starts stabilized; comparison choices only last until the next load.
+        fovOverviewBtn.checked = false;
+        secondPreview.show = false;
+        stabEnabledBtn.checked = true;
     }
 
     function shouldShowStabilizeHint(): bool {
