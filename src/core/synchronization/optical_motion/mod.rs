@@ -12,6 +12,7 @@ pub mod bearings;
 pub mod config;
 pub mod cost;
 pub mod quat_table;
+pub mod rates;
 pub mod search;
 #[cfg(feature = "use-opencv")] pub mod tracker;
 pub mod tracks;
