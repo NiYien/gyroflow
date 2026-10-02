@@ -6,5 +6,6 @@
 pub mod config;
 pub mod cost;
 pub mod quat_table;
+pub mod search;
 pub mod tracks;
 #[cfg(test)] pub mod testutil;
