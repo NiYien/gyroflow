@@ -67,7 +67,7 @@ impl FrameTransform {
         }
     }
 
-    fn get_frame_readout_time(
+    pub(crate) fn get_frame_readout_time(
         params: &ComputeParams,
         can_invert: bool,
         timestamp_ms: f64,

@@ -91,6 +91,39 @@ pub fn readout_pos(pt: [f32; 2], size: (u32, u32), horizontal: bool) -> f32 {
     if horizontal { pt[0] / size.0 as f32 } else { pt[1] / size.1 as f32 }
 }
 
+/// Size a frame is tracked at: frames wider than `track_width` are downscaled to that width, the height in proportion
+/// and rounded to an even number; narrower frames keep their size.
+pub fn tracking_size(size: (u32, u32), track_width: u32) -> (u32, u32) {
+    let (w, h) = size;
+    if w <= track_width { return size; }
+    let th = (h as f64 * track_width as f64 / w as f64 / 2.0).round() as u32 * 2;
+    (track_width, th.max(2))
+}
+
+/// Ids for the corners one replenish added, given in cell order (`counts[c]` corners of grid cell `c`, the corners of
+/// a cell next to each other): handed out round-robin over the cells, starting at `first_id` (the first corner of
+/// every cell, then the second of every cell, ...). Ties between equally long track segments are broken by id
+/// (`cost::select_tracks`), and this way the lowest ids are spread over the frame instead of filling one cell.
+pub fn round_robin_ids(counts: &[usize], first_id: u32) -> Vec<u32> {
+    let mut start = Vec::with_capacity(counts.len());
+    let mut total = 0;
+    for &n in counts {
+        start.push(total);
+        total += n;
+    }
+    let mut ids = vec![0u32; total];
+    let mut next = first_id;
+    for k in 0..counts.iter().copied().max().unwrap_or(0) {
+        for (cell, &n) in counts.iter().enumerate() {
+            if k < n {
+                ids[start[cell] + k] = next;
+                next = next.wrapping_add(1);
+            }
+        }
+    }
+    ids
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,5 +165,32 @@ mod tests {
     #[test] fn readout_pos_uses_x_when_horizontal() {
         assert_eq!(readout_pos([240.0, 54.0], (960, 540), true), 0.25);
         assert_eq!(readout_pos([240.0, 54.0], (960, 540), false), 0.1);
+    }
+    #[test] fn tracking_size_downscales_wide_frames_to_an_even_height() {
+        assert_eq!(tracking_size((1920, 1080), 960), (960, 540));
+        assert_eq!(tracking_size((3840, 1606), 960), (960, 402));   // 401.5
+        assert_eq!(tracking_size((3840, 1600), 960), (960, 400));
+        assert_eq!(tracking_size((4096, 2160), 960), (960, 506));   // 506.25
+        assert_eq!(tracking_size((960, 540), 960), (960, 540));
+        assert_eq!(tracking_size((640, 361), 960), (640, 361));     // not downscaled: left as is
+    }
+    #[test] fn round_robin_ids_interleave_the_cells() {
+        // Cell order: two corners of cell 0, none of cell 1, one of cell 2, three of cell 3
+        assert_eq!(round_robin_ids(&[2, 0, 1, 3], 10), vec![10, 13, 11, 12, 14, 15]);
+        assert_eq!(round_robin_ids(&[], 7), Vec::<u32>::new());
+        assert_eq!(round_robin_ids(&[0, 0], 7), Vec::<u32>::new());
+    }
+    #[test] fn round_robin_ids_spread_the_lowest_ids_over_the_grid() {
+        // A full replenish of the 6x4 grid: 62 corners per cell
+        let counts = [62usize; 24];
+        let ids = round_robin_ids(&counts, 1000);
+        let mut sorted = ids.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, (1000..1000 + 62 * 24).collect::<Vec<u32>>());   // unique, allocated from first_id
+        let cell_of = |k: usize| k / 62;
+        let mut cells: Vec<usize> = (0..ids.len()).filter(|&k| ids[k] < 1024).map(cell_of).collect();
+        cells.sort_unstable();
+        cells.dedup();
+        assert_eq!(cells.len(), 24);   // the first 24 ids: one in every cell
     }
 }
