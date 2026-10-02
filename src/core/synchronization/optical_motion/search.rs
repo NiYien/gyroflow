@@ -5,7 +5,8 @@
 //! 1. A window with fewer than MIN_PAIRS frame pairs fails with `WindowTooShort` before anything is evaluated.
 //! 2. Coarse scan: the coarse cost at every point of `grid(search_intervals(..))`, in parallel on the given pool. A grid
 //!    point whose coarse cost is None or not finite is invalid. Without a valid point the search fails with
-//!    `NoGyroOverlap`.
+//!    `NoGyroOverlap` (the caller, which knows the gyro coverage, turns that into `FewMeasurements` when the points
+//!    were covered but nothing could be fitted).
 //! 3. c1 is the lowest valid grid point (see `local_minima` for why that is also the lowest local minimum). Within
 //!    EDGE_STEPS grid steps of an end of a search interval or of an invalid grid point it fails with `Edge`.
 //! 4. Candidates and refinement (§6.4): c1 refined by `brent_min` on full evaluations; up to FAR_CANDIDATES far

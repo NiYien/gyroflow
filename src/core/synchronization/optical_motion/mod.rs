@@ -31,7 +31,7 @@ use crate::synchronization::{ sync_diag, GrayImage, SyncParams };
 use self::config::OpticalConfig;
 use self::cost::{ eval_coarse, eval_full, select_tracks, CostContext, SgCache };
 use self::quat_table::QuatTable;
-use self::search::{ failed, run_search, search_intervals, FailReason, FullEval, SearchOutcome, SearchParams };
+use self::search::{ failed, grid, run_search, search_intervals, FailReason, FullEval, SearchOutcome, SearchParams };
 use self::tracks::{ frame_index, row_time_ms, FrameStep, Observation, RawFrame, RawWindow, WindowBuilder, WindowTracks };
 
 /// Tracks kept alive per frame (upstream value)
@@ -315,12 +315,24 @@ fn table_for(intervals: &[(f64, f64)], d: f64) -> usize {
     (0..intervals.len()).min_by(|&x, &y| distance(&intervals[x]).total_cmp(&distance(&intervals[y]))).unwrap_or(0)
 }
 
+/// `run_search` fails as no_gyro_overlap when no coarse grid point could be evaluated, which also happens when the gyro
+/// data is there but no band could be fitted (too few long tracks). `covered` tells whether the window's row-time span
+/// minus at least one grid offset lies inside the gyro data; when it does, the failure is few_measurements.
+fn relabel_unfitted(mut outcome: SearchOutcome, covered: impl FnOnce() -> bool) -> SearchOutcome {
+    if outcome.fail == Some(FailReason::NoGyroOverlap) && covered() {
+        outcome.fail = Some(FailReason::FewMeasurements);
+    }
+    outcome
+}
+
 /// The search of one window, logged; None when cancelled.
 ///
 /// Set up as spec §6 asks: one quaternion table per search interval (`interval_tables`), the coarse scan takes
 /// `cfg.coarse_points` points per pair by whole track segments and COARSE_IRLS_ROUNDS reweighting rounds, and a full
-/// evaluation that is covered but fits no band counts as unmeasured. In the log line, `fine` is the summed wall time
-/// of the full evaluations (they run one after another) and `coarse` the rest of the search's wall time.
+/// evaluation that is covered but fits no band counts as unmeasured. A coarse curve without a valid point is
+/// no_gyro_overlap only when the gyro data covers none of the grid offsets (`relabel_unfitted`). In the log line,
+/// `fine` is the summed wall time of the full evaluations (they run one after another) and `coarse` the rest of the
+/// search's wall time.
 fn solve_window(i: usize, w: &WindowTracks, input: &SolveInput, sg: &SgCache, pool: &rayon::ThreadPool, cancel: &AtomicBool) -> Option<SearchOutcome> {
     let sp = input.sync_params;
     let cfg = input.cfg;
@@ -348,11 +360,15 @@ fn solve_window(i: usize, w: &WindowTracks, input: &SolveInput, sg: &SgCache, po
                 fine_ns.fetch_add(t.elapsed().as_nanos() as u64, Relaxed);
                 r
             };
-            (run_search(&p, &coarse, &full, pool, cancel)?, subset.per_pair.iter().map(Vec::len).sum::<usize>())
+            let outcome = run_search(&p, &coarse, &full, pool, cancel)?;
+            // Gyro time = video time - offset; `covers` is about the gyro data, the same for every table
+            let covered = || grid(&intervals, p.step_ms).iter().any(|&d| tables[table_for(&intervals, d)].covers(lo - d, hi - d));
+            (relabel_unfitted(outcome, covered), subset.per_pair.iter().map(Vec::len).sum::<usize>())
         }
-        // No observation at all, so no time span to build the table over: nothing is covered. Without pairs (a window
-        // that received no frames) the search fails as window_too_short before evaluating anything.
-        None => (run_search(&p, &|_| None, &|_| None, pool, cancel)?, 0),
+        // No observation at all, so no time span to build a table over and nothing to cover (the cost's rule for an
+        // empty span): with pairs but no observations the failure is few_measurements. Without pairs (a window that
+        // received no frames) the search fails as window_too_short before evaluating anything.
+        None => (relabel_unfitted(run_search(&p, &|_| None, &|_| None, pool, cancel)?, || true), 0),
     };
     let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
     let fine_ms = fine_ns.load(Relaxed) as f64 / 1e6;
@@ -564,6 +580,29 @@ mod tests {
         let all_cores = rayon::ThreadPoolBuilder::new().build().unwrap();
         let rows = solve_windows(&[w0], &input, &all_cores, &AtomicBool::new(false), &|_: f64| {}).unwrap();
         assert!((rows[0].1 + 700.0).abs() < 1.0 && rows[0].3 >= 0.9, "{:?}", rows[0]);
+    }
+    #[test] fn unfittable_window_is_few_measurements_unless_uncovered() {
+        // 20 tracks: every band has fewer than MIN_BAND_POINTS points, so no coarse grid point gets a cost even where
+        // the gyro data covers the window
+        let (w, quats) = synth_window(&SynthSpec { tracks: 20, ..Default::default() });
+        let cfg = cfg();
+        let solve = |init: f64| {
+            let sp = SyncParams { initial_offset: init, search_size: 1000.0, ..Default::default() };
+            let input = SolveInput { ranges_us: &[(5_000_000, 8_000_000)], sync_params: &sp, quats: &quats, cfg: &cfg, has_tracker: true };
+            solve_window(0, &w, &input, &SgCache::new(), &pool(), &AtomicBool::new(false)).unwrap()
+        };
+        // Gyro data spans -8000..20000 ms of gyro time and the window about 5000..8000 ms of video time
+        let o = solve(0.0);
+        assert_eq!((o.fail, o.offset_ms, o.conf), (Some(FailReason::FewMeasurements), 0.0, 0.0));
+        assert!(!o.coarse.is_empty() && o.coarse.iter().all(|c| c.1.is_nan()));
+        // Partly covered: only some grid offsets are inside the gyro data, which is enough
+        assert_eq!(solve(-12000.0).fail, Some(FailReason::FewMeasurements));
+        // Every grid offset puts the window before the gyro start
+        let o = solve(30000.0);
+        assert_eq!((o.fail, o.offset_ms, o.conf), (Some(FailReason::NoGyroOverlap), 30000.0, 0.0));
+        // Other failures keep their reason; an uncovered one stays no_gyro_overlap
+        assert!(relabel_unfitted(failed(FailReason::Edge, 0.0), || true).fail == Some(FailReason::Edge));
+        assert!(relabel_unfitted(failed(FailReason::NoGyroOverlap, 0.0), || false).fail == Some(FailReason::NoGyroOverlap));
     }
     #[test] fn missing_tracker_reports_no_opencv() {
         let (w0, quats) = synth_window(&SynthSpec { duration_ms: 1000.0, tracks: 50, ..Default::default() });
