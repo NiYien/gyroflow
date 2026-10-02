@@ -367,6 +367,27 @@ mod tests {
     use super::*;
     use crate::synchronization::optical_motion::testutil::{ synth_window, SynthSpec, XorShift64 };
 
+    // Pins the band fit output across the IRLS core extraction (spec §5.1). The constants depend on the toolchain's
+    // float library: to refresh them, set both to 0, run the test and copy the values from the failure message.
+    const GOLDEN_LEN: usize = 1074;
+    const GOLDEN_HASH: u64 = 15466644730790657508;
+
+    #[test]
+    fn band_fits_bits_unchanged() {
+        let spec = SynthSpec::default();
+        let (window, quats) = synth_window(&spec);
+        let table = QuatTable::build(&quats, -3000.0, 15000.0);
+        let sg = SgCache::new();
+        let ctx = CostContext { window: &window, quats: &table, sg: &sg };
+        let fits = band_fits_full(&ctx, spec.true_offset_ms).expect("covered");
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        for f in &fits {
+            for v in [f.rho.x, f.rho.y, f.rho.z, f.var, f.weight_sum] {
+                h = (h ^ v.to_bits()).wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        assert_eq!((fits.len(), h), (GOLDEN_LEN, GOLDEN_HASH));
+    }
     #[test] fn sg_removes_quadratics_keeps_high_frequency() {
         let p = sg_projection(31);
         let quad: Vec<f64> = (0..31).map(|i| 2.0 + 0.3 * i as f64 - 0.01 * (i * i) as f64).collect();
