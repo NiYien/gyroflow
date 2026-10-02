@@ -577,4 +577,49 @@ mod tests {
         let o = search_synthetic(&SynthSpec { freq_hz: (0.05, 0.15), amp_dps: 2.0, noise_px: 0.5, ..Default::default() });
         assert!(o.conf < 0.4, "offset {} conf {} G {} fail {:?}", o.offset_ms, o.conf, o.g, o.fail);
     }
+
+    /// Release benchmark against the spec §7 budget: coarse scan <= 1500 ms, refinement <= 1000 ms.
+    /// Run: just test-core "--release optical_motion::search::tests::bench_synthetic_window -- --ignored --nocapture"
+    #[test] #[ignore]
+    fn bench_synthetic_window() {
+        use std::time::Instant;
+        let spec = SynthSpec { fps: 60.0, duration_ms: 1500.0, tracks: 1200, ..Default::default() };
+        let (w, quats) = synth_window(&spec);
+        let p = SearchParams { search_ms: 5000.0, total_pairs: w.pairs.len(), ..params() };
+        let (lo, hi) = w.pairs.iter()
+            .flat_map(|pd| pd.fa.iter().map(|&f| row_time_ms(&pd.a, f)).chain(pd.fb.iter().map(|&f| row_time_ms(&pd.b, f))))
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), t| (lo.min(t), hi.max(t)));
+        let intervals = search_intervals(p.init_ms, p.search_ms, p.check_negative);
+        let (first, last) = (intervals[0].0, intervals[intervals.len() - 1].1);
+        let table = QuatTable::build(&quats, lo - last - 50.0, hi - first + 50.0);
+        let sg = SgCache::new();
+        let ctx = CostContext { window: &w, quats: &table, sg: &sg };
+        let coarse_points = crate::synchronization::optical_motion::config::config().coarse_points;
+        let subset = select_tracks(&w, coarse_points);
+        let coarse = |d: f64| eval_coarse(&ctx, &subset, d, 5);
+        let full = |d: f64| eval_full(&ctx, d).filter(|r| r.bands > 0).map(|r| FullEval { cost: r.cost_px, pairs_measured: r.pairs_measured });
+        let pool = rayon::ThreadPoolBuilder::new().build().unwrap();
+        let cancel = AtomicBool::new(false);
+
+        // The coarse scan timed on its own: the same parallel grid evaluation run_search does, on the same pool
+        let xs = grid(&intervals, p.step_ms);
+        let t = Instant::now();
+        let scanned = pool.install(|| xs.par_iter().filter(|&&x| coarse(x).is_some()).count());
+        let coarse_ms = t.elapsed().as_secs_f64() * 1000.0;
+        // One full evaluation at the truth, on the same pool
+        let t = Instant::now();
+        let one = pool.install(|| full(spec.true_offset_ms));
+        let full_ms = t.elapsed().as_secs_f64() * 1000.0;
+        // The whole search
+        let t = Instant::now();
+        let o = run_search(&p, &coarse, &full, &pool, &cancel).unwrap();
+        let total_ms = t.elapsed().as_secs_f64() * 1000.0;
+
+        println!("cores {}", pool.current_num_threads());
+        println!("pairs {}, pts/pair {}, coarse_pts/pair {}", w.pairs.len(), w.pairs[0].ids.len(), subset.per_pair[0].len());
+        println!("coarse total {coarse_ms:.0} ms ({} evals, {scanned} covered), one full eval {full_ms:.1} ms (measured {:?})", xs.len(), one.map(|e| e.pairs_measured));
+        println!("run_search total {total_ms:.0} ms, refinement {:.0} ms ({} full evals)", total_ms - coarse_ms, o.fine.len());
+        println!("result offset {:.2} conf {:.2} fail {:?}", o.offset_ms, o.conf, o.fail);
+        println!("budget: coarse <= 1500 ms: {}, refinement <= 1000 ms: {}", coarse_ms <= 1500.0, total_ms - coarse_ms <= 1000.0);
+    }
 }
