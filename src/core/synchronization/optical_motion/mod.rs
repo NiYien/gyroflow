@@ -4,4 +4,7 @@
 //! rotation-residual cost, independent of the optical-flow based methods.
 
 pub mod config;
+pub mod cost;
+pub mod quat_table;
 pub mod tracks;
+#[cfg(test)] pub mod testutil;
