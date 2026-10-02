@@ -13,6 +13,9 @@
 //! - `cost_curves_essmat.csv`     full per-segment cost curve from essential_matrix
 //! - `cost_curves_rssync.csv`     full per-segment cost curve from rs_sync
 //! - `summary.txt`                per-segment initial vs final, second/best ratio
+//! - `optical_coarse.csv` / `optical_fine.csv`  optical motion method only
+//!   (offset_method 3): per-window coarse scan and full evaluations; not
+//!   written by runs of the other methods
 //!
 //! `GYROFLOW_SYNC_DIAG=2` implies all of the above and additionally streams
 //! per-point rs-sync residuals to `residuals.csv` (change
@@ -104,6 +107,9 @@ struct DiagSession {
     /// Lazily created on the first `record_residuals` call.
     residuals_writer: Option<BufWriter<File>>,
     residual_rows: u64,
+    /// Optical motion method: coarse scan and full evaluations per window
+    optical_coarse: Vec<CostCurvePoint>,
+    optical_fine: Vec<CostCurvePoint>,
 }
 
 struct FlowQualityRecord {
@@ -277,6 +283,8 @@ pub fn init_session() {
         axis_weights: Vec::new(),
         residuals_writer: None,
         residual_rows: 0,
+        optical_coarse: Vec::new(),
+        optical_fine: Vec::new(),
     });
 }
 
@@ -463,6 +471,28 @@ pub fn record_cost_curve_rssync(range_idx: usize, points: &[(f64, f64)]) {
         s.cost_curves_rssync.reserve(points.len());
         for (offset_ms, cost) in points {
             s.cost_curves_rssync.push(CostCurvePoint {
+                range_idx,
+                offset_ms: *offset_ms,
+                cost: *cost,
+            });
+        }
+    }
+}
+
+/// Optical motion method (offset_method 3): one window's coarse scan
+/// (`fine == false`, `optical_coarse.csv`) or its full evaluations in
+/// evaluation order (`fine == true`, `optical_fine.csv`), as (offset ms,
+/// cost px), NaN where nothing was measured.
+#[inline]
+pub fn record_optical_curve(range_idx: usize, fine: bool, points: &[(f64, f64)]) {
+    if !is_enabled() {
+        return;
+    }
+    if let Some(s) = SESSION.lock().as_mut() {
+        let curve = if fine { &mut s.optical_fine } else { &mut s.optical_coarse };
+        curve.reserve(points.len());
+        for (offset_ms, cost) in points {
+            curve.push(CostCurvePoint {
                 range_idx,
                 offset_ms: *offset_ms,
                 cost: *cost,
@@ -1039,6 +1069,25 @@ fn write_all(s: &DiagSession) -> std::io::Result<()> {
     write_flow_quality(s)?;
     write_axis_weights(s)?;
     write_summary(s)?;
+    write_optical_curves(s)?;
+    Ok(())
+}
+
+/// Only files with points: runs of the other methods leave the session's file list as it was
+fn write_optical_curves(s: &DiagSession) -> std::io::Result<()> {
+    for (name, pts) in [("optical_coarse.csv", &s.optical_coarse), ("optical_fine.csv", &s.optical_fine)] {
+        if !pts.is_empty() {
+            write_optical_curve(&mut open_csv(&s.out_dir, name)?, pts)?;
+        }
+    }
+    Ok(())
+}
+
+fn write_optical_curve(w: &mut impl Write, pts: &[CostCurvePoint]) -> std::io::Result<()> {
+    writeln!(w, "range_idx,offset_ms,cost_px")?;
+    for p in pts {
+        writeln!(w, "{},{:.4},{:.6}", p.range_idx, p.offset_ms, p.cost)?;
+    }
     Ok(())
 }
 
@@ -1674,8 +1723,21 @@ mod tests {
         record_cost_curve_essmat(0, &[]);
         record_cost_curve_rssync(0, &[]);
         record_rssync_summary(0, 0.0, 0.0, 0.0, 0.0);
+        record_optical_curve(0, false, &[(10.0, 1.5)]);
+        record_optical_curve(0, true, &[(10.0, 1.5)]);
         // SESSION should remain None.
         assert!(SESSION.lock().is_none());
+    }
+
+    #[test]
+    fn optical_curve_csv_lists_range_offset_and_cost() {
+        let pts = [
+            CostCurvePoint { range_idx: 0, offset_ms: -700.25, cost: 1.5 },
+            CostCurvePoint { range_idx: 1, offset_ms: 10.0, cost: f64::NAN },
+        ];
+        let mut out = Vec::new();
+        write_optical_curve(&mut out, &pts).unwrap();
+        assert_eq!(String::from_utf8(out).unwrap(), "range_idx,offset_ms,cost_px\n0,-700.2500,1.500000\n1,10.0000,NaN\n");
     }
 
     /// M1 (sync-parallax-suppression): the weighted Pearson aggregate's argmax
