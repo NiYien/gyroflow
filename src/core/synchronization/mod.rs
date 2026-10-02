@@ -108,6 +108,7 @@ unsafe impl Sync for FrameResult {}
 #[derive(Default)]
 pub struct PoseEstimator {
     pub sync_results: Arc<RwLock<BTreeMap<i64, FrameResult>>>,
+    pub optical_rates: Arc<RwLock<BTreeMap<i64, [f64; 3]>>>,
     pub estimated_gyro: Arc<RwLock<BTreeMap<i64, TimeIMU>>>,
     pub estimated_quats: Arc<RwLock<TimeQuat>>,
     pub lpf: AtomicU32,
@@ -125,8 +126,15 @@ pub struct PoseEstimator {
 impl PoseEstimator {
     pub fn clear(&self) {
         self.sync_results.write().clear();
+        self.optical_rates.write().clear();
         self.estimated_gyro.write().clear();
         self.estimated_quats.write().clear();
+    }
+
+    pub fn replace_optical_rates(&self, ranges_us: &[(i64, i64)], samples: BTreeMap<i64, [f64; 3]>) {
+        let mut rates = self.optical_rates.write();
+        rates.retain(|timestamp, _| !ranges_us.iter().any(|(from, to)| timestamp >= from && timestamp <= to));
+        rates.extend(samples);
     }
 
     pub fn detect_features(
@@ -578,6 +586,15 @@ impl PoseEstimator {
         {
             let sync_results = self.sync_results.read();
 
+            let optical_rates = self.optical_rates.read();
+            if sync_results.is_empty() && !optical_rates.is_empty() {
+                gyro.extend(optical_rates.iter().map(|(timestamp, rate)| (*timestamp, TimeIMU {
+                    timestamp_ms: *timestamp as f64 / 1000.0,
+                    gyro: Some(*rate),
+                    accl: None,
+                    magn: None,
+                })));
+            } else {
             let mut iter = sync_results.iter().peekable();
             while let Some((k, v)) = iter.next() {
                 let mut eul = v.euler;
@@ -640,6 +657,7 @@ impl PoseEstimator {
                     let quat = v.quat.unwrap_or_else(|| Quat64::identity());
                     quats.insert(ts_us, quat);
                 }
+            }
             }
         }
         {
@@ -743,6 +761,62 @@ impl PoseEstimator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recalculate_uses_optical_rates_when_no_sync_results() {
+        let pe = PoseEstimator::default();
+        pe.optical_rates.write().extend([(1_000_000, [1.0, 2.0, 3.0]), (1_033_333, [4.0, 5.0, 6.0])]);
+        pe.recalculate_gyro_data(30.0, true);
+        let g = pe.estimated_gyro.read();
+        assert_eq!(g.len(), 2);
+        assert_eq!(g[&1_033_333].gyro, Some([4.0, 5.0, 6.0]));
+        assert!((g[&1_000_000].timestamp_ms - 1000.0).abs() < 1e-9);
+        assert!(pe.estimated_quats.read().is_empty());
+    }
+
+    #[test]
+    fn optical_rates_follow_the_sync_lpf() {
+        let pe = PoseEstimator::default();
+        pe.optical_rates.write().extend((0..300).map(|i| (i * 10_000, if i % 2 == 0 { [10.0; 3] } else { [-10.0; 3] })));
+        pe.lowpass_filter(5.0, 100.0);
+        let g = pe.estimated_gyro.read();
+        assert_eq!(g.len(), 300);
+        assert!(g.values().skip(50).take(200).all(|x| x.gyro.unwrap()[0].abs() < 5.0));
+    }
+
+    #[test]
+    fn sync_results_take_precedence_over_optical_rates() {
+        let pe = PoseEstimator::default();
+        let img = Arc::new(image::GrayImage::new(8, 8));
+        pe.sync_results.write().insert(2_000_000, FrameResult {
+            of_method: OpticalFlowMethod::detect_features(2, 2_000_000, img, None, 8, 8, 8),
+            frame_no: 0, timestamp_us: 2_000_000, gyro_timestamp_us: 2_000_000, frame_size: (8, 8),
+            rotation: None, quat: None, euler: Some((0.01, 0.02, 0.03)),
+            optical_flow: Default::default(),
+        });
+        pe.optical_rates.write().insert(1_000_000, [1.0; 3]);
+        pe.recalculate_gyro_data(30.0, true);
+        // Only the sync_results sample: a single frame keeps its own timestamp
+        assert_eq!(pe.estimated_gyro.read().keys().copied().collect::<Vec<_>>(), vec![2_000_000]);
+    }
+
+    #[test]
+    fn replace_optical_rates_keeps_other_windows() {
+        let pe = PoseEstimator::default();
+        pe.optical_rates.write().extend([(500_000, [1.0; 3]), (1_200_000, [2.0; 3]), (3_000_000, [3.0; 3])]);
+        pe.replace_optical_rates(&[(1_000_000, 2_000_000)], BTreeMap::from([(1_500_000, [9.0; 3])]));
+        let r = pe.optical_rates.read();
+        assert_eq!(r.keys().copied().collect::<Vec<_>>(), vec![500_000, 1_500_000, 3_000_000]);
+        assert_eq!(r[&1_500_000], [9.0; 3]);
+    }
+
+    #[test]
+    fn clear_empties_optical_rates() {
+        let pe = PoseEstimator::default();
+        pe.optical_rates.write().insert(1, [0.0; 3]);
+        pe.clear();
+        assert!(pe.optical_rates.read().is_empty());
+    }
 
     #[test]
     fn normalize_for_mode_only_touches_optical_synchronize() {
