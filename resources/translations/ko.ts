@@ -3341,6 +3341,11 @@ Close and reopen Final Cut Pro before using the effect.</source>
         <translation>롤링 셔터 동기화</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="450"/>
+        <source>Optical motion</source>
+        <translation>광학 모션</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="447"/>
         <source>Essential matrix</source>
         <translation>필수 행렬</translation>
@@ -5269,6 +5274,13 @@ Resulting offset is the one where lines were the shortest, meaning the video was
 Make sure you have proper rolling shutter value set before syncing.</source>
         <translation>롤링 셔터가 있는 비디오를 자이로에 동기화시키는 알고리즘.
 동기화하기 전에 롤링 셔터 값이 적절한지 확인하세요.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="458"/>
+        <source>Tracks image features and matches their motion directly to the gyroscope.
+Needs some camera shake; very smooth motion may produce no sync points.</source>
+        <translation>영상의 특징점을 추적하여 그 움직임을 자이로스코프와 직접 맞춥니다.
+어느 정도의 카메라 흔들림이 필요하며, 매우 부드러운 움직임에서는 동기화 지점이 생성되지 않을 수 있습니다.</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="461"/>

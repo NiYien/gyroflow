@@ -3342,6 +3342,11 @@ Zamknij i otwórz ponownie Final Cut Pro przed użyciem efektu.</translation>
         <translation>rs-sync</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="450"/>
+        <source>Optical motion</source>
+        <translation>Ruch optyczny</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="447"/>
         <source>Essential matrix</source>
         <translation>Essential matrix</translation>
@@ -5270,6 +5275,13 @@ Wynikowy offset będzie tym, gdzie długość linii będzie najkrótsza, co ozna
 Make sure you have proper rolling shutter value set before syncing.</source>
         <translation>Algorytm synchronizacji uwzględniający rolling-shutter.
 Upewnij się, że masz ustawiony poprawny czas odczytu klatki.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="458"/>
+        <source>Tracks image features and matches their motion directly to the gyroscope.
+Needs some camera shake; very smooth motion may produce no sync points.</source>
+        <translation>Śledzi cechy obrazu i dopasowuje ich ruch bezpośrednio do żyroskopu.
+Wymaga pewnych drgań kamery; bardzo płynny ruch może nie dać żadnych punktów synchronizacji.</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="461"/>

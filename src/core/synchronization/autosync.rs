@@ -71,7 +71,17 @@ pub struct AutosyncProcess {
     lens_delay_meta_ln: Vec<f64>,
 
     thread_pool: rayon::ThreadPool,
+
+    /// Optical motion method (`offset_method` 3 in `synchronize` mode): the feature tracking session. None for every
+    /// other run, which then takes none of the optical paths below
+    optical: Option<super::optical_motion::OpticalSession>,
+    /// The frames are read out along x (optical motion method)
+    horizontal_readout: bool,
+    /// `progress_cb` for the optical tracking threads, which start before `on_progress` sets it
+    optical_progress_cb: Arc<RwLock<Option<OpticalProgressCb>>>,
 }
+
+type OpticalProgressCb = Arc<Box<dyn Fn(f64, usize, usize) + Send + Sync + 'static>>;
 
 pub fn describe_autosync_init_failure(
     stab: &StabilizationManager,
@@ -242,6 +252,7 @@ impl AutosyncProcess {
         let mut frame_count = ((timestamps_fract.len() as f64 * (time_per_syncpoint / 1000.0) * org_fps)
             .ceil() as usize)
             .min(params.frame_count) / every_nth_frame as usize;
+        let horizontal_readout = params.frame_readout_direction.is_horizontal();
 
         drop(params);
 
@@ -390,6 +401,42 @@ impl AutosyncProcess {
         crate::synchronization::flow_gate::reset_stats();
         crate::synchronization::sync_diag::init_session();
 
+        let total_read_frames = Arc::new(AtomicUsize::new(1)); // Start with 1 to keep the loader active until `finished_feeding_frames` overrides it with final value
+        let total_detected_frames = Arc::new(AtomicUsize::new(0));
+        let optical_progress_cb: Arc<RwLock<Option<OpticalProgressCb>>> = Arc::new(RwLock::new(None));
+        // Optical motion method: its own tracking threads take the frames instead of the Sync pool (spec §5.1). A
+        // tracked frame counts as detected; tracking is the first 0.6 of the progress
+        let optical = if sync_params.offset_method == 3 && mode == "synchronize" {
+            let detected = total_detected_frames.clone();
+            let read = total_read_frames.clone();
+            let progress = optical_progress_cb.clone();
+            let cancel = cancel_flag.clone();
+            let on_frame_done: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+                detected.fetch_add(1, SeqCst);
+                // No progress after a cancel: see the frame task in `feed_frame`
+                if cancel.load(Relaxed) {
+                    return;
+                }
+                let cb = progress.read().clone();
+                if let Some(cb) = cb {
+                    let d = detected.load(SeqCst);
+                    let t = read.load(SeqCst).max(frame_count);
+                    cb((d as f64 / t.max(1) as f64) * 0.6, d, t);
+                }
+            });
+            let cfg = super::optical_motion::config::config();
+            Some(super::optical_motion::OpticalSession::new(
+                scaled_ranges_us.len(),
+                scaled_fps,
+                every_nth_frame.max(1),
+                cancel_flag.clone(),
+                &|| super::optical_motion::default_tracker(cfg),
+                on_frame_done,
+            ))
+        } else {
+            None
+        };
+
         Ok(Self {
             frame_count,
             org_fps,
@@ -407,14 +454,17 @@ impl AutosyncProcess {
             lazy_probe_unavailable,
             estimator,
             fps_scale,
-            total_read_frames: Arc::new(AtomicUsize::new(1)), // Start with 1 to keep the loader active until `finished_feeding_frames` overrides it with final value
-            total_detected_frames: Arc::new(AtomicUsize::new(0)),
+            total_read_frames,
+            total_detected_frames,
             frame_tasks: Arc::new(AtomicUsize::new(0)),
             compute_params: Arc::new(RwLock::new(comp_params)),
             finished_cb: None,
             progress_cb: None,
             cancel_flag,
             thread_pool,
+            optical,
+            horizontal_readout,
+            optical_progress_cb,
         })
     }
 
@@ -481,6 +531,8 @@ impl AutosyncProcess {
         if let Some(scale) = self.fps_scale {
             timestamp_us = (timestamp_us as f64 / scale) as i64;
         }
+        // Optical motion method: frame index and row times use the time without the per-frame offset (spec §5.2)
+        let ts_no_offset = timestamp_us;
 
         {
             let compute_params = compute_params.read();
@@ -506,6 +558,22 @@ impl AutosyncProcess {
         let in_probe = self
             .lazy_probe_scaled_range()
             .is_some_and(|(from, to)| (from..=to).contains(&timestamp_us));
+        // Optical motion method: the frame goes to the tracking thread of every window it falls in (same window test
+        // as above), and to nothing else: no NV12 copy, no frame task on the Sync pool, no `detect_features`
+        if let Some(session) = &self.optical {
+            let windows =
+                super::optical_motion::windows_containing(&self.scaled_ranges_us, timestamp_us);
+            let Some(img) = img.filter(|_| !windows.is_empty()) else {
+                return false;
+            };
+            // `yuv_to_gray` keeps the row stride as the image width: cut the padding off
+            let img = super::optical_motion::crop_to_width(img, width);
+            for window in windows {
+                self.total_read_frames.fetch_add(1, SeqCst);
+                session.feed(window, ts_no_offset, img.clone());
+            }
+            return true;
+        }
         if in_user_ranges || in_probe {
             let valid_image = img.is_some();
             self.total_read_frames.fetch_add(1, SeqCst);
@@ -604,6 +672,9 @@ impl AutosyncProcess {
     }
 
     pub fn finished_feeding_frames(&self) {
+        // Optical motion method: close the tracking queues and wait for the tracking threads. Every frame fed has
+        // then been reported done, so the spin-wait below ends at once
+        let optical_raw = self.optical.as_ref().map(|session| session.finish());
         // §5.1/§5.2 were once early-return cancel checks but they leaked
         // stale rayon-pool tasks: the run_threaded OpGuard would drop while
         // tasks remained queued, wait_until_idle in the racing load_video
@@ -630,6 +701,63 @@ impl AutosyncProcess {
         if self.cancel_flag.load(SeqCst) {
             log::info!(target: "lifecycle", "autosync canceled after spin-wait drain");
             self.emit_canceled_progress();
+            return;
+        }
+
+        // Optical motion method: bearings and offset search per window, one row per window, delivered here. None of
+        // the steps below (NeuFlow drain, pose estimation, find_offsets, lazy probe, negative-offset retry) apply
+        if let Some(raw) = optical_raw {
+            use super::optical_motion as optical;
+            // Measurement params (spec §5.2): from_manager already cleared the keyframes and set full correction
+            let mut params = self.compute_params.read().clone();
+            params.framebuffer_inverted = false;
+            let quats = params.gyro.read().quaternions.clone();
+            let (ranges, horizontal) = (&self.scaled_ranges_us, self.horizontal_readout);
+            let windows: Vec<optical::tracks::WindowTracks> = self.thread_pool.install(|| {
+                raw.iter()
+                    .zip(ranges)
+                    .map(|(r, &(from, to))| {
+                        optical::bearings::build_window_tracks(r, &params, horizontal, (from + to) as f64 / 2.0 / 1000.0)
+                    })
+                    .collect()
+            });
+            drop(raw);
+            let input = optical::SolveInput {
+                ranges_us: &self.scaled_ranges_us,
+                sync_params: &self.sync_params,
+                quats: &quats,
+                cfg: optical::config::config(),
+                has_tracker: self.optical.as_ref().is_some_and(|s| s.has_tracker()),
+            };
+            let progress_cb = self.progress_cb.clone();
+            let (detected, read, cancel) =
+                (&self.total_detected_frames, &self.total_read_frames, &self.cancel_flag);
+            // The search is the progress from 0.6 to 0.99
+            let progress = |p: f64| {
+                if let Some(cb) = &progress_cb {
+                    if !cancel.load(SeqCst) {
+                        cb(0.6 + 0.39 * p, detected.load(SeqCst), read.load(SeqCst));
+                    }
+                }
+            };
+            let t_search = std::time::Instant::now();
+            let Some(rows) = optical::solve_windows(&windows, &input, &self.thread_pool, &self.cancel_flag, &progress) else {
+                log::info!(target: "lifecycle", "autosync canceled during the optical offset search");
+                self.emit_canceled_progress();
+                return;
+            };
+            if let Some(session) = &self.optical {
+                optical::log_run(rows.len(), &session.timings(), t_search.elapsed().as_secs_f64() * 1000.0);
+            }
+            if let Some(cb) = &self.finished_cb {
+                cb(AutosyncResult::Offsets(rows));
+            }
+            if let Some(cb) = &self.progress_cb {
+                let len = self.total_detected_frames.load(SeqCst);
+                cb(1.0, len, len);
+            }
+            crate::synchronization::sync_perf::dump_and_reset();
+            crate::synchronization::sync_diag::flush_and_close();
             return;
         }
 
@@ -1043,6 +1171,9 @@ impl AutosyncProcess {
         F: Fn(f64, usize, usize) + Send + Sync + 'static,
     {
         self.progress_cb = Some(Arc::new(Box::new(cb)));
+        if self.optical.is_some() {
+            *self.optical_progress_cb.write() = self.progress_cb.clone();
+        }
     }
     pub fn on_finished<F>(&mut self, cb: F)
     where
@@ -1264,6 +1395,133 @@ mod tests {
     }
 
     #[test]
+    fn optical_branch_bypasses_the_dis_pipeline() {
+        let src = include_str!("autosync.rs").split("#[cfg(test)]").next().unwrap();
+        let feed = &src[src.find("pub fn feed_frame").unwrap()..src.find("pub fn wait_for_frame_tasks").unwrap()];
+        let optical = feed.find("if let Some(session) = &self.optical").expect("optical branch in feed_frame");
+        assert!(optical < feed.find("self.thread_pool.spawn").unwrap(), "optical frames must not reach the Sync pool");
+        let fin = &src[src.find("pub fn finished_feeding_frames").unwrap()..];
+        assert!(fin.find("solve_windows").unwrap() < fin.find("neuflow_processing").unwrap());
+        assert!(src.contains("sync_params.offset_method == 3 && mode == \"synchronize\""));
+    }
+
+    /// A default manager with one gyro quaternion (enough for `has_motion`, which `synchronize` requires): 64×64
+    /// frames, 30 fps, 3 s
+    fn manager_with_motion() -> StabilizationManager {
+        let stab = StabilizationManager::default();
+        {
+            let mut p = stab.params.write();
+            p.size = (64, 64);
+            p.fps = 30.0;
+            p.duration_ms = 3000.0;
+            p.frame_count = 90;
+        }
+        stab.gyro.read().file_metadata.write().quaternions.insert(0, crate::gyro_source::Quat64::identity());
+        stab
+    }
+
+    fn optical_params() -> SyncParams {
+        SyncParams {
+            initial_offset: 12.0,
+            time_per_syncpoint: 500.0,
+            search_size: 100.0,
+            every_nth_frame: 1,
+            offset_method: 3,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn optical_session_only_for_offset_method_3_synchronize() {
+        let stab = manager_with_motion();
+        let cancel = || Arc::new(AtomicBool::new(false));
+        let make = |offset_method: usize, mode: &str| {
+            AutosyncProcess::from_manager(&stab, &[0.5], SyncParams { offset_method, ..optical_params() }, mode.into(), cancel()).unwrap()
+        };
+        assert!(make(3, "synchronize").optical.is_some());
+        assert!(make(2, "synchronize").optical.is_none());
+        assert!(make(3, "estimate_rolling_shutter").optical.is_none());
+        assert!(make(3, "guess_imu_orientation").optical.is_none());
+    }
+
+    #[test]
+    fn optical_run_delivers_one_row_per_window_without_the_sync_pool() {
+        use std::sync::Mutex;
+        let stab = manager_with_motion();
+        // Windows 500..1000 ms and 2000..2500 ms
+        let mut sync = AutosyncProcess::from_manager(&stab, &[0.25, 0.75], optical_params(), "synchronize".into(), Arc::new(AtomicBool::new(false))).unwrap();
+        let rows = Arc::new(Mutex::new(None));
+        let progress = Arc::new(Mutex::new(Vec::new()));
+        let (rows2, progress2) = (rows.clone(), progress.clone());
+        sync.on_finished(move |r| if let AutosyncResult::Offsets(o) = r { *rows2.lock().unwrap() = Some(o); });
+        sync.on_progress(move |p, d, t| progress2.lock().unwrap().push((p, d, t)));
+        let mut accepted = 0;
+        for i in 0..90i64 {
+            // Stride 72 > width 64: takes the crop path
+            if sync.feed_frame(i * 1_000_000 / 30, i as usize, 64, 64, 72, &[128; 72 * 64]) { accepted += 1; }
+            assert_eq!(sync.frame_tasks.load(SeqCst), 0, "no frame task on the Sync pool");
+        }
+        assert_eq!(accepted, 32);   // 16 frames in each window, both ends included
+        sync.finished_feeding_frames();
+        assert_eq!(*rows.lock().unwrap(), Some(vec![(750.0, 12.0, 0.0, 0.0), (2250.0, 12.0, 0.0, 0.0)]));
+        // Tracking: one call per frame, up to 0.6; then the search by window, 0.6 to 0.99; then 1.0
+        let progress = progress.lock().unwrap();
+        let (tracking, rest) = progress.split_at(progress.len() - 4);
+        assert!(tracking.len() == 32 && tracking.iter().all(|p| p.0 > 0.0 && p.0 <= 0.6), "{progress:?}");
+        let rest: Vec<f64> = rest.iter().map(|p| (p.0 * 1000.0).round() / 1000.0).collect();
+        assert_eq!(rest, vec![0.6, 0.795, 0.99, 1.0]);
+        assert_eq!(*progress.last().unwrap(), (1.0, 32, 32));
+        assert!(stab.pose_estimator.sync_results.read().is_empty());
+    }
+
+    #[test]
+    fn optical_run_with_overlapping_windows_in_decoder_order() {
+        use std::sync::Mutex;
+        let stab = manager_with_motion();
+        // Windows 500..1000 ms (frames 15..=30) and 650..1150 ms (frames 20..=34)
+        let mut sync = AutosyncProcess::from_manager(&stab, &[0.25, 0.3], optical_params(), "synchronize".into(), Arc::new(AtomicBool::new(false))).unwrap();
+        assert_eq!(sync.get_ranges(), vec![(500.0, 1000.0), (650.0, 1150.0)]);
+        let rows = Arc::new(Mutex::new(None));
+        let progress = Arc::new(Mutex::new(Vec::new()));
+        let (rows2, progress2) = (rows.clone(), progress.clone());
+        sync.on_finished(move |r| if let AutosyncResult::Offsets(o) = r { *rows2.lock().unwrap() = Some(o); });
+        sync.on_progress(move |p, d, t| progress2.lock().unwrap().push((p, d, t)));
+        // The decoder's order: the first range, then a seek back to the second range's start, so frames 20..=30 come
+        // twice and each time go to both windows
+        let mut accepted = 0;
+        for i in (15..=30i64).chain(20..=34) {
+            if sync.feed_frame(i * 1_000_000 / 30, i as usize, 64, 64, 64, &[128; 64 * 64]) { accepted += 1; }
+        }
+        assert_eq!(accepted, 16 + 15);
+        // One job per (frame, window): 16 + 11 in the first range, 11 + 15 in the second
+        assert_eq!(sync.total_read_frames.load(SeqCst), 1 + 53);
+        sync.finished_feeding_frames();
+        assert_eq!(sync.total_detected_frames.load(SeqCst), 53);
+        assert_eq!(*rows.lock().unwrap(), Some(vec![(750.0, 12.0, 0.0, 0.0), (900.0, 12.0, 0.0, 0.0)]));
+        assert_eq!(*progress.lock().unwrap().last().unwrap(), (1.0, 53, 53));
+    }
+
+    #[test]
+    fn cancelled_optical_run_delivers_nothing() {
+        use std::sync::Mutex;
+        let stab = manager_with_motion();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let mut sync = AutosyncProcess::from_manager(&stab, &[0.5], optical_params(), "synchronize".into(), cancel.clone()).unwrap();
+        let delivered = Arc::new(AtomicBool::new(false));
+        let progress = Arc::new(Mutex::new(Vec::new()));
+        let (delivered2, progress2) = (delivered.clone(), progress.clone());
+        sync.on_finished(move |_| delivered2.store(true, SeqCst));
+        sync.on_progress(move |p, d, t| progress2.lock().unwrap().push((p, d, t)));
+        for i in 0..90i64 {
+            if i == 50 { cancel.store(true, SeqCst); }
+            sync.feed_frame(i * 1_000_000 / 30, i as usize, 64, 64, 64, &[128; 64 * 64]);
+        }
+        sync.finished_feeding_frames();
+        assert!(!delivered.load(SeqCst));
+        assert_eq!(progress.lock().unwrap().last().unwrap().0, 1.0);
+    }
+
+    #[test]
     fn probe_escalation_gate() {
         // Empty result = "no correct point found" → escalate.
         assert!(probe_escalation_needed(&[]));
@@ -1341,5 +1599,12 @@ mod tests {
         let p_start: f64 = (2400.0_f64 - half).max(0.0);
         let p_end: f64 = (2400.0_f64 + half).min(2400.0);
         assert!((p_start - 1150.0).abs() < 1e-6 && (p_end - 2400.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn simple_mode_never_sends_the_optical_offset_method() {
+        let qml = include_str!("../../ui/menu/Synchronization.qml");
+        assert!(qml.contains("\"offset_method\":      (isSimple && offsetMethod.currentIndex === 3) ? 2 : offsetMethod.currentIndex,"));
+        assert!(qml.contains("QT_TRANSLATE_NOOP(\"Popup\", \"Optical motion\")"));
     }
 }

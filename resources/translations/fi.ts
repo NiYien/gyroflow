@@ -3341,6 +3341,11 @@ Sulje Final Cut Pro ja avaa se uudelleen ennen tehosteen käyttöä.</translatio
         <translation>rs-sync</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="450"/>
+        <source>Optical motion</source>
+        <translation>Optinen liike</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="447"/>
         <source>Essential matrix</source>
         <translation>Olennainen matriisi</translation>
@@ -5269,6 +5274,13 @@ Tuloksena oleva offset on se, jossa viivat olivat lyhyimmät, mikä tarkoittaa, 
 Make sure you have proper rolling shutter value set before syncing.</source>
         <translation>Rolling shutter -video gyroskooppisynkronointialgoritmiin.
 Varmista, että olet asettanut oikean rullasulkimen arvon ennen synkronointia.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="458"/>
+        <source>Tracks image features and matches their motion directly to the gyroscope.
+Needs some camera shake; very smooth motion may produce no sync points.</source>
+        <translation>Seuraa kuvan piirteitä ja täsmää niiden liikkeen suoraan gyroskooppiin.
+Vaatii jonkin verran kameran tärinää; hyvin tasainen liike ei välttämättä tuota synkronointipisteitä.</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="461"/>

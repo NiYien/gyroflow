@@ -1156,6 +1156,7 @@ impl Controller {
         sync_params.time_per_syncpoint *= 1000.0; // s to ms
         sync_params.search_size *= 1000.0; // s to ms
         sync_params.every_nth_frame = sync_params.every_nth_frame.max(1);
+        sync_params.normalize_for_mode(&mode);
 
         let for_rs = mode == "estimate_rolling_shutter";
 

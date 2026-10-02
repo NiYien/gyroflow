@@ -3342,6 +3342,11 @@ Close and reopen Final Cut Pro before using the effect.</source>
         <translation>rs-sync</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="450"/>
+        <source>Optical motion</source>
+        <translation>Оптичний рух</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="447"/>
         <source>Essential matrix</source>
         <translation>Есенційна матриця</translation>
@@ -5270,6 +5275,13 @@ Resulting offset is the one where lines were the shortest, meaning the video was
 Make sure you have proper rolling shutter value set before syncing.</source>
         <translation>Алгоритм синхронізації відео з гіроскопом.
 Перед синхронізацією переконайтеся, що встановлено правильне значення rolling shutter.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="458"/>
+        <source>Tracks image features and matches their motion directly to the gyroscope.
+Needs some camera shake; very smooth motion may produce no sync points.</source>
+        <translation>Відстежує ознаки зображення та напряму зіставляє їхній рух із гіроскопом.
+Потрібна певна тряска камери; за дуже плавного руху точки синхронізації можуть не знайтися.</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="461"/>

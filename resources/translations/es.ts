@@ -3340,6 +3340,11 @@ Cierra y vuelve a abrir Final Cut Pro antes de usar el efecto.</translation>
         <translation>rs-sync</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="450"/>
+        <source>Optical motion</source>
+        <translation>Movimiento óptico</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="447"/>
         <source>Essential matrix</source>
         <translation>Matriz esencial</translation>
@@ -5267,6 +5272,13 @@ La compensación resultante es la que aparece con las líneas más cortas, que e
 Make sure you have proper rolling shutter value set before syncing.</source>
         <translation>Algoritmo de sincronización entre el giroscopio y el barrido del obturador.
 Asegúrese de que el valor de barrido del obturador es el adecuado antes de sincronizar.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="458"/>
+        <source>Tracks image features and matches their motion directly to the gyroscope.
+Needs some camera shake; very smooth motion may produce no sync points.</source>
+        <translation>Rastrea características de la imagen y compara su movimiento directamente con el giroscopio.
+Necesita algo de vibración de la cámara; un movimiento muy suave puede no generar puntos de sincronización.</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="461"/>

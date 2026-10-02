@@ -3339,6 +3339,11 @@ Tutup dan buka kembali Final Cut Pro sebelum menggunakan efek.</translation>
         <translation>rs-sync</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="450"/>
+        <source>Optical motion</source>
+        <translation>Gerakan optik</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="447"/>
         <source>Essential matrix</source>
         <translation>Matriks esensial</translation>
@@ -5266,6 +5271,13 @@ Offset yang dihasilkan adalah yang memiliki garis terpendek, yang berarti video 
 Make sure you have proper rolling shutter value set before syncing.</source>
         <translation>Rolling shutter video ke algoritma sinkronisasi gyro.
 Pastikan Anda mengatur nilai Rolling shutter yang tepat sebelum menyinkronkan.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="458"/>
+        <source>Tracks image features and matches their motion directly to the gyroscope.
+Needs some camera shake; very smooth motion may produce no sync points.</source>
+        <translation>Melacak fitur gambar dan mencocokkan gerakannya langsung dengan giroskop.
+Membutuhkan sedikit guncangan kamera; gerakan yang sangat halus mungkin tidak menghasilkan titik sinkronisasi.</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="461"/>

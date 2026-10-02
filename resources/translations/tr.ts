@@ -3337,6 +3337,11 @@ Efekti kullanmadan önce Final Cut Pro&apos;yu kapatıp yeniden açın.</transla
         <translation>rs-sync</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="450"/>
+        <source>Optical motion</source>
+        <translation>Optik hareket</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="447"/>
         <source>Essential matrix</source>
         <translation>Asli matris</translation>
@@ -5261,6 +5266,13 @@ Elde ettiğiniz öteleme değeri, çizgilerin en kısa olduğu; yani videodaki h
 Make sure you have proper rolling shutter value set before syncing.</source>
         <translation>Jöle etkili video - gyro senkronizasyonu algoritması. 
 Senkronize etmeden önce uygun jöle etkisi değerini ayarladığınızdan emin olun.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="458"/>
+        <source>Tracks image features and matches their motion directly to the gyroscope.
+Needs some camera shake; very smooth motion may produce no sync points.</source>
+        <translation>Görüntü özelliklerini izler ve hareketlerini doğrudan jiroskopla eşleştirir.
+Biraz kamera sarsıntısı gerektirir; çok yumuşak hareket hiç senkronizasyon noktası üretmeyebilir.</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="461"/>

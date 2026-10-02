@@ -9723,6 +9723,7 @@ impl RenderQueue {
                     sync_params.initial_offset *= 1000.0; // s to ms
                     sync_params.time_per_syncpoint *= 1000.0; // s to ms
                     sync_params.search_size *= 1000.0; // s to ms
+                    sync_params.normalize_for_mode("synchronize");
 
                     let every_nth_frame = sync_params.every_nth_frame.max(1);
                     let of_method = sync_params.of_method;

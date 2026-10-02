@@ -3340,6 +3340,11 @@ Pecha e volve abrir Final Cut Pro antes de usar o efecto.</translation>
         <translation>rs-sync</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="450"/>
+        <source>Optical motion</source>
+        <translation>Movemento óptico</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="447"/>
         <source>Essential matrix</source>
         <translation>Matriz esencial</translation>
@@ -5269,6 +5274,13 @@ O desprazamento resultante é o que ten liñas máis curtas, significa que o ví
 Make sure you have proper rolling shutter value set before syncing.</source>
         <translation>Algoritmo de sincronización do xiroscopio ó vídeo con efecto xelatina.
 Asegúrese de ter configurado o valor do efecto xelatina adecuado antes de sincronizar.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="458"/>
+        <source>Tracks image features and matches their motion directly to the gyroscope.
+Needs some camera shake; very smooth motion may produce no sync points.</source>
+        <translation>Rastrexa características da imaxe e compara o seu movemento directamente co xiroscopio.
+Precisa algo de vibración da cámara; un movemento moi suave pode non xerar puntos de sincronización.</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="461"/>

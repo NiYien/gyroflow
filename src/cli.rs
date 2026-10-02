@@ -134,6 +134,8 @@ pub fn will_run_in_console() -> bool {
 }
 
 pub fn run(open_file: &mut String, open_preset: &mut String) -> bool {
+    // Headless sync regression run (rendering::sync_regress), before any argument parsing
+    if let Ok(cfg) = std::env::var("GYROFLOW_SYNC_REGRESS") { crate::rendering::init_log(); std::process::exit(crate::rendering::sync_regress::run(&cfg)); }
     if std::env::args().len() > 1 {
         let opts: Opts = argh::from_env();
 
