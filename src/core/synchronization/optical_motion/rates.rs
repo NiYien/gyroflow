@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use nalgebra::Vector3;
+use rayon::prelude::*;
 use crate::gyro_source::{ GyroSource, TimeQuat };
 use super::cost::pair_rotation_rate;
 use super::tracks::{ PairData, WindowTracks };
@@ -28,11 +29,14 @@ pub fn pair_gyro_rate(pd: &PairData, quats: &TimeQuat, offset_ms: f64) -> Option
 
 /// Collects fitted rates at each frame pair's midpoint in microseconds.
 pub fn rate_samples(windows: &[WindowTracks]) -> BTreeMap<i64, [f64; 3]> {
-    windows.iter().flat_map(|window| window.pairs.iter()).filter_map(|pd| {
+    let pairs: Vec<_> = windows.iter().flat_map(|window| window.pairs.iter()).collect();
+    // Indexed parallel collection preserves pair order, so later pairs still replace duplicate keys.
+    let samples: Vec<_> = pairs.par_iter().map(|pd| {
         let rate = pair_rotation_rate(pd)?;
         let key = ((pd.a.mid_ms + pd.b.mid_ms) / 2.0 * 1000.0).round() as i64;
         Some((key, quat_rate_to_chart_dps(rate)))
-    }).collect()
+    }).collect();
+    samples.into_iter().flatten().collect()
 }
 
 /// Correlates paired samples per axis, omitting quiet gyro axes and undefined correlations.
@@ -111,4 +115,17 @@ mod tests {
         assert!(r[1].is_none());      // RMS 0.07 °/s < 2
         assert!(r[2].unwrap() > 0.99);
     }
+    #[test]
+    fn overlapping_windows_keep_the_last_pair_at_each_key() {
+        let (first, _) = synth_window(&SynthSpec::default());
+        let mut last = WindowTracks { pairs: first.pairs.clone(), focal_px: first.focal_px };
+        last.pairs[0].a.mid_ms -= 1.0;
+        last.pairs[0].b.mid_ms += 1.0;
+        let pd = &first.pairs[0];
+        let key = ((pd.a.mid_ms + pd.b.mid_ms) / 2.0 * 1000.0).round() as i64;
+        let expected = rate_samples(std::slice::from_ref(&last));
+        assert_ne!(rate_samples(std::slice::from_ref(&first))[&key], expected[&key]);
+        assert_eq!(rate_samples(&[first, last]), expected);
+    }
+
 }
