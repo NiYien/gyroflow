@@ -7,11 +7,17 @@
 //! corpus the existing chain (`offset_method` 2) and the optical motion method (3) run on the same sync points and
 //! parameters through the real `AutosyncProcess`, each on a freshly cleared `PoseEstimator`.
 //!
-//! Decoding and feeding mirror `Controller::start_autosync`'s `try_run`, which stays authoritative: software
-//! decode, 1080 px processing height (decoder `scale` option and converter scaling), GRAY8 (NV12 for the NeuFlow
-//! `of_method`s), every `every_nth_frame`-th frame, the DNG tone curve when the file has one, the process' own
-//! ranges, then `finished_feeding_frames` and, when `pending_probe_ranges` asks for it, the lazy-probe second pass
-//! (its time counts). Image-sequence decoder options are not mirrored: the corpus holds video files only.
+//! Decoding and feeding mirror `Controller::start_autosync`'s `try_run`, which stays authoritative: 1080 px processing
+//! height (decoder `scale` option and converter scaling), GRAY8 (NV12 for the NeuFlow `of_method`s), every
+//! `every_nth_frame`-th frame, the DNG tone curve when the file has one, the process' own ranges, then
+//! `finished_feeding_frames` and, when `pending_probe_ranges` asks for it, the lazy-probe second pass (its time
+//! counts). Image-sequence decoder options are not mirrored: the corpus holds video files only.
+//!
+//! `GYROFLOW_SYNC_REGRESS_DECODE` picks the decoder: `sw` (default) decodes in software only; `gpu` decodes as the
+//! controller does with `gpudecode` on: the GPU codec blocklist is cleared at every method run, the codec signature
+//! is probed, a blocklisted codec goes straight to software, otherwise GPU first and, when that pass fails with
+//! `GPUDecodingFailed`, software on the same `AutosyncProcess` (the first pass also blocklists the codec). Which
+//! decoder delivered the frames is taken from the decoder's own `Selected HW backend` log line.
 //!
 //! Timing: a method's total runs from before `AutosyncProcess::from_manager` to the end of the result callback and is
 //! split evenly across its windows. The decode wall time (start_decoder_only calls) and the time spent inside
@@ -23,14 +29,14 @@
 //! line written at the start of every method run.
 //!
 //! Environment: `GYROFLOW_SYNC_REGRESS_ONLY=<name,name>` runs only those clips; `GYROFLOW_SYNC_REGRESS_GATE=1`
-//! makes the exit code reflect the gates.
+//! makes the exit code reflect the gates; `GYROFLOW_SYNC_REGRESS_DECODE=sw|gpu` as above.
 
 use std::cell::RefCell;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
 use std::time::Instant;
 
 use ffmpeg_next::format::Pixel;
@@ -38,7 +44,8 @@ use gyroflow_core::StabilizationManager;
 use gyroflow_core::synchronization::{AutosyncProcess, AutosyncResult, SyncParams};
 use parking_lot::Mutex;
 
-use super::VideoProcessor;
+use super::gpu_codec_blocklist::CodecSignature;
+use super::{FFmpegError, VideoProcessor};
 
 /// The existing chain (rs-sync, fusion, posterior, arbitration)
 const BASELINE: usize = 2;
@@ -51,6 +58,38 @@ const CONF_GATE: f64 = 0.4;
 const PROC_HEIGHT: i32 = 1080;
 const MODE: &str = "synchronize";
 const DEFAULT_TOLERANCE_MS: f64 = 3.0;
+
+/// How the frames are decoded (`GYROFLOW_SYNC_REGRESS_DECODE`)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DecodeMode {
+    /// Software only (the default)
+    Software,
+    /// As the controller with `gpudecode` on: GPU first, software when GPU decoding fails
+    GpuFirst,
+}
+
+impl DecodeMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Software => "sw",
+            Self::GpuFirst => "gpu",
+        }
+    }
+}
+
+fn resolve_decode_mode() -> Result<DecodeMode, String> {
+    let raw = std::env::var("GYROFLOW_SYNC_REGRESS_DECODE");
+    let (mode, source) = match raw.as_deref().map(str::trim) {
+        Err(_) | Ok("") => (DecodeMode::Software, "default"),
+        Ok(v) => match v.to_ascii_lowercase().as_str() {
+            "sw" => (DecodeMode::Software, "env"),
+            "gpu" => (DecodeMode::GpuFirst, "env"),
+            _ => return Err(format!("GYROFLOW_SYNC_REGRESS_DECODE must be sw or gpu, got {v:?}")),
+        },
+    };
+    log::info!(target: "lifecycle", "GYROFLOW_SYNC_REGRESS_DECODE resolved value={} source={source}", mode.as_str());
+    Ok(mode)
+}
 
 /// One window of one clip, synchronized by one method
 #[derive(Clone, Debug)]
@@ -299,6 +338,8 @@ struct MethodRun {
     timing: DecodeTiming,
     /// The lazy probe was decoded (existing chain)
     probe: bool,
+    /// Per decode pass, which decoder delivered the frames
+    decoders: Vec<String>,
     errors: Vec<String>,
     /// `[optical]` / `[posterior]` log lines of the run, from the tag on
     log: Vec<String>,
@@ -313,6 +354,13 @@ struct ClipResult {
 }
 
 pub fn run(corpus_path: &str) -> i32 {
+    let decode = match resolve_decode_mode() {
+        Ok(m) => m,
+        Err(e) => {
+            println!("[regress] {e}");
+            return 2;
+        }
+    };
     let corpus = match Corpus::load(corpus_path) {
         Ok(c) => c,
         Err(e) => {
@@ -342,14 +390,20 @@ pub fn run(corpus_path: &str) -> i32 {
         println!("[regress] cannot create {}: {e}", out_dir.display());
         return 2;
     }
-    println!("[regress] corpus {corpus_path}: {} of {} clips, gate mode {}", clips.len(), corpus.clips.len(), if gate_mode { "on" } else { "off" });
+    println!(
+        "[regress] corpus {corpus_path}: {} of {} clips, gate mode {}, decode {}",
+        clips.len(),
+        corpus.clips.len(),
+        if gate_mode { "on" } else { "off" },
+        decode.as_str()
+    );
 
     let started = Instant::now();
     let mut results = Vec::new();
     let mut seq = 0usize;
     for clip in clips {
         println!("[regress] ===== {} =====", clip.name);
-        results.push(run_clip(clip, &mut seq));
+        results.push(run_clip(clip, decode, &mut seq));
     }
 
     let rows: Vec<Row> = results.iter().flat_map(|r| r.rows.iter().cloned()).collect();
@@ -362,7 +416,7 @@ pub fn run(corpus_path: &str) -> i32 {
     let report = evaluate_gates(&rows, &known);
 
     let csv = rows_csv(&rows);
-    let summary = summary_md(corpus_path, gate_mode, &results, &known, &report, started.elapsed().as_secs_f64());
+    let summary = summary_md(corpus_path, gate_mode, decode, &results, &known, &report, started.elapsed().as_secs_f64());
     for (name, text) in [("rows.csv", &csv), ("summary.md", &summary)] {
         if let Err(e) = std::fs::write(out_dir.join(name), text) {
             println!("[regress] cannot write {name}: {e}");
@@ -376,7 +430,7 @@ pub fn run(corpus_path: &str) -> i32 {
     if gate_mode && !report.passed() { 1 } else { 0 }
 }
 
-fn run_clip(clip: &Clip, seq: &mut usize) -> ClipResult {
+fn run_clip(clip: &Clip, decode: DecodeMode, seq: &mut usize) -> ClipResult {
     let mut result = ClipResult { clip: clip.clone(), info: None, runs: Vec::new(), rows: Vec::new(), error: None };
     let stab = match import_clip(clip) {
         Ok((stab, info)) => {
@@ -401,9 +455,9 @@ fn run_clip(clip: &Clip, seq: &mut usize) -> ClipResult {
     let info = result.info.clone().unwrap_or_default();
     for method in METHODS {
         *seq += 1;
-        let run = run_method(&stab, clip, &info, method, *seq);
+        let run = run_method(&stab, clip, &info, method, decode, *seq);
         println!(
-            "[regress] {} m{}: rows={} total={:.0}ms decode={:.0}ms feed={:.0}ms frames={} probe={} errors={:?}",
+            "[regress] {} m{}: rows={} total={:.0}ms decode={:.0}ms feed={:.0}ms frames={} probe={} decoder={} errors={:?}",
             clip.name,
             method,
             run.result.as_ref().map_or(0, Vec::len),
@@ -412,6 +466,7 @@ fn run_clip(clip: &Clip, seq: &mut usize) -> ClipResult {
             run.timing.feed_ms,
             run.timing.frames,
             run.probe,
+            run.decoders.join(" + "),
             run.errors
         );
         result.rows.extend(rows_for(clip, &info, &run));
@@ -448,7 +503,7 @@ fn import_clip(clip: &Clip) -> Result<(Arc<StabilizationManager>, ClipInfo), Str
     Ok((stab, info))
 }
 
-fn run_method(stab: &Arc<StabilizationManager>, clip: &Clip, info: &ClipInfo, method: usize, seq: usize) -> MethodRun {
+fn run_method(stab: &Arc<StabilizationManager>, clip: &Clip, info: &ClipInfo, method: usize, decode: DecodeMode, seq: usize) -> MethodRun {
     let mut run = MethodRun {
         method,
         ranges_ms: Vec::new(),
@@ -456,6 +511,7 @@ fn run_method(stab: &Arc<StabilizationManager>, clip: &Clip, info: &ClipInfo, me
         total_ms: f64::NAN,
         timing: DecodeTiming::default(),
         probe: false,
+        decoders: Vec::new(),
         errors: Vec::new(),
         log: Vec::new(),
     };
@@ -472,6 +528,10 @@ fn run_method(stab: &Arc<StabilizationManager>, clip: &Clip, info: &ClipInfo, me
 
     let tag = format!("[regress] run {seq}: clip={} method={method}", clip.name);
     log::info!(target: "sync_regress", "{tag}");
+    // The controller resets the GPU codec blocklist at every autosync start
+    if decode == DecodeMode::GpuFirst {
+        super::gpu_codec_blocklist::clear();
+    }
 
     let result: Arc<Mutex<Option<(Vec<(f64, f64, f64, f64)>, Instant)>>> = Arc::new(Mutex::new(None));
     let cancel = Arc::new(AtomicBool::new(false));
@@ -498,18 +558,64 @@ fn run_method(stab: &Arc<StabilizationManager>, clip: &Clip, info: &ClipInfo, me
     let dng_curve = gyroflow_core::dng_tone_curve::DngToneCurve::from_url(&video_url).map(Rc::new);
     let timing = Rc::new(RefCell::new(DecodeTiming::default()));
 
-    let first = decode_and_feed(&sync, &video_url, run.ranges_ms.clone(), &cancel, &dng_curve, &timing);
+    // GPU first: the controller's codec signature probe and blocklist check
+    let (codec_sig, try_gpu) = match decode {
+        DecodeMode::Software => (None, false),
+        DecodeMode::GpuFirst => {
+            let sig = match VideoProcessor::get_video_info(&video_url) {
+                Ok(info) => Some(CodecSignature::from(&info)),
+                Err(e) => {
+                    log::debug!("[autosync] codec signature probe failed: {e:?} (proceeding without blocklist consultation)");
+                    None
+                }
+            };
+            let blocked = sig.as_ref().is_some_and(super::gpu_codec_blocklist::is_blocklisted);
+            if blocked {
+                log::info!("[autosync] skipping GPU for blocklisted signature {:?}", sig);
+            }
+            (sig, !blocked)
+        }
+    };
+    let attempt = |use_gpu: bool, ranges: Vec<(f64, f64)>| decode_and_feed(&sync, &video_url, ranges, use_gpu, &cancel, &dng_curve, &timing);
+    // One `try_run` round of the controller: GPU first when allowed, software on the same process when GPU decoding
+    // fails. Only the first round blocklists the codec, as in the controller
+    let round = |ranges: Vec<(f64, f64)>, first: bool| -> (Result<(), FFmpegError>, String) {
+        if !try_gpu {
+            let label = if decode == DecodeMode::Software { "sw" } else { "sw (blocklisted)" };
+            return (attempt(false, ranges).0, label.to_string());
+        }
+        match attempt(true, ranges.clone()) {
+            (Err(FFmpegError::GPUDecodingFailed), backend) => {
+                if first {
+                    match codec_sig {
+                        Some(sig) => {
+                            log::info!("[autosync] GPU decode failed for signature {:?}, retrying with software", sig);
+                            super::gpu_codec_blocklist::record_failure(sig);
+                        }
+                        None => log::info!("[autosync] GPU decode failed (no signature available), retrying with software"),
+                    }
+                }
+                (attempt(false, ranges).0, format!("sw-fallback (after {backend})"))
+            }
+            other => other,
+        }
+    };
+
+    let (first, decoder) = round(run.ranges_ms.clone(), true);
+    run.decoders.push(decoder);
     let round1_ok = first.is_ok();
     if let Err(e) = first {
-        run.errors.push(e);
+        run.errors.push(format!("decode: {e}"));
     }
     sync.finished_feeding_frames();
     // Lazy probe escalation of the existing chain, as in the controller
     if round1_ok {
         if let Some(probe_ranges) = sync.pending_probe_ranges() {
             run.probe = true;
-            if let Err(e) = decode_and_feed(&sync, &video_url, probe_ranges, &cancel, &dng_curve, &timing) {
-                run.errors.push(e);
+            let (probe, decoder) = round(probe_ranges, false);
+            run.decoders.push(format!("probe {decoder}"));
+            if let Err(e) = probe {
+                run.errors.push(format!("decode: {e}"));
             }
             sync.finished_feeding_frames();
         }
@@ -527,16 +633,20 @@ fn run_method(stab: &Arc<StabilizationManager>, clip: &Clip, info: &ClipInfo, me
     run
 }
 
-/// `try_run` of `Controller::start_autosync` with software decoding. Converter errors are recorded like the
-/// controller reports them, without failing the pass; the result is the decoder's.
+/// One attempt of `Controller::start_autosync`'s `try_run`. Converter errors are recorded like the controller reports
+/// them, without failing the pass; the result is the decoder's. Also returns which decoder delivered the frames:
+/// "sw", "gpu:<backend>", or for a GPU request that got no hardware decoder "sw (no hw decoder)".
+#[allow(clippy::too_many_arguments)]
 fn decode_and_feed(
     sync: &Rc<AutosyncProcess>,
     video_url: &str,
     ranges: Vec<(f64, f64)>,
+    use_gpu: bool,
     cancel: &Arc<AtomicBool>,
     dng_curve: &Option<Rc<gyroflow_core::dng_tone_curve::DngToneCurve>>,
     timing: &Rc<RefCell<DecodeTiming>>,
-) -> Result<(), String> {
+) -> (Result<(), FFmpegError>, String) {
+    static PASS: AtomicUsize = AtomicUsize::new(0);
     let started = Instant::now();
     // `synchronize` mode: the process' own every_nth_frame
     let every_nth_frame = sync.sync_params.every_nth_frame.max(1);
@@ -547,7 +657,23 @@ fn decode_and_feed(
     if let Some(scale) = super::sync_decoder_scale_string(PROC_HEIGHT, video_url) {
         decoder_options.set("scale", &scale);
     }
-    let mut proc = VideoProcessor::from_file(video_url, false, 0, Some(decoder_options)).map_err(|e| format!("decoder: {e}"))?;
+    let tag = format!("[regress] decode pass {}: gpu={use_gpu}", PASS.fetch_add(1, Relaxed));
+    log::info!(target: "sync_regress", "{tag}");
+    let mut proc = match VideoProcessor::from_file(video_url, use_gpu, 0, Some(decoder_options)) {
+        Ok(p) => p,
+        Err(e) => {
+            timing.borrow_mut().wall_ms += started.elapsed().as_secs_f64() * 1000.0;
+            return (Err(e), if use_gpu { "gpu (decoder open failed)".into() } else { "sw".into() });
+        }
+    };
+    let backend = if use_gpu {
+        match hw_backend_since(&tag) {
+            Some((kind, name)) if !name.is_empty() => format!("gpu:{kind}"),
+            _ => "sw (no hw decoder)".to_string(),
+        }
+    } else {
+        "sw".to_string()
+    };
 
     let convert_error: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
     let (sync2, timing2, dng_curve2, convert_error2) = (sync.clone(), timing.clone(), dng_curve.clone(), convert_error.clone());
@@ -589,13 +715,31 @@ fn decode_and_feed(
         abs_frame_no += 1;
         Ok(())
     });
-    let decoded = proc.start_decoder_only(ranges, cancel.clone()).map_err(|e| format!("decode: {e}"));
+    let decoded = proc.start_decoder_only(ranges, cancel.clone());
     drop(proc);
     timing.borrow_mut().wall_ms += started.elapsed().as_secs_f64() * 1000.0;
     if let Some(e) = convert_error.borrow_mut().take() {
         println!("[regress] converter error (frames skipped): {e}");
     }
-    decoded
+    (decoded, backend)
+}
+
+/// The hardware backend the decoder opened after `tag` was logged, from its `Selected HW backend` debug line:
+/// (device type, device name), the name empty when no hardware decoder was found
+fn hw_backend_since(tag: &str) -> Option<(String, String)> {
+    log::logger().flush();
+    let buf = crate::logger::ring_buffer_snapshot();
+    let text = String::from_utf8_lossy(&buf);
+    let pos = text.rfind(tag)?;
+    text[pos..].lines().find_map(parse_hw_backend)
+}
+
+fn parse_hw_backend(line: &str) -> Option<(String, String)> {
+    const KEY: &str = "Selected HW backend ";
+    let rest = &line[line.find(KEY)? + KEY.len()..];
+    let kind = rest.split_whitespace().next()?.trim_start_matches("AV_HWDEVICE_TYPE_").to_ascii_lowercase();
+    let name = rest.split_once('(').and_then(|(_, r)| r.split_once(')')).map_or(String::new(), |(n, _)| n.to_string());
+    Some((kind, name))
 }
 
 /// The `[optical]` and `[posterior]` log lines written since `tag`, from the logger's ring buffer
@@ -765,11 +909,15 @@ fn verdict(ok: bool) -> &'static str {
     if ok { "PASS" } else { "FAIL" }
 }
 
-fn summary_md(corpus_path: &str, gate_mode: bool, results: &[ClipResult], known: &[&str], report: &GateReport, elapsed_s: f64) -> String {
+fn summary_md(corpus_path: &str, gate_mode: bool, decode: DecodeMode, results: &[ClipResult], known: &[&str], report: &GateReport, elapsed_s: f64) -> String {
     let mut s = String::new();
     let _ = writeln!(s, "# Sync regression summary\n");
     let _ = writeln!(s, "- Corpus: `{corpus_path}`, {} clips, gate mode {}, wall time {:.0} s", results.len(), if gate_mode { "on" } else { "off" }, elapsed_s);
-    let _ = writeln!(s, "- Methods: m2 = existing chain (`offset_method` 2), m3 = optical motion (`offset_method` 3); both through `AutosyncProcess`, software decode, {PROC_HEIGHT} px processing height, GRAY8, fresh `PoseEstimator` per method; m2 runs first on every clip");
+    let decode_text = match decode {
+        DecodeMode::Software => "decode `sw` (software only)",
+        DecodeMode::GpuFirst => "decode `gpu` (GPU first, software fallback as in the controller)",
+    };
+    let _ = writeln!(s, "- Methods: m2 = existing chain (`offset_method` 2), m3 = optical motion (`offset_method` 3); both through `AutosyncProcess`, {decode_text}, {PROC_HEIGHT} px processing height, GRAY8, fresh `PoseEstimator` per method; m2 runs first on every clip");
     let _ = writeln!(s, "- Correct = conf >= {CONF_GATE} and |err| <= tolerance; err = offset - truth (ms); total = from before `from_manager` to the end of the result callback, per window");
     let _ = writeln!(s, "- G / near / second / coarse / fine: parsed in-process from the `[optical] seg` lines (logger ring buffer)\n");
 
@@ -833,8 +981,8 @@ fn summary_md(corpus_path: &str, gate_mode: bool, results: &[ClipResult], known:
 
     let _ = writeln!(s, "## Per clip timings (ms)\n");
     let _ = writeln!(s, "decode = wall time of the decoder passes minus the time inside `feed_frame`; feed = time inside `feed_frame` (for m3 it includes waiting on the tracking queue); track / decode_wait / search from the `[optical] run` line (track summed over tracking threads)\n");
-    let _ = writeln!(s, "| clip | windows | m2 total | m2 decode | m2 feed | m2 frames | m2 probe | m3 total | m3 decode | m3 feed | m3 frames | track | decode_wait | search | track > total/2 |");
-    let _ = writeln!(s, "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+    let _ = writeln!(s, "| clip | windows | m2 total | m2 decode | m2 feed | m2 frames | m2 probe | m2 decoder | m3 total | m3 decode | m3 feed | m3 frames | m3 decoder | track | decode_wait | search | track > total/2 |");
+    let _ = writeln!(s, "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
     for res in results {
         let run = |m: usize| res.runs.iter().find(|r| r.method == m);
         let (b, o) = (run(BASELINE), run(OPTICAL));
@@ -844,9 +992,10 @@ fn summary_md(corpus_path: &str, gate_mode: bool, results: &[ClipResult], known:
             (Some(l), Some(o)) if o.total_ms.is_finite() => if l.track_ms > o.total_ms / 2.0 { "yes" } else { "no" },
             _ => "-",
         };
+        let decoders = |r: Option<&MethodRun>| r.map_or("-".into(), |r| r.decoders.join(" + "));
         let _ = writeln!(
             s,
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             res.clip.name,
             res.clip.sync_points_ms.len(),
             t(b, |r| r.total_ms),
@@ -854,10 +1003,12 @@ fn summary_md(corpus_path: &str, gate_mode: bool, results: &[ClipResult], known:
             t(b, |r| r.timing.feed_ms),
             b.map_or("-".into(), |r| r.timing.frames.to_string()),
             b.map_or("-".into(), |r| if r.probe { "yes".to_string() } else { "no".to_string() }),
+            decoders(b),
             t(o, |r| r.total_ms),
             t(o, |r| r.timing.wall_ms - r.timing.feed_ms),
             t(o, |r| r.timing.feed_ms),
             o.map_or("-".into(), |r| r.timing.frames.to_string()),
+            decoders(o),
             line.as_ref().map_or("-".into(), |l| format!("{:.0}", l.track_ms)),
             line.as_ref().map_or("-".into(), |l| format!("{:.0}", l.decode_wait_ms)),
             line.as_ref().map_or("-".into(), |l| format!("{:.0}", l.search_ms)),
@@ -966,6 +1117,15 @@ mod tests {
 
         let run = parse_run_line("[optical] run: windows=1 track_ms=2210 decode_wait_ms=15 search_ms=1460").unwrap();
         assert_eq!(run, OpticalRunLine { track_ms: 2210.0, decode_wait_ms: 15.0, search_ms: 1460.0 });
+    }
+
+    #[test]
+    fn parses_hw_backend_line() {
+        let gpu = "[2026-10-02 12:00:00.000] [DEBUG] [gyroflow::rendering::ffmpeg_processor] Selected HW backend AV_HWDEVICE_TYPE_D3D11VA (NVIDIA GeForce RTX) with format Some(AV_PIX_FMT_D3D11)";
+        assert_eq!(parse_hw_backend(gpu), Some(("d3d11va".to_string(), "NVIDIA GeForce RTX".to_string())));
+        let none = "Selected HW backend AV_HWDEVICE_TYPE_NONE () with format None";
+        assert_eq!(parse_hw_backend(none), Some(("none".to_string(), String::new())));
+        assert_eq!(parse_hw_backend("Available decoders: []"), None);
     }
 
     #[test]
