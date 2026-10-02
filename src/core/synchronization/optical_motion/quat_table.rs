@@ -45,6 +45,10 @@ impl QuatTable {
         let inside = |t: f64| t >= self.gyro_range_ms.0 && t <= self.gyro_range_ms.1;
         inside(from_ms) && inside(to_ms)
     }
+
+    /// Samples held
+    #[cfg(test)]
+    pub fn samples(&self) -> usize { self.quats.len() }
 }
 
 #[cfg(test)]

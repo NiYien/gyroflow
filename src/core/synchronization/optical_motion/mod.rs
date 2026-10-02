@@ -300,13 +300,27 @@ pub fn solve_windows(windows: &[WindowTracks], input: &SolveInput, pool: &rayon:
     Some(rows)
 }
 
+/// One quaternion table per search interval, in interval order: interval `(a, b)` gets the gyro times of the row-time
+/// span `(lo, hi)` minus every offset in `[a − TABLE_MARGIN_MS, b + TABLE_MARGIN_MS]` (gyro time = video time − offset).
+/// A single table across two disjoint intervals would also sample the gap between them, which grows with |initial
+/// offset|; this way the memory follows the intervals' and the span's lengths only.
+fn interval_tables(quats: &TimeQuat, (lo, hi): (f64, f64), intervals: &[(f64, f64)]) -> Vec<QuatTable> {
+    intervals.iter().map(|&(a, b)| QuatTable::build(quats, lo - b - TABLE_MARGIN_MS, hi - a + TABLE_MARGIN_MS)).collect()
+}
+
+/// Index of the interval nearest to offset `d` (the one holding it, else the first of the equally near ones). The
+/// search stays within TABLE_MARGIN_MS of an interval, so that interval's table covers `d`.
+fn table_for(intervals: &[(f64, f64)], d: f64) -> usize {
+    let distance = |&(a, b): &(f64, f64)| (a - d).max(d - b).max(0.0);
+    (0..intervals.len()).min_by(|&x, &y| distance(&intervals[x]).total_cmp(&distance(&intervals[y]))).unwrap_or(0)
+}
+
 /// The search of one window, logged; None when cancelled.
 ///
-/// Set up as spec §6 asks: the quaternion table covers the window's row-time span minus every search interval with
-/// TABLE_MARGIN_MS on both ends, the coarse scan takes `cfg.coarse_points` points per pair by whole track segments and
-/// COARSE_IRLS_ROUNDS reweighting rounds, and a full evaluation that is covered but fits no band counts as unmeasured.
-/// In the log line, `fine` is the summed wall time of the full evaluations (they run one after another) and `coarse`
-/// the rest of the search's wall time.
+/// Set up as spec §6 asks: one quaternion table per search interval (`interval_tables`), the coarse scan takes
+/// `cfg.coarse_points` points per pair by whole track segments and COARSE_IRLS_ROUNDS reweighting rounds, and a full
+/// evaluation that is covered but fits no band counts as unmeasured. In the log line, `fine` is the summed wall time
+/// of the full evaluations (they run one after another) and `coarse` the rest of the search's wall time.
 fn solve_window(i: usize, w: &WindowTracks, input: &SolveInput, sg: &SgCache, pool: &rayon::ThreadPool, cancel: &AtomicBool) -> Option<SearchOutcome> {
     let sp = input.sync_params;
     let cfg = input.cfg;
@@ -323,15 +337,14 @@ fn solve_window(i: usize, w: &WindowTracks, input: &SolveInput, sg: &SgCache, po
     let (outcome, coarse_points) = match row_time_span_ms(w) {
         Some((lo, hi)) => {
             let intervals = search_intervals(p.init_ms, p.search_ms, p.check_negative);
-            let (first, last) = (intervals[0].0, intervals[intervals.len() - 1].1);
-            // Gyro time = video time - offset
-            let table = QuatTable::build(input.quats, lo - last - TABLE_MARGIN_MS, hi - first + TABLE_MARGIN_MS);
-            let ctx = CostContext { window: w, quats: &table, sg };
+            let tables = interval_tables(input.quats, (lo, hi), &intervals);
+            let ctxs: Vec<CostContext> = tables.iter().map(|table| CostContext { window: w, quats: table, sg }).collect();
+            let ctx = |d: f64| &ctxs[table_for(&intervals, d)];
             let subset = select_tracks(w, cfg.coarse_points);
-            let coarse = |d: f64| eval_coarse(&ctx, &subset, d, COARSE_IRLS_ROUNDS);
+            let coarse = |d: f64| eval_coarse(ctx(d), &subset, d, COARSE_IRLS_ROUNDS);
             let full = |d: f64| {
                 let t = Instant::now();
-                let r = eval_full(&ctx, d).filter(|r| r.bands > 0).map(|r| FullEval { cost: r.cost_px, pairs_measured: r.pairs_measured });
+                let r = eval_full(ctx(d), d).filter(|r| r.bands > 0).map(|r| FullEval { cost: r.cost_px, pairs_measured: r.pairs_measured });
                 fine_ns.fetch_add(t.elapsed().as_nanos() as u64, Relaxed);
                 r
             };
@@ -525,6 +538,32 @@ mod tests {
         assert!((rows[0].1 + 700.0).abs() < 1.0 && rows[0].3 >= 0.9, "{:?}", rows[0]);
         assert_eq!(rows[1], (10750.0, 0.0, 0.0, 0.0));
         assert_eq!(*progress.lock().unwrap(), vec![0.0, 0.5, 1.0]);
+    }
+    #[test] fn disjoint_search_intervals_get_one_table_each() {
+        // Video time 5000..6500 ms, truth -700 ms; short window and searches keep the debug profile fast
+        let (w0, quats) = synth_window(&SynthSpec { duration_ms: 1500.0, ..Default::default() });
+        let span = row_time_span_ms(&w0).unwrap();
+        // One table: the span, an interval of 2·search and the margins, at STEP_MS (plus one sample of rounding slack)
+        let bound = |search: f64| ((span.1 - span.0 + 2.0 * search + 2.0 * TABLE_MARGIN_MS) / QuatTable::STEP_MS).ceil() as usize + 2;
+        // |init| = 1 h: two tables of about 23k samples each, where one table across both intervals took 14.4M (460 MB)
+        let intervals = search_intervals(3_600_000.0, 5000.0, true);
+        let tables = interval_tables(&quats, span, &intervals);
+        assert_eq!(tables.len(), 2);
+        assert!(tables.iter().all(|t| t.samples() <= bound(5000.0)), "{:?}", tables.iter().map(QuatTable::samples).collect::<Vec<_>>());
+        // Merged intervals keep a single table, as before
+        assert_eq!(interval_tables(&quats, span, &search_intervals(100.0, 1000.0, true)).len(), 1);
+        // Each offset takes the table of its interval, margins included
+        let two = [(-1500.0, -500.0), (500.0, 1500.0)];
+        assert_eq!([-1545.0, -700.0, -455.0, 455.0, 1545.0, 0.0].map(|d| table_for(&two, d)), [0, 0, 0, 1, 1, 0]);
+
+        // ±1000 ± 500 ms with the negative side: the truth lies in the interval below zero
+        let sp = SyncParams { initial_offset: 1000.0, search_size: 500.0, initial_offset_inv: true, ..Default::default() };
+        assert_eq!(search_intervals(sp.initial_offset, sp.search_size, true), two.to_vec());
+        let cfg = cfg();
+        let input = SolveInput { ranges_us: &[(5_000_000, 6_500_000)], sync_params: &sp, quats: &quats, cfg: &cfg, has_tracker: true };
+        let all_cores = rayon::ThreadPoolBuilder::new().build().unwrap();
+        let rows = solve_windows(&[w0], &input, &all_cores, &AtomicBool::new(false), &|_: f64| {}).unwrap();
+        assert!((rows[0].1 + 700.0).abs() < 1.0 && rows[0].3 >= 0.9, "{:?}", rows[0]);
     }
     #[test] fn missing_tracker_reports_no_opencv() {
         let (w0, quats) = synth_window(&SynthSpec { duration_ms: 1000.0, tracks: 50, ..Default::default() });
