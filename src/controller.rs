@@ -111,6 +111,7 @@ pub struct Controller {
     lens_group_manual_edit: qt_property!(bool; READ get_lens_group_manual_edit WRITE set_lens_group_manual_edit NOTIFY lens_group_manual_edit_changed),
     lens_group_manual_edit_changed: qt_signal!(),
     get_lens_presets: qt_method!(fn(&self) -> QString),
+    has_optical_sync_support: qt_method!(fn(&self) -> bool),
     has_neuflow_support: qt_method!(fn(&self) -> bool),
     full_mode_enabled: qt_method!(fn(&self) -> bool),
     queue_edit_writeback_enabled: qt_method!(fn(&self) -> bool),
@@ -2507,6 +2508,9 @@ impl Controller {
     }
     fn get_lens_presets(&self) -> QString {
         QString::from(self.stabilizer.get_lens_presets_json())
+    }
+    fn has_optical_sync_support(&self) -> bool {
+        cfg!(feature = "opencv")
     }
     fn has_neuflow_support(&self) -> bool {
         cfg!(any(feature = "neuflow-ort", neuflow_burn_enabled))

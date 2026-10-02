@@ -1860,6 +1860,7 @@ pub struct RenderQueue {
 
     pub queue: qt_property!(RefCell<SimpleListModel<RenderQueueItem>>; NOTIFY queue_changed),
     jobs: HashMap<u32, Job>,
+    pending_sync_offset_methods: HashMap<u32, u64>,
 
     // mounting-rotation-home-value: the mounting angle the user owns (the
     // "home" value persisted in settings), mirrored here from
@@ -1941,6 +1942,7 @@ pub struct RenderQueue {
     // (NeuFlow v2 Burn) for batch sync; when false, of_method=2 (DIS).
     // Driven by SimpleStabilization.qml::aiSyncCb and persisted via QSettings.
     pub batch_sync_ai_method: qt_property!(bool; NOTIFY batch_sync_ai_method_changed),
+    pub batch_sync_optical: qt_property!(bool; NOTIFY batch_sync_optical_changed),
 
     pub progress_changed: qt_signal!(),
     pub queue_changed: qt_signal!(),
@@ -1949,6 +1951,7 @@ pub struct RenderQueue {
     pub auto_rotate_changed: qt_signal!(),
     pub simple_mode_changed: qt_signal!(),
     pub batch_sync_ai_method_changed: qt_signal!(),
+    pub batch_sync_optical_changed: qt_signal!(),
 
     pub render_progress: qt_signal!(job_id: u32, progress: f64, current_frame: usize, total_frames: usize, finished: bool, start_time: f64, is_conversion: bool),
     pub encoder_initialized: qt_signal!(job_id: u32, encoder_name: String),
@@ -1971,6 +1974,7 @@ pub struct RenderQueue {
 
     apply_to_all: qt_method!(fn(&mut self, data: String, additional_data: String, to_job_id: u32)),
     set_pending_output_format: qt_method!(fn(&mut self, options_json: String)),
+    set_jobs_sync_offset_method: qt_method!(fn(&mut self, method: u32)),
     // mounting-rotation-propagation: called by MountingPresetSelector on every
     // mounting change so already-queued jobs follow the new device orientation
     // (the add_file snapshot only covers jobs enqueued after the change).
@@ -5958,6 +5962,11 @@ impl RenderQueue {
                     Ok(_) => {
                         stab.set_output_size(opts.output_width, opts.output_height);
                         if let Some(job) = self.jobs.get_mut(&job_id) {
+                            if let Some(method) = self.pending_sync_offset_methods.remove(&job_id) {
+                                if let Some(old) = rewrite_sync_offset_method(&stab, method) {
+                                    ::log::info!(target: "sync", "[optical-toggle] job={} offset_method {} -> {}", job_id, old, method);
+                                }
+                            }
                             job.stab = Some(stab);
                         }
                     }
@@ -6469,15 +6478,15 @@ impl RenderQueue {
                 }
             }
         }
-        let mut additional_data = additional_data.to_owned();
-        if let Ok(serde_json::Value::Object(mut obj)) =
-            serde_json::from_str(&additional_data) as serde_json::Result<serde_json::Value>
-        {
-            if let Ok(output) = serde_json::to_value(&render_options) {
-                obj.insert("output".into(), output);
-            }
-            additional_data = serde_json::to_string(&obj).unwrap_or_default();
+        // A snapshot must remain an object even when the job has no valid additional data.
+        let mut obj = match serde_json::from_str::<serde_json::Value>(additional_data) {
+            Ok(serde_json::Value::Object(obj)) => obj,
+            _ => serde_json::Map::new(),
+        };
+        if let Ok(output) = serde_json::to_value(&render_options) {
+            obj.insert("output".into(), output);
         }
+        let additional_data = serde_json::to_string(&obj).unwrap_or_default();
         if let Ok(data) = stab.export_gyroflow_data(typ, &additional_data, None) {
             return Some(data);
         }
@@ -10375,6 +10384,51 @@ impl RenderQueue {
         });
     }
 
+    pub fn set_jobs_sync_offset_method(&mut self, method: u32) {
+        if !matches!(method, 2 | 3) {
+            ::log::warn!(target: "sync", "[optical-toggle] invalid offset_method {}", method);
+            return;
+        }
+        let method = method as u64;
+        let mut rewritten = 0;
+        for (&job_id, job) in self.jobs.iter_mut() {
+            if self.queue.borrow().iter().any(|item| item.job_id == job_id && item.status == JobStatus::Rendering) { continue; }
+            let mut old_method = None;
+            let mut changed;
+            if let Some(stab) = job.stab.as_ref() {
+                old_method = rewrite_sync_offset_method(stab, method);
+                changed = old_method.is_some();
+                self.pending_sync_offset_methods.remove(&job_id);
+            } else {
+                self.pending_sync_offset_methods.insert(job_id, method);
+                changed = true;
+                ::log::info!(target: "sync", "[optical-toggle] job={} offset_method pending -> {} (stabilizer released)", job_id, method);
+            }
+            match serde_json::from_str::<serde_json::Value>(&job.additional_data) {
+                Ok(serde_json::Value::Object(obj)) => {
+                    let old = obj.get("synchronization").and_then(|sync| sync.get("offset_method"));
+                    if old.is_none() || matches!(old.and_then(|value| value.as_u64()), Some(2 | 3)) {
+                        if let Some(patched) = patch_additional_data_offset_method(&job.additional_data, method) {
+                            if old.and_then(|value| value.as_u64()) != Some(method) {
+                                changed = true;
+                                old_method = old_method.or_else(|| old.and_then(|value| value.as_u64()));
+                            }
+                            job.additional_data = patched;
+                        }
+                    }
+                }
+                _ => ::log::warn!(target: "sync", "[optical-toggle] job={} invalid additional_data JSON", job_id),
+            }
+            if changed {
+                rewritten += 1;
+                if job.stab.is_some() {
+                    ::log::info!(target: "sync", "[optical-toggle] job={} offset_method {} -> {}", job_id, old_method.map(|old| old.to_string()).unwrap_or_else(|| "missing".into()), method);
+                }
+            }
+        }
+        ::log::info!(target: "sync", "[optical-toggle] rewrote {} job(s) to offset_method {}", rewritten, method);
+    }
+
     pub fn set_pending_output_format(&mut self, options_json: String) {
         let Ok(options) = serde_json::from_str::<serde_json::Value>(&options_json) else { return; };
         let Some(codec) = options.get("codec").and_then(|v| v.as_str()) else { return; };
@@ -13074,6 +13128,7 @@ impl RenderQueue {
         // QML so this stays false there; if a method=4 somehow leaks through,
         // OpticalFlowMethod::detect_features falls back to DIS with a log error.
         let default_of_method: u64 = if self.batch_sync_ai_method { 4 } else { 2 };
+        let optical = self.batch_sync_optical;
 
         core::run_threaded(move || {
             let t_bg = std::time::Instant::now();
@@ -14004,7 +14059,7 @@ impl RenderQueue {
                     "calc_initial_fast": false,
                     "pose_method": 0,
                     "of_method": default_of_method,
-                    "offset_method": 2,
+                    "offset_method": batch_offset_method(optical),
                     "auto_sync_points": true
                 }));
                 drop(lens);
@@ -14064,6 +14119,9 @@ impl RenderQueue {
                         search_size_s,
                         every_nth_frame,
                     ) {
+                        item.additional_data = patched;
+                    }
+                    if let Some(patched) = patch_additional_data_offset_method(&item.additional_data, batch_offset_method(optical)) {
                         item.additional_data = patched;
                     }
 
@@ -15755,7 +15813,7 @@ impl RenderQueue {
                         "calc_initial_fast": false,
                         "pose_method": 0,
                         "of_method": 2,
-                        "offset_method": 2,
+                        "offset_method": batch_offset_method(self.batch_sync_optical),
                         "auto_sync_points": true
                     }));
                 }
@@ -15769,6 +15827,9 @@ impl RenderQueue {
                         3.0,
                         deep_match_every_nth_frame,
                     ) {
+                        job.additional_data = patched;
+                    }
+                    if let Some(patched) = patch_additional_data_offset_method(&job.additional_data, batch_offset_method(self.batch_sync_optical)) {
                         job.additional_data = patched;
                     }
                 }
@@ -16946,6 +17007,27 @@ fn batch_sync_every_nth_frame(
         return 1;
     };
     ((fps / 49.0).floor() as i64).max(1)
+}
+
+fn batch_offset_method(optical: bool) -> u64 {
+    if optical { 3 } else { 2 }
+}
+
+fn patch_additional_data_offset_method(additional_data: &str, method: u64) -> Option<String> {
+    let serde_json::Value::Object(mut obj) = serde_json::from_str::<serde_json::Value>(additional_data).ok()? else { return None; };
+    let sync = obj.entry("synchronization".to_owned()).or_insert_with(|| serde_json::json!({}));
+    sync.as_object_mut()?.insert("offset_method".into(), method.into());
+    serde_json::to_string(&serde_json::Value::Object(obj)).ok()
+}
+
+fn rewrite_sync_offset_method(stab: &StabilizationManager, method: u64) -> Option<u64> {
+    let mut lens = stab.lens.write();
+    let sync = lens.sync_settings.as_mut()?;
+    let old = sync.get("offset_method")?.as_u64()?;
+    if matches!(old, 2 | 3) && old != method {
+        sync["offset_method"] = method.into();
+        Some(old)
+    } else { None }
 }
 
 // [batch-match-high-fps-duration-precedence] Merge the per-clip batch-sync
@@ -22424,11 +22506,172 @@ mod tests {
         let ad: serde_json::Value =
             serde_json::from_str(&queue.jobs[&1].additional_data).unwrap();
         assert_eq!(ad["original"], true);
+        assert_eq!(ad["synchronization"]["offset_method"], 2);
         assert!(
             (ad["synchronization"]["initial_offset"].as_f64().unwrap() - (-5.0005)).abs() < 1e-9
         );
     }
 
+    #[test]
+    fn patch_offset_method_writes_only_that_key() {
+        let out: serde_json::Value = serde_json::from_str(&patch_additional_data_offset_method(r#"{"synchronization":{"initial_offset":-1.5,"offset_method":2}}"#, 3).unwrap()).unwrap();
+        assert_eq!(out["synchronization"]["offset_method"], 3);
+        assert_eq!(out["synchronization"]["initial_offset"], -1.5);
+        let created: serde_json::Value = serde_json::from_str(&patch_additional_data_offset_method("{}", 3).unwrap()).unwrap();
+        assert_eq!(created["synchronization"]["offset_method"], 3);
+        assert!(patch_additional_data_offset_method("[]", 3).is_none());
+        assert!(patch_additional_data_offset_method("not json", 3).is_none());
+    }
+
+    #[test]
+    fn set_jobs_rewrites_lens_and_mirror() {
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        queue.jobs.get_mut(&1).unwrap().additional_data = r#"{"synchronization":{"offset_method":2}}"#.into();
+        queue.set_jobs_sync_offset_method(3);
+        let job = &queue.jobs[&1];
+        assert_eq!(job.stab.as_ref().unwrap().lens.read().sync_settings.as_ref().unwrap()["offset_method"], 3);
+        let ad: serde_json::Value = serde_json::from_str(&job.additional_data).unwrap();
+        assert_eq!(ad["synchronization"]["offset_method"], 3);
+        queue.set_jobs_sync_offset_method(2);
+        assert_eq!(queue.jobs[&1].stab.as_ref().unwrap().lens.read().sync_settings.as_ref().unwrap()["offset_method"], 2);
+    }
+
+    #[test]
+    fn set_jobs_skips_rendering_jobs() {
+        let mut queue = queue_with_eta_job(JobStatus::Rendering);
+        queue.set_jobs_sync_offset_method(3);
+        assert_eq!(queue.jobs[&1].stab.as_ref().unwrap().lens.read().sync_settings.as_ref().unwrap()["offset_method"], 2);
+    }
+
+    #[test]
+    fn set_jobs_keeps_essential_and_ncc_methods() {
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        queue.jobs[&1].stab.as_ref().unwrap().lens.write().sync_settings.as_mut().unwrap()["offset_method"] = 0.into();
+        queue.jobs.get_mut(&1).unwrap().additional_data = r#"{"synchronization":{"offset_method":1}}"#.into();
+        queue.set_jobs_sync_offset_method(3);
+        assert_eq!(queue.jobs[&1].stab.as_ref().unwrap().lens.read().sync_settings.as_ref().unwrap()["offset_method"], 0);
+        let ad: serde_json::Value = serde_json::from_str(&queue.jobs[&1].additional_data).unwrap();
+        assert_eq!(ad["synchronization"]["offset_method"], 1);
+    }
+
+    #[test]
+    fn set_jobs_tolerates_non_json_additional_data() {
+        let mut queue = queue_with_eta_job(JobStatus::Queued);   // additional_data is ""
+        queue.set_jobs_sync_offset_method(3);
+        assert_eq!(queue.jobs[&1].additional_data, "");
+        assert_eq!(queue.jobs[&1].stab.as_ref().unwrap().lens.read().sync_settings.as_ref().unwrap()["offset_method"], 3);
+    }
+
+    #[test]
+    fn set_jobs_rejects_other_methods() {
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        queue.set_jobs_sync_offset_method(1);
+        assert_eq!(queue.jobs[&1].stab.as_ref().unwrap().lens.read().sync_settings.as_ref().unwrap()["offset_method"], 2);
+    }
+
+    #[test]
+    fn queue_snapshot_preserves_project_with_non_object_additional_data() {
+        let queue = queue_with_eta_job(JobStatus::Finished);
+        let job = &queue.jobs[&1];
+        for additional in ["", "not json", "null", "[]", "42", "true"] {
+            let data = RenderQueue::get_gyroflow_data_internal(job.stab.as_ref().unwrap(), additional, &job.render_options).unwrap();
+            let snapshot: serde_json::Value = serde_json::from_str(&data).unwrap();
+            println!("additional={:?} snapshot={}", additional, snapshot);
+            assert!(snapshot.is_object(), "additional={:?} snapshot={}", additional, snapshot);
+            assert_eq!(snapshot["videofile"], "file:///eta-test.mp4");
+            assert_eq!(snapshot["calibration_data"]["sync_settings"]["offset_method"], 2);
+            assert!(snapshot["output"].is_object());
+        }
+    }
+
+    #[test]
+    fn queue_snapshot_preserves_valid_additional_data_merge() {
+        let queue = queue_with_eta_job(JobStatus::Finished);
+        let job = &queue.jobs[&1];
+        let data = RenderQueue::get_gyroflow_data_internal(job.stab.as_ref().unwrap(), r#"{"custom":{"kept":true},"synchronization":{"offset_method":3},"output":{"ignored":true}}"#, &job.render_options).unwrap();
+        let snapshot: serde_json::Value = serde_json::from_str(&data).unwrap();
+        assert_eq!(snapshot["videofile"], "file:///eta-test.mp4");
+        assert_eq!(snapshot["calibration_data"]["sync_settings"]["offset_method"], 2);
+        assert_eq!(snapshot["custom"]["kept"], true);
+        assert_eq!(snapshot["synchronization"]["offset_method"], 3);
+        assert_eq!(snapshot["output"], serde_json::to_value(&job.render_options).unwrap());
+    }
+
+    #[test]
+    fn set_jobs_reaches_a_job_whose_stab_was_released() {
+        // A finished export releases the stabilizer and keeps only project_data: reset_job rebuilds from it and never
+        // reads additional_data, so the toggle has to be applied to the rebuilt stabilizer
+        let mut queue = queue_with_eta_job(JobStatus::Finished);
+        let project_data = {
+            let job = queue.jobs.get(&1).unwrap();
+            RenderQueue::get_gyroflow_data_internal(job.stab.as_ref().unwrap(), &job.additional_data, &job.render_options).unwrap()
+        };
+        {
+            let job = queue.jobs.get_mut(&1).unwrap();
+            job.project_data = Some(project_data);
+            job.stab = None;
+        }
+        queue.set_jobs_sync_offset_method(3);
+        assert_eq!(queue.pending_sync_offset_methods.get(&1), Some(&3));
+        queue.reset_job(1);
+        let job = &queue.jobs[&1];
+        assert_eq!(job.stab.as_ref().unwrap().lens.read().sync_settings.as_ref().unwrap()["offset_method"], 3);
+        assert!(queue.pending_sync_offset_methods.is_empty());
+    }
+
+    #[test]
+    fn deep_match_landing_follows_the_optical_toggle() {
+        use gyroflow_core::synchronization::deep_match;
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        queue.batch_sync_optical = true;
+        let stab = setup_deep_match_job(&mut queue, true);
+        simulate_deep_match_probe(&mut queue, &stab);
+
+        deep_match::arm(2);
+        deep_match::record(deep_match_stats(0.1));
+        deep_match::record(deep_match_stats(0.2));
+        queue.record_batch_sync_result(
+            1,
+            vec![
+                sync_candidate(1, 1000.0, -5000.0, 0.9),
+                sync_candidate(1, 2000.0, -5001.0, 0.9),
+            ],
+            vec![],
+        );
+
+        assert!(queue.deep_match_results.contains_key(&1), "expected Accepted");
+        {
+            let gyro = stab.gyro.read();
+            let fm = gyro.file_metadata.read();
+            assert!(fm.keep_video_gyro, "built-in gyro must be restored on keep material");
+            assert_eq!(fm.raw_imu.len(), 1);
+            assert_eq!(gyro.file_url, "file:///builtin-source.mp4");
+        }
+        let lens = stab.lens.read();
+        assert_eq!(lens.name, "", "probe-injected lens must not leak");
+        let ss = lens.sync_settings.clone().unwrap();
+        assert_eq!(ss["offset_method"], 3);
+        assert!((ss["initial_offset"].as_f64().unwrap() - (-5.0005)).abs() < 1e-9);
+        let ad: serde_json::Value =
+            serde_json::from_str(&queue.jobs[&1].additional_data).unwrap();
+        assert_eq!(ad["original"], true);
+        assert_eq!(ad["synchronization"]["offset_method"], 3);
+        assert!(
+            (ad["synchronization"]["initial_offset"].as_f64().unwrap() - (-5.0005)).abs() < 1e-9
+        );
+    }
+
+    #[test]
+    fn batch_match_follows_the_optical_toggle() {
+        assert_eq!(batch_offset_method(true), 3);
+        assert_eq!(batch_offset_method(false), 2);
+        // "\nmod tests {" also matches under CRLF line endings; the implementation has no other line starting like it
+        let src = include_str!("render_queue.rs");
+        let implementation = &src[..src.find("\nmod tests {").expect("test module marker")];
+        assert_eq!(implementation.matches("\"offset_method\": batch_offset_method(").count(), 2, "apply_match and deep landing");
+        assert!(implementation.matches("patch_additional_data_offset_method(").count() >= 3, "apply_match, deep landing, set_jobs");
+    }
     #[test]
     fn deep_match_success_keeps_bin_for_regular_material() {
         use gyroflow_core::synchronization::deep_match;
