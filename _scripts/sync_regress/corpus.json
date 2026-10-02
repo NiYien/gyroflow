@@ -14,6 +14,7 @@
     {"name": "15_P1032787", "project": "D:/Gyroflow_NiYien/Test_function/SyncError/4/P1032787.gyroflow", "video": "D:/Gyroflow_NiYien/Test_function/SyncError/4/P1032787.MOV", "truth": -1650, "sync_points_ms": [4320]},
     {"name": "16_P1032805", "project": "D:/Gyroflow_NiYien/Test_function/SyncError/4/P1032805.gyroflow", "video": "D:/Gyroflow_NiYien/Test_function/SyncError/4/P1032805.MOV", "truth": -1637, "sync_points_ms": [2160]},
     {"name": "obs_C50_C952", "project": "D:/Gyroflow_NiYien/Test_function/SyncError/2/A_0041C952H260507_155743IM_C50AW.gyroflow", "video": "D:/Gyroflow_NiYien/Test_function/SyncError/2/A_0041C952H260507_155743IM_C50AW.MP4", "gate": false, "sync_points_ms": [2252]},
-    {"name": "obs_P1032801", "project": "D:/Gyroflow_NiYien/Test_function/SyncError/4/P1032801.gyroflow", "video": "D:/Gyroflow_NiYien/Test_function/SyncError/4/P1032801.MOV", "gate": false, "sync_points_ms": [1200]}
+    {"name": "obs_P1032801", "project": "D:/Gyroflow_NiYien/Test_function/SyncError/4/P1032801.gyroflow", "video": "D:/Gyroflow_NiYien/Test_function/SyncError/4/P1032801.MOV", "gate": false, "sync_points_ms": [1200]},
+    {"name": "obs_13_P1032767_overlap", "project": "D:/Gyroflow_NiYien/Test_function/SyncError/4/P1032767.gyroflow", "video": "D:/Gyroflow_NiYien/Test_function/SyncError/4/P1032767.MOV", "truth": -1664, "gate": false, "sync_points_ms": [700, 1400, 2100]}
   ]
 }
