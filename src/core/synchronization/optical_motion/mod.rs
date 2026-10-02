@@ -542,11 +542,11 @@ mod tests {
     }
     #[test] fn rows_follow_window_order_and_centres() {
         let (w0, quats) = synth_window(&SynthSpec::default());   // video time 5000..8000 ms, truth -700 ms
-        let sp = SyncParams { initial_offset: 0.0, search_size: 5000.0, ..Default::default() };
+        // ±1 s keeps the truth well inside and the debug-profile coarse scan short
+        let sp = SyncParams { initial_offset: 0.0, search_size: 1000.0, ..Default::default() };
         let cfg = cfg();
         let input = SolveInput { ranges_us: &[(5_000_000, 8_000_000), (10_000_000, 11_500_000)], sync_params: &sp, quats: &quats, cfg: &cfg, has_tracker: true };
         let progress = std::sync::Mutex::new(Vec::new());
-        // All cores: the ±5 s coarse scan of a 3 s window is slow in the debug profile
         let all_cores = rayon::ThreadPoolBuilder::new().build().unwrap();
         let rows = solve_windows(&[w0, empty()], &input, &all_cores, &AtomicBool::new(false), &|p: f64| progress.lock().unwrap().push(p)).unwrap();
         assert_eq!(rows.len(), 2);
