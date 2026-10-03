@@ -11,6 +11,7 @@
 //! `render_queue.rs` (job prep / completion divert).
 
 use parking_lot::Mutex;
+use super::optical_motion::judge::{JudgeMode, JudgeOutcome};
 
 /// Per-window stats recorded inside the essential coarse scan when the
 /// collector is armed. `cost_p25` is the 25th percentile of a decimated
@@ -44,6 +45,8 @@ static CURVE_COLLECTOR: Mutex<Option<Vec<DeepMatchWindowCurve>>> = Mutex::new(No
 static SCAN_K: Mutex<usize> = Mutex::new(0);
 static FORWARD_ARMED: Mutex<bool> = Mutex::new(false);
 static FORWARD_RESULT: Mutex<Option<ForwardOutcome>> = Mutex::new(None);
+static OPTICAL_JUDGE_ARMED: Mutex<Option<JudgeMode>> = Mutex::new(None);
+static OPTICAL_JUDGE_RESULT: Mutex<Option<JudgeOutcome>> = Mutex::new(None);
 // How far the essential scan's window loop got on this chunk. An empty
 // collector is produced by three structurally different situations (every
 // window skipped by the motion gate / every argmin rejected by the search
@@ -52,17 +55,23 @@ static FORWARD_RESULT: Mutex<Option<ForwardOutcome>> = Mutex::new(None);
 static WINDOWS_SCANNED: Mutex<usize> = Mutex::new(0);
 static WINDOWS_GATED: Mutex<usize> = Mutex::new(0);
 
+// Serializes tests that share the global collector statics across modules.
+#[cfg(test)]
+pub(crate) static TEST_MTX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Arm both collectors and record the scan-K target the essential scan uses to
 /// cap how many (highest-motion) windows it fully scans. Only one deep match
 /// runs at a time (render queue enforces), so single global slots suffice.
-/// Forward re-scoring is disarmed here; the chunk-scan launch opts in via
-/// `arm_forward()` (verification probes and the auto-probe never do).
+/// Forward re-scoring and the optical judge are disarmed here; the chunk-scan
+/// launch opts in separately (verification probes and the auto-probe never do).
 pub fn arm(scan_k: usize) {
     *COLLECTOR.lock() = Some(Vec::new());
     *CURVE_COLLECTOR.lock() = Some(Vec::new());
     *SCAN_K.lock() = scan_k;
     *FORWARD_ARMED.lock() = false;
     *FORWARD_RESULT.lock() = None;
+    *OPTICAL_JUDGE_ARMED.lock() = None;
+    *OPTICAL_JUDGE_RESULT.lock() = None;
     *WINDOWS_SCANNED.lock() = 0;
     *WINDOWS_GATED.lock() = 0;
 }
@@ -120,13 +129,16 @@ pub fn window_counts() -> (usize, usize) {
 }
 
 /// Take the collected stats and disarm (both collectors + scan-K + forward
-/// slots + window counters reset). Call `take_curves()`, `take_forward()` and
-/// `window_counts()` BEFORE this if you need them — this resets everything.
+/// and optical judge slots + window counters reset). Call `take_curves()`,
+/// `take_forward()`, `take_optical_judge()` and `window_counts()` BEFORE this
+/// if you need them — this resets everything.
 pub fn take() -> Vec<DeepMatchSegStats> {
     *SCAN_K.lock() = 0;
     *CURVE_COLLECTOR.lock() = None;
     *FORWARD_ARMED.lock() = false;
     *FORWARD_RESULT.lock() = None;
+    *OPTICAL_JUDGE_ARMED.lock() = None;
+    *OPTICAL_JUDGE_RESULT.lock() = None;
     *WINDOWS_SCANNED.lock() = 0;
     *WINDOWS_GATED.lock() = 0;
     COLLECTOR.lock().take().unwrap_or_default()
@@ -202,6 +214,26 @@ pub fn record_forward(outcome: ForwardOutcome) {
 /// Drain the forward outcome. Call BEFORE `take()` (which resets the slot).
 pub fn take_forward() -> Option<ForwardOutcome> {
     FORWARD_RESULT.lock().take()
+}
+
+/// Opt the current chunk into the optical judge after arming the collectors.
+pub fn arm_optical_judge(mode: JudgeMode) {
+    *OPTICAL_JUDGE_ARMED.lock() = Some(mode);
+}
+
+pub fn optical_judge_armed() -> Option<JudgeMode> {
+    if is_armed() { *OPTICAL_JUDGE_ARMED.lock() } else { None }
+}
+
+pub fn record_optical_judge(outcome: JudgeOutcome) {
+    if is_armed() {
+        *OPTICAL_JUDGE_RESULT.lock() = Some(outcome);
+    }
+}
+
+/// Drain the judge outcome before `take()` resets the collector slots.
+pub fn take_optical_judge() -> Option<JudgeOutcome> {
+    OPTICAL_JUDGE_RESULT.lock().take()
 }
 
 /// Compute the global (run-level) essential search domain so that every
@@ -1411,6 +1443,57 @@ fn env_f64_nonneg(name: &str, default: f64) -> f64 {
         .unwrap_or(default)
 }
 
+pub fn parse_optical_mode(raw: Option<&str>) -> (Option<JudgeMode>, &'static str) {
+    match raw.map(str::trim) {
+        None | Some("") => (Some(JudgeMode::On), "default"),
+        Some(s) => match s.to_ascii_lowercase().as_str() {
+            "0" | "off" | "false" | "no" => (None, "env"),
+            "shadow" => (Some(JudgeMode::Shadow), "env"),
+            "1" | "on" | "true" | "yes" => (Some(JudgeMode::On), "env"),
+            _ => (Some(JudgeMode::On), "default"),
+        },
+    }
+}
+
+pub fn optical_env_mode() -> Option<JudgeMode> {
+    static RESOLVED: std::sync::OnceLock<Option<JudgeMode>> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        let raw = std::env::var("GYROFLOW_DEEP_MATCH_OPTICAL").ok();
+        let (mode, source) = parse_optical_mode(raw.as_deref());
+        if let Some(s) = raw.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            if source == "default" {
+                log::warn!(target: "lifecycle", "GYROFLOW_DEEP_MATCH_OPTICAL={} invalid, falling back to default (on)", s);
+            }
+        }
+        let mode_name = match mode {
+            Some(JudgeMode::On) => "on",
+            Some(JudgeMode::Shadow) => "shadow",
+            None => "off",
+        };
+        log::info!(target: "lifecycle", "deep_match_optical resolved: mode={} source={}", mode_name, source);
+        mode
+    })
+}
+
+pub fn optical_g_strong() -> f64 {
+    env_f64("GYROFLOW_DEEP_MATCH_OPTICAL_G_STRONG", 1.4).max(1.0)
+}
+pub fn optical_support_ratio() -> f64 {
+    env_f64("GYROFLOW_DEEP_MATCH_OPTICAL_SUPPORT_RATIO", 1.1).max(1.0)
+}
+pub fn optical_radius_ms() -> f64 {
+    env_f64_nonneg("GYROFLOW_DEEP_MATCH_OPTICAL_RADIUS_MS", 100.0)
+}
+pub fn optical_top_n() -> usize {
+    (env_f64("GYROFLOW_DEEP_MATCH_OPTICAL_TOP_N", 50.0) as usize).clamp(4, 400)
+}
+pub fn optical_fps() -> f64 {
+    env_f64("GYROFLOW_DEEP_MATCH_OPTICAL_FPS", 30.0).max(5.0)
+}
+pub fn optical_coarse_points() -> usize {
+    (env_f64("GYROFLOW_DEEP_MATCH_OPTICAL_COARSE_POINTS", 200.0) as usize).max(1)
+}
+
 pub fn spread_max_ms() -> f64 {
     env_f64("GYROFLOW_DEEP_MATCH_SPREAD_MS", 200.0)
 }
@@ -1811,9 +1894,39 @@ pub fn fwd_min_candidates() -> usize {
 mod tests {
     use super::*;
 
-    // Serializes tests that share the global collector statics so they do not
-    // race each other when the test harness runs them on multiple threads.
-    static TEST_MTX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    #[test]
+    fn optical_judge_slots_reset_on_arm_and_take() {
+        let _g = TEST_MTX.lock().unwrap_or_else(|e| e.into_inner());
+        use crate::synchronization::optical_motion::judge::{ JudgeMode, JudgeOutcome, JudgeVerdict };
+        let _ = take(); // Start disarmed regardless of earlier tests.
+        let o = JudgeOutcome { mode: JudgeMode::On, verdict: JudgeVerdict::NoWinner { support_ms: None } };
+        record_optical_judge(o.clone()); // Ignore writes while disarmed.
+        arm(2);
+        assert_eq!(optical_judge_armed(), None);
+        arm_optical_judge(JudgeMode::Shadow);
+        assert_eq!(optical_judge_armed(), Some(JudgeMode::Shadow));
+        record_optical_judge(o.clone());
+        arm(2); // Re-arming clears both slots.
+        assert_eq!((optical_judge_armed(), take_optical_judge()), (None, None));
+        arm_optical_judge(JudgeMode::On);
+        record_optical_judge(o.clone());
+        assert_eq!(take_optical_judge(), Some(o.clone()));
+        assert_eq!(take_optical_judge(), None);
+        record_optical_judge(o);
+        let _ = take(); // Disarming clears both slots.
+        assert_eq!((optical_judge_armed(), take_optical_judge()), (None, None));
+    }
+
+    #[test]
+    fn parse_optical_mode_values() {
+        use crate::synchronization::optical_motion::judge::JudgeMode::*;
+        assert_eq!(parse_optical_mode(None), (Some(On), "default"));
+        assert_eq!(parse_optical_mode(Some(" ")), (Some(On), "default"));
+        for off in ["0", "off", "FALSE", "no"] { assert_eq!(parse_optical_mode(Some(off)), (None, "env")); }
+        assert_eq!(parse_optical_mode(Some("Shadow")), (Some(Shadow), "env"));
+        assert_eq!(parse_optical_mode(Some("on")), (Some(On), "env"));
+        assert_eq!(parse_optical_mode(Some("bogus")), (Some(On), "default"));
+    }
 
     #[test]
     fn search_domain_covers_capped_gyro_span() {
