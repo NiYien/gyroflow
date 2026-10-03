@@ -29018,7 +29018,7 @@ mod tests {
         let qml = include_str!("../ui/App.qml");
 
         assert_eq!(
-            qml.matches("videoArea.queue.shown && render_queue.queue.rowCount() > 0")
+            qml.matches("(window.useMobileWorkspace || videoArea.queue.shown) && render_queue.queue.rowCount() > 0")
                 .count(),
             2,
             "runPluginStabilizeFlow and runStabilizedBatchExport must both keep the \
@@ -29527,7 +29527,7 @@ mod tests {
         let flow = &flow_rest[..flow_rest
             .find("function showNotification")
             .expect("export flow is followed by showNotification")];
-        assert!(flow.contains("videoArea.queue && videoArea.queue.shown"));
+        assert!(flow.contains("videoArea.queue && (window.useMobileWorkspace || videoArea.queue.shown)"));
         assert!(flow.contains("render_queue.queue.rowCount() > 0"));
         assert!(
             flow.contains("render_queue.batch_motion_ready()"),
@@ -30349,7 +30349,7 @@ mod tests {
         let qml = include_str!("../ui/App.qml");
 
         assert!(
-            qml.contains("function scheduleApplyBatchParams()"),
+            qml.contains("function scheduleApplyBatchParams(field)"),
             "batch state edits must schedule applying params to selected render queue jobs"
         );
         assert!(
@@ -30358,11 +30358,11 @@ mod tests {
         );
 
         for needle in [
-            "onSmoothnessChanged: window.scheduleApplyBatchParams()",
-            "onHorizonLockChanged: window.scheduleApplyBatchParams()",
-            "onHorizonLockAmountChanged: window.scheduleApplyBatchParams()",
-            "onZoomModeChanged: window.scheduleApplyBatchParams()",
-            "onLensCorrectionChanged: window.scheduleApplyBatchParams()",
+            "onSmoothnessChanged: window.scheduleApplyBatchParams(\"smoothness\")",
+            "onHorizonLockChanged: window.scheduleApplyBatchParams(\"horizon_lock_amount\")",
+            "onHorizonLockAmountChanged: window.scheduleApplyBatchParams(\"horizon_lock_amount\")",
+            "onZoomModeChanged: window.scheduleApplyBatchParams(\"zoom_mode\")",
+            "onLensCorrectionChanged: window.scheduleApplyBatchParams(\"lens_correction\")",
             "onFramerateChanged: window.scheduleApplyBatchParams()",
         ] {
             assert!(
