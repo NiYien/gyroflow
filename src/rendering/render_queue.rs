@@ -5306,6 +5306,7 @@ impl RenderQueue {
             self.queue_changed();
         }
         self.jobs.remove(&job_id);
+        self.pending_sync_offset_methods.remove(&job_id);
         self.render_jobs_after_pending_reset.remove(&job_id);
         self.batch_sync_job_ids.remove(&job_id);
         self.expected_batch_sync_job_ids.remove(&job_id);
@@ -22616,6 +22617,25 @@ mod tests {
         queue.reset_job(1);
         let job = &queue.jobs[&1];
         assert_eq!(job.stab.as_ref().unwrap().lens.read().sync_settings.as_ref().unwrap()["offset_method"], 3);
+        assert!(queue.pending_sync_offset_methods.is_empty());
+    }
+
+    #[test]
+    fn remove_cleans_pending_method_for_a_released_job() {
+        let mut queue = queue_with_eta_job(JobStatus::Finished);
+        let project_data = {
+            let job = queue.jobs.get(&1).unwrap();
+            RenderQueue::get_gyroflow_data_internal(job.stab.as_ref().unwrap(), &job.additional_data, &job.render_options).unwrap()
+        };
+        {
+            let job = queue.jobs.get_mut(&1).unwrap();
+            job.project_data = Some(project_data);
+            job.stab = None;
+        }
+        queue.set_jobs_sync_offset_method(3);
+        assert_eq!(queue.pending_sync_offset_methods.get(&1), Some(&3));
+        queue.remove(1);
+        assert!(!queue.jobs.contains_key(&1));
         assert!(queue.pending_sync_offset_methods.is_empty());
     }
 

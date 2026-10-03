@@ -749,6 +749,7 @@ impl AutosyncProcess {
                 self.emit_canceled_progress();
                 return;
             };
+            let search_ms = t_search.elapsed().as_secs_f64() * 1000.0;
             let samples = self.thread_pool.install(|| optical::rates::rate_samples(&windows));
             for (i, &row) in rows.iter().enumerate() {
                 optical::log_rate_fit(i, &windows[i], &quats, row);
@@ -756,7 +757,7 @@ impl AutosyncProcess {
             self.estimator.replace_optical_rates(&self.scaled_ranges_us, samples);
             self.estimator.recalculate_gyro_data(self.org_fps, true);
             if let Some(session) = &self.optical {
-                optical::log_run(rows.len(), &session.timings(), t_search.elapsed().as_secs_f64() * 1000.0);
+                optical::log_run(rows.len(), &session.timings(), search_ms);
             }
             if let Some(cb) = &self.finished_cb {
                 cb(AutosyncResult::Offsets(rows));
