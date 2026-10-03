@@ -143,7 +143,7 @@ pub fn run_chunk_judge(curves: &[DeepMatchWindowCurve], scaled_duration_ms: f64,
     let judge_ms = start.elapsed().as_secs_f64() * 1000.0;
     let posterior = posterior_x.map_or_else(|| "none".to_owned(), |x| format!("accepted@{x:.1}ms"));
     let cands = format!("[{}]", candidates.iter().map(|x| format!("{x:.0}")).collect::<Vec<_>>().join(", "));
-    log::info!(target: "sync", "[deep-match] optical judge: windows={} candidates={} radius=卤{:.0}ms t_d={:.1}ms posterior={} every_nth={} quats={} frames_fed={} cands={}",
+    log::info!(target: "sync", "[deep-match] optical judge: windows={} candidates={} radius=±{:.0}ms t_d={:.1}ms posterior={} every_nth={} quats={} frames_fed={} cands={}",
         tracks.windows.len(), candidates.len(), p.radius_ms, t_d_ms, posterior, tracks.every_nth, quats.len(), tracks.frames_fed, cands);
     for (i, window) in windows.iter().enumerate() {
         match window.outcome {
