@@ -4,6 +4,7 @@
 use super::super::{PoseEstimator, SyncParams};
 use crate::filtering::Lowpass;
 use crate::stabilization::ComputeParams;
+use crate::synchronization::{deep_match, optical_motion};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::collections::BTreeMap;
 use std::sync::{
@@ -13,6 +14,10 @@ use std::sync::{
 
 use crate::gyro_source::TimeIMU;
 
+pub(crate) fn judge_progress_scale(armed: bool) -> f64 {
+    if armed { 0.9 } else { 1.0 }
+}
+
 pub fn find_offsets<F: Fn(f64) + Send + Sync>(
     estimator: &PoseEstimator,
     ranges: &[(i64, i64)],
@@ -21,6 +26,10 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
     progress_cb: F,
     cancel_flag: Arc<AtomicBool>,
 ) -> Vec<(f64, f64, f64, f64)> {
+    let judge_mode = deep_match::optical_judge_armed();
+    let scale = judge_progress_scale(judge_mode.is_some());
+    let raw_progress = progress_cb;
+    let progress_cb = |p: f64| raw_progress(p * scale);
     // Vec<(timestamp, offset, cost, confidence)>
     // essential_matrix path: confidence placeholder 0.5 (no NCC, no natural confidence metric)
     let estimated_gyro = estimator.estimated_gyro.read().clone();
@@ -396,11 +405,17 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
     // scoring, no rs-sync problem assembled).
     {
         use crate::synchronization::deep_match as dm;
-        if dm::forward_armed()
-            && dm::forward_enabled()
-            && dm::posterior_enabled()
-            && !cancel_flag.load(Relaxed)
-        {
+        let judged = match judge_mode {
+            Some(mode) if !cancel_flag.load(Relaxed) => {
+                let quats = params.gyro.read().quaternions.clone();
+                let curves = dm::peek_curves();
+                optical_motion::judge::run_chunk_judge(&curves, params.scaled_duration_ms, &quats, mode, &cancel_flag, &|p| raw_progress(0.9 + 0.1 * p))
+            }
+            _ => None,
+        };
+        if let Some(o) = &judged { dm::record_optical_judge(o.clone()); }
+        let judge_decisive = optical_motion::judge::is_decisive(judged.as_ref());
+        if !judge_decisive && dm::forward_armed() && dm::forward_enabled() && dm::posterior_enabled() && !cancel_flag.load(Relaxed) {
             forward_rescore(estimator, ranges, sync_params, params, &cancel_flag);
         }
     }
@@ -947,6 +962,25 @@ fn calculate_cost(offs: f64, of: &[TimeIMU], gyro: &BTreeMap<usize, TimeIMU>) ->
     } else {
         // Otherwise not a good match
         f64::MAX
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test] fn judge_progress_scale_is_identity_when_unarmed() {
+        assert_eq!(judge_progress_scale(false), 1.0);
+        assert_eq!(judge_progress_scale(true), 0.9);
+    }
+
+    #[test] fn forward_rescore_is_gated_by_the_judge() {
+        let src = include_str!("essential_matrix.rs");
+        let tail = &src[src.find("// Forward re-scoring cascade (change deep-match-forward-rescoring): when a").unwrap()..src.find("/// Forward re-scoring cascade (change deep-match-forward-rescoring):").unwrap()];
+        let judge = tail.find("run_chunk_judge(").expect("judge runs in the tail");
+        let gate = tail.find("if !judge_decisive").expect("forward gated by the judge");
+        let forward = tail.find("forward_rescore(estimator, ranges, sync_params, params, &cancel_flag);").unwrap();
+        assert!(judge < gate && gate < forward);
     }
 }
 
