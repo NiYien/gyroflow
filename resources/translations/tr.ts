@@ -1106,6 +1106,10 @@ Farklı bir çıkış kodeki deneyin (H.265/HEVC, H.264/AVC&apos;den daha fazla 
         <source>Go to settings</source>
         <translation>Ayarlara git</translation>
     </message>
+    <message>
+        <source>This video is still loading.</source>
+        <translation>Bu video hâlâ yükleniyor.</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -2122,6 +2126,18 @@ Gelişmiş kısmında keskinlik sınırını artırabilirsiniz.</translation>
         <location filename="../../src/ui/components/FeedbackDialog.qml" line="171"/>
         <source>Packaging…</source>
         <translation>Paketleniyor…</translation>
+    </message>
+    <message>
+        <source>Feedback includes your message, optional email, app version and submission time. Choose any attachments below. No videos are uploaded. See Privacy policy in Settings.</source>
+        <translation>Feedback includes your message, optional email, app version and submission time. Choose any attachments below. No videos are uploaded. See Privacy policy in Settings.</translation>
+    </message>
+    <message>
+        <source>Include logs and device information</source>
+        <translation>Include logs and device information</translation>
+    </message>
+    <message>
+        <source>Include project and lens settings</source>
+        <translation>Include project and lens settings</translation>
     </message>
 </context>
 <context>
@@ -4346,6 +4362,10 @@ Lütfen frame rate&apos;i belirtin: </translation>
         <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
         <translation>Kuyruktaki her videonun lens numarasını kontrol edin. Değiştirmek için sağ tıklayın, ardından sabitleyin.</translation>
     </message>
+    <message>
+        <source>Search stage %1 of %2</source>
+        <translation>Arama aşaması %1 / %2</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>
@@ -6271,6 +6291,10 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <source>Playback speed</source>
         <translation>Oynatma hızı</translation>
     </message>
+    <message>
+        <source>Not stabilized yet. Return to Videos and tap Stabilize.</source>
+        <translation>Henüz sabitlenmedi. Videolara dönüp Sabitle’ye dokunun.</translation>
+    </message>
 </context>
 <context>
     <name>VideoInformation</name>
@@ -6308,6 +6332,630 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <location filename="../../src/ui/main_window.qml" line="114"/>
         <source>No</source>
         <translation>Hayır</translation>
+    </message>
+</context>
+<context>
+    <name>MobileSettings</name>
+    <message>
+        <source>App preferences</source>
+        <translation>Uygulama tercihleri</translation>
+    </message>
+    <message>
+        <source>Auto rotate</source>
+        <translation>Otomatik döndür</translation>
+    </message>
+    <message>
+        <source>Dynamic zoom</source>
+        <translation>Dinamik yakınlaştırma</translation>
+    </message>
+    <message>
+        <source>Feedback</source>
+        <translation>Geri bildirim</translation>
+    </message>
+    <message>
+        <source>Horizon lock amount</source>
+        <translation>Ufuk kilitleme miktarı</translation>
+    </message>
+    <message>
+        <source>Language</source>
+        <translation>Dil</translation>
+    </message>
+    <message>
+        <source>Lens correction</source>
+        <translation>Lens doğrulaması</translation>
+    </message>
+    <message>
+        <source>Lock horizon</source>
+        <translation>Ufku kilitle</translation>
+    </message>
+    <message>
+        <source>Smoothness</source>
+        <translation>Yumuşaklık</translation>
+    </message>
+    <message>
+        <source>Stabilization</source>
+        <translation>Stabilizasyon</translation>
+    </message>
+    <message>
+        <source>Static zoom</source>
+        <translation>Statik zoom</translation>
+    </message>
+    <message>
+        <source>Theme</source>
+        <translation>Tema</translation>
+    </message>
+    <message>
+        <source>Updates</source>
+        <translation>Güncellemeler</translation>
+    </message>
+    <message>
+        <source>Zoom</source>
+        <translation>Yakınlaştırma</translation>
+    </message>
+    <message>
+        <source>About NiYien</source>
+        <translation>About NiYien</translation>
+    </message>
+    <message>
+        <source>Help and support</source>
+        <translation>Help and support</translation>
+    </message>
+    <message>
+        <source>Open-source licenses</source>
+        <translation>Open-source licenses</translation>
+    </message>
+    <message>
+        <source>Privacy policy</source>
+        <translation>Privacy policy</translation>
+    </message>
+</context>
+<context>
+    <name>MobileWorkspace</name>
+    <message>
+        <source>%1 completed · %2 need attention</source>
+        <translation>%1 tamamlandı · %2 kontrol gerekli</translation>
+    </message>
+    <message>
+        <source>%1 videos completed</source>
+        <translation>%1 video tamamlandı</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>Ekle</translation>
+    </message>
+    <message>
+        <source>Add files</source>
+        <translation>Dosya ekle</translation>
+    </message>
+    <message>
+        <source>Add folder</source>
+        <translation>Klasör ekle</translation>
+    </message>
+    <message>
+        <source>Add media</source>
+        <translation>Medya ekle</translation>
+    </message>
+    <message>
+        <source>Add videos and gyroscope data to get started.</source>
+        <translation>Başlamak için video ve jiroskop verileri ekleyin.</translation>
+    </message>
+    <message>
+        <source>All</source>
+        <translation>Tümü</translation>
+    </message>
+    <message>
+        <source>Back to videos</source>
+        <translation>Videolara dön</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>İptal et</translation>
+    </message>
+    <message>
+        <source>Clear queue</source>
+        <translation>Kuyruğu temizle</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Kapat</translation>
+    </message>
+    <message>
+        <source>Continue with all videos. Other clips from the same recording day can use this match when their timestamps are available.</source>
+        <translation>Tüm videolarla devam edin. Aynı kayıt günündeki diğer klipler, zaman damgaları varsa bu eşleşmeyi kullanabilir.</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>Derin arama</translation>
+    </message>
+    <message>
+        <source>Deep search complete</source>
+        <translation>Derin arama tamamlandı</translation>
+    </message>
+    <message>
+        <source>Deep search · %1</source>
+        <translation>Derin arama · %1</translation>
+    </message>
+    <message>
+        <source>Deselect</source>
+        <translation>Seçimi kaldır</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>Tamam</translation>
+    </message>
+    <message>
+        <source>Export stabilized video</source>
+        <translation>Sabitlenmiş videoyu dışa aktar</translation>
+    </message>
+    <message>
+        <source>Exported</source>
+        <translation>Dışa aktarıldı</translation>
+    </message>
+    <message>
+        <source>Exporting</source>
+        <translation>Dışa aktarılıyor</translation>
+    </message>
+    <message>
+        <source>Exporting %1%</source>
+        <translation>Dışa aktarılıyor %1%</translation>
+    </message>
+    <message>
+        <source>Global settings</source>
+        <translation>Genel ayarlar</translation>
+    </message>
+    <message>
+        <source>Gyroscope data</source>
+        <translation>Jiroskop verileri</translation>
+    </message>
+    <message>
+        <source>Info</source>
+        <translation>Bilgi</translation>
+    </message>
+    <message>
+        <source>Match found. You can now stabilize.</source>
+        <translation>Eşleşme bulundu. Artık sabitleyebilirsiniz.</translation>
+    </message>
+    <message>
+        <source>Matching videos…</source>
+        <translation>Videolar eşleştiriliyor…</translation>
+    </message>
+    <message>
+        <source>More</source>
+        <translation>Diğer</translation>
+    </message>
+    <message>
+        <source>Needs attention</source>
+        <translation>Kontrol gerekli</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>İleri</translation>
+    </message>
+    <message>
+        <source>No gyroscope data. Add a recording or try Deep search.</source>
+        <translation>Jiroskop verisi yok. Bir kayıt ekleyin veya Derin aramayı deneyin.</translation>
+    </message>
+    <message>
+        <source>No match found. Try a video with more camera motion, and check the gyro recording, in-camera stabilization and mounting position.</source>
+        <translation>Eşleşme bulunamadı. Daha fazla kamera hareketi içeren bir video deneyin; jiroskop kaydını, kamera içi sabitlemeyi ve montaj konumunu kontrol edin.</translation>
+    </message>
+    <message>
+        <source>Original</source>
+        <translation>Orijinal</translation>
+    </message>
+    <message>
+        <source>Pause</source>
+        <translation>Duraklat</translation>
+    </message>
+    <message>
+        <source>Play</source>
+        <translation>Oynat</translation>
+    </message>
+    <message>
+        <source>Playback position</source>
+        <translation>Oynatma konumu</translation>
+    </message>
+    <message>
+        <source>Preparing search…</source>
+        <translation>Arama hazırlanıyor…</translation>
+    </message>
+    <message>
+        <source>Preparing…</source>
+        <translation>Hazırlanıyor…</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>Önceki</translation>
+    </message>
+    <message>
+        <source>Processed %1 / %2</source>
+        <translation>İşlenen %1 / %2</translation>
+    </message>
+    <message>
+        <source>Reading…</source>
+        <translation>Okunuyor…</translation>
+    </message>
+    <message>
+        <source>Ready</source>
+        <translation>Hazır</translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation>Kaldır</translation>
+    </message>
+    <message>
+        <source>Reset pairing</source>
+        <translation>Eşleştirmeyi sıfırla</translation>
+    </message>
+    <message>
+        <source>Retry</source>
+        <translation>Yeniden dene</translation>
+    </message>
+    <message>
+        <source>Search cancelled</source>
+        <translation>Arama iptal edildi</translation>
+    </message>
+    <message>
+        <source>Select</source>
+        <translation>Seç</translation>
+    </message>
+    <message>
+        <source>Selected %1</source>
+        <translation>%1 seçildi</translation>
+    </message>
+    <message>
+        <source>Settings</source>
+        <translation>Ayarlar</translation>
+    </message>
+    <message>
+        <source>Skipped</source>
+        <translation>Atlandı</translation>
+    </message>
+    <message>
+        <source>Stabilize</source>
+        <translation>Sabitle</translation>
+    </message>
+    <message>
+        <source>Stabilized</source>
+        <translation>Stabilize edilmiş</translation>
+    </message>
+    <message>
+        <source>Stabilizing</source>
+        <translation>Sabitleniyor</translation>
+    </message>
+    <message>
+        <source>Stabilizing %1%</source>
+        <translation>Sabitleniyor %1%</translation>
+    </message>
+    <message>
+        <source>Stop</source>
+        <translation>Dur</translation>
+    </message>
+    <message>
+        <source>Stop the current task before changing its inputs.</source>
+        <translation>Girdilerini değiştirmeden önce geçerli görevi durdurun.</translation>
+    </message>
+    <message>
+        <source>Stop the current task to adjust processing settings.</source>
+        <translation>İşleme ayarlarını değiştirmek için geçerli görevi durdurun.</translation>
+    </message>
+    <message>
+        <source>Stop this video</source>
+        <translation>Bu videoyu durdur</translation>
+    </message>
+    <message>
+        <source>Stopped by you. Retry starts this video from the beginning.</source>
+        <translation>Siz durdurdunuz. Yeniden deneme bu videoyu baştan işler.</translation>
+    </message>
+    <message>
+        <source>Stopped · %1 completed</source>
+        <translation>Durduruldu · %1 tamamlandı</translation>
+    </message>
+    <message>
+        <source>Stopping…</source>
+        <translation>Durduruluyor…</translation>
+    </message>
+    <message>
+        <source>Sync not confirmed</source>
+        <translation>Senkronizasyon onaylanmadı</translation>
+    </message>
+    <message>
+        <source>Task details</source>
+        <translation>Görev ayrıntıları</translation>
+    </message>
+    <message>
+        <source>This format supports stabilization for editing plugins only.</source>
+        <translation>Bu biçim yalnızca kurgu eklentileri için sabitlemeyi destekler.</translation>
+    </message>
+    <message>
+        <source>This video could not be processed. Check its gyroscope data and lens settings.</source>
+        <translation>Bu video işlenemedi. Jiroskop verilerini ve lens ayarlarını kontrol edin.</translation>
+    </message>
+    <message>
+        <source>This video is being processed. Preview will be available when it finishes.</source>
+        <translation>Bu video işleniyor. Tamamlandığında önizleme kullanılabilir.</translation>
+    </message>
+    <message>
+        <source>Unknown</source>
+        <translation>Bilinmiyor</translation>
+    </message>
+    <message>
+        <source>Video information</source>
+        <translation>Video özellikleri</translation>
+    </message>
+    <message>
+        <source>Videos</source>
+        <translation>Videolar</translation>
+    </message>
+    <message>
+        <source>Videos %1</source>
+        <translation>Videolar %1</translation>
+    </message>
+    <message>
+        <source>View</source>
+        <translation>Görüntüle</translation>
+    </message>
+    <message>
+        <source>Waiting</source>
+        <translation>Bekliyor</translation>
+    </message>
+    <message>
+        <source>Your videos, ready to stabilize</source>
+        <translation>Videolarınız sabitlenmeye hazır</translation>
+    </message>
+    <message>
+        <source>‹ Videos</source>
+        <translation>‹ Videolar</translation>
+    </message>
+    <message>
+        <source>Add folders</source>
+        <translation>Klasör ekle</translation>
+    </message>
+    <message>
+        <source>Add gyroscope data</source>
+        <translation>Jiroskop verisi ekle</translation>
+    </message>
+    <message>
+        <source>Focal length unknown</source>
+        <translation>Odak uzaklığı bilinmiyor</translation>
+    </message>
+    <message>
+        <source>No gyroscope data added</source>
+        <translation>Jiroskop verisi eklenmedi</translation>
+    </message>
+    <message>
+        <source>Add recordings from an external gyroscope here. Built-in video data is read automatically.</source>
+        <translation>Harici jiroskop kayıtlarını buraya ekleyin. Videodaki dahili veriler otomatik okunur.</translation>
+    </message>
+    <message>
+        <source>Add videos to get started.</source>
+        <translation>Başlamak için video ekleyin.</translation>
+    </message>
+    <message>
+        <source>Choose video folders</source>
+        <translation>Video klasörlerini seç</translation>
+    </message>
+    <message>
+        <source>Choose videos</source>
+        <translation>Video seç</translation>
+    </message>
+    <message>
+        <source>External gyroscope</source>
+        <translation>Harici jiroskop</translation>
+    </message>
+    <message>
+        <source>App</source>
+        <translation>Uygulama</translation>
+    </message>
+    <message>
+        <source>Back</source>
+        <translation>Geri</translation>
+    </message>
+    <message>
+        <source>Changes apply to all videos.</source>
+        <translation>Değişiklikler tüm videolara uygulanır.</translation>
+    </message>
+    <message>
+        <source>Clear video and gyroscope matches</source>
+        <translation>Video ve jiroskop eşleşmelerini temizle</translation>
+    </message>
+    <message>
+        <source>Export</source>
+        <translation>Dışarı aktar</translation>
+    </message>
+    <message>
+        <source>Lens</source>
+        <translation>Lens</translation>
+    </message>
+    <message>
+        <source>Remove all videos from this list</source>
+        <translation>Bu listedeki tüm videoları kaldır</translation>
+    </message>
+    <message>
+        <source>Choose files</source>
+        <translation>Dosya seç</translation>
+    </message>
+    <message>
+        <source>Choose folders</source>
+        <translation>Klasör seç</translation>
+    </message>
+    <message>
+        <source>View results</source>
+        <translation>Sonuçları görüntüle</translation>
+    </message>
+    <message>
+        <source>Confirm folder import</source>
+        <translation>Klasör içe aktarımını onayla</translation>
+    </message>
+    <message>
+        <source>Import</source>
+        <translation>İçe aktar</translation>
+    </message>
+    <message>
+        <source>Stabilize (for plugins)</source>
+        <translation>Sabitle (eklentiler için)</translation>
+    </message>
+    <message>
+        <source>Calibration pair</source>
+        <translation>Kalibrasyon çifti</translation>
+    </message>
+    <message>
+        <source>In-camera stabilization on</source>
+        <translation>Kamera içi sabitleme açık</translation>
+    </message>
+    <message>
+        <source>No gyroscope data</source>
+        <translation>Jiroskop verisi yok</translation>
+    </message>
+    <message>
+        <source>Plugin stabilization only</source>
+        <translation>Yalnızca eklenti sabitlemesi</translation>
+    </message>
+    <message>
+        <source>Skip reason not recorded</source>
+        <translation>Atlama nedeni kaydedilmedi</translation>
+    </message>
+    <message>
+        <source>Stopped manually</source>
+        <translation>Elle durduruldu</translation>
+    </message>
+    <message>
+        <source>About NiYien</source>
+        <translation>About NiYien</translation>
+    </message>
+    <message>
+        <source>Export editing project</source>
+        <translation>Export editing project</translation>
+    </message>
+    <message>
+        <source>Feedback</source>
+        <translation>Geri bildirim</translation>
+    </message>
+    <message>
+        <source>Help and support</source>
+        <translation>Help and support</translation>
+    </message>
+    <message>
+        <source>How it works</source>
+        <translation>How it works</translation>
+    </message>
+    <message>
+        <source>Open-source licenses</source>
+        <translation>Open-source licenses</translation>
+    </message>
+    <message>
+        <source>Privacy policy</source>
+        <translation>Privacy policy</translation>
+    </message>
+    <message>
+        <source>Share / Save to Files</source>
+        <translation>Share / Save to Files</translation>
+    </message>
+    <message>
+        <source>Source code</source>
+        <translation>Source code</translation>
+    </message>
+    <message>
+        <source>The demo could not be prepared. Please try again.</source>
+        <translation>The demo could not be prepared. Please try again.</translation>
+    </message>
+    <message>
+        <source>The output file is unavailable. Check the output folder.</source>
+        <translation>The output file is unavailable. Check the output folder.</translation>
+    </message>
+    <message>
+        <source>Try a generated demo</source>
+        <translation>Try a generated demo</translation>
+    </message>
+    <message>
+        <source>Use a supported camera's gyroscope data or import a separate gyroscope file.</source>
+        <translation>Use a supported camera's gyroscope data or import a separate gyroscope file.</translation>
+    </message>
+</context>
+<context>
+    <name>MobileFolderPicker</name>
+    <message>
+        <source>Add %1 folders</source>
+        <translation>%1 klasör ekle</translation>
+    </message>
+    <message>
+        <source>Choose a location, then select the folders to add. You can also add folders from another location.</source>
+        <translation>Bir konum seçip eklenecek klasörleri işaretleyin. Başka konumlardan da klasör ekleyebilirsiniz.</translation>
+    </message>
+    <message>
+        <source>Choose location</source>
+        <translation>Konum seç</translation>
+    </message>
+    <message>
+        <source>No subfolders. Select this folder to add its files.</source>
+        <translation>Alt klasör yok. Dosyalarını eklemek için bu klasörü seçin.</translation>
+    </message>
+    <message>
+        <source>Open folder</source>
+        <translation>Klasörü aç</translation>
+    </message>
+    <message>
+        <source>This folder</source>
+        <translation>Bu klasör</translation>
+    </message>
+    <message>
+        <source>Unable to read this folder. Choose the location again.</source>
+        <translation>Klasör okunamıyor. Konumu yeniden seçin.</translation>
+    </message>
+    <message>
+        <source>Up one level</source>
+        <translation>Bir üst düzey</translation>
+    </message>
+    <message>
+        <source>Add this folder</source>
+        <translation>Bu klasörü ekle</translation>
+    </message>
+    <message>
+        <source>No subfolders</source>
+        <translation>Alt klasör yok</translation>
+    </message>
+    <message>
+        <source>Subfolders</source>
+        <translation>Alt klasörler</translation>
+    </message>
+    <message>
+        <source>Browse</source>
+        <translation>Gözat</translation>
+    </message>
+    <message>
+        <source>Add %1 files</source>
+        <translation>%1 dosya ekle</translation>
+    </message>
+    <message>
+        <source>Add location</source>
+        <translation>Konum ekle</translation>
+    </message>
+    <message>
+        <source>Choose a folder once to browse its files here.</source>
+        <translation>Dosyalarına buradan göz atmak için bir kez klasör seçin.</translation>
+    </message>
+    <message>
+        <source>No matching files</source>
+        <translation>Eşleşen dosya yok</translation>
+    </message>
+    <message>
+        <source>Includes files in this folder and up to two levels of subfolders.</source>
+        <translation>Bu klasördeki ve en fazla iki alt klasör düzeyindeki dosyaları içerir.</translation>
+    </message>
+    <message>
+        <source>Saved folders</source>
+        <translation>Kayıtlı klasörler</translation>
+    </message>
+    <message>
+        <source>Other locations</source>
+        <translation>Diğer konumlar</translation>
+    </message>
+</context>
+<context>
+    <name>MobileGyroBar</name>
+    <message>
+        <source>Not added</source>
+        <translation>Eklenmedi</translation>
     </message>
 </context>
 </TS>

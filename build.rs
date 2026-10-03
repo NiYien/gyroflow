@@ -194,15 +194,41 @@ fn compile_qml(dir: &str, qt_include_path: &str, qt_library_path: &str) {
 fn main() {
     println!("cargo:rerun-if-env-changed=GITHUB_REF");
     println!("cargo:rerun-if-env-changed=GITHUB_RUN_NUMBER");
+    println!("cargo:rerun-if-changed=_deployment/ios/app.json");
+    println!("cargo:rerun-if-env-changed=NIYIEN_IOS_BUILD_NUMBER");
+    println!("cargo:rerun-if-changed=_deployment/android/app.json");
+    println!("cargo:rerun-if-env-changed=NIYIEN_ANDROID_VERSION_CODE");
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
     let build_time = std::time::SystemTime::now()
         .duration_since(std::time::SystemTime::UNIX_EPOCH)
         .ok()
         .map(|time| ((time.as_secs() - 1642516578) / 600).to_string());
     let build_time_value = build_time.as_deref().unwrap_or("1");
-    let version_info = niyien_version_info(
+    let mut version_info = niyien_version_info(
         &env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".to_owned()),
         Some(build_time_value),
     );
+    if target_os == "ios" {
+        let metadata: serde_json::Value = serde_json::from_str(include_str!("_deployment/ios/app.json")).unwrap();
+        let version = metadata["version"].as_str().unwrap().to_owned();
+        let build = env::var("NIYIEN_IOS_BUILD_NUMBER")
+            .unwrap_or_else(|_| metadata["build_number"].as_str().unwrap().to_owned());
+        assert!(version.split('.').count() == 3 && version.split('.').all(|part| !part.is_empty() && part.bytes().all(|c| c.is_ascii_digit())), "iOS version must contain three integers");
+        assert!(!build.is_empty() && build.bytes().all(|c| c.is_ascii_digit()) && build.parse::<u64>().unwrap_or(0) > 0, "iOS build number must be a positive integer");
+        println!("cargo:rustc-env=NIYIEN_IOS_DISPLAY_NAME={}", metadata["display_name"].as_str().unwrap());
+        version_info = NiyienVersionInfo { canonical: version.clone(), display: version, numeric: build };
+    }
+    if target_os == "android" {
+        let metadata: serde_json::Value = serde_json::from_str(include_str!("_deployment/android/app.json")).unwrap();
+        let version = metadata["version"].as_str().unwrap().to_owned();
+        let build = env::var("NIYIEN_ANDROID_VERSION_CODE")
+            .or_else(|_| env::var("GITHUB_RUN_NUMBER"))
+            .unwrap_or_else(|_| metadata["version_code"].as_str().unwrap().to_owned());
+        assert!(version.split('.').count() == 3 && version.split('.').all(|part| !part.is_empty() && part.bytes().all(|c| c.is_ascii_digit())), "Android version must contain three integers");
+        assert!(build.parse::<u64>().is_ok_and(|code| (1..=2_100_000_000).contains(&code)), "Android version code must be a positive Play-compatible integer");
+        println!("cargo:rustc-env=NIYIEN_ANDROID_DISPLAY_NAME={}", metadata["display_name"].as_str().unwrap());
+        version_info = NiyienVersionInfo { canonical: version.clone(), display: version, numeric: build };
+    }
 
     println!("cargo:rustc-env=BUILD_TIME={build_time_value}");
     println!(
@@ -222,7 +248,6 @@ fn main() {
     let qt_library_path = env::var("DEP_QT_LIBRARY_PATH").unwrap();
     let qt_version = env::var("DEP_QT_VERSION").unwrap();
 
-    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
     crm::build(&target_os);
 
     // Synthetic cfg `neuflow_burn_enabled`. Must mirror the same logic in
@@ -271,6 +296,7 @@ fn main() {
     println!("cargo:rerun-if-changed=src/ui");
     println!("cargo:rerun-if-changed=src/ui/components");
     println!("cargo:rerun-if-changed=src/ui/menu");
+    println!("cargo:rerun-if-changed=src/ui/mobile");
 
     if target_os == "ios" {
         println!("cargo:rerun-if-changed=_deployment/ios/qml_plugins.cpp");

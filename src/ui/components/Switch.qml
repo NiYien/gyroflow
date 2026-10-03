@@ -2,12 +2,14 @@
 // Copyright © 2026 Adrian <adrian.eddy at gmail>
 
 import QtQuick
+import "../mobile" as Mobile
 
 // Vertical two-option switch: both option labels are always visible, stacked
 // vertically, and the knob points at the active one. Clicking a label selects
 // that option (radio-like), clicking the track toggles.
 Item {
     id: sw;
+    readonly property bool mobileStyle: typeof window !== "undefined" && window.useMobileWorkspace === true
     property bool checked: false;
     property string textOff; // top option, active when checked == false
     property string textOn;  // bottom option, active when checked == true
@@ -25,6 +27,7 @@ Item {
 
     Rectangle {
         id: track;
+        visible: !sw.mobileStyle;
         width: 20 * dpiScale;
         height: rows.height;
         radius: width / 2;
@@ -59,19 +62,23 @@ Item {
 
     Column {
         id: rows;
-        anchors.left: track.right;
-        anchors.leftMargin: 8 * dpiScale;
+        anchors.left: sw.mobileStyle ? parent.left : track.right;
+        anchors.leftMargin: sw.mobileStyle ? 0 : 8 * dpiScale;
         anchors.right: parent.right;
 
         Text {
             width: parent.width;
-            height: 24 * dpiScale;
+            height: sw.mobileStyle ? Math.max(48 * dpiScale, implicitHeight + 16 * dpiScale) : 24 * dpiScale;
             text: sw.textOff;
-            font.pixelSize: 13 * dpiScale;
-            font.family: styleFont;
-            font.bold: !sw.checked;
+            font.pixelSize: (sw.mobileStyle ? Mobile.MobileStyle.body : 13) * dpiScale;
+            font.family: sw.mobileStyle ? Mobile.MobileStyle.fontFamily : styleFont;
+            font.bold: !sw.mobileStyle && !sw.checked;
             color: styleTextColor;
-            opacity: sw.checked? 0.45 : 1.0;
+            opacity: sw.mobileStyle ? 1 : sw.checked? 0.45 : 1.0;
+            rightPadding: sw.mobileStyle ? 32 * dpiScale : 0;
+            wrapMode: sw.mobileStyle ? Text.WordWrap : Text.NoWrap;
+            Mobile.MobileIcon { visible: sw.mobileStyle && !sw.checked; name: "check"; color: Mobile.MobileStyle.accent(style === "dark"); width: 22 * dpiScale; height: width; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter }
+            Rectangle { visible: sw.mobileStyle; width: parent.width; height: 0.5 * dpiScale; anchors.bottom: parent.bottom; color: Mobile.MobileStyle.separator(style === "dark") }
             Ease on opacity { duration: 300; }
             elide: Text.ElideRight;
             verticalAlignment: Text.AlignVCenter;
@@ -79,13 +86,16 @@ Item {
         }
         Text {
             width: parent.width;
-            height: 24 * dpiScale;
+            height: sw.mobileStyle ? Math.max(48 * dpiScale, implicitHeight + 16 * dpiScale) : 24 * dpiScale;
             text: sw.textOn;
-            font.pixelSize: 13 * dpiScale;
-            font.family: styleFont;
-            font.bold: sw.checked;
+            font.pixelSize: (sw.mobileStyle ? Mobile.MobileStyle.body : 13) * dpiScale;
+            font.family: sw.mobileStyle ? Mobile.MobileStyle.fontFamily : styleFont;
+            font.bold: !sw.mobileStyle && sw.checked;
             color: styleTextColor;
-            opacity: sw.checked? 1.0 : 0.45;
+            opacity: sw.mobileStyle ? 1 : sw.checked? 1.0 : 0.45;
+            rightPadding: sw.mobileStyle ? 32 * dpiScale : 0;
+            wrapMode: sw.mobileStyle ? Text.WordWrap : Text.NoWrap;
+            Mobile.MobileIcon { visible: sw.mobileStyle && sw.checked; name: "check"; color: Mobile.MobileStyle.accent(style === "dark"); width: 22 * dpiScale; height: width; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter }
             Ease on opacity { duration: 300; }
             elide: Text.ElideRight;
             verticalAlignment: Text.AlignVCenter;
@@ -95,6 +105,7 @@ Item {
 
     MouseArea {
         id: hoverArea;
+        visible: !sw.mobileStyle;
         anchors.fill: track;
         hoverEnabled: true;
         cursorShape: Qt.PointingHandCursor;

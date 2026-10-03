@@ -5,9 +5,11 @@ import QtQuick
 import QtQuick.Controls as QQC
 import QtQuick.Controls.impl as QQCI
 import QtQuick.Controls.Material as QQCM
+import "../mobile" as Mobile
 
 Item {
     id: root;
+    readonly property bool mobileStyle: typeof window !== "undefined" && window.useMobileWorkspace === true
     signal clicked();
     property alias text: btn.text;
     property bool opened: col.children.length > 0;
@@ -16,6 +18,7 @@ Item {
     property alias spacing: col.spacing;
     property alias innerItem: innerItem;
     property bool showBtn: true;
+    property real contentInset: (mobileStyle ? (showBtn ? 8 : 0) : 15) * dpiScale;
     default property alias data: col.data;
     property string iconName;
     property bool canEnsureVisible: false;
@@ -51,7 +54,7 @@ Item {
     }
 
     width: parent.width;
-    height: btn.height + (opened || !root.showBtn? col.height : 0);
+    height: (root.mobileStyle && !btn.visible ? 0 : btn.height) + (opened || !root.showBtn? col.height : 0);
     Ease on height { id: anim; }
     onHeightChanged: Qt.callLater(root.ensureVisible);
     clip: true;
@@ -70,15 +73,15 @@ Item {
 
         visible: root.showBtn;
 
-        icon.name: iconName || "";
-        icon.source: iconName ? "qrc:/resources/icons/svg/" + iconName + ".svg" : "";
+        icon.name: root.mobileStyle ? "" : iconName || "";
+        icon.source: !root.mobileStyle && iconName ? "qrc:/resources/icons/svg/" + iconName + ".svg" : "";
         // Icon scales with the title-bar height (36 -> ~24, 28 -> ~19) so subclasses
         // that shrink btnHeight stay visually balanced.
         icon.width: root.btnHeight * 0.67;
         icon.height: root.btnHeight * 0.67;
 
         width: parent.width;
-        height: root.btnHeight;
+        height: root.mobileStyle ? 44 * dpiScale : root.btnHeight;
         // Override the default implicit height so the contentItem layout respects
         // btnHeight when a subclass sets 28.
         implicitHeight: root.btnHeight;
@@ -96,14 +99,16 @@ Item {
             contentItem.alignment = Qt.AlignLeft;
         }
 
-        font.pixelSize: 14 * dpiScale;
-        font.family: styleFont;
+        font.pixelSize: (root.mobileStyle ? Mobile.MobileStyle.body : 14) * dpiScale;
+        font.family: root.mobileStyle ? Mobile.MobileStyle.fontFamily : styleFont;
+        font.weight: root.mobileStyle ? Font.DemiBold : Font.Normal;
         font.capitalization: Font.Normal
 
         background: Item {
             anchors.fill: parent;
 
             Rectangle {
+                visible: !root.mobileStyle;
                 color: styleAccentColor;
                 height: parent.height * 0.45;
                 width: 3 * dpiScale;
@@ -145,14 +150,14 @@ Item {
         Column {
             id: col;
             y: btn.visible? btn.height : 0;
-            x: 15 * dpiScale;
+            x: root.contentInset;
             opacity: root.opened || !root.showBtn? 1 : 0;
             Ease on opacity { }
             visible: opacity > 0;
             width: root.width - 2*x;
-            spacing: 10 * dpiScale;
-            topPadding: 10 * dpiScale;
-            bottomPadding: 20 * dpiScale;
+            spacing: (root.mobileStyle ? 16 : 10) * dpiScale;
+            topPadding: (root.mobileStyle ? 0 : 10) * dpiScale;
+            bottomPadding: (root.mobileStyle ? 8 : 20) * dpiScale;
         }
     }
     LoaderOverlay { id: loader; }

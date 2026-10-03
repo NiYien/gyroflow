@@ -36,7 +36,7 @@ MenuItem {
     readonly property int nowSentinel: -1
     // batchScope hides `Now`: with a job selected the lens index is assigned, so it
     // is necessarily one of the six groups.
-    readonly property bool hasNowEntry: !!projectLens && !batchScope
+    readonly property bool hasNowEntry: !!projectLens && !batchScope && !root.mobileStyle
     // Tracks presence across reloads so a *refresh* of the same project (what a
     // save does) can be told apart from a project *arriving*.
     property bool _projectLensWasPresent: false
@@ -60,7 +60,7 @@ MenuItem {
     // panel right after setting selection, which would suppress the per-job
     // hint + "Apply globally" button. Selection state alone is the right
     // signal for "are we editing per-job vs global".
-    readonly property bool batchScope: !!(window.videoArea
+    readonly property bool batchScope: !root.mobileStyle && !!(window.videoArea
         && window.videoArea.queue
         && window.videoArea.queue.selectedCount > 0)
     readonly property bool lightTheme: style === "light"
@@ -218,6 +218,7 @@ MenuItem {
             presets = []
     }
     function loadProjectLens(): void {
+        if (root.mobileStyle) return;
         const raw = controller.project_lens + ""
         const parsed = raw.length > 0 ? parseJson(raw, null) : null
         const arrived = !!parsed && !_projectLensWasPresent
@@ -595,6 +596,7 @@ MenuItem {
         if (!syncing)
             refreshUiFromSelection()
     }
+    onMobileStyleChanged: { if (_bootDone) { if (mobileStyle) loadConfigs(); else loadProjectLens(); } }
     onBatchScopeChanged: {
         // Reset user lens pick when scope changes (entering / leaving batch view) —
         // each scope is allowed its own auto-selected lens group.
@@ -666,30 +668,30 @@ MenuItem {
 
     Rectangle {
         width: parent.width
-        height: contentColumn.implicitHeight + 20 * dpiScale
+        height: contentColumn.implicitHeight + (root.mobileStyle ? 0 : 20) * dpiScale
         radius: 12 * dpiScale
-        color: root.cardColor
-        border.width: 1 * dpiScale
+        color: root.mobileStyle ? "transparent" : root.cardColor
+        border.width: root.mobileStyle ? 0 : 1 * dpiScale
         border.color: root.borderColor
 
         Column {
             id: contentColumn
             anchors.fill: parent
-            anchors.margins: 12 * dpiScale
+            anchors.margins: (root.mobileStyle ? 0 : 12) * dpiScale
             spacing: 10 * dpiScale
 
             Rectangle {
                 width: parent.width
-                height: headerColumn.implicitHeight + 16 * dpiScale
+                height: headerColumn.implicitHeight + (root.mobileStyle ? 0 : 16) * dpiScale
                 radius: 10 * dpiScale
-                color: root.sectionColor
-                border.width: 1 * dpiScale
+                color: root.mobileStyle ? "transparent" : root.sectionColor
+                border.width: root.mobileStyle ? 0 : 1 * dpiScale
                 border.color: root.borderColor
 
                 Column {
                     id: headerColumn
                     anchors.fill: parent
-                    anchors.margins: 10 * dpiScale
+                    anchors.margins: (root.mobileStyle ? 0 : 10) * dpiScale
                     spacing: 6 * dpiScale
 
                     // Global lens-type switch for all 6 lens groups. Persists to
@@ -735,6 +737,7 @@ MenuItem {
                 visible: !!root.manualCameraState.eligible
 
                 Label {
+                    mobileStacked: true
                     position: Label.LeftPosition
                     text: qsTranslate("TableList", "Camera brand")
                     width: parent.width
@@ -758,6 +761,7 @@ MenuItem {
                 }
 
                 Label {
+                    mobileStacked: true
                     position: Label.LeftPosition
                     text: qsTranslate("TableList", "Camera model")
                     width: parent.width
@@ -787,8 +791,10 @@ MenuItem {
             // must not be folded away by the manual-edit switch. Only the editing
             // fields below collapse.
             Label {
+                mobileStacked: true
                 position: Label.LeftPosition
                 text: qsTr("Lens group")
+                visible: !root.mobileStyle || controller.lens_group_manual_edit
                 width: parent.width
 
                 ComboBox {
@@ -849,6 +855,7 @@ MenuItem {
                 // adjust them via the render-queue right-click "Change lens group" menu.
 
                 Label {
+                    mobileStacked: true
                     position: Label.LeftPosition
                     text: qsTr("Focal length")
                     width: parent.width
@@ -928,6 +935,7 @@ MenuItem {
                     }
 
                     Label {
+                        mobileStacked: true
                         position: Label.LeftPosition
                         text: qsTr("Preset")
                         width: parent.width
@@ -989,6 +997,7 @@ MenuItem {
                     }
 
                     Label {
+                        mobileStacked: true
                         position: Label.LeftPosition
                         text: qsTr("Squeeze ratio")
                         width: parent.width
@@ -1014,6 +1023,7 @@ MenuItem {
                     }
 
                     Label {
+                        mobileStacked: true
                         position: Label.LeftPosition
                         // Reuse the existing "Lens correction" translation from the Stabilization
                         // context (all 22 languages have it) instead of creating a new context.
@@ -1083,7 +1093,7 @@ MenuItem {
                         leftPadding: 0
                         visible: text.length > 0
                         color: root.mutedTextColor
-                        font.pixelSize: 11 * dpiScale
+                        font.pixelSize: (root.mobileStyle ? 14 : 11) * dpiScale
                         font.bold: true
                         wrapMode: Text.WordWrap
                     }

@@ -1,14 +1,16 @@
 <?xml version="1.0"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.niyien.gyroflow"
+    package="com.niyien.stabilizer"
     android:installLocation="auto"
     android:versionCode="100"
-    android:versionName="1.6.3">
+    android:versionName="1.0.0">
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <!-- Direct folder browsing; the user grants special access in Android settings. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- In-app update: allows requesting the system package installer for the
          downloaded APK (user still confirms in the installer UI). -->
@@ -37,15 +39,16 @@
         android:name="org.qtproject.qt.android.bindings.QtApplication"
         android:extractNativeLibs="true"
         android:hardwareAccelerated="true"
-        android:label="Gyroflow(NiYien)"
+        android:label="NiYien"
         android:icon="@mipmap/icon"
         android:allowNativeHeapPointerTagging="false"
         android:allowBackup="true"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
         <activity
-            android:name="com.niyien.gyroflow.MainActivity"
+            android:name="com.niyien.stabilizer.MainActivity"
+            android:enableOnBackInvokedCallback="false"
             android:configChanges="orientation|uiMode|screenLayout|screenSize|smallestScreenSize|layoutDirection|locale|fontScale|keyboard|keyboardHidden|navigation|mcc|mnc|density"
-            android:label="Gyroflow(NiYien)"
+            android:label="NiYien"
             android:launchMode="singleTask"
             android:screenOrientation="unspecified"
             android:exported="true">
@@ -111,7 +114,7 @@
              Qt's (commented) qtprovider so the two never collide. -->
         <provider
             android:name="androidx.core.content.FileProvider"
-            android:authorities="com.niyien.gyroflow.updateprovider"
+            android:authorities="com.niyien.stabilizer.updateprovider"
             android:exported="false"
             android:grantUriPermissions="true">
             <meta-data

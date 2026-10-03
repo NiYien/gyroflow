@@ -1,0 +1,5 @@
+MDK Multimedia Development Kit
+Copyright (c) 2016-2025 WangBin
+Project and author licensing information: https://github.com/wang-bin/mdk-sdk#license
+
+MDK is a separately licensed native SDK. The author offers keys to open-source projects and describes other eligible and commercial uses at the address above. Its license is distinct from the GPL license of NiYien.

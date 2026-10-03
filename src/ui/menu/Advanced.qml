@@ -61,7 +61,7 @@ MenuItem {
 
         const parsed = Math.floor(+index);
         if (isNaN(parsed) || parsed < 0 || parsed >= count)
-            return Math.min(1, count - 1);
+            return (isMobile || mobileUiTest) ? 0 : Math.min(1, count - 1);
 
         return parsed;
     }
@@ -180,12 +180,13 @@ MenuItem {
             font.pixelSize: 12 * dpiScale;
             width: parent.width;
             Component.onCompleted: {
-                const savedTheme = +settings.value("theme", 1);
+                const savedTheme = +settings.value("theme", (isMobile || mobileUiTest) ? 0 : 1);
                 let m = [QT_TRANSLATE_NOOP("Popup", "Light"), QT_TRANSLATE_NOOP("Popup", "Dark")];
                 if (!(isMobile && screenSize < 7.0)) {
                     m.push(QT_TRANSLATE_NOOP("Popup", "Mobile Light"));
                     m.push(QT_TRANSLATE_NOOP("Popup", "Mobile Dark"));
                 }
+                if (isMobile || (typeof mobileUiTest !== "undefined" && mobileUiTest)) updatingTheme = true;
                 model = m;
                 root.setThemeIndex(savedTheme, false);
             }

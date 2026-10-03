@@ -3911,6 +3911,9 @@ impl Controller {
     }
 
     fn start_app_update_for_version(&self, requested_version: Option<String>) {
+        if cfg!(target_os = "ios") {
+            return;
+        }
         let progress = util::qt_queued_callback_mut(
             QPointer::from(self as &Self),
             |this, (downloaded, total, message): (u64, u64, String)| {
@@ -5860,21 +5863,22 @@ impl Controller {
     }
 
     fn build_feedback_options(json: &str) -> crate::feedback::packager::PackageOptions {
+        let default = true;
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(json) {
             let g = |k: &str, default: bool| v.get(k).and_then(|x| x.as_bool()).unwrap_or(default);
             crate::feedback::packager::PackageOptions {
-                include_current_log: g("current_log", true),
-                include_history_logs: g("history_logs", true),
-                include_incidents: g("incidents", true),
-                include_project: g("project", true),
-                include_video_meta: g("video_meta", true),
-                include_lens: g("lens", true),
-                include_queue_settings: g("queue_settings", true),
-                include_system_info: g("system_info", true),
-                include_crashes: g("crashes", true),
+                include_current_log: g("current_log", default),
+                include_history_logs: g("history_logs", default),
+                include_incidents: g("incidents", default),
+                include_project: g("project", default),
+                include_video_meta: g("video_meta", default),
+                include_lens: g("lens", default),
+                include_queue_settings: g("queue_settings", default),
+                include_system_info: g("system_info", default),
+                include_crashes: g("crashes", default),
             }
         } else {
-            crate::feedback::packager::PackageOptions::default()
+            Self::build_feedback_options("{}")
         }
     }
 
@@ -5891,7 +5895,11 @@ impl Controller {
         let opts = Self::build_feedback_options(&options_json.to_string());
         let summary = description.to_string();
         let email = email.to_string();
-        let meta = crate::feedback::meta::Meta::collect();
+        let meta = if !cfg!(any(target_os = "ios", target_os = "android")) || opts.include_system_info {
+            crate::feedback::meta::Meta::collect()
+        } else {
+            crate::feedback::meta::Meta::minimal()
+        };
 
         // Channel for state events. Forwarded to QML via Qt-queued callback.
         let (tx, rx) = std::sync::mpsc::channel::<crate::feedback::FeedbackJobState>();
@@ -6322,6 +6330,9 @@ pub struct Filesystem {
     catch_urls_open: qt_method!(fn(&self, urls: QStringList)),
     open_native_picker:
         qt_method!(fn(&self, mode: i32, allow_multiple: bool, initial_url: QString) -> bool),
+    list_mobile_folders: qt_method!(fn(&self, url: QUrl, request_id: i32)),
+    get_mobile_locations: qt_method!(fn(&self) -> QString),
+    mobile_folders_listed: qt_signal!(request_id: i32, result: QString),
     open_ios_video_picker: qt_method!(fn(&self) -> bool),
     catch_picker_cancelled: qt_method!(fn(&self)),
     catch_picker_error: qt_method!(fn(&self, message: QString)),
@@ -6337,6 +6348,63 @@ pub struct Filesystem {
     picker_error: qt_signal!(message: QString),
 }
 impl Filesystem {
+    fn get_mobile_locations(&self) -> QString {
+        #[cfg(target_os = "android")]
+        let locations = filesystem::android::persisted_folder_urls().unwrap_or_else(|error| {
+            ::log::warn!("Unable to read persisted folder permissions: {error:?}");
+            Vec::new()
+        });
+        #[cfg(not(target_os = "android"))]
+        let locations = filesystem::get_allowed_folder_urls();
+        serde_json::to_string(&locations).unwrap_or_else(|_| "[]".into()).into()
+    }
+    fn list_mobile_folders(&self, url: QUrl, request_id: i32) {
+        let url = util::qurl_to_encoded(url);
+        let ready = util::qt_queued_callback(
+            QPointer::from(self as &Self),
+            |this, (id, result): (i32, String)| {
+                this.mobile_folders_listed(id, QString::from(result));
+            },
+        );
+        core::run_threaded(move || {
+            let list = (|| -> Result<Vec<(String, String, bool)>, String> {
+                #[cfg(target_os = "android")]
+                if url.starts_with("content://") {
+                    return filesystem::android::list_files(&url)
+                        .map(|items| {
+                            items
+                                .into_iter()
+                                .filter_map(|item| Some((item.filename?, item.url?, item.is_dir)))
+                                .collect()
+                        })
+                        .map_err(|error| error.to_string());
+                }
+                let entries = std::fs::read_dir(filesystem::url_to_path(&url))
+                    .map_err(|error| error.to_string())?;
+                Ok(entries
+                    .filter_map(Result::ok)
+                    .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir() || kind.is_file()))
+                    .map(|entry| {
+                        (
+                            entry.file_name().to_string_lossy().into_owned(),
+                            filesystem::path_to_url(&entry.path().to_string_lossy()),
+                            entry.file_type().is_ok_and(|kind| kind.is_dir()),
+                        )
+                    })
+                    .collect())
+            })();
+            let result = match list {
+                Ok(mut entries) => {
+                    entries.sort_by(|a, b| human_sort::compare(&a.0, &b.0));
+                    let (folders, files): (Vec<_>, Vec<_>) = entries.into_iter().partition(|entry| entry.2);
+                    let items = |entries: Vec<(String, String, bool)>| entries.into_iter().map(|(name, url, _)| serde_json::json!({ "name": name, "url": url })).collect::<Vec<_>>();
+                    serde_json::json!({ "url": url, "folders": items(folders), "files": items(files) })
+                }
+                Err(error) => serde_json::json!({ "url": url, "folders": [], "files": [], "error": error }),
+            };
+            ready((request_id, result.to_string()));
+        });
+    }
     fn exists_in_folder(&self, folder: QUrl, filename: QString) -> bool {
         filesystem::exists_in_folder(&util::qurl_to_encoded(folder), &filename.to_string())
     }

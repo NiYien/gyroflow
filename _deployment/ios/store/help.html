@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>NiYien · Help &amp; Support · 帮助与支持</title>
+<link rel="icon" href="niyien-icon.png">
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f6f7fa;color:#1c2533;font:17px/1.8 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+a{color:#075da8;text-underline-offset:3px}a:focus-visible{outline:3px solid #0875cb;outline-offset:4px}
+header,main,footer{max-width:900px;margin:auto;padding:24px 28px}header{display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:12px;color:#16283c;text-decoration:none;font-size:23px;font-weight:700}.brand img{width:44px;height:44px;border-radius:10px}
+nav{display:flex;gap:22px;flex-wrap:wrap;font-size:15px}main{background:white;border:1px solid #e4e8ee;border-radius:18px;padding:8px 42px 36px}
+section{scroll-margin-top:24px;padding:26px 0}section+section{border-top:1px solid #dfe5ec;margin-top:18px}
+h1{font-size:30px;line-height:1.35;letter-spacing:-.5px;margin:12px 0 20px}h2{font-size:20px;line-height:1.45;margin:30px 0 8px}p{margin:8px 0;overflow-wrap:anywhere}.date,footer{color:#526170;font-size:14px}footer{padding-bottom:40px}
+@media(max-width:600px){header,footer{padding:20px}main{margin:0 12px;padding:6px 22px 24px;border-radius:14px}h1{font-size:26px}body{font-size:16px}nav{gap:16px}}
+</style>
+</head>
+<body>
+<header><a class="brand" href="https://www.niyien.com/"><img src="niyien-icon.png" alt="">NiYien</a>
+<nav aria-label="Language"><a href="#zh">简体中文</a><a href="#en" lang="en">English</a></nav></header>
+<main>
+<section id="zh" lang="zh-Hans">
+<h1>NiYien 使用帮助</h1>
+<h2>1. 添加素材</h2>
+<p>从相册、文件或文件夹选择视频。请使用支持记录陀螺仪数据的相机；普通手机视频可能没有陀螺仪稳定所需的运动数据。</p>
+<h2>2. 按需添加外置陀螺仪数据</h2>
+<p>在“添加素材”中切换到“外置陀螺仪”，选择对应的运动数据文件。批量处理前检查视频与陀螺仪的时间是否正确。</p>
+<h2>3. 设置稳定和镜头参数</h2>
+<p>设置会应用到列表中的全部视频。请确认镜头和设备安装方向正确；部分相机需要单独的镜头配置。</p>
+<h2>4. 预览与导出</h2>
+<p>打开视频可以比较“原始”与“稳定后”。“导出稳定视频”生成可播放的视频；“稳定（插件用）”生成用于兼容桌面编辑器/插件的 .gyroflow 工程，不等于完成视频导出。</p>
+<h2>5. 取回结果</h2>
+<p>选择能在“文件”中访问的输出文件夹。处理完成后打开任务查看结果，iOS 可使用“分享／存储到文件”。长时间处理请保持 NiYien 在前台，并留意可用存储空间。</p>
+<p>没有可用陀螺仪数据、运动数据未同步、格式不支持或镜头信息错误时，请按提示修正对应输入后重试。取消任务不会删除原视频。</p>
+<p>当前 iOS 版本支持从文件导入外置陀螺仪数据，不提供 NiYien A1 实时 USB 设备通道或固件升级通道。</p>
+<h2>支持</h2>
+<p>请发邮件至 <a href="mailto:support@niyien.com">support@niyien.com</a>，或使用“设置 → 应用 → 反馈”。应用内提交会自动附带当前可用的诊断资料；也可直接发邮件，不附加应用诊断资料。排查时可提供应用版本、设备型号和复现步骤，请勿发送密码或私人视频。兼容说明和源代码：<a href="https://github.com/NiYien/gyroflow">https://github.com/NiYien/gyroflow</a>。</p>
+</section>
+<section id="en" lang="en">
+<h1>NiYien — Help and support</h1>
+<h2>1. Add media</h2>
+<p>Choose videos from Photos, Files or a folder. Use a supported camera with recorded gyroscope data. Ordinary phone videos may not contain the motion data required for gyro stabilization.</p>
+<h2>2. Add external gyroscope data if needed</h2>
+<p>In Add media, choose External gyroscope and select the matching motion file. Check the video and gyroscope timestamps before starting a batch.</p>
+<h2>3. Set stabilization and lens parameters</h2>
+<p>Settings apply to all videos in the list. Use the correct lens and mounting orientation. A separate lens file may be needed for your camera.</p>
+<h2>4. Preview and export</h2>
+<p>Open a video to compare Original and Stabilized. Export stabilized video produces a playable video. Stabilize (for plugins) prepares a .gyroflow project for a compatible desktop editor/plugin; it does not itself produce a finished video.</p>
+<h2>5. Retrieve the output</h2>
+<p>Choose an output folder you can access in Files. Open a completed task to view its result or use Share / Save to Files on iOS. Keep NiYien in the foreground during long processing and check available storage.</p>
+<p>If a video has no usable gyroscope data, no synchronized motion, an unsupported format or incorrect lens information, fix the corresponding input before retrying. Cancelling a task does not delete your source video.</p>
+<p>The current iOS version imports external gyroscope files but does not provide the NiYien A1 real-time USB device channel or firmware update channel.</p>
+<h2>Support</h2>
+<p>Email <a href="mailto:support@niyien.com">support@niyien.com</a>, or use Settings → App → Feedback. In-app submission automatically includes available diagnostic information for troubleshooting; email is an alternative that does not attach app diagnostics. Include the app version, device model and steps to reproduce the issue when useful. Do not send passwords or private video files. Project compatibility and source code: <a href="https://github.com/NiYien/gyroflow">https://github.com/NiYien/gyroflow</a>.</p>
+</section>
+</main>
+<footer><nav aria-label="Support"><a href="privacy.html">隐私政策 / Privacy</a><a href="help.html">帮助与支持 / Support</a><a href="mailto:support@niyien.com">support@niyien.com</a><a href="https://www.niyien.com/v2/zh/download.html">官网下载</a></nav></footer>
+</body>
+</html>

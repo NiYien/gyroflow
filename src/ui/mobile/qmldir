@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+module mobile
+singleton MobileStyle 1.0 MobileStyle.qml
+MobileText 1.0 MobileText.qml
+MobileIcon 1.0 MobileIcon.qml
+MobileSlider 1.0 MobileSlider.qml
+MobileToggle 1.0 MobileToggle.qml
+MobileChoice 1.0 MobileChoice.qml
+MobileGroup 1.0 MobileGroup.qml
+MobileActionRow 1.0 MobileActionRow.qml
+MobileTabs 1.0 MobileTabs.qml
+MobileFolderPicker 1.0 MobileFolderPicker.qml
+MobileGyroBar 1.0 MobileGyroBar.qml
+MobileWorkspace 1.0 MobileWorkspace.qml
+MobileButton 1.0 MobileButton.qml
+MobileVideoCard 1.0 MobileVideoCard.qml
+MobileSettings 1.0 MobileSettings.qml
+MobileLogic 1.0 MobileLogic.js

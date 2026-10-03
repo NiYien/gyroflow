@@ -14,6 +14,88 @@ Item {
     property alias dt: dt;
     property alias isDragging: lv.isDragging;
     property bool shown: false;
+    readonly property bool importBusy: window.mobilePhotoPickerBusy || loader.active || r3dSeqLoader.waiting || r3dSeqLoader.queue.length > 0;
+    function loadMobileDemoProject(url): bool {
+        if (importBusy || render_queue.status === "active") return false;
+        // The bundled project provides complete export settings before any video is open.
+        const jobId = render_queue.add_file(url.toString(), "", JSON.stringify({ output: {} }));
+        if (jobId <= 0) return false;
+        loader.pendingJobs[jobId] = true;
+        loader.updateStatus();
+        return true;
+    }
+    function requestMobileFiles(): void {
+        if (Qt.platform.os === "android") requestMobileDirectPicker(true, function(urls) { dt.loadFiles(urls); }, "video");
+        else videoSourcePicker.openFiles(function(urls) { dt.loadFiles(urls); }, mobileAddFilesDialog);
+    }
+    function requestMobilePhotos(): void {
+        if (Qt.platform.os === "ios") videoSourcePicker.openPhotos(function(urls) { dt.loadFiles(urls); });
+    }
+    readonly property var mobileVideoExtensions: fileDialog.extensions
+    function requestMobileFolder(): void { mobileAddFolderAction.clicked(); }
+    property var mobileFolderLocationCallback: null;
+    function requestMobileDirectPicker(files, callback, kind = "video"): void {
+        const labels = { files: files, title: files ? qsTranslate("MobileWorkspace", "Choose files") : qsTranslate("MobileWorkspace", "Choose folders"),
+            cancel: qsTranslate("MobileWorkspace", "Cancel"), up: qsTranslate("MobileFolderPicker", "Up one level"),
+            select: files ? qsTranslate("MobileFolderPicker", "Add %1 files") : qsTranslate("MobileFolderPicker", "Add this folder"),
+            loading: qsTranslate("MobileWorkspace", "Reading…"), empty: qsTranslate("MobileFolderPicker", files ? "No matching files" : "No subfolders"),
+            error: qsTranslate("MobileFolderPicker", "Unable to read this folder. Choose the location again."), dark: style === "dark",
+            suffixes: kind === "gyro" ? ["_mix.bin"] : mobileVideoExtensions.map(extension => "." + extension) };
+        window.pendingPickerCallback = callback;
+        if (!filesystem.open_native_picker(files ? 3 : 2, files, JSON.stringify(labels))) {
+            window.pendingPickerCallback = null;
+            messageBox(Modal.Warning, labels.error, [{ text: qsTr("Ok") }]);
+        }
+    }
+    function requestMobileFolderLocation(callback, direct = false): void {
+        if (direct && Qt.platform.os === "android") {
+            requestMobileDirectPicker(false, function(urls) { if (urls && urls.length) callback(urls[0].toString()); });
+            return;
+        }
+        mobileFolderLocationCallback = callback;
+        window.openPicker(1, false, function(urls) { root.acceptMobileFolderLocation(urls); }, mobileFolderLocationDialog);
+    }
+    function acceptMobileFolderLocation(urls): void {
+        const callback = mobileFolderLocationCallback;
+        mobileFolderLocationCallback = null;
+        if (!urls || !urls.length || !callback) return;
+        filesystem.folder_access_granted(urls[0]);
+        Qt.callLater(filesystem.save_allowed_folders);
+        callback(urls[0].toString());
+    }
+    function requestMobileGyroFiles(): void {
+        if (Qt.platform.os === "android") { requestMobileDirectPicker(true, function(urls) { root.addMobileGyroUrls(urls); }, "gyro"); return; }
+        window.openPicker(0, true, function(urls) { root.addMobileGyroUrls(urls); }, mobileGyroFilesDialog);
+    }
+    function addMobileGyroUrls(urls): void {
+        let added = 0;
+        for (const url of urls || []) {
+            if (filesystem.is_dir(url)) added += render_queue.add_gyro_folder(url.toString());
+            else if (render_queue.is_gyro_mix_file(url.toString())) { render_queue.add_gyro_file(url.toString()); added++; }
+        }
+        if (!added && urls && urls.length) messageBox(Modal.Info, qsTr("No supported files were found in the selection."), [{ text: qsTr("Ok") }]);
+    }
+    Connections {
+        target: render_queue;
+        enabled: window.useMobileWorkspace;
+        function onDeep_match_probe_changed(job_id, probe, total, tier, gyro_filename): void {
+            if (window.mobileUI && window.mobileUI.deepJobId === job_id)
+                window.mobileUI.deepStage = qsTr("Search stage %1 of %2").arg(probe).arg(total);
+        }
+        function onDeep_match_chunk_changed(job_id, chunk, total): void {
+            if (window.mobileUI && window.mobileUI.deepJobId === job_id)
+                window.mobileUI.deepStage = qsTr("Scanning segment %1 of %2").arg(chunk).arg(total);
+        }
+        function onDeep_match_finished(job_id, success, error_kind, offset_ms): void {
+            if (!window.mobileUI || window.mobileUI.deepJobId !== job_id) return;
+            if (success) {
+                root.matchDirty = true;
+                window.deepMatchStabilizePending = true;
+                root.matchVersion++;
+            }
+            window.mobileUI.deepFinished(job_id, success, error_kind, offset_ms);
+        }
+    }
     readonly property bool lightTheme: style === "light"
 
     // Session-scoped choice applied to all remaining convert_format errors in the current batch
@@ -145,6 +227,7 @@ Item {
     }
     function dispatchMatchedAction(action): void {
         if (action === "review") {
+            if (window.useMobileWorkspace && window.mobileUI) { window.mobileUI.showPanel("settings"); return; }
             messageBox(Modal.Info, qsTr("Check the lens number on each video in the queue. Right-click to change it, then stabilize."), [ { text: qsTr("Ok") } ]);
         } else if (action === "sync") {
             window.runSimpleBatchSync();
@@ -378,6 +461,10 @@ Item {
             return;
         }
         const gyroName = (!poolMode && gyroIdx < gyroFilesInfo.length) ? gyroFilesInfo[gyroIdx].filename : "";
+        if (window.useMobileWorkspace && window.mobileUI) {
+            window.mobileUI.deepStarted(jobId);
+            return;
+        }
         const dlg = deepMatchDialogComponent.createObject(window, {
             "jobId": jobId,
             "videoName": videoName,
@@ -397,7 +484,7 @@ Item {
         // can always proceed (re-searching a mis-matched clip is legitimate).
         if (render_queue.deep_match_redundant_for_job(jobId)) {
             messageBox(Modal.Info, qsTr("This day's footage has already been deep-searched; clips from the same day are matched automatically."), [
-                { text: qsTr("Stabilize now"), accent: true, clicked: function() { window.runPluginStabilizeFlow(); } },
+                { text: qsTr("Stabilize now"), accent: true, clicked: function() { if (window.useMobileWorkspace && window.mobileUI) window.mobileUI.startAction("sync"); else window.runPluginStabilizeFlow(); } },
                 { text: qsTr("Deep search anyway"), clicked: function() { root.proceedDeepMatch(jobId, gyroIdx, videoName); } },
             ]);
             return;
@@ -740,7 +827,9 @@ Item {
                     }
                 }
                 if (unmatchedCount > 0) {
-                    root.matchWarning = qsTr("%1 video(s) not matched. Right-click a video with clear camera motion and select \"Deep match with gyro\".").arg(unmatchedCount);
+                    root.matchWarning = window.useMobileWorkspace
+                        ? qsTranslate("MobileWorkspace", "No match found. Try a video with more camera motion, and check the gyro recording, in-camera stabilization and mounting position.")
+                        : qsTr("%1 video(s) not matched. Right-click a video with clear camera motion and select \"Deep match with gyro\".").arg(unmatchedCount);
                 }
             });
         }
@@ -776,11 +865,12 @@ Item {
                 const mismatchLines = root.deepMatchLensMismatchLines();
                 if (mismatchLines.length > 0) {
                     const text = mismatchLines.join("\n") + "\n\n"
-                        + qsTr("Check the lens number on each video in the queue. Right-click to change it, then stabilize.");
+                        + (window.useMobileWorkspace ? qsTranslate("MobileWorkspace", "Global settings") + " → " + qsTranslate("App", "Sensor && Lens").replace("&&", "&")
+                            : qsTr("Check the lens number on each video in the queue. Right-click to change it, then stabilize."));
                     const buttons = action === "review"
                         ? [ { text: qsTr("Ok") } ]
                         : [
-                            { text: qsTr("Review lens numbers"), accent: true },
+                            { text: qsTr("Review lens numbers"), accent: true, clicked: function() { if (window.useMobileWorkspace && window.mobileUI) window.mobileUI.showPanel("settings"); } },
                             { text: qsTranslate("App", "Continue"), clicked: function() { root.dispatchMatchedAction(action); } }
                         ];
                     messageBox(Modal.Warning, text, buttons);
@@ -822,7 +912,9 @@ Item {
                 window.syncDirty = false;
                 // play-hint-after-deep-match: terminal state, paired with syncDirty.
                 window.deepMatchStabilizePending = false;
-                messageBox(Modal.Warning, qsTr("Could not establish time sync. Right-click a video with clear camera motion and select \"Deep match with gyro\"."), [
+                messageBox(Modal.Warning, window.useMobileWorkspace
+                    ? qsTranslate("MobileWorkspace", "No match found. Try a video with more camera motion, and check the gyro recording, in-camera stabilization and mounting position.")
+                    : qsTr("Could not establish time sync. Right-click a video with clear camera motion and select \"Deep match with gyro\"."), [
                     { text: qsTr("Ok") }
                 ]);
             } else if (kind === "finished_with_yellow") {
@@ -853,7 +945,7 @@ Item {
         }
     }
     opacity: shown? 1 : 0;
-    visible: opacity > 0;
+    visible: opacity > 0 && !window.useMobileWorkspace;
     anchors.bottomMargin: (shown? 10 : 30) * dpiScale;
     anchors.topMargin: (shown? 10 : -20) * dpiScale;
     Ease on opacity { }
@@ -901,6 +993,7 @@ Item {
         y: 5 * dpiScale;
         spacing: 8 * dpiScale;
         Button {
+            id: mobileAddFilesAction;
             text: qsTr("Add files");
             iconName: "plus";
             height: 26 * dpiScale;
@@ -918,6 +1011,7 @@ Item {
             }
         }
         Button {
+            id: mobileAddFolderAction;
             text: qsTr("Add folder");
             iconName: "folder";
             height: 26 * dpiScale;
@@ -1007,6 +1101,22 @@ Item {
             dt.loadFiles([selectedFolder]);
         }
         onRejected: { if (Qt.platform.os === "android") window.pendingPickerCallback = null; }
+    }
+
+    QQD.FolderDialog {
+        id: mobileFolderLocationDialog;
+        title: qsTr("Choose folder")
+        onAccepted: if (Qt.platform.os !== "android") root.acceptMobileFolderLocation([selectedFolder]);
+        onRejected: { root.mobileFolderLocationCallback = null; if (Qt.platform.os === "android") window.pendingPickerCallback = null; }
+    }
+    FileDialog {
+        id: mobileGyroFilesDialog;
+        title: qsTranslate("MobileWorkspace", "Add gyroscope data")
+        fileMode: FileDialog.OpenFiles;
+        nameFilters: [qsTranslate("MobileWorkspace", "Gyroscope data") + " (*_mix.bin)"];
+        type: "motion-data";
+        onAccepted: if (Qt.platform.os !== "android") root.addMobileGyroUrls(selectedFiles);
+        onRejected: if (Qt.platform.os === "android") window.pendingPickerCallback = null;
     }
 
     Row {
@@ -2940,11 +3050,13 @@ Item {
             let additional = prepareBatchAdditionalData(window.getAdditionalProjectData());
             const deferIosPhotoOutput = window.deferIosPhotoQueueOutputCheck(urls);
             if (!outFolder) {
-                // Android SAF picker hands out per-file content URIs, so the
-                // source folder is never writable. Resolve outFolder from the
-                // persisted Export setting; if absent, prompt the user once
-                // and re-enter add() so the rest of the pipeline runs uniformly.
-                if (Qt.platform.os === "android" && isSandboxed) {
+                if (isSandboxed && !deferIosPhotoOutput && (Qt.platform.os === "android" || Qt.platform.os === "ios")) {
+                    const sourceFolders = [...new Set(urls.map(url => filesystem.get_folder(url).toString()))];
+                    foldersWithoutAccess = sourceFolders.filter(folder => !filesystem.can_create_file(folder, "check.tmp"));
+                }
+                // Direct folder imports can already be writable. Only request
+                // an output grant when source access is actually missing.
+                if (Qt.platform.os === "android" && foldersWithoutAccess.length > 0) {
                     const fixed = window.exportSettings ? window.exportSettings.queueFixedOutputPath : "";
                     if (fixed && filesystem.can_create_file(fixed, "check.tmp")) {
                         add(fixed, urls, crmProxyGyroByProxy);
@@ -2963,7 +3075,7 @@ Item {
                 }
                 delete additional.output.output_folder;
                 delete additional.output.output_filename;
-                if (isSandboxed && !deferIosPhotoOutput) {
+                if (isSandboxed && !deferIosPhotoOutput && Qt.platform.os !== "android" && Qt.platform.os !== "ios") {
                     for (const url of urls) {
                         const folder = filesystem.get_folder(url);
                         if (!foldersWithoutAccess.includes(folder) && !filesystem.can_create_file(folder, "check.tmp")) {
@@ -3043,6 +3155,7 @@ Item {
                     delete root.pendingSequenceMeta[root.seqKey(url)];
                 }
                 const job_id = render_queue.add_file(url.toString(), crmProxyGyroByProxy[url.toString()] || "", perUrlAdditional);
+                if (window.useMobileWorkspace) window.rememberMobileDefaults(job_id, url.toString());
                 if (job_id > 0) loader.pendingJobs[job_id] = true;
             }
             if (otherUrls.length > 0) loader.updateStatus();
@@ -3434,6 +3547,7 @@ Item {
             waiting = true;
             const url = queue.shift();
             const job_id = render_queue.add_file(url.toString(), "", additional);
+            if (window.useMobileWorkspace) window.rememberMobileDefaults(job_id, url.toString());
             if (job_id > 0) {
                 loader.pendingJobs[job_id] = true;
                 loader.updateStatus();

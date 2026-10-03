@@ -198,7 +198,7 @@ mod android {
         };
         let activity_class = env.get_object_class(&activity)?;
         let class_loader = activity_class.get_class_loader(env)?;
-        let class_name = env.new_string("com.niyien.gyroflow.MainActivity")?;
+        let class_name = env.new_string("com.niyien.stabilizer.MainActivity")?;
         JClass::for_name_with_loader(env, class_name, true, class_loader)
     }
 
@@ -278,7 +278,7 @@ mod android {
 
     #[allow(non_snake_case)]
     #[unsafe(no_mangle)]
-    pub extern "system" fn Java_com_niyien_gyroflow_MainActivity_nativeOnUsbAttached(
+    pub extern "system" fn Java_com_niyien_stabilizer_MainActivity_nativeOnUsbAttached(
         _env: *mut std::ffi::c_void,
         _class: *mut std::ffi::c_void,
         vid: jint,
@@ -292,7 +292,7 @@ mod android {
 
     #[allow(non_snake_case)]
     #[unsafe(no_mangle)]
-    pub extern "system" fn Java_com_niyien_gyroflow_MainActivity_nativeOnUsbDetached(
+    pub extern "system" fn Java_com_niyien_stabilizer_MainActivity_nativeOnUsbDetached(
         _env: *mut std::ffi::c_void,
         _class: *mut std::ffi::c_void,
     ) {
@@ -301,7 +301,7 @@ mod android {
 
     #[allow(non_snake_case)]
     #[unsafe(no_mangle)]
-    pub extern "system" fn Java_com_niyien_gyroflow_MainActivity_nativeOnUsbPermission(
+    pub extern "system" fn Java_com_niyien_stabilizer_MainActivity_nativeOnUsbPermission(
         _env: *mut std::ffi::c_void,
         _class: *mut std::ffi::c_void,
         granted: jboolean,
@@ -323,7 +323,7 @@ mod android {
 
     #[allow(non_snake_case)]
     #[unsafe(no_mangle)]
-    pub extern "system" fn Java_com_niyien_gyroflow_MainActivity_nativeOnUsbOpened(
+    pub extern "system" fn Java_com_niyien_stabilizer_MainActivity_nativeOnUsbOpened(
         _env: *mut std::ffi::c_void,
         _class: *mut std::ffi::c_void,
         vid: jint,
@@ -340,7 +340,7 @@ mod android {
 
     #[allow(non_snake_case)]
     #[unsafe(no_mangle)]
-    pub extern "system" fn Java_com_niyien_gyroflow_MainActivity_nativeOnUsbBytes<'local>(
+    pub extern "system" fn Java_com_niyien_stabilizer_MainActivity_nativeOnUsbBytes<'local>(
         mut env: jni::EnvUnowned<'local>,
         _class: JClass<'local>,
         buf: JByteArray<'local>,
@@ -359,7 +359,7 @@ mod android {
 
     #[allow(non_snake_case)]
     #[unsafe(no_mangle)]
-    pub extern "system" fn Java_com_niyien_gyroflow_MainActivity_nativeOnUsbWriteResult<'local>(
+    pub extern "system" fn Java_com_niyien_stabilizer_MainActivity_nativeOnUsbWriteResult<'local>(
         mut env: jni::EnvUnowned<'local>,
         _class: JClass<'local>,
         ok: jboolean,
@@ -386,7 +386,7 @@ mod android {
 
     #[allow(non_snake_case)]
     #[unsafe(no_mangle)]
-    pub extern "system" fn Java_com_niyien_gyroflow_MainActivity_nativeOnUsbError<'local>(
+    pub extern "system" fn Java_com_niyien_stabilizer_MainActivity_nativeOnUsbError<'local>(
         mut env: jni::EnvUnowned<'local>,
         _class: JClass<'local>,
         err: JString<'local>,

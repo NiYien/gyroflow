@@ -3,11 +3,13 @@
 
 import QtQuick
 import QtQuick.Controls as QQC
+import "../mobile" as Mobile
 
 QQC.CheckBox {
     id: cb;
+    readonly property bool mobileStyle: typeof window !== "undefined" && window.useMobileWorkspace === true
     onCheckedChanged: if (checked) { cb.indicator.reset();  }
-    implicitHeight: 30 * dpiScale;
+    implicitHeight: mobileStyle ? Math.max(44 * dpiScale, contentItem.implicitHeight + 12 * dpiScale) : 30 * dpiScale;
 
     Keys.onPressed: (e) => {
         if (e.key == Qt.Key_Enter || e.key == Qt.Key_Return) {
@@ -80,8 +82,9 @@ QQC.CheckBox {
 
     contentItem: Text {
         text: cb.text;
-        font.pixelSize: 13 * dpiScale;
-        font.family: styleFont;
+        font.pixelSize: (cb.mobileStyle ? Mobile.MobileStyle.body : 13) * dpiScale;
+        font.family: cb.mobileStyle ? Mobile.MobileStyle.fontFamily : styleFont;
+        wrapMode: cb.mobileStyle ? Text.WordWrap : Text.NoWrap;
         color: styleTextColor;
         opacity: enabled ? 1.0 : 0.3
         verticalAlignment: Text.AlignVCenter

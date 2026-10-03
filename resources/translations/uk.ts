@@ -1110,6 +1110,10 @@ Try a different output codec (H.265/HEVC handles more cases than H.264/AVC), low
         <source>Go to settings</source>
         <translation>Перейти до налаштувань</translation>
     </message>
+    <message>
+        <source>This video is still loading.</source>
+        <translation>Це відео ще завантажується.</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -2126,6 +2130,18 @@ You can increase the sharpness limit in the Advanced section.</source>
         <location filename="../../src/ui/components/FeedbackDialog.qml" line="171"/>
         <source>Packaging…</source>
         <translation>Пакування…</translation>
+    </message>
+    <message>
+        <source>Feedback includes your message, optional email, app version and submission time. Choose any attachments below. No videos are uploaded. See Privacy policy in Settings.</source>
+        <translation>Feedback includes your message, optional email, app version and submission time. Choose any attachments below. No videos are uploaded. See Privacy policy in Settings.</translation>
+    </message>
+    <message>
+        <source>Include logs and device information</source>
+        <translation>Include logs and device information</translation>
+    </message>
+    <message>
+        <source>Include project and lens settings</source>
+        <translation>Include project and lens settings</translation>
     </message>
 </context>
 <context>
@@ -4353,6 +4369,10 @@ Please provide frame rate: </source>
         <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
         <translation>Перевірте номер об&apos;єктива для кожного відео в черзі. Клацніть правою кнопкою миші, щоб змінити його, потім стабілізуйте.</translation>
     </message>
+    <message>
+        <source>Search stage %1 of %2</source>
+        <translation>Етап пошуку %1 з %2</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>
@@ -6285,6 +6305,10 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <source>Playback speed</source>
         <translation>Швидкість відтворення</translation>
     </message>
+    <message>
+        <source>Not stabilized yet. Return to Videos and tap Stabilize.</source>
+        <translation>Ще не стабілізовано. Поверніться до відео й натисніть «Стабілізувати».</translation>
+    </message>
 </context>
 <context>
     <name>VideoInformation</name>
@@ -6322,6 +6346,630 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <location filename="../../src/ui/main_window.qml" line="114"/>
         <source>No</source>
         <translation>Ні</translation>
+    </message>
+</context>
+<context>
+    <name>MobileSettings</name>
+    <message>
+        <source>App preferences</source>
+        <translation>Налаштування програми</translation>
+    </message>
+    <message>
+        <source>Auto rotate</source>
+        <translation>Автоповорот</translation>
+    </message>
+    <message>
+        <source>Dynamic zoom</source>
+        <translation>Динамічний зум</translation>
+    </message>
+    <message>
+        <source>Feedback</source>
+        <translation>Зворотний зв’язок</translation>
+    </message>
+    <message>
+        <source>Horizon lock amount</source>
+        <translation>Горизонт блокування</translation>
+    </message>
+    <message>
+        <source>Language</source>
+        <translation>Мова</translation>
+    </message>
+    <message>
+        <source>Lens correction</source>
+        <translation>Корекція лінз</translation>
+    </message>
+    <message>
+        <source>Lock horizon</source>
+        <translation>Зафіксувати горизонт</translation>
+    </message>
+    <message>
+        <source>Smoothness</source>
+        <translation>Згладжування</translation>
+    </message>
+    <message>
+        <source>Stabilization</source>
+        <translation>Стабілізація</translation>
+    </message>
+    <message>
+        <source>Static zoom</source>
+        <translation>Статичне збільшення</translation>
+    </message>
+    <message>
+        <source>Theme</source>
+        <translation>Тема оформлення</translation>
+    </message>
+    <message>
+        <source>Updates</source>
+        <translation>Оновлення</translation>
+    </message>
+    <message>
+        <source>Zoom</source>
+        <translation>Масштаб</translation>
+    </message>
+    <message>
+        <source>About NiYien</source>
+        <translation>About NiYien</translation>
+    </message>
+    <message>
+        <source>Help and support</source>
+        <translation>Help and support</translation>
+    </message>
+    <message>
+        <source>Open-source licenses</source>
+        <translation>Open-source licenses</translation>
+    </message>
+    <message>
+        <source>Privacy policy</source>
+        <translation>Privacy policy</translation>
+    </message>
+</context>
+<context>
+    <name>MobileWorkspace</name>
+    <message>
+        <source>%1 completed · %2 need attention</source>
+        <translation>Готово: %1 · Потребують уваги: %2</translation>
+    </message>
+    <message>
+        <source>%1 videos completed</source>
+        <translation>Завершено відео: %1</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>Додати</translation>
+    </message>
+    <message>
+        <source>Add files</source>
+        <translation>Додати файли</translation>
+    </message>
+    <message>
+        <source>Add folder</source>
+        <translation>Додати теку</translation>
+    </message>
+    <message>
+        <source>Add media</source>
+        <translation>Додати медіа</translation>
+    </message>
+    <message>
+        <source>Add videos and gyroscope data to get started.</source>
+        <translation>Додайте відео й дані гіроскопа, щоб почати.</translation>
+    </message>
+    <message>
+        <source>All</source>
+        <translation>Усі</translation>
+    </message>
+    <message>
+        <source>Back to videos</source>
+        <translation>До списку відео</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Скасувати</translation>
+    </message>
+    <message>
+        <source>Clear queue</source>
+        <translation>Очистити чергу</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Закрити</translation>
+    </message>
+    <message>
+        <source>Continue with all videos. Other clips from the same recording day can use this match when their timestamps are available.</source>
+        <translation>Продовжити з усіма відео. Інші кліпи того самого дня знімання можуть використати цей збіг, якщо мають часові мітки.</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>Глибокий пошук</translation>
+    </message>
+    <message>
+        <source>Deep search complete</source>
+        <translation>Глибокий пошук завершено</translation>
+    </message>
+    <message>
+        <source>Deep search · %1</source>
+        <translation>Глибокий пошук · %1</translation>
+    </message>
+    <message>
+        <source>Deselect</source>
+        <translation>Зняти вибір</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>Готово</translation>
+    </message>
+    <message>
+        <source>Export stabilized video</source>
+        <translation>Експортувати стабілізоване відео</translation>
+    </message>
+    <message>
+        <source>Exported</source>
+        <translation>Експортовано</translation>
+    </message>
+    <message>
+        <source>Exporting</source>
+        <translation>Експортування</translation>
+    </message>
+    <message>
+        <source>Exporting %1%</source>
+        <translation>Експортування %1%</translation>
+    </message>
+    <message>
+        <source>Global settings</source>
+        <translation>Загальні налаштування</translation>
+    </message>
+    <message>
+        <source>Gyroscope data</source>
+        <translation>Дані гіроскопа</translation>
+    </message>
+    <message>
+        <source>Info</source>
+        <translation>Інформація</translation>
+    </message>
+    <message>
+        <source>Match found. You can now stabilize.</source>
+        <translation>Збіг знайдено. Тепер можна стабілізувати.</translation>
+    </message>
+    <message>
+        <source>Matching videos…</source>
+        <translation>Зіставлення відео…</translation>
+    </message>
+    <message>
+        <source>More</source>
+        <translation>Ще</translation>
+    </message>
+    <message>
+        <source>Needs attention</source>
+        <translation>Потребує уваги</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>Далі</translation>
+    </message>
+    <message>
+        <source>No gyroscope data. Add a recording or try Deep search.</source>
+        <translation>Немає даних гіроскопа. Додайте запис або спробуйте глибокий пошук.</translation>
+    </message>
+    <message>
+        <source>No match found. Try a video with more camera motion, and check the gyro recording, in-camera stabilization and mounting position.</source>
+        <translation>Збіг не знайдено. Спробуйте відео з більшим рухом камери й перевірте запис гіроскопа, стабілізацію в камері та положення кріплення.</translation>
+    </message>
+    <message>
+        <source>Original</source>
+        <translation>Оригінал</translation>
+    </message>
+    <message>
+        <source>Pause</source>
+        <translation>Пауза</translation>
+    </message>
+    <message>
+        <source>Play</source>
+        <translation>Відтворення</translation>
+    </message>
+    <message>
+        <source>Playback position</source>
+        <translation>Позиція відтворення</translation>
+    </message>
+    <message>
+        <source>Preparing search…</source>
+        <translation>Підготовка пошуку…</translation>
+    </message>
+    <message>
+        <source>Preparing…</source>
+        <translation>Підготовка…</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>Попереднє</translation>
+    </message>
+    <message>
+        <source>Processed %1 / %2</source>
+        <translation>Оброблено %1 / %2</translation>
+    </message>
+    <message>
+        <source>Reading…</source>
+        <translation>Зчитування…</translation>
+    </message>
+    <message>
+        <source>Ready</source>
+        <translation>Готово</translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation>Видалити</translation>
+    </message>
+    <message>
+        <source>Reset pairing</source>
+        <translation>Скинути зіставлення</translation>
+    </message>
+    <message>
+        <source>Retry</source>
+        <translation>Повторити</translation>
+    </message>
+    <message>
+        <source>Search cancelled</source>
+        <translation>Пошук скасовано</translation>
+    </message>
+    <message>
+        <source>Select</source>
+        <translation>Вибрати</translation>
+    </message>
+    <message>
+        <source>Selected %1</source>
+        <translation>Вибрано: %1</translation>
+    </message>
+    <message>
+        <source>Settings</source>
+        <translation>Налаштування</translation>
+    </message>
+    <message>
+        <source>Skipped</source>
+        <translation>Пропущено</translation>
+    </message>
+    <message>
+        <source>Stabilize</source>
+        <translation>Стабілізувати</translation>
+    </message>
+    <message>
+        <source>Stabilized</source>
+        <translation>Стабілізований</translation>
+    </message>
+    <message>
+        <source>Stabilizing</source>
+        <translation>Стабілізація</translation>
+    </message>
+    <message>
+        <source>Stabilizing %1%</source>
+        <translation>Стабілізація %1%</translation>
+    </message>
+    <message>
+        <source>Stop</source>
+        <translation>Стоп</translation>
+    </message>
+    <message>
+        <source>Stop the current task before changing its inputs.</source>
+        <translation>Зупиніть поточне завдання, перш ніж змінювати вхідні файли.</translation>
+    </message>
+    <message>
+        <source>Stop the current task to adjust processing settings.</source>
+        <translation>Зупиніть поточне завдання, щоб змінити налаштування обробки.</translation>
+    </message>
+    <message>
+        <source>Stop this video</source>
+        <translation>Зупинити це відео</translation>
+    </message>
+    <message>
+        <source>Stopped by you. Retry starts this video from the beginning.</source>
+        <translation>Зупинено вами. Повторна спроба обробить це відео від початку.</translation>
+    </message>
+    <message>
+        <source>Stopped · %1 completed</source>
+        <translation>Зупинено · Готово: %1</translation>
+    </message>
+    <message>
+        <source>Stopping…</source>
+        <translation>Зупинення…</translation>
+    </message>
+    <message>
+        <source>Sync not confirmed</source>
+        <translation>Синхронізацію не підтверджено</translation>
+    </message>
+    <message>
+        <source>Task details</source>
+        <translation>Відомості про завдання</translation>
+    </message>
+    <message>
+        <source>This format supports stabilization for editing plugins only.</source>
+        <translation>Цей формат підтримує стабілізацію лише для плагінів монтажу.</translation>
+    </message>
+    <message>
+        <source>This video could not be processed. Check its gyroscope data and lens settings.</source>
+        <translation>Не вдалося обробити відео. Перевірте дані гіроскопа й налаштування об’єктива.</translation>
+    </message>
+    <message>
+        <source>This video is being processed. Preview will be available when it finishes.</source>
+        <translation>Це відео обробляється. Попередній перегляд буде доступний після завершення.</translation>
+    </message>
+    <message>
+        <source>Unknown</source>
+        <translation>Невідомо</translation>
+    </message>
+    <message>
+        <source>Video information</source>
+        <translation>Відомості про відео</translation>
+    </message>
+    <message>
+        <source>Videos</source>
+        <translation>Відео</translation>
+    </message>
+    <message>
+        <source>Videos %1</source>
+        <translation>Відео %1</translation>
+    </message>
+    <message>
+        <source>View</source>
+        <translation>Переглянути</translation>
+    </message>
+    <message>
+        <source>Waiting</source>
+        <translation>Очікування</translation>
+    </message>
+    <message>
+        <source>Your videos, ready to stabilize</source>
+        <translation>Ваші відео готові до стабілізації</translation>
+    </message>
+    <message>
+        <source>‹ Videos</source>
+        <translation>‹ Відео</translation>
+    </message>
+    <message>
+        <source>Add folders</source>
+        <translation>Додати папки</translation>
+    </message>
+    <message>
+        <source>Add gyroscope data</source>
+        <translation>Додати дані гіроскопа</translation>
+    </message>
+    <message>
+        <source>Focal length unknown</source>
+        <translation>Фокусна невідома</translation>
+    </message>
+    <message>
+        <source>No gyroscope data added</source>
+        <translation>Дані гіроскопа не додано</translation>
+    </message>
+    <message>
+        <source>Add recordings from an external gyroscope here. Built-in video data is read automatically.</source>
+        <translation>Додайте тут записи зовнішнього гіроскопа. Вбудовані дані відео зчитуються автоматично.</translation>
+    </message>
+    <message>
+        <source>Add videos to get started.</source>
+        <translation>Додайте відео, щоб почати.</translation>
+    </message>
+    <message>
+        <source>Choose video folders</source>
+        <translation>Вибрати папки з відео</translation>
+    </message>
+    <message>
+        <source>Choose videos</source>
+        <translation>Вибрати відео</translation>
+    </message>
+    <message>
+        <source>External gyroscope</source>
+        <translation>Зовнішній гіроскоп</translation>
+    </message>
+    <message>
+        <source>App</source>
+        <translation>Застосунок</translation>
+    </message>
+    <message>
+        <source>Back</source>
+        <translation>Назад</translation>
+    </message>
+    <message>
+        <source>Changes apply to all videos.</source>
+        <translation>Зміни застосовуються до всіх відео.</translation>
+    </message>
+    <message>
+        <source>Clear video and gyroscope matches</source>
+        <translation>Очистити зіставлення відео й гіроскопа</translation>
+    </message>
+    <message>
+        <source>Export</source>
+        <translation>Експортувати</translation>
+    </message>
+    <message>
+        <source>Lens</source>
+        <translation>Об'єктив</translation>
+    </message>
+    <message>
+        <source>Remove all videos from this list</source>
+        <translation>Прибрати всі відео з цього списку</translation>
+    </message>
+    <message>
+        <source>Choose files</source>
+        <translation>Вибрати файли</translation>
+    </message>
+    <message>
+        <source>Choose folders</source>
+        <translation>Вибрати папки</translation>
+    </message>
+    <message>
+        <source>View results</source>
+        <translation>Переглянути результати</translation>
+    </message>
+    <message>
+        <source>Confirm folder import</source>
+        <translation>Підтвердити імпорт папки</translation>
+    </message>
+    <message>
+        <source>Import</source>
+        <translation>Імпортувати</translation>
+    </message>
+    <message>
+        <source>Stabilize (for plugins)</source>
+        <translation>Стабілізувати (для плагінів)</translation>
+    </message>
+    <message>
+        <source>Calibration pair</source>
+        <translation>Калібрувальна пара</translation>
+    </message>
+    <message>
+        <source>In-camera stabilization on</source>
+        <translation>Стабілізація камери ввімкнена</translation>
+    </message>
+    <message>
+        <source>No gyroscope data</source>
+        <translation>Немає даних гіроскопа</translation>
+    </message>
+    <message>
+        <source>Plugin stabilization only</source>
+        <translation>Стабілізація лише для плагінів</translation>
+    </message>
+    <message>
+        <source>Skip reason not recorded</source>
+        <translation>Причину пропуску не записано</translation>
+    </message>
+    <message>
+        <source>Stopped manually</source>
+        <translation>Зупинено вручну</translation>
+    </message>
+    <message>
+        <source>About NiYien</source>
+        <translation>About NiYien</translation>
+    </message>
+    <message>
+        <source>Export editing project</source>
+        <translation>Export editing project</translation>
+    </message>
+    <message>
+        <source>Feedback</source>
+        <translation>Зворотний зв’язок</translation>
+    </message>
+    <message>
+        <source>Help and support</source>
+        <translation>Help and support</translation>
+    </message>
+    <message>
+        <source>How it works</source>
+        <translation>How it works</translation>
+    </message>
+    <message>
+        <source>Open-source licenses</source>
+        <translation>Open-source licenses</translation>
+    </message>
+    <message>
+        <source>Privacy policy</source>
+        <translation>Privacy policy</translation>
+    </message>
+    <message>
+        <source>Share / Save to Files</source>
+        <translation>Share / Save to Files</translation>
+    </message>
+    <message>
+        <source>Source code</source>
+        <translation>Source code</translation>
+    </message>
+    <message>
+        <source>The demo could not be prepared. Please try again.</source>
+        <translation>The demo could not be prepared. Please try again.</translation>
+    </message>
+    <message>
+        <source>The output file is unavailable. Check the output folder.</source>
+        <translation>The output file is unavailable. Check the output folder.</translation>
+    </message>
+    <message>
+        <source>Try a generated demo</source>
+        <translation>Try a generated demo</translation>
+    </message>
+    <message>
+        <source>Use a supported camera's gyroscope data or import a separate gyroscope file.</source>
+        <translation>Use a supported camera's gyroscope data or import a separate gyroscope file.</translation>
+    </message>
+</context>
+<context>
+    <name>MobileFolderPicker</name>
+    <message>
+        <source>Add %1 folders</source>
+        <translation>Додати папки: %1</translation>
+    </message>
+    <message>
+        <source>Choose a location, then select the folders to add. You can also add folders from another location.</source>
+        <translation>Виберіть розташування й позначте папки. Можна додати папки й з інших розташувань.</translation>
+    </message>
+    <message>
+        <source>Choose location</source>
+        <translation>Вибрати розташування</translation>
+    </message>
+    <message>
+        <source>No subfolders. Select this folder to add its files.</source>
+        <translation>Немає вкладених папок. Виберіть цю папку, щоб додати її файли.</translation>
+    </message>
+    <message>
+        <source>Open folder</source>
+        <translation>Відкрити папку</translation>
+    </message>
+    <message>
+        <source>This folder</source>
+        <translation>Ця папка</translation>
+    </message>
+    <message>
+        <source>Unable to read this folder. Choose the location again.</source>
+        <translation>Не вдалося прочитати папку. Виберіть розташування знову.</translation>
+    </message>
+    <message>
+        <source>Up one level</source>
+        <translation>На рівень вище</translation>
+    </message>
+    <message>
+        <source>Add this folder</source>
+        <translation>Додати цю папку</translation>
+    </message>
+    <message>
+        <source>No subfolders</source>
+        <translation>Немає вкладених папок</translation>
+    </message>
+    <message>
+        <source>Subfolders</source>
+        <translation>Вкладені папки</translation>
+    </message>
+    <message>
+        <source>Browse</source>
+        <translation>Огляд</translation>
+    </message>
+    <message>
+        <source>Add %1 files</source>
+        <translation>Додати файли: %1</translation>
+    </message>
+    <message>
+        <source>Add location</source>
+        <translation>Додати розташування</translation>
+    </message>
+    <message>
+        <source>Choose a folder once to browse its files here.</source>
+        <translation>Виберіть папку один раз, щоб переглядати її файли тут.</translation>
+    </message>
+    <message>
+        <source>No matching files</source>
+        <translation>Немає відповідних файлів</translation>
+    </message>
+    <message>
+        <source>Includes files in this folder and up to two levels of subfolders.</source>
+        <translation>Включає файли цієї папки та до двох рівнів вкладених папок.</translation>
+    </message>
+    <message>
+        <source>Saved folders</source>
+        <translation>Збережені папки</translation>
+    </message>
+    <message>
+        <source>Other locations</source>
+        <translation>Інші розташування</translation>
+    </message>
+</context>
+<context>
+    <name>MobileGyroBar</name>
+    <message>
+        <source>Not added</source>
+        <translation>Не додано</translation>
     </message>
 </context>
 </TS>

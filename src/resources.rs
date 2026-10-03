@@ -7,10 +7,12 @@ qrc!(pub rsrc,
     "/" {
         "src/ui/components/qmldir",
         "src/ui/menu/qmldir",
+        "src/ui/mobile/qmldir",
         "src/ui/qmldir",
 
         "resources/shadow.png",
         "resources/icon.png",
+        "_deployment/ios/NiYienIcon.png",
         "resources/tutorial/queue_row_thumb.png",
         "resources/tutorial/queue_row_thumb_0380.png",
         "resources/tutorial/queue_row_thumb_0385.png",

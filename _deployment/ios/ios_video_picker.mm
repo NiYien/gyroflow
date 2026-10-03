@@ -7,6 +7,7 @@
 #import <objc/runtime.h>
 
 #include <QtCore/QDir>
+#include <QtCore/QFileInfo>
 #include <QtCore/QMetaObject>
 #include <QtCore/QObject>
 #include <QtCore/QPointer>
@@ -208,8 +209,9 @@ void invokeCancelled(const QPointer<QObject> &receiver)
 @end
 
 
-@interface GyroflowVideoPickerDelegate : NSObject <PHPickerViewControllerDelegate> {
+@interface GyroflowVideoPickerDelegate : NSObject <PHPickerViewControllerDelegate, UIAdaptivePresentationControllerDelegate> {
     QPointer<QObject> receiver;
+    BOOL completionHandled;
 }
 - (instancetype)initWithReceiver:(QObject *)receiver;
 @end
@@ -226,6 +228,9 @@ void invokeCancelled(const QPointer<QObject> &receiver)
 
 - (void)picker:(PHPickerViewController *)picker didFinishPicking:(NSArray<PHPickerResult *> *)results
 {
+    if (completionHandled)
+        return;
+    completionHandled = YES;
     [picker dismissViewControllerAnimated:YES completion:nil];
     if (results.count == 0) {
         pickerActive = false;
@@ -303,6 +308,16 @@ void invokeCancelled(const QPointer<QObject> &receiver)
     [session release];
 }
 
+- (void)presentationControllerDidDismiss:(UIPresentationController *)presentationController
+{
+    // An interactive sheet dismissal is cancellation, not an unfinished import.
+    if (completionHandled)
+        return;
+    completionHandled = YES;
+    pickerActive = false;
+    invokeCancelled(receiver);
+}
+
 @end
 
 
@@ -329,6 +344,7 @@ bool gyroflowIosOpenVideoPicker(QObject *receiver)
     GyroflowVideoPickerDelegate *delegate =
         [[GyroflowVideoPickerDelegate alloc] initWithReceiver:receiver];
     picker.delegate = delegate;
+    picker.presentationController.delegate = delegate;
     objc_setAssociatedObject(picker, &delegateAssociationKey, delegate,
                              OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     [delegate release];
@@ -345,4 +361,33 @@ void gyroflowIosCleanupVideoImports()
     if (root.exists())
         root.removeRecursively();
     QDir().mkpath(rootPath);
+}
+
+bool gyroflowIosShareFile(const QUrl &url)
+{
+    if (!NSThread.isMainThread || !url.isLocalFile())
+        return false;
+    UIViewController *controller = topViewController(activeWindow().rootViewController);
+    if (!controller)
+        return false;
+    NSURL *file = [NSURL fileURLWithPath:[NSString stringWithUTF8String:url.toLocalFile().toUtf8().constData()]];
+    const BOOL scopedAccess = [file startAccessingSecurityScopedResource];
+    if (!QFileInfo(url.toLocalFile()).isFile()) {
+        if (scopedAccess)
+            [file stopAccessingSecurityScopedResource];
+        return false;
+    }
+    UIActivityViewController *activity = [[[UIActivityViewController alloc]
+        initWithActivityItems:@[file] applicationActivities:nil] autorelease];
+    activity.excludedActivityTypes = @[UIActivityTypeSaveToCameraRoll];
+    activity.completionWithItemsHandler = ^(UIActivityType, BOOL, NSArray *, NSError *) {
+        if (scopedAccess)
+            [file stopAccessingSecurityScopedResource];
+    };
+    UIPopoverPresentationController *popover = activity.popoverPresentationController;
+    popover.sourceView = controller.view;
+    popover.sourceRect = CGRectMake(CGRectGetMidX(controller.view.bounds), CGRectGetMidY(controller.view.bounds), 1, 1);
+    popover.permittedArrowDirections = 0;
+    [controller presentViewController:activity animated:YES completion:nil];
+    return true;
 }

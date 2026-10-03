@@ -133,6 +133,7 @@ MenuItem {
     //   * a real .gyroflow project — its rotation is adopted as a temporary
     //     borrow for the main preview.
     function loadGyroflow(obj: var): void {
+        if (window.useMobileWorkspace) return;
         if (!obj) return;
         if (obj[root.uiResetKey]) { root.restoreHome(); return; }
         if (!obj.hasOwnProperty("gyro_source")) return;
@@ -244,6 +245,7 @@ MenuItem {
     Connections {
         target: controller;
         function onTelemetry_loaded(is_main_video: bool, filename: string, camera: string, additional_data: var): void {
+            if (window.useMobileWorkspace && render_queue.editing_job_id > 0) return;
             // Re-apply mounting rotation after MotionData clears it. This only
             // re-pushes the already effective value to the core: it must not
             // reach the queue (a borrowed project value would leak into it) and
@@ -256,15 +258,16 @@ MenuItem {
         id: mountingGuidance;
         readonly property color accentColorC: styleAccentColor;
         width: parent.width;
-        implicitHeight: Math.max(mountingGuidanceIcon.implicitHeight, mountingGuidanceText.implicitHeight) + 16 * dpiScale;
+        implicitHeight: Math.max(mountingGuidanceIcon.implicitHeight, mountingGuidanceText.implicitHeight) + (root.mobileStyle ? 0 : 16) * dpiScale;
         height: implicitHeight;
         radius: 6 * dpiScale;
-        color: Qt.rgba(accentColorC.r, accentColorC.g, accentColorC.b, 0.07);
+        color: root.mobileStyle ? "transparent" : Qt.rgba(accentColorC.r, accentColorC.g, accentColorC.b, 0.07);
         border.color: Qt.rgba(accentColorC.r, accentColorC.g, accentColorC.b, 0.28);
-        border.width: Math.max(1, 1 * dpiScale);
+        border.width: root.mobileStyle ? 0 : Math.max(1, 1 * dpiScale);
 
         BasicText {
             id: mountingGuidanceIcon;
+            visible: !root.mobileStyle;
             x: 10 * dpiScale;
             anchors.verticalCenter: parent.verticalCenter;
             text: "i";
@@ -275,12 +278,13 @@ MenuItem {
         }
         BasicText {
             id: mountingGuidanceText;
-            x: mountingGuidanceIcon.x + mountingGuidanceIcon.implicitWidth + 7 * dpiScale;
-            width: parent.width - x - 10 * dpiScale;
+            x: root.mobileStyle ? 0 : mountingGuidanceIcon.x + mountingGuidanceIcon.implicitWidth + 7 * dpiScale;
+            width: parent.width - x - (root.mobileStyle ? 0 : 10) * dpiScale;
             anchors.verticalCenter: parent.verticalCenter;
             text: qsTr("The device mounting position is relative to the camera, regardless of landscape or portrait orientation.");
             color: styleTextColor;
-            font.pixelSize: 11 * dpiScale;
+            font.pixelSize: (root.mobileStyle ? 14 : 11) * dpiScale;
+            opacity: root.mobileStyle ? 0.65 : 1;
             wrapMode: Text.WordWrap;
             leftPadding: 0;
         }
@@ -290,7 +294,7 @@ MenuItem {
     ComboBox {
         id: modeCombo;
         model: root.modeLabels;
-        font.pixelSize: 12 * dpiScale;
+        font.pixelSize: (root.mobileStyle ? 17 : 12) * dpiScale;
         width: parent.width;
         currentIndex: 0;
         onCurrentIndexChanged: {
@@ -311,8 +315,9 @@ MenuItem {
         Label {
             position: Label.LeftPosition;
             text: qsTr("Pitch");
-            width: undefined;
-            inner.width: 50 * dpiScale;
+            mobileStacked: true;
+            width: root.mobileStyle ? parent.width : undefined;
+            inner.width: root.mobileStyle ? parent.width : 50 * dpiScale;
             spacing: 5 * dpiScale;
             NumberField {
                 id: pitchField;
@@ -320,7 +325,7 @@ MenuItem {
                 precision: 1;
                 from: -360;
                 to: 360;
-                width: 50 * dpiScale;
+                width: root.mobileStyle ? parent.width : 50 * dpiScale;
                 // No `value:` binding on purpose — NumberField.updateValue()
                 // assigns to `value` during its own construction, which would
                 // drop the binding before restoreSettings() could ever push
@@ -335,8 +340,9 @@ MenuItem {
         Label {
             position: Label.LeftPosition;
             text: qsTr("Roll");
-            width: undefined;
-            inner.width: 50 * dpiScale;
+            mobileStacked: true;
+            width: root.mobileStyle ? parent.width : undefined;
+            inner.width: root.mobileStyle ? parent.width : 50 * dpiScale;
             spacing: 5 * dpiScale;
             NumberField {
                 id: rollField;
@@ -344,7 +350,7 @@ MenuItem {
                 precision: 1;
                 from: -360;
                 to: 360;
-                width: 50 * dpiScale;
+                width: root.mobileStyle ? parent.width : 50 * dpiScale;
                 // See pitchField: the field itself is the source of truth.
                 onValueChanged: {
                     if (root._programmaticWrite) return;
@@ -356,8 +362,9 @@ MenuItem {
         Label {
             position: Label.LeftPosition;
             text: qsTr("Yaw");
-            width: undefined;
-            inner.width: 50 * dpiScale;
+            mobileStacked: true;
+            width: root.mobileStyle ? parent.width : undefined;
+            inner.width: root.mobileStyle ? parent.width : 50 * dpiScale;
             spacing: 5 * dpiScale;
             NumberField {
                 id: yawField;
@@ -365,7 +372,7 @@ MenuItem {
                 precision: 1;
                 from: -360;
                 to: 360;
-                width: 50 * dpiScale;
+                width: root.mobileStyle ? parent.width : 50 * dpiScale;
                 // See pitchField: the field itself is the source of truth.
                 onValueChanged: {
                     if (root._programmaticWrite) return;

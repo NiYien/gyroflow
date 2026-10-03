@@ -238,7 +238,7 @@ pub fn get_filename(url: &str) -> String {
             return Ok(android::get_url_info(url)
                 .map(|x| x.filename.unwrap_or_default())
                 .unwrap_or_default());
-        } else {
+        } else if !url.starts_with("file://") {
             log::error!("Unknown android url scheme: {url}");
         }
 
@@ -621,7 +621,11 @@ pub fn remove_file(url: &str) -> Result<()> {
     dbg_call!(url);
     #[cfg(target_os = "android")]
     {
-        android::remove_file(url).map(|_| ())
+        if url.starts_with("file://") {
+            Ok(std::fs::remove_file(url_to_pathbuf(url)?)?)
+        } else {
+            android::remove_file(url).map(|_| ())
+        }
     }
     #[cfg(not(target_os = "android"))]
     {
@@ -648,7 +652,9 @@ pub fn can_create_file(folder: &str, filename: &str) -> bool {
         return false;
     }
     fn inner(folder: &str, filename: &str) -> bool {
-        if is_sandboxed() && folder.contains("://") {
+        // Direct Android paths are checked by the OS permission and the write probe below.
+        let direct_android = cfg!(target_os = "android") && folder.starts_with("file://");
+        if is_sandboxed() && !direct_android && folder.contains("://") {
             let lock = ALLOWED_FOLDERS.read();
             if !lock.contains(&normalize_url(folder, true)) {
                 return false; // Access not allowed
@@ -732,27 +738,38 @@ pub fn path_to_url(path: &str) -> String {
 }
 
 pub fn url_to_path(url: &str) -> String {
-    fn inner(url: &str) -> Result<String> {
-        if url.is_empty() {
-            return Ok(String::new());
-        }
-        if cfg!(target_os = "android") {
-            return Ok(get_filename(url));
-        }
-        Ok(url_to_pathbuf(url)?.to_string_lossy().to_string())
-    }
-    result!(inner(url), url)
+    result!(url_to_path_for_platform(url, cfg!(target_os = "android")), url)
 }
+fn url_to_path_for_platform(url: &str, android: bool) -> Result<String> {
+    if url.is_empty() {
+        return Ok(String::new());
+    }
+    // Only SAF URLs lack a local path. Direct folder imports need the full path.
+    if android && url.starts_with("content://") {
+        return Ok(get_filename(url));
+    }
+    Ok(url_to_pathbuf(url)?.to_string_lossy().to_string())
+}
+#[cfg(any(target_os = "android", test))]
+fn android_content_display_path(url: &str) -> Option<String> {
+    if !url.starts_with("content://") {
+        return None;
+    }
+    // Folder grants contain only a tree ID; child URLs also contain a document ID.
+    let (_, id) = url.rsplit_once("/document/").or_else(|| url.rsplit_once("/tree/"))?;
+    // The children endpoint is outside the encoded document ID.
+    let id = id.split('/').next()?;
+    let decoded = urlencoding::decode(id).ok()?;
+    let (_, path) = decoded.split_once(':')?;
+    Some(path.trim_start_matches('/').to_owned())
+}
+
 pub fn display_url(url: &str) -> String {
     dbg_call!(url);
 
-    if cfg!(target_os = "android") && url.contains("/document/") && url.contains("%3A") {
-        let parts = url.split("/document/").last().unwrap();
-        if let Ok(decoded) = urlencoding::decode(parts) {
-            if let Some(pos) = decoded.find(':') {
-                return decoded[pos + 1..].trim_start_matches('/').to_string();
-            }
-        }
+    #[cfg(target_os = "android")]
+    if let Some(path) = android_content_display_path(url) {
+        return path;
     }
 
     let path = url_to_path(url);
@@ -855,7 +872,7 @@ pub fn folder_access_granted(folder_url: &str) {
 mod tests {
     use super::{
         filename_from_url_string, get_filename, is_bare_content_tree_url,
-        reencode_url_for_android,
+        reencode_url_for_android, path_to_url, url_to_path_for_platform,
     };
 
     #[test]
@@ -1002,6 +1019,29 @@ mod tests {
         assert_eq!(get_filename("clip.mp4"), "clip.mp4");
     }
 
+    #[test]
+    fn android_content_display_path_handles_folder_grants_and_children() {
+        assert_eq!(super::android_content_display_path("content://provider/tree/primary%3ADownload/document/primary%3ADownload%2FA/children/"), Some("Download/A".into()));
+        assert_eq!(super::android_content_display_path("content://provider/tree/primary%3ADownload/document/primary%3ADownload%2Fchildren/children"), Some("Download/children".into()));
+        assert_eq!(super::android_content_display_path("content://com.android.externalstorage.documents/tree/primary%3ADownload%2FGyroflow-UI-Test-20260910"), Some("Download/Gyroflow-UI-Test-20260910".into()));
+        assert_eq!(super::android_content_display_path("content://provider/tree/primary%3ADownload/document/primary%3ADownload%2F%E4%B8%AD%E6%96%87%20space"), Some("Download/中文 space".into()));
+        assert_eq!(super::android_content_display_path("content://provider/tree/primary%3aDownload%2fA"), Some("Download/A".into()));
+        assert_eq!(super::android_content_display_path("content://provider/document/opaque-id"), None);
+        assert_eq!(super::android_content_display_path("file:///storage/emulated/0/tree/primary%3ADownload"), None);
+    }
+
+    #[test]
+    fn android_local_file_urls_keep_full_path() {
+        let folder = std::env::temp_dir().join("gyroflow path roundtrip").join("中文素材");
+        for path in [folder.clone(), folder.join("clip 01.mp4")] {
+            let expected = path.to_string_lossy().to_string();
+            let url = path_to_url(&expected);
+            assert_eq!(url_to_path_for_platform(&url, true).unwrap(), expected);
+            assert_eq!(url_to_path_for_platform(&expected, true).unwrap(), expected);
+        }
+        assert_eq!(url_to_path_for_platform("", true).unwrap(), "");
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     fn get_filename_cross_os_uses_fallback_on_windows() {
@@ -1031,6 +1071,12 @@ pub fn restore_allowed_folders(list: &[String]) {
             folder_access_granted(x);
         }
     }
+}
+
+pub fn get_allowed_folder_urls() -> Vec<String> {
+    let mut urls: Vec<String> = ALLOWED_FOLDERS.read().iter().cloned().collect();
+    urls.sort();
+    urls
 }
 
 pub fn get_allowed_folders() -> Vec<String> {

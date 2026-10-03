@@ -18,7 +18,42 @@ cpp! {{
     #include <QTranslator>
     #include <QJsonObject>
     #include <QQuickWindow>
+    #include <QFontDatabase>
+    #include <QDebug>
+    #include <QQmlEngine>
+    #include <QQmlIncubator>
+    #include <QTimer>
+    #include <QPointer>
+    #include <QElapsedTimer>
     #include <qpa/qplatformwindow.h>
+
+    static QString mobileUiFont(const QString &language = QString()) {
+        static const QString systemFamily = QGuiApplication::font().family();
+        static QString activeLanguage = QLocale::system().name();
+        if (!language.isEmpty()) activeLanguage = language;
+        QStringList preferred;
+        if (activeLanguage == "zh_CN") preferred = { "Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC", "PingFang SC", "Microsoft YaHei UI" };
+        else if (activeLanguage == "zh_TW") preferred = { "Noto Sans CJK TC", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei UI" };
+        else if (activeLanguage == "ja") preferred = { "Noto Sans CJK JP", "Noto Sans JP", "Hiragino Sans" };
+        else if (activeLanguage == "ko") preferred = { "Noto Sans CJK KR", "Noto Sans KR", "Apple SD Gothic Neo" };
+        if (!preferred.isEmpty()) {
+            auto families = QFontDatabase::families();
+            for (const auto &family : preferred) if (families.contains(family)) return family;
+            // Some Android font registries expose only the default TTC face.
+            // Register the system collection so its SC/TC faces can be selected explicitly.
+            #ifdef Q_OS_ANDROID
+            static bool registeredCjk = false;
+            if (!registeredCjk) {
+                registeredCjk = true;
+                QFontDatabase::addApplicationFont("/system/fonts/NotoSansCJK-Regular.ttc");
+                QFontDatabase::addApplicationFont("/system/fonts/NotoSansCJK-VF.ttc");
+            }
+            families = QFontDatabase::families();
+            for (const auto &family : preferred) if (families.contains(family)) return family;
+            #endif
+        }
+        return systemFamily;
+    }
 }}
 
 // Set (from the render thread) when Qt tears down the scene graph — on
@@ -42,11 +77,15 @@ pub struct UITools {
     get_safe_area_margins: qt_method!(fn(&mut self, wnd: QJSValue) -> QJsonObject),
     ensure_window_visible: qt_method!(fn(&mut self, wnd: QJSValue)),
     watch_scene_graph_invalidation: qt_method!(fn(&mut self, wnd: QJSValue)),
+    accelerate_startup: qt_method!(fn(&self, wnd: QJSValue)),
     take_scene_graph_invalidated: qt_method!(fn(&mut self) -> bool),
     set_progress: qt_method!(fn(&self, progress: f64)),
     modify_digit:
         qt_method!(fn(&self, value: String, cursor_position: usize, increase: bool) -> QString),
     closing: qt_method!(fn(&mut self)),
+    mobile_document: qt_method!(fn(&self, kind: QString) -> QString),
+    share_mobile_file: qt_method!(fn(&self, url: QUrl) -> bool),
+    prepare_mobile_demo: qt_method!(fn(&self) -> QString),
 
     // Carries the language code so listeners never re-read settings: the
     // Advanced-panel switch writes its Settings alias with deferred store
@@ -61,12 +100,67 @@ pub struct UITools {
     main_window_handle: Option<isize>,
 
     is_dark: bool,
+    applied_theme: Option<String>,
+    applied_language: RefCell<Option<String>>,
 
     pub engine_ptr: Option<*mut QmlEngine>,
 }
 impl UITools {
+    pub fn prepare_mobile_demo(&self) -> QString {
+        match crate::mobile_content::prepare_demo() {
+            Ok(url) => url.into(),
+            Err(error) => { ::log::warn!("Unable to prepare mobile demo: {error}"); QString::default() }
+        }
+    }
+
+    pub fn share_mobile_file(&self, url: QUrl) -> bool {
+        crate::util::share_ios_file(url)
+    }
+
+    pub fn mobile_document(&self, kind: QString) -> QString {
+        crate::mobile_content::document(&kind.to_string(), &gyroflow_core::settings::get_str("lang", "en")).into()
+    }
+
+    pub fn accelerate_startup(&self, wnd: QJSValue) {
+        if let Some(engine) = self.engine_ptr {
+            let engine_ptr = unsafe { (&*engine).cpp_ptr() };
+            cpp!(unsafe [engine_ptr as "QQmlEngine *", wnd as "QJSValue"] {
+                auto window = wnd.toQObject();
+                if (!window || !window->property("fastMobileStartup").toBool()) return;
+                const QPointer<QQmlEngine> engineGuard(engine_ptr);
+                const QPointer<QObject> windowGuard(window);
+                auto timer = new QTimer(engine_ptr);
+                timer->setInterval(1);
+                // Run outside the Rust method: incubation invokes QML callbacks that
+                // may borrow UITools again. Keep each slice bounded for system events.
+                QObject::connect(timer, &QTimer::timeout, engine_ptr,
+                    [engineGuard, windowGuard, timer, slices = 0, workMs = qint64(0)]() mutable {
+                        if (!engineGuard || !windowGuard || !windowGuard->property("startupLoading").toBool()) {
+                            qDebug() << "[startup] incubation_finished slices=" << slices << "work_ms=" << workMs;
+                            timer->stop(); timer->deleteLater();
+                            return;
+                        }
+                        if (auto controller = engineGuard->incubationController()) {
+                            QElapsedTimer elapsed; elapsed.start();
+                            controller->incubateFor(20);
+                            workMs += elapsed.elapsed();
+                            ++slices;
+                        }
+                    });
+                timer->start();
+            });
+        }
+    }
     pub fn set_language(&self, lang_id: QString) {
         if let Some(engine) = self.engine_ptr {
+            let language = lang_id.to_string();
+            let mobile_ui = cfg!(any(target_os = "android", target_os = "ios"))
+                || std::env::var("GYROFLOW_MOBILE_UI_TEST").as_deref() == Ok("1");
+            if mobile_ui && self.applied_language.borrow().as_deref() == Some(language.as_str()) {
+                // Newly created listeners still receive the current language.
+                self.language_changed(lang_id);
+                return;
+            }
             let lang_for_signal = lang_id.clone();
             let engine = unsafe { &mut *(engine) };
             let engine_ptr = engine.cpp_ptr();
@@ -82,6 +176,15 @@ impl UITools {
 
                 engine_ptr->retranslate();
             });
+            if mobile_ui {
+                let selected_font = cpp!(unsafe [lang_for_signal as "QString"] -> QString as "QString" {
+                    const auto family = mobileUiFont(lang_for_signal);
+                    qInfo() << "[mobile.font] language=" << lang_for_signal << "family=" << family;
+                    return family;
+                });
+                engine.set_property("mobileFont".into(), selected_font.into());
+            }
+            *self.applied_language.borrow_mut() = Some(language);
             self.language_changed(lang_for_signal);
         }
     }
@@ -100,9 +203,17 @@ impl UITools {
     }
 
     pub fn set_theme(&mut self, theme: String) {
+        let mobile_ui = cfg!(any(target_os = "android", target_os = "ios"))
+            || std::env::var("GYROFLOW_MOBILE_UI_TEST").as_deref() == Ok("1");
+        if mobile_ui && self.applied_theme.as_deref() == Some(theme.as_str()) { return; }
         if let Some(engine) = self.engine_ptr {
             let engine = unsafe { &mut *(engine) };
 
+            let mobile_font = cpp!(unsafe [] -> QString as "QString" {
+                return mobileUiFont();
+            });
+            engine.set_property("mobileFont".into(), mobile_font.into());
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
             cpp!(unsafe [] { auto f = QGuiApplication::font(); f.setFamily("Arial"); QGuiApplication::setFont(f); });
             engine.set_property("styleFont".into(), QString::from("Arial").into());
 
@@ -172,6 +283,7 @@ impl UITools {
                 }
             }
             self.update_dark_mode(0);
+            self.applied_theme = Some(theme);
         }
     }
 
@@ -190,7 +302,8 @@ impl UITools {
     pub fn get_safe_area_margins(&mut self, wnd: QJSValue) -> QJsonObject {
         cpp!(unsafe [wnd as "QJSValue"] -> QJsonObject as "QJsonObject" {
             auto obj = qobject_cast<QQuickWindow *>(wnd.toQObject());
-            QPlatformWindow *pWin = qobject_cast<QWindow *>(obj)->handle();
+            if (!obj || !obj->handle()) return QJsonObject();
+            QPlatformWindow *pWin = obj->handle();
             QMargins safeArea = pWin->safeAreaMargins();
             return QJsonObject {
                 { "top",    safeArea.top() },

@@ -57,14 +57,14 @@ impl Default for PackageInputs {
 
 #[derive(Clone, Copy, Debug)]
 pub struct PackageOptions {
-    pub include_current_log:    bool, // mandatory — UI does not allow off
+    pub include_current_log:    bool,
     pub include_history_logs:   bool,
     pub include_incidents:      bool,
     pub include_project:        bool,
     pub include_video_meta:     bool, // phase 4 stub (no probe yet)
     pub include_lens:           bool,
     pub include_queue_settings: bool,
-    pub include_system_info:    bool, // mandatory — UI does not allow off
+    pub include_system_info:    bool,
     pub include_crashes:        bool,
 }
 
@@ -107,13 +107,12 @@ pub fn estimate_size(inputs: &PackageInputs, options: &PackageOptions) -> u64 {
             total = total.saturating_add(meta.len());
         }
     }
-    // Plugin logs are always counted (no PackageOptions toggle) and capped to
-    // PLUGIN_LOG_TAIL_CAP each so a 70 MiB OFX log does not inflate the UI's
-    // pre-submit size hint to scary numbers (design §D7).
-    if let Some(p) = &inputs.openfx_log {
+    // Mobile consent controls plugin diagnostics; desktop keeps its existing bundle.
+    let include_plugin_logs = !cfg!(any(target_os = "ios", target_os = "android")) || options.include_current_log;
+    if let Some(p) = inputs.openfx_log.as_ref().filter(|_| include_plugin_logs) {
         total = total.saturating_add(capped_metadata_len(p, PLUGIN_LOG_TAIL_CAP));
     }
-    if let Some(p) = &inputs.adobe_log {
+    if let Some(p) = inputs.adobe_log.as_ref().filter(|_| include_plugin_logs) {
         total = total.saturating_add(capped_metadata_len(p, PLUGIN_LOG_TAIL_CAP));
     }
     // manifest + per-zip overhead approximation
@@ -262,13 +261,12 @@ pub fn pack(
             entries.push((format!("crashes/{name}"), p.clone()));
         }
     }
-    // Plugin logs (OFX / Adobe). Always included when present — no
-    // matching PackageOptions toggle today; stable `-tail` zip names
-    // regardless of whether truncation actually fired (design §D3, §D6).
-    if let Some(p) = &inputs.openfx_log {
+    // Mobile consent controls plugin diagnostics; desktop keeps its existing bundle.
+    let include_plugin_logs = !cfg!(any(target_os = "ios", target_os = "android")) || options.include_current_log;
+    if let Some(p) = inputs.openfx_log.as_ref().filter(|_| include_plugin_logs) {
         entries.push(("logs/openfx-tail.log".into(), p.clone()));
     }
-    if let Some(p) = &inputs.adobe_log {
+    if let Some(p) = inputs.adobe_log.as_ref().filter(|_| include_plugin_logs) {
         entries.push(("logs/adobe-tail.log".into(), p.clone()));
     }
 
@@ -319,13 +317,14 @@ pub fn pack(
         }
 
         // manifest.json last — it references the file list above.
+        let include_system_info = !cfg!(any(target_os = "ios", target_os = "android")) || options.include_system_info;
         let manifest = ManifestJson {
             app_version:     &meta.app_version,
-            os:              &meta.os,
-            gpu:             &meta.gpu,
-            cpu:             &meta.cpu,
-            memory_total:    meta.memory_total,
-            display_scale:   meta.display_scale,
+            os:              if include_system_info { &meta.os } else { "" },
+            gpu:             if include_system_info { &meta.gpu } else { "" },
+            cpu:             if include_system_info { &meta.cpu } else { "" },
+            memory_total:    if include_system_info { meta.memory_total } else { 0 },
+            display_scale:   if include_system_info { meta.display_scale } else { None },
             summary,
             email,
             ts:              chrono::Utc::now().to_rfc3339(),
@@ -378,6 +377,37 @@ mod tests {
             memory_total:  16 * 1024 * 1024 * 1024,
             display_scale: Some(1.0),
         }
+    }
+
+    #[test]
+    fn feedback_consent_preserves_desktop_diagnostics() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sensitive = make_file(tmp.path(), "private.log", b"private camera and path details");
+        let inputs = PackageInputs {
+            current_log: Some(sensitive.clone()), history_logs: vec![sensitive.clone()],
+            incidents_log: Some(sensitive.clone()), project_file: Some(sensitive.clone()),
+            lens_file: Some(sensitive.clone()), queue_file: Some(sensitive.clone()),
+            settings_file: Some(sensitive.clone()), crash_zips: vec![sensitive.clone()],
+            openfx_log: Some(sensitive.clone()), adobe_log: Some(sensitive), ..Default::default()
+        };
+        let options = PackageOptions {
+            include_current_log: false, include_history_logs: false, include_incidents: false,
+            include_project: false, include_video_meta: false, include_lens: false,
+            include_queue_settings: false, include_system_info: false, include_crashes: false,
+        };
+        let mobile = cfg!(any(target_os = "ios", target_os = "android"));
+        assert_eq!(estimate_size(&inputs, &options), if mobile { 2048 } else { 2048 + 2 * b"private camera and path details".len() as u64 });
+        let (bytes, _) = pack(&inputs, &options, "Help", "", &dummy_meta()).unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        assert_eq!(archive.len(), if mobile { 1 } else { 3 });
+        let manifest: serde_json::Value = serde_json::from_reader(archive.by_name("manifest.json").unwrap()).unwrap();
+        assert_eq!(manifest["summary"], "Help");
+        assert_eq!(manifest["os"], if mobile { "" } else { "TestOS" });
+        assert_eq!(manifest["cpu"], if mobile { "" } else { "TestCPU" });
+        assert_eq!(manifest["gpu"], if mobile { "" } else { "TestGPU" });
+        assert_eq!(manifest["memory_total"], if mobile { 0_u64 } else { 16 * 1024 * 1024 * 1024 });
+        assert_eq!(manifest["display_scale"], if mobile { serde_json::Value::Null } else { serde_json::json!(1.0) });
+        assert_eq!(manifest["files"].as_array().unwrap().len(), if mobile { 0 } else { 2 });
     }
 
     #[test]

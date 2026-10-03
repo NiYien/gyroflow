@@ -1110,6 +1110,10 @@ Skúste iný výstupný kodek (H.265/HEVC zvládne viac prípadov než H.264/AVC
         <source>Go to settings</source>
         <translation>Prejsť do nastavení</translation>
     </message>
+    <message>
+        <source>This video is still loading.</source>
+        <translation>Toto video sa ešte načítava.</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -2126,6 +2130,18 @@ Môžeš zvýšit ostrosť vzorku v pokročilých nastaveniach.</translation>
         <location filename="../../src/ui/components/FeedbackDialog.qml" line="171"/>
         <source>Packaging…</source>
         <translation>Balenie…</translation>
+    </message>
+    <message>
+        <source>Feedback includes your message, optional email, app version and submission time. Choose any attachments below. No videos are uploaded. See Privacy policy in Settings.</source>
+        <translation>Feedback includes your message, optional email, app version and submission time. Choose any attachments below. No videos are uploaded. See Privacy policy in Settings.</translation>
+    </message>
+    <message>
+        <source>Include logs and device information</source>
+        <translation>Include logs and device information</translation>
+    </message>
+    <message>
+        <source>Include project and lens settings</source>
+        <translation>Include project and lens settings</translation>
     </message>
 </context>
 <context>
@@ -4353,6 +4369,10 @@ Prosím nastav snímkovú frekvenciu:</translation>
         <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
         <translation>Skontrolujte číslo objektívu pri každom videu vo fronte. Kliknite pravým tlačidlom pre zmenu, potom stabilizujte.</translation>
     </message>
+    <message>
+        <source>Search stage %1 of %2</source>
+        <translation>Fáza hľadania %1 z %2</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>
@@ -6284,6 +6304,10 @@ Vypnite stabilizáciu objektívu (Optical SteadyShot), aby ste mohli používať
         <source>Playback speed</source>
         <translation>Rýchlosť prehrávania</translation>
     </message>
+    <message>
+        <source>Not stabilized yet. Return to Videos and tap Stabilize.</source>
+        <translation>Ešte nie je stabilizované. Vráťte sa k videám a klepnite na Stabilizovať.</translation>
+    </message>
 </context>
 <context>
     <name>VideoInformation</name>
@@ -6321,6 +6345,630 @@ Vypnite stabilizáciu objektívu (Optical SteadyShot), aby ste mohli používať
         <location filename="../../src/ui/main_window.qml" line="114"/>
         <source>No</source>
         <translation>Nie</translation>
+    </message>
+</context>
+<context>
+    <name>MobileSettings</name>
+    <message>
+        <source>App preferences</source>
+        <translation>Nastavenia aplikácie</translation>
+    </message>
+    <message>
+        <source>Auto rotate</source>
+        <translation>Automatické otočenie</translation>
+    </message>
+    <message>
+        <source>Dynamic zoom</source>
+        <translation>Dynamické priblíženie</translation>
+    </message>
+    <message>
+        <source>Feedback</source>
+        <translation>Spätná väzba</translation>
+    </message>
+    <message>
+        <source>Horizon lock amount</source>
+        <translation>Činiteľ zamknutia horizontu</translation>
+    </message>
+    <message>
+        <source>Language</source>
+        <translation>Jazyk programu</translation>
+    </message>
+    <message>
+        <source>Lens correction</source>
+        <translation>Korekcia skreslenia</translation>
+    </message>
+    <message>
+        <source>Lock horizon</source>
+        <translation>Zamknutý horizont</translation>
+    </message>
+    <message>
+        <source>Smoothness</source>
+        <translation>Vyhladenie</translation>
+    </message>
+    <message>
+        <source>Stabilization</source>
+        <translation>Stabilizácia</translation>
+    </message>
+    <message>
+        <source>Static zoom</source>
+        <translation>Pevné priblíženie</translation>
+    </message>
+    <message>
+        <source>Theme</source>
+        <translation>Vzhľad programu</translation>
+    </message>
+    <message>
+        <source>Updates</source>
+        <translation>Aktualizácie</translation>
+    </message>
+    <message>
+        <source>Zoom</source>
+        <translation>Priblíženie</translation>
+    </message>
+    <message>
+        <source>About NiYien</source>
+        <translation>About NiYien</translation>
+    </message>
+    <message>
+        <source>Help and support</source>
+        <translation>Help and support</translation>
+    </message>
+    <message>
+        <source>Open-source licenses</source>
+        <translation>Open-source licenses</translation>
+    </message>
+    <message>
+        <source>Privacy policy</source>
+        <translation>Privacy policy</translation>
+    </message>
+</context>
+<context>
+    <name>MobileWorkspace</name>
+    <message>
+        <source>%1 completed · %2 need attention</source>
+        <translation>%1 dokončené · %2 vyžadujú pozornosť</translation>
+    </message>
+    <message>
+        <source>%1 videos completed</source>
+        <translation>%1 videí dokončených</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>Pridať</translation>
+    </message>
+    <message>
+        <source>Add files</source>
+        <translation>Pridať súbory</translation>
+    </message>
+    <message>
+        <source>Add folder</source>
+        <translation>Pridať priečinok</translation>
+    </message>
+    <message>
+        <source>Add media</source>
+        <translation>Pridať médiá</translation>
+    </message>
+    <message>
+        <source>Add videos and gyroscope data to get started.</source>
+        <translation>Začnite pridaním videí a dát gyroskopu.</translation>
+    </message>
+    <message>
+        <source>All</source>
+        <translation>Všetko</translation>
+    </message>
+    <message>
+        <source>Back to videos</source>
+        <translation>Späť k videám</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Zrušiť</translation>
+    </message>
+    <message>
+        <source>Clear queue</source>
+        <translation>Vymazať front</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Zatvoriť</translation>
+    </message>
+    <message>
+        <source>Continue with all videos. Other clips from the same recording day can use this match when their timestamps are available.</source>
+        <translation>Pokračovať so všetkými videami. Ďalšie klipy z rovnakého dňa záznamu môžu použiť túto zhodu, ak majú časové údaje.</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>Hĺbkové hľadanie</translation>
+    </message>
+    <message>
+        <source>Deep search complete</source>
+        <translation>Hĺbkové hľadanie dokončené</translation>
+    </message>
+    <message>
+        <source>Deep search · %1</source>
+        <translation>Hĺbkové hľadanie · %1</translation>
+    </message>
+    <message>
+        <source>Deselect</source>
+        <translation>Zrušiť výber</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>Hotovo</translation>
+    </message>
+    <message>
+        <source>Export stabilized video</source>
+        <translation>Exportovať stabilizované video</translation>
+    </message>
+    <message>
+        <source>Exported</source>
+        <translation>Exportované</translation>
+    </message>
+    <message>
+        <source>Exporting</source>
+        <translation>Exportovanie</translation>
+    </message>
+    <message>
+        <source>Exporting %1%</source>
+        <translation>Exportovanie %1%</translation>
+    </message>
+    <message>
+        <source>Global settings</source>
+        <translation>Globálne nastavenia</translation>
+    </message>
+    <message>
+        <source>Gyroscope data</source>
+        <translation>Dáta gyroskopu</translation>
+    </message>
+    <message>
+        <source>Info</source>
+        <translation>Informácie</translation>
+    </message>
+    <message>
+        <source>Match found. You can now stabilize.</source>
+        <translation>Zhoda nájdená. Teraz môžete stabilizovať.</translation>
+    </message>
+    <message>
+        <source>Matching videos…</source>
+        <translation>Párovanie videí…</translation>
+    </message>
+    <message>
+        <source>More</source>
+        <translation>Viac</translation>
+    </message>
+    <message>
+        <source>Needs attention</source>
+        <translation>Vyžaduje pozornosť</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>Ďalej</translation>
+    </message>
+    <message>
+        <source>No gyroscope data. Add a recording or try Deep search.</source>
+        <translation>Chýbajú dáta gyroskopu. Pridajte záznam alebo skúste hĺbkové hľadanie.</translation>
+    </message>
+    <message>
+        <source>No match found. Try a video with more camera motion, and check the gyro recording, in-camera stabilization and mounting position.</source>
+        <translation>Zhoda sa nenašla. Skúste video s väčším pohybom kamery a skontrolujte záznam gyroskopu, stabilizáciu vo fotoaparáte a polohu upevnenia.</translation>
+    </message>
+    <message>
+        <source>Original</source>
+        <translation>Pôvodné</translation>
+    </message>
+    <message>
+        <source>Pause</source>
+        <translation>Pauza</translation>
+    </message>
+    <message>
+        <source>Play</source>
+        <translation>Prehrať</translation>
+    </message>
+    <message>
+        <source>Playback position</source>
+        <translation>Pozícia prehrávania</translation>
+    </message>
+    <message>
+        <source>Preparing search…</source>
+        <translation>Príprava hľadania…</translation>
+    </message>
+    <message>
+        <source>Preparing…</source>
+        <translation>Príprava…</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>Predchádzajúce</translation>
+    </message>
+    <message>
+        <source>Processed %1 / %2</source>
+        <translation>Spracované %1 / %2</translation>
+    </message>
+    <message>
+        <source>Reading…</source>
+        <translation>Načítavanie…</translation>
+    </message>
+    <message>
+        <source>Ready</source>
+        <translation>Pripravené</translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation>Odstrániť</translation>
+    </message>
+    <message>
+        <source>Reset pairing</source>
+        <translation>Obnoviť párovanie</translation>
+    </message>
+    <message>
+        <source>Retry</source>
+        <translation>Skúsiť znova</translation>
+    </message>
+    <message>
+        <source>Search cancelled</source>
+        <translation>Hľadanie zrušené</translation>
+    </message>
+    <message>
+        <source>Select</source>
+        <translation>Vybrať</translation>
+    </message>
+    <message>
+        <source>Selected %1</source>
+        <translation>Vybrané %1</translation>
+    </message>
+    <message>
+        <source>Settings</source>
+        <translation>Nastavenia</translation>
+    </message>
+    <message>
+        <source>Skipped</source>
+        <translation>Preskočené</translation>
+    </message>
+    <message>
+        <source>Stabilize</source>
+        <translation>Stabilizovať</translation>
+    </message>
+    <message>
+        <source>Stabilized</source>
+        <translation>Stabilizované</translation>
+    </message>
+    <message>
+        <source>Stabilizing</source>
+        <translation>Stabilizácia</translation>
+    </message>
+    <message>
+        <source>Stabilizing %1%</source>
+        <translation>Stabilizácia %1%</translation>
+    </message>
+    <message>
+        <source>Stop</source>
+        <translation>Zastaviť</translation>
+    </message>
+    <message>
+        <source>Stop the current task before changing its inputs.</source>
+        <translation>Pred zmenou vstupov zastavte aktuálnu úlohu.</translation>
+    </message>
+    <message>
+        <source>Stop the current task to adjust processing settings.</source>
+        <translation>Ak chcete upraviť nastavenia spracovania, zastavte aktuálnu úlohu.</translation>
+    </message>
+    <message>
+        <source>Stop this video</source>
+        <translation>Zastaviť toto video</translation>
+    </message>
+    <message>
+        <source>Stopped by you. Retry starts this video from the beginning.</source>
+        <translation>Zastavili ste toto video. Opakovanie začne od začiatku.</translation>
+    </message>
+    <message>
+        <source>Stopped · %1 completed</source>
+        <translation>Zastavené · %1 dokončené</translation>
+    </message>
+    <message>
+        <source>Stopping…</source>
+        <translation>Zastavovanie…</translation>
+    </message>
+    <message>
+        <source>Sync not confirmed</source>
+        <translation>Synchronizácia nepotvrdená</translation>
+    </message>
+    <message>
+        <source>Task details</source>
+        <translation>Podrobnosti úlohy</translation>
+    </message>
+    <message>
+        <source>This format supports stabilization for editing plugins only.</source>
+        <translation>Tento formát podporuje stabilizáciu len pre doplnky strihových programov.</translation>
+    </message>
+    <message>
+        <source>This video could not be processed. Check its gyroscope data and lens settings.</source>
+        <translation>Toto video sa nepodarilo spracovať. Skontrolujte dáta gyroskopu a nastavenia objektívu.</translation>
+    </message>
+    <message>
+        <source>This video is being processed. Preview will be available when it finishes.</source>
+        <translation>Toto video sa spracováva. Náhľad bude dostupný po dokončení.</translation>
+    </message>
+    <message>
+        <source>Unknown</source>
+        <translation>Neznáme</translation>
+    </message>
+    <message>
+        <source>Video information</source>
+        <translation>Informácie o videu</translation>
+    </message>
+    <message>
+        <source>Videos</source>
+        <translation>Videá</translation>
+    </message>
+    <message>
+        <source>Videos %1</source>
+        <translation>Videá %1</translation>
+    </message>
+    <message>
+        <source>View</source>
+        <translation>Zobraziť</translation>
+    </message>
+    <message>
+        <source>Waiting</source>
+        <translation>Čaká</translation>
+    </message>
+    <message>
+        <source>Your videos, ready to stabilize</source>
+        <translation>Vaše videá, pripravené na stabilizáciu</translation>
+    </message>
+    <message>
+        <source>‹ Videos</source>
+        <translation>‹ Videá</translation>
+    </message>
+    <message>
+        <source>Add folders</source>
+        <translation>Pridať priečinky</translation>
+    </message>
+    <message>
+        <source>Add gyroscope data</source>
+        <translation>Pridať dáta gyroskopu</translation>
+    </message>
+    <message>
+        <source>Focal length unknown</source>
+        <translation>Neznáme ohnisko</translation>
+    </message>
+    <message>
+        <source>No gyroscope data added</source>
+        <translation>Nie sú pridané dáta gyroskopu</translation>
+    </message>
+    <message>
+        <source>Add recordings from an external gyroscope here. Built-in video data is read automatically.</source>
+        <translation>Sem pridajte záznamy z externého gyroskopu. Dáta vo videu sa načítajú automaticky.</translation>
+    </message>
+    <message>
+        <source>Add videos to get started.</source>
+        <translation>Začnite pridaním videí.</translation>
+    </message>
+    <message>
+        <source>Choose video folders</source>
+        <translation>Vybrať priečinky s videami</translation>
+    </message>
+    <message>
+        <source>Choose videos</source>
+        <translation>Vybrať videá</translation>
+    </message>
+    <message>
+        <source>External gyroscope</source>
+        <translation>Externý gyroskop</translation>
+    </message>
+    <message>
+        <source>App</source>
+        <translation>Aplikácia</translation>
+    </message>
+    <message>
+        <source>Back</source>
+        <translation>Späť</translation>
+    </message>
+    <message>
+        <source>Changes apply to all videos.</source>
+        <translation>Zmeny platia pre všetky videá.</translation>
+    </message>
+    <message>
+        <source>Clear video and gyroscope matches</source>
+        <translation>Zrušiť párovanie videí a gyroskopu</translation>
+    </message>
+    <message>
+        <source>Export</source>
+        <translation>Exportovať</translation>
+    </message>
+    <message>
+        <source>Lens</source>
+        <translation>Objektív</translation>
+    </message>
+    <message>
+        <source>Remove all videos from this list</source>
+        <translation>Odobrať všetky videá z tohto zoznamu</translation>
+    </message>
+    <message>
+        <source>Choose files</source>
+        <translation>Vybrať súbory</translation>
+    </message>
+    <message>
+        <source>Choose folders</source>
+        <translation>Vybrať priečinky</translation>
+    </message>
+    <message>
+        <source>View results</source>
+        <translation>Zobraziť výsledky</translation>
+    </message>
+    <message>
+        <source>Confirm folder import</source>
+        <translation>Potvrdiť import priečinka</translation>
+    </message>
+    <message>
+        <source>Import</source>
+        <translation>Importovať</translation>
+    </message>
+    <message>
+        <source>Stabilize (for plugins)</source>
+        <translation>Stabilizovať (pre pluginy)</translation>
+    </message>
+    <message>
+        <source>Calibration pair</source>
+        <translation>Kalibračný pár</translation>
+    </message>
+    <message>
+        <source>In-camera stabilization on</source>
+        <translation>Stabilizácia vo fotoaparáte zapnutá</translation>
+    </message>
+    <message>
+        <source>No gyroscope data</source>
+        <translation>Chýbajú dáta gyroskopu</translation>
+    </message>
+    <message>
+        <source>Plugin stabilization only</source>
+        <translation>Stabilizácia iba pre pluginy</translation>
+    </message>
+    <message>
+        <source>Skip reason not recorded</source>
+        <translation>Dôvod preskočenia nie je zaznamenaný</translation>
+    </message>
+    <message>
+        <source>Stopped manually</source>
+        <translation>Ručne zastavené</translation>
+    </message>
+    <message>
+        <source>About NiYien</source>
+        <translation>About NiYien</translation>
+    </message>
+    <message>
+        <source>Export editing project</source>
+        <translation>Export editing project</translation>
+    </message>
+    <message>
+        <source>Feedback</source>
+        <translation>Spätná väzba</translation>
+    </message>
+    <message>
+        <source>Help and support</source>
+        <translation>Help and support</translation>
+    </message>
+    <message>
+        <source>How it works</source>
+        <translation>How it works</translation>
+    </message>
+    <message>
+        <source>Open-source licenses</source>
+        <translation>Open-source licenses</translation>
+    </message>
+    <message>
+        <source>Privacy policy</source>
+        <translation>Privacy policy</translation>
+    </message>
+    <message>
+        <source>Share / Save to Files</source>
+        <translation>Share / Save to Files</translation>
+    </message>
+    <message>
+        <source>Source code</source>
+        <translation>Source code</translation>
+    </message>
+    <message>
+        <source>The demo could not be prepared. Please try again.</source>
+        <translation>The demo could not be prepared. Please try again.</translation>
+    </message>
+    <message>
+        <source>The output file is unavailable. Check the output folder.</source>
+        <translation>The output file is unavailable. Check the output folder.</translation>
+    </message>
+    <message>
+        <source>Try a generated demo</source>
+        <translation>Try a generated demo</translation>
+    </message>
+    <message>
+        <source>Use a supported camera's gyroscope data or import a separate gyroscope file.</source>
+        <translation>Use a supported camera's gyroscope data or import a separate gyroscope file.</translation>
+    </message>
+</context>
+<context>
+    <name>MobileFolderPicker</name>
+    <message>
+        <source>Add %1 folders</source>
+        <translation>Pridať %1 priečinkov</translation>
+    </message>
+    <message>
+        <source>Choose a location, then select the folders to add. You can also add folders from another location.</source>
+        <translation>Vyberte umiestnenie a označte priečinky. Môžete pridať aj priečinky z iného umiestnenia.</translation>
+    </message>
+    <message>
+        <source>Choose location</source>
+        <translation>Vybrať umiestnenie</translation>
+    </message>
+    <message>
+        <source>No subfolders. Select this folder to add its files.</source>
+        <translation>Žiadne podpriečinky. Vyberte tento priečinok na pridanie jeho súborov.</translation>
+    </message>
+    <message>
+        <source>Open folder</source>
+        <translation>Otvoriť priečinok</translation>
+    </message>
+    <message>
+        <source>This folder</source>
+        <translation>Tento priečinok</translation>
+    </message>
+    <message>
+        <source>Unable to read this folder. Choose the location again.</source>
+        <translation>Priečinok sa nedá prečítať. Vyberte umiestnenie znova.</translation>
+    </message>
+    <message>
+        <source>Up one level</source>
+        <translation>O úroveň vyššie</translation>
+    </message>
+    <message>
+        <source>Add this folder</source>
+        <translation>Pridať tento priečinok</translation>
+    </message>
+    <message>
+        <source>No subfolders</source>
+        <translation>Žiadne podpriečinky</translation>
+    </message>
+    <message>
+        <source>Subfolders</source>
+        <translation>Podpriečinky</translation>
+    </message>
+    <message>
+        <source>Browse</source>
+        <translation>Prehľadávať</translation>
+    </message>
+    <message>
+        <source>Add %1 files</source>
+        <translation>Pridať %1 súborov</translation>
+    </message>
+    <message>
+        <source>Add location</source>
+        <translation>Pridať umiestnenie</translation>
+    </message>
+    <message>
+        <source>Choose a folder once to browse its files here.</source>
+        <translation>Vyberte priečinok raz a potom tu prehliadajte jeho súbory.</translation>
+    </message>
+    <message>
+        <source>No matching files</source>
+        <translation>Žiadne zodpovedajúce súbory</translation>
+    </message>
+    <message>
+        <source>Includes files in this folder and up to two levels of subfolders.</source>
+        <translation>Zahŕňa súbory v tomto priečinku a najviac v dvoch úrovniach podpriečinkov.</translation>
+    </message>
+    <message>
+        <source>Saved folders</source>
+        <translation>Uložené priečinky</translation>
+    </message>
+    <message>
+        <source>Other locations</source>
+        <translation>Iné umiestnenia</translation>
+    </message>
+</context>
+<context>
+    <name>MobileGyroBar</name>
+    <message>
+        <source>Not added</source>
+        <translation>Nepridané</translation>
     </message>
 </context>
 </TS>

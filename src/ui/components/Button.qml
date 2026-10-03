@@ -5,9 +5,11 @@ import QtQuick
 import QtQuick.Controls as QQC
 import QtQuick.Controls.Material as QQCM
 import QtQuick.Controls.Material.impl as QQCMI
+import "../mobile" as Mobile
 
 QQC.Button {
     id: root;
+    readonly property bool mobileStyle: typeof window !== "undefined" && window.useMobileWorkspace === true
 
     property bool accent: false;
     property bool transparentOnMobile: false;
@@ -26,20 +28,20 @@ QQC.Button {
 
     property bool fadeWhenDisabled: true;
 
-    height: 35 * dpiScale;
+    height: (mobileStyle ? 48 : 35) * dpiScale;
     leftPadding: 15 * dpiScale;
     rightPadding: 15 * dpiScale;
     topPadding: 8 * dpiScale;
     bottomPadding: 8 * dpiScale;
-    font.pixelSize: 14 * dpiScale;
-    font.family: styleFont;
+    font.pixelSize: (mobileStyle ? Mobile.MobileStyle.body : 14) * dpiScale;
+    font.family: mobileStyle ? Mobile.MobileStyle.fontFamily : styleFont;
     hoverEnabled: enabled;
 
     background: Rectangle {
         color: root.accent? root.hovered || root.activeFocus? Qt.lighter(accentColor, 1.1) : accentColor : root.hovered || root.activeFocus? Qt.lighter(styleButtonColor, 1.2) : styleButtonColor;
         opacity: (!parent.enabled && fadeWhenDisabled? 0.75 : root.down? 0.75 : 1.0) * (transparentOnMobile && window.isMobileLayout? 0.8 : 1.0);
         Ease on opacity { duration: 100; }
-        radius: 6 * dpiScale;
+        radius: (root.mobileStyle ? 5 : 6) * dpiScale;
         anchors.fill: parent;
         border.width: style === "light"? (1 * dpiScale) : 0;
         border.color: "#cccccc";

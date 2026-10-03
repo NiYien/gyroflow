@@ -7,22 +7,22 @@ import 'common.just'
 # To list available certificates: security find-identity -v -p codesigning
 
 TeamID                        := "H59FJRN2AM"
-BundleIdentifier              := "com.niyien.gyroflow"
+BundleIdentifier              := "com.niyien.stabilizer"
 DevelopmentCertificateSHA     := "F4722C6FA73CC1749FFFDECFD1B04599513757B4"
-DevelopmentProvisioning       := ProjectDir / "_deployment/ios/Gyroflow_dev.mobileprovision"
+DevelopmentProvisioning       := ProjectDir / "_deployment/ios/NiYien_dev.mobileprovision"
 DevelopmentProvisioningName   := "Gyroflow dev"
 DistributionCertificateSHA    := "91B8D990131A6DE4525121FC14D56B39633ED71F"
-DistributionProvisioning      := ProjectDir / "_deployment/ios/Gyroflow_dist.mobileprovision"
+DistributionProvisioning      := ProjectDir / "_deployment/ios/NiYien_dist.mobileprovision"
 DistributionProvisioningName  := "Gyroflow dist"
 
-AppBundle := ProjectDir / "_deployment/_binaries/ios/Payload/Gyroflow.app"
+AppBundle := ProjectDir / "_deployment/_binaries/ios/Payload/NiYien.app"
 
 QtVersionIOS := "6.7.3"
 
 IPHONESDK := `xcode-select -p` + "/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk"
-export BINDGEN_EXTRA_CLANG_ARGS_aarch64_apple_ios := "--target=arm64-apple-ios -arch arm64 -miphoneos-version-min=14 -isysroot " + IPHONESDK
+export BINDGEN_EXTRA_CLANG_ARGS_aarch64_apple_ios := "--target=arm64-apple-ios -arch arm64 -miphoneos-version-min=15 -isysroot " + IPHONESDK
 export CFLAGS_aarch64_apple_darwin := "-mmacosx-version-min=10.15"
-export IPHONEOS_DEPLOYMENT_TARGET := "14.0"
+export IPHONEOS_DEPLOYMENT_TARGET := "15.0"
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Dependencies ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -110,14 +110,14 @@ build-and-package profile is_dist:
     #!/bin/bash
     set -e
 
-    rm -rf {{ProjectDir}}/_deployment/_binaries/ios/
-    rm -f {{ProjectDir}}/target/aarch64-apple-ios/{{profile}}/gyroflow
-
-    mkdir -p {{AppBundle}}
-
+    python3 "{{ProjectDir}}/_scripts/ios_metadata.py" > /dev/null
+    export CARGO_PROFILE_DEPLOY_DEBUG=1
     export FFMPEG_DIR="{{ProjectDir}}/ext/ffmpeg-8.1-iOS-gpl-lite"
     export PATH="{{ProjectDir}}/ext/{{QtVersionIOS}}/ios/bin:/usr/libexec/:$PATH"
     export QMAKE="{{ProjectDir}}/ext/{{QtVersionIOS}}/ios/bin/qmake"
+    if [ -d "{{ProjectDir}}/ext/mdk-sdk-ios" ]; then
+        export MDK_SDK="{{ProjectDir}}/ext/mdk-sdk-ios/"
+    fi
 
     export OPENCV_LINK_LIBS="opencv_core4,opencv_calib3d4,opencv_features2d4,opencv_imgproc4,opencv_video4,opencv_flann4,opencv_stitching4"
     export OPENCV_LINK_PATHS={{ProjectDir}}/ext/vcpkg/installed/arm64-ios/lib
@@ -129,180 +129,20 @@ build-and-package profile is_dist:
         cargo build --target aarch64-apple-ios --profile {{profile}}
     fi
 
-    if [ -z "$SIGN_KEY" ] && [ -z "$PROVISIONING_PROFILE" ]; then
-        if [ "{{is_dist}}" == "distribution" ]; then
-            SIGN_KEY="{{DistributionCertificateSHA}}"
-            PROVISIONING_PROFILE="{{DistributionProvisioning}}"
-        else
-            SIGN_KEY="{{DevelopmentCertificateSHA}}"
-            PROVISIONING_PROFILE="{{DevelopmentProvisioning}}"
-        fi
-    fi
-
-    if [ -f "{{ProjectDir}}/target/aarch64-apple-ios/{{profile}}/gyroflow" ]; then
-        cp -f {{ProjectDir}}/target/aarch64-apple-ios/{{profile}}/gyroflow {{AppBundle}}/gyroflow
-        cp -rf {{ProjectDir}}/target/aarch64-apple-ios/Frameworks {{AppBundle}}/Frameworks
-        cp -rf {{ProjectDir}}/_deployment/ios/Info.plist {{AppBundle}}/Info.plist
-        cp -rf {{ProjectDir}}/_deployment/ios/PrivacyInfo.xcprivacy {{AppBundle}}/PrivacyInfo.xcprivacy
-        cp -rf {{ProjectDir}}/_deployment/ios/PkgInfo {{AppBundle}}/PkgInfo
-        APP_NUMERIC_CORE="$(python "{{ProjectDir}}/_scripts/niyien_version.py" numeric_core --repo-root "{{ProjectDir}}")"
-        APP_FILE_VERSION="$(python "{{ProjectDir}}/_scripts/niyien_version.py" file --repo-root "{{ProjectDir}}")"
-        PlistBuddy -x -c "Set :CFBundleIdentifier {{BundleIdentifier}}" {{AppBundle}}/Info.plist
-        PlistBuddy -x -c "Set :CFBundleShortVersionString $APP_NUMERIC_CORE" {{AppBundle}}/Info.plist
-        PlistBuddy -x -c "Set :CFBundleVersion $APP_FILE_VERSION" {{AppBundle}}/Info.plist
-
-        ICON={{ProjectDir}}/resources/icon_1080.png
-        ICON_OUT={{ProjectDir}}/_deployment/ios/Resources/Images.xcassets/AppIcon.appiconset
-        sips -z 40 40     $ICON --out $ICON_OUT/AppIcon-20@2x.png
-        sips -z 40 40     $ICON --out $ICON_OUT/AppIcon-20@2x~ipad.png
-        sips -z 60 60     $ICON --out $ICON_OUT/AppIcon-20@3x.png
-        sips -z 20 20     $ICON --out $ICON_OUT/AppIcon-20~ipad.png
-        sips -z 29 29     $ICON --out $ICON_OUT/AppIcon-29.png
-        sips -z 58 58     $ICON --out $ICON_OUT/AppIcon-29@2x.png
-        sips -z 58 58     $ICON --out $ICON_OUT/AppIcon-29@2x~ipad.png
-        sips -z 87 87     $ICON --out $ICON_OUT/AppIcon-29@3x.png
-        sips -z 29 29     $ICON --out $ICON_OUT/AppIcon-29~ipad.png
-        sips -z 80 80     $ICON --out $ICON_OUT/AppIcon-40@2x.png
-        sips -z 80 80     $ICON --out $ICON_OUT/AppIcon-40@2x~ipad.png
-        sips -z 120 120   $ICON --out $ICON_OUT/AppIcon-40@3x.png
-        sips -z 40 40     $ICON --out $ICON_OUT/AppIcon-40~ipad.png
-        sips -z 120 120   $ICON --out $ICON_OUT/AppIcon-60@2x~car.png
-        sips -z 180 180   $ICON --out $ICON_OUT/AppIcon-60@3x~car.png
-        sips -z 167 167   $ICON --out $ICON_OUT/AppIcon-83.5@2x~ipad.png
-        sips -z 120 120   $ICON --out $ICON_OUT/AppIcon@2x.png
-        sips -z 152 152   $ICON --out $ICON_OUT/AppIcon@2x~ipad.png
-        sips -z 180 180   $ICON --out $ICON_OUT/AppIcon@3x.png
-        sips -z 1024 1024 $ICON --out $ICON_OUT/AppIcon~ios-marketing.png
-        sips -z 76 76     $ICON --out $ICON_OUT/AppIcon~ipad.png
-
-        DEFAULT_iOS_SDK_VERSION=`xcrun --sdk iphoneos --show-sdk-version`
-        PlistBuddy -x -c "Add :BuildMachineOSBuild string `sw_vers -buildVersion`" {{AppBundle}}/Info.plist
-        PlistBuddy -x -c "Add :DTCompiler string `defaults read $(xcode-select -p)/../info DTCompiler`" {{AppBundle}}/Info.plist
-        PlistBuddy -x -c "Add :DTPlatformBuild string `xcrun --sdk iphoneos --show-sdk-build-version`" {{AppBundle}}/Info.plist
-        PlistBuddy -x -c "Add :DTPlatformName string iphoneos" {{AppBundle}}/Info.plist
-        PlistBuddy -x -c "Add :DTPlatformVersion string $DEFAULT_iOS_SDK_VERSION" {{AppBundle}}/Info.plist
-        PlistBuddy -x -c "Add :DTSDKBuild string `xcrun --sdk iphoneos --show-sdk-build-version`" {{AppBundle}}/Info.plist
-        PlistBuddy -x -c "Add :DTSDKName string iphoneos$DEFAULT_iOS_SDK_VERSION" {{AppBundle}}/Info.plist
-        PlistBuddy -x -c "Add :DTXcode string `defaults read $(xcode-select -p)/../info DTXcode`" {{AppBundle}}/Info.plist
-        PlistBuddy -x -c "Add :DTXcodeBuild string `xcodebuild -version | grep 'Build version' | sed 's/^Build version //'`" {{AppBundle}}/Info.plist
-
-        cat {{AppBundle}}/Info.plist
-
-        # Bundle BRAW SDK
-        FrameworksDir={{AppBundle}}/Frameworks
-        : "${SDK_BASE:=https://www.niyien.com/api/sdk}"
-        if [ ! -f "$FrameworksDir/BlackmagicRawAPI.framework/Versions/A/BlackmagicRawAPI" ]; then
-            curl -L "$SDK_BASE/Blackmagic_RAW_SDK_iOS_5.0.0.tar.gz" -o tmp.tar.gz
-            7z x -aoa tmp.tar.gz
-            7z x -o"$FrameworksDir/" tmp.tar
-            rm tmp.tar tmp.tar.gz
-        fi
-        chmod -R 0755 $FrameworksDir/*
-
-        # Generate entitlements
-        PlistBuddy -x -c "Add :application-identifier string {{TeamID}}.{{BundleIdentifier}}" {{AppBundle}}/../../entitlements.xcent
-        PlistBuddy -x -c "Add :com.apple.developer.team-identifier string {{TeamID}}" {{AppBundle}}/../../entitlements.xcent
-        PlistBuddy -x -c "Add :com.apple.developer.kernel.increased-memory-limit bool true" {{AppBundle}}/../../entitlements.xcent
-        if [ "{{is_dist}}" == "distribution" ]; then
-            PlistBuddy -x -c "Add :get-task-allow bool false" {{AppBundle}}/../../entitlements.xcent
-        else
-            PlistBuddy -x -c "Add :get-task-allow bool true" {{AppBundle}}/../../entitlements.xcent
-        fi
-        PlistBuddy -x -c "Add :keychain-access-groups array" {{AppBundle}}/../../entitlements.xcent
-        PlistBuddy -x -c "Add :keychain-access-groups:0 string {{TeamID}}.{{BundleIdentifier}}" {{AppBundle}}/../../entitlements.xcent
-
-        actool {{ProjectDir}}/_deployment/ios/Resources/Images.xcassets --compile {{AppBundle}} --platform iphoneos --minimum-deployment-target 15 --app-icon AppIcon --output-partial-info-plist {{AppBundle}}/../../AppIcon.plist
-
-        ibtool --errors --warnings --notices --module gyroflow --target-device iphone --target-device ipad --minimum-deployment-target 14.0 --output-format human-readable-text --auto-activate-custom-fonts --compilation-directory {{AppBundle}}/../../ {{ProjectDir}}/_deployment/ios/LaunchScreen.storyboard
-        ibtool --errors --warnings --notices --module gyroflow --target-device iphone --target-device ipad --minimum-deployment-target 14.0 --output-format human-readable-text --link {{AppBundle}} {{AppBundle}}/../../LaunchScreen.storyboardc
-
-        cp -f "$PROVISIONING_PROFILE" {{AppBundle}}/embedded.mobileprovision
-        #derq query -f xml -i {{ProjectDir}}/_deployment/ios/Entitlements.plist -o {{AppBundle}}/../../Gyroflow.app.xcent.der --raw
-        dsymutil {{AppBundle}}/gyroflow -o {{AppBundle}}/../../../Gyroflow.app.dSYM
-        mkdir -p {{AppBundle}}/../../Symbols
-        xcrun symbols -noTextInSOD -noDaemon -arch all -symbolsPackageDir {{AppBundle}}/../../Symbols {{AppBundle}}/../../../Gyroflow.app.dSYM
-        rm -rf {{AppBundle}}/../../../Gyroflow.app.dSYM
-
-        codesign -vvvv --force --generate-entitlement-der --preserve-metadata=identifier,flags,runtime --sign $SIGN_KEY {{AppBundle}}/Frameworks/*.framework
-        codesign -vvvv --force --generate-entitlement-der --preserve-metadata=identifier,flags,runtime --sign $SIGN_KEY --entitlements {{AppBundle}}/../../entitlements.xcent {{AppBundle}}
-
-        codesign -vvvv --deep --strict --verify {{AppBundle}}
-    fi
+    python3 "{{ProjectDir}}/_scripts/package_ios.py" --profile {{profile}} --signing {{is_dist}}
 
 [no-cd]
 deploy *param:
     #!/bin/bash
     set -e
-    export PATH="/usr/libexec/:$PATH"
-
     just -f {{justfile()}} build-and-package deploy distribution
-
-    pushd {{AppBundle}}/../../
-        zip -r ../Gyroflow.ipa Payload Symbols
-    popd
-    ios-deploy --bundle {{AppBundle}}
-
-    # ---------------------- XCode archive way ----------------------
-    # This shouldn't be normally needed, but if anything changes in the build process in the future, it's more "official" way
-    if false; then
-        if true; then
-            SIGN_KEY="{{DistributionCertificateSHA}}"
-            PROVISIONING_PROFILE="{{DistributionProvisioningName}}"
-        else
-            SIGN_KEY="{{DevelopmentCertificateSHA}}"
-            PROVISIONING_PROFILE="{{DevelopmentProvisioningName}}"
-        fi
-        # For app store
-        TYPE="app-store"
-        # For ad-hoc
-        TYPE="developer-id"
-
-        mkdir -p {{ProjectDir}}/_deployment/_binaries/ios/Gyroflow.xcarchive/Products/Applications
-        cp -rf {{AppBundle}} {{ProjectDir}}/_deployment/_binaries/ios/Gyroflow.xcarchive/Products/Applications/
-
-        # Build Archive.plist
-        ARCHIVE_PLIST={{ProjectDir}}/_deployment/_binaries/ios/Gyroflow.xcarchive/Info.plist
-        PlistBuddy -x -c "Add :ApplicationProperties dict" $ARCHIVE_PLIST
-        PlistBuddy -x -c "Add :ApplicationProperties:ApplicationPath string Applications/Gyroflow.app" $ARCHIVE_PLIST
-        PlistBuddy -x -c "Add :ApplicationProperties:Architectures array" $ARCHIVE_PLIST
-        PlistBuddy -x -c "Add :ApplicationProperties:Architectures:0 string arm64" $ARCHIVE_PLIST
-        PlistBuddy -x -c "Add :ApplicationProperties:CFBundleIdentifier string {{BundleIdentifier}}" $ARCHIVE_PLIST
-        PlistBuddy -x -c "Add :ApplicationProperties:CFBundleShortVersionString string $(python "{{ProjectDir}}/_scripts/niyien_version.py" numeric_core --repo-root "{{ProjectDir}}")" $ARCHIVE_PLIST
-        PlistBuddy -x -c "Add :ApplicationProperties:CFBundleVersion string $(python "{{ProjectDir}}/_scripts/niyien_version.py" file --repo-root "{{ProjectDir}}")" $ARCHIVE_PLIST
-        PlistBuddy -x -c "Add :ApplicationProperties:Team string {{TeamID}}" $ARCHIVE_PLIST
-        PlistBuddy -x -c "Add :ArchiveVersion integer 2" $ARCHIVE_PLIST
-        PlistBuddy -x -c "Add :CreationDate date \"`date +'%c'`\"" $ARCHIVE_PLIST
-        PlistBuddy -x -c "Add :Name string Gyroflow" $ARCHIVE_PLIST
-        PlistBuddy -x -c "Add :SchemeName string Gyroflow" $ARCHIVE_PLIST
-
-        # Build Export.plist
-        PlistBuddy -x -c "Add :method string $TYPE" {{AppBundle}}/../../Export.plist
-        PlistBuddy -x -c "Add :teamID string {{TeamID}}" {{AppBundle}}/../../Export.plist
-        PlistBuddy -x -c "Add :signingCertificate string $SIGN_KEY" {{AppBundle}}/../../Export.plist
-        PlistBuddy -x -c "Add :uploadSymbols bool true" {{AppBundle}}/../../Export.plist
-        PlistBuddy -x -c "Add :provisioningProfiles dict" {{AppBundle}}/../../Export.plist
-        PlistBuddy -x -c "Add :provisioningProfiles:{{BundleIdentifier}} string $PROVISIONING_PROFILE" {{AppBundle}}/../../Export.plist
-
-        xcodebuild -sdk iphoneos -exportArchive -archivePath {{ProjectDir}}/_deployment/_binaries/ios/Gyroflow.xcarchive -exportPath {{AppBundle}}/../out/Payload -exportOptionsPlist {{AppBundle}}/../../Export.plist
-
-        pushd {{AppBundle}}/../out/
-            rm -f ../Gyroflow.ipa
-            rm -f Payload/*.plist
-            rm -f Payload/*.log
-            zip -r ../Gyroflow.ipa Payload Symbols
-        popd
-        ios-deploy --bundle {{AppBundle}}/../out/Payload/Gyroflow.app
-    fi
-    # ---------------------- XCode archive way ----------------------
 
 [no-cd]
 build-ipa:
     #!/bin/bash
     set -e
-    export PATH="/usr/libexec/:$PATH"
-
     just -f {{justfile()}} build-and-package deploy distribution
 
-    pushd {{AppBundle}}/../../
-        zip -r ../Gyroflow.ipa Payload Symbols
-    popd
+[no-cd]
+package profile="deploy" signing="development":
+    python3 "{{ProjectDir}}/_scripts/package_ios.py" --profile {{profile}} --signing {{signing}}

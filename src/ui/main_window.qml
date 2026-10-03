@@ -12,11 +12,17 @@ Window {
     id: main_window;
     width:  isMobile? Screen.desktopAvailableWidth  : Math.min(Screen.width, 1650 * dpiScale);
     height: isMobile? Screen.desktopAvailableHeight : Math.min(Screen.height, 950 * dpiScale);
-    minimumWidth: 900 * dpiScale;
-    minimumHeight: 400 * dpiScale;
+    minimumWidth: (isMobile || (typeof mobileUiTest !== "undefined" && mobileUiTest) ? 280 : 900) * dpiScale;
+    minimumHeight: (isMobile || (typeof mobileUiTest !== "undefined" && mobileUiTest) ? 280 : 400) * dpiScale;
     visible: false;
     color: styleBackground;
+    readonly property bool fastMobileStartup: isMobile || (typeof mobileUiTest !== "undefined" && mobileUiTest);
+    readonly property double startupWindowCreatedAt: Date.now();
+    readonly property bool startupLoading: !!appLoader && appLoader.status === Loader.Loading;
     property var safeAreaMargins: ({});
+    readonly property bool applyMobileSafeArea: Qt.platform.os === "android" || (Qt.platform.os === "ios" && appLoader.item && appLoader.item.useMobileWorkspace);
+    onApplyMobileSafeAreaChanged: updateMargins.restart();
+    onActiveChanged: if (active && applyMobileSafeArea) updateMargins.restart();
     onWidthChanged: updateMargins.start();
     onHeightChanged: updateMargins.start();
     Timer {
@@ -28,6 +34,7 @@ Window {
     title: brandDisplayName + " " + version;
 
     onVisibilityChanged: {
+        if (visible && applyMobileSafeArea) updateMargins.restart();
         Qt.callLater(() => {
             if (main_window.visibility != 0)
                 sett.visibility = main_window.visibility;
@@ -71,6 +78,7 @@ Window {
 
     Component.onCompleted: {
         ui_tools.set_icon(main_window);
+        if (fastMobileStartup) ui_tools.accelerate_startup(main_window);
         // Android suspend/resume video recovery: track render-surface
         // teardown so VideoArea can decide on resume whether the MDK player
         // needs a media reload (see VideoArea's Qt.application Connections).
@@ -99,6 +107,7 @@ Window {
     onClosing: (close) => {
         let app = getApp();
         if (app) {
+            if (app.useMobileWorkspace && app.mobileUI && app.mobileUI.back()) { close.accepted = false; return; }
             close.accepted = closeConfirmed || !app.wasModified;
             if (close.accepted) {
                 settings.flush();
@@ -119,27 +128,34 @@ Window {
 
     Rectangle {
         id: libg;
+        objectName: "startupLogoBackground";
         anchors.fill: loadingImage;
         anchors.margins: -20 * dpiScale;
         radius: 10 * dpiScale;
         z: 9998;
         opacity: 0.5;
         Ease on opacity { duration: 1000; }
-        visible: opacity > 0;
+        visible: opacity > 0 && (!main_window.fastMobileStartup || !appLoader || appLoader.status !== Loader.Ready);
         color: styleBackground;
     }
     Image {
         id: loadingImage;
-        source: "qrc:/resources/logo" + (style === "dark"? "_white" : "_black") + ".svg";
-        sourceSize.width: Math.min(400 * dpiScale, parent.width * 0.7);
-        opacity: 0;
-        YAnimator       on y       { id: liy; from: -1000; to: -1000; duration: 1000; easing.type: Easing.OutExpo; }
-        OpacityAnimator on opacity { id: lio; from: 0; to: 1; duration: 1000; easing.type: Easing.OutExpo; }
+        objectName: "startupLogo";
+        source: Qt.platform.os === "ios" ? "qrc:/_deployment/ios/NiYienIcon.png" : "qrc:/resources/logo" + (style === "dark"? "_white" : "_black") + ".svg";
+        sourceSize.width: Math.min((Qt.platform.os === "ios" ? 104 : 400) * dpiScale, parent.width * 0.7);
+        visible: !main_window.fastMobileStartup || !appLoader || appLoader.status !== Loader.Ready;
+        opacity: main_window.fastMobileStartup ? 1 : 0;
+        YAnimator       on y       { id: liy; running: !main_window.fastMobileStartup; from: -1000; to: -1000; duration: 1000; easing.type: Easing.OutExpo; }
+        OpacityAnimator on opacity { id: lio; running: !main_window.fastMobileStartup; from: 0; to: 1; duration: 1000; easing.type: Easing.OutExpo; }
         anchors.horizontalCenter: parent.horizontalCenter;
         z: 9999;
-        onHeightChanged: updateYAnim(loadingIndicator.y, height);
+        onHeightChanged: if (loadingIndicator) updateYAnim(loadingIndicator.y, height);
         function updateYAnim(indicatorY: real, imageHeight: real): void {
             liy.stop();
+            if (main_window.fastMobileStartup) {
+                y = indicatorY - imageHeight - 20 * dpiScale;
+                return;
+            }
             liy.from = indicatorY - imageHeight - 10 * dpiScale;
             liy.to = indicatorY - imageHeight - 30 * dpiScale;
             liy.restart();
@@ -152,19 +168,20 @@ Window {
         // Apply safe-area insets on Android so the UI never sits under the status
         // bar or gesture-nav strip. Desktop platforms get an empty margin map and
         // degrade to 0.
-        anchors.topMargin:    Qt.platform.os === "android" ? (main_window.safeAreaMargins.top    || 0) : 0;
-        anchors.bottomMargin: Qt.platform.os === "android" ? (main_window.safeAreaMargins.bottom || 0) : 0;
-        anchors.leftMargin:   Qt.platform.os === "android" ? (main_window.safeAreaMargins.left   || 0) : 0;
-        anchors.rightMargin:  Qt.platform.os === "android" ? (main_window.safeAreaMargins.right  || 0) : 0;
+        anchors.topMargin:    main_window.applyMobileSafeArea ? (main_window.safeAreaMargins.top    || 0) : 0;
+        anchors.bottomMargin: main_window.applyMobileSafeArea ? (main_window.safeAreaMargins.bottom || 0) : 0;
+        anchors.leftMargin:   main_window.applyMobileSafeArea ? (main_window.safeAreaMargins.left   || 0) : 0;
+        anchors.rightMargin:  main_window.applyMobileSafeArea ? (main_window.safeAreaMargins.right  || 0) : 0;
         asynchronous: true;
         opacity: appLoader.status == Loader.Ready? 1 : 0.5;
         onStatusChanged: {
             if (status == Loader.Ready) {
+                if (main_window.fastMobileStartup) console.debug("[startup] app_ready window_elapsed_ms=" + (Date.now() - main_window.startupWindowCreatedAt) + " splash_tail_ms=0");
                 Qt.callLater(item.isMobileLayoutChanged);
                 Qt.callLater(item.isLandscapeChanged);
             }
         }
-        Ease on opacity { }
+        Ease on opacity { enabled: !main_window.fastMobileStartup; }
         sourceComponent: Component {
             App { objectName: "App"; }
         }
@@ -172,8 +189,16 @@ Window {
     QQC.BusyIndicator {
         id: loadingIndicator;
         anchors.centerIn: parent;
+        visible: !main_window.fastMobileStartup || running;
         running: appLoader.status != Loader.Ready;
-        onYChanged: loadingImage.updateYAnim(y, loadingImage.height);
-        onRunningChanged: if (!running) { destroy(700); lio.stop(); lio.from = 1; lio.to = 0; lio.restart(); libg.opacity = 0; libg.destroy(1000); loadingImage.destroy(1000); }
+        onYChanged: if (loadingImage) loadingImage.updateYAnim(y, loadingImage.height);
+        onRunningChanged: if (!running) {
+            if (main_window.fastMobileStartup) {
+                // The interface is ready; mobile startup has no decorative delay.
+                loadingImage.destroy(); libg.destroy(); destroy();
+                return;
+            }
+            destroy(700); lio.stop(); lio.from = 1; lio.to = 0; lio.restart(); libg.opacity = 0; libg.destroy(1000); loadingImage.destroy(1000);
+        }
     }
 }

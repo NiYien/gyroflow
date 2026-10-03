@@ -26,6 +26,13 @@ MenuItem {
     property var selectedTimezone: ({ key: "Shanghai", offsetMinutes: 480, tzId: "Asia/Shanghai" })
     property var selectedRegion: null
     property var timezoneCatalog: DeviceTimezones.timezoneRegions
+    readonly property var mobileTimezoneOptions: {
+        const result = [{ label: qsTranslate("Device", "Use system timezone"), choice: null, region: null }];
+        for (const region of timezoneCatalog) {
+            for (const choice of regionChoices(region)) result.push({ label: cityDisplayName(choice.key) + "  " + formatUtcOffset(effectiveOffsetMinutes(choice)), choice: choice, region: region });
+        }
+        return result;
+    }
     // Mirrors OFFSET_SENTINEL in src/niyien_device/timezone.rs.
     readonly property int tzOffsetSentinel: -2147483648
 
@@ -450,30 +457,30 @@ MenuItem {
 
     Rectangle {
         width: parent.width
-        height: contentColumn.implicitHeight + 22 * dpiScale
+        height: contentColumn.implicitHeight + (root.mobileStyle ? 0 : 22) * dpiScale
         radius: 12 * dpiScale
-        color: root.cardColor
-        border.width: 1 * dpiScale
+        color: root.mobileStyle ? "transparent" : root.cardColor
+        border.width: root.mobileStyle ? 0 : 1 * dpiScale
         border.color: root.borderColor
 
         Column {
             id: contentColumn
             anchors.fill: parent
-            anchors.margins: 12 * dpiScale
+            anchors.margins: (root.mobileStyle ? 0 : 12) * dpiScale
             spacing: 10 * dpiScale
 
             Rectangle {
                 width: parent.width
-                height: headerContent.implicitHeight + 18 * dpiScale
+                height: headerContent.implicitHeight + (root.mobileStyle ? 0 : 18) * dpiScale
                 radius: 10 * dpiScale
-                color: root.sectionColor
-                border.width: 1 * dpiScale
+                color: root.mobileStyle ? "transparent" : root.sectionColor
+                border.width: root.mobileStyle ? 0 : 1 * dpiScale
                 border.color: root.borderColor
 
                 Column {
                     id: headerContent
                     anchors.fill: parent
-                    anchors.margins: 10 * dpiScale
+                    anchors.margins: (root.mobileStyle ? 0 : 10) * dpiScale
                     spacing: 6 * dpiScale
 
                     Row {
@@ -505,7 +512,7 @@ MenuItem {
                                 width: parent.width
                                 leftPadding: 0
                                 text: qsTranslate("Device", "Model") + ": " + (controller.device_name.length > 0 ? controller.device_name : qsTranslate("Device", "NiYien A1"))
-                                font.pixelSize: 12 * dpiScale
+                                font.pixelSize: (root.mobileStyle ? 14 : 12) * dpiScale
                                 color: root.mutedTextColor
                                 elide: Text.ElideRight
                             }
@@ -513,7 +520,7 @@ MenuItem {
                             BasicText {
                                 width: parent.width
                                 leftPadding: 0
-                                font.pixelSize: 12 * dpiScale
+                                font.pixelSize: (root.mobileStyle ? 14 : 12) * dpiScale
                                 color: root.mutedTextColor
                                 text: qsTranslate("Device", "Software") + ": " + (controller.device_soft_version.length > 0 ? controller.device_soft_version : "--")
                                       + "    "
@@ -539,7 +546,7 @@ MenuItem {
                             horizontalAlignment: Text.AlignHCenter
                             text: root.firmwareStatusTitle()
                             color: root.firmwareStatusColor()
-                            font.pixelSize: 11 * dpiScale
+                            font.pixelSize: (root.mobileStyle ? 14 : 11) * dpiScale
                             font.bold: true
                             elide: Text.ElideRight
                         }
@@ -549,23 +556,23 @@ MenuItem {
 
             Rectangle {
                 width: parent.width
-                height: timeSection.implicitHeight + 18 * dpiScale
+                height: timeSection.implicitHeight + (root.mobileStyle ? 0 : 18) * dpiScale
                 radius: 10 * dpiScale
-                color: root.sectionColor
-                border.width: 1 * dpiScale
+                color: root.mobileStyle ? "transparent" : root.sectionColor
+                border.width: root.mobileStyle ? 0 : 1 * dpiScale
                 border.color: root.borderColor
 
                 Column {
                     id: timeSection
                     anchors.fill: parent
-                    anchors.margins: 10 * dpiScale
+                    anchors.margins: (root.mobileStyle ? 0 : 10) * dpiScale
                     spacing: 8 * dpiScale
 
                     BasicText {
                         width: parent.width
                         leftPadding: 0
                         text: qsTranslate("Device", "Device time")
-                        font.pixelSize: 12 * dpiScale
+                        font.pixelSize: (root.mobileStyle ? 14 : 12) * dpiScale
                         font.bold: true
                         color: root.mutedTextColor
                     }
@@ -581,9 +588,27 @@ MenuItem {
                     BasicText {
                         width: parent.width
                         leftPadding: 0
+                        visible: !root.mobileStyle
                         text: qsTranslate("Device", "Timezone") + ": " + root.currentTimezoneLabel()
                         color: root.mutedTextColor
                         wrapMode: Text.WordWrap
+                    }
+
+                    Label {
+                        visible: root.mobileStyle
+                        mobileStacked: true; width: parent.width
+                        text: qsTranslate("Device", "Timezone")
+                        ComboBox {
+                            width: parent.width; textRole: "label"; model: root.mobileTimezoneOptions
+                            currentIndex: root.selectedTimezone.key === "System" ? 0 : model.findIndex(entry => entry.choice && entry.choice.key === root.selectedTimezone.key)
+                            displayText: currentIndex >= 0 ? model[currentIndex].label : root.currentTimezoneLabel()
+                            onActivated: {
+                                const entry = model[currentIndex];
+                                if (!entry) return;
+                                if (!entry.choice) root.selectSystemTimezone();
+                                else root.applyTimezoneChoice(entry.choice, entry.region);
+                            }
+                        }
                     }
 
                     Row {
@@ -591,7 +616,7 @@ MenuItem {
                         spacing: 8 * dpiScale
 
                         Button {
-                            width: (parent.width - parent.spacing) / 2
+                            width: root.mobileStyle ? parent.width : (parent.width - parent.spacing) / 2
                             accent: true
                             text: controller.device_time_sync_in_progress ? qsTranslate("Device", "Syncing...") : qsTranslate("Device", "Sync Time")
                             enabled: controller.device_connected && !controller.device_time_sync_in_progress && controller.ota_state !== "updating"
@@ -602,6 +627,7 @@ MenuItem {
                         }
 
                         Button {
+                            visible: !root.mobileStyle
                             width: (parent.width - parent.spacing) / 2
                             text: qsTranslate("Device", "Set timezone")
                             onClicked: timezonePopup.open()
@@ -629,7 +655,7 @@ MenuItem {
                                 anchors.margins: 6 * dpiScale
                                 leftPadding: 0
                                 text: root.deviceSyncNoticeText
-                                font.pixelSize: 11 * dpiScale
+                                font.pixelSize: (root.mobileStyle ? 14 : 11) * dpiScale
                                 font.bold: true
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
@@ -645,7 +671,7 @@ MenuItem {
                         visible: !controller.device_connected && root.connectionStatusNeedsPanel() && text.length > 0
                         text: root.connectionStatusMessage()
                         color: root.connectionStatusColor()
-                        font.pixelSize: 11 * dpiScale
+                        font.pixelSize: (root.mobileStyle ? 14 : 11) * dpiScale
                         font.bold: true
                         wrapMode: Text.WordWrap
                     }

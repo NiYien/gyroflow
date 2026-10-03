@@ -1,0 +1,85 @@
+{
+  "title": "NiYien generated demo",
+  "version": 4,
+  "videofile": "niyien-demo.mp4",
+  "video_info": {
+    "width": 640,
+    "height": 360,
+    "fps": 30,
+    "num_frames": 180,
+    "duration_ms": 6000,
+    "rotation": 0
+  },
+  "gyro_source": {
+    "filepath": "niyien-demo.gcsv",
+    "imu_orientation": "XYZ",
+    "integration_method": 3,
+    "lpf": 0
+  },
+  "offsets": {
+    "0": 0
+  },
+  "calibration_data": {
+    "name": "NiYien generated pinhole camera",
+    "camera_brand": "NiYien",
+    "camera_model": "Synthetic demo",
+    "calib_dimension": {
+      "w": 640,
+      "h": 360
+    },
+    "orig_dimension": {
+      "w": 640,
+      "h": 360
+    },
+    "fps": 30,
+    "distortion_model": "opencv_standard",
+    "fisheye_params": {
+      "camera_matrix": [
+        [
+          450,
+          0,
+          320.0
+        ],
+        [
+          0,
+          450,
+          180.0
+        ],
+        [
+          0,
+          0,
+          1
+        ]
+      ],
+      "distortion_coeffs": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  "stabilization": {
+    "method": "Default",
+    "smoothing_params": [
+      {
+        "name": "smoothness",
+        "value": 0.5
+      }
+    ],
+    "fov": 0.85,
+    "adaptive_zoom_window": 0,
+    "frame_readout_time": 0
+  },
+  "output": {
+    "codec": "H.264/AVC",
+    "output_width": 640,
+    "output_height": 360,
+    "bitrate": 8,
+    "use_gpu": true,
+    "audio": false,
+    "pixel_format": "yuv420p",
+    "output_filename": "NiYien-demo-stabilized.mp4"
+  }
+}

@@ -1108,6 +1108,10 @@ Prova un altro codec di output (H.265/HEVC copre più casi di H.264/AVC), riduci
         <source>Go to settings</source>
         <translation>Vai alle impostazioni</translation>
     </message>
+    <message>
+        <source>This video is still loading.</source>
+        <translation>Questo video è ancora in caricamento.</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -2124,6 +2128,18 @@ You can increase the sharpness limit in the Advanced section.</source>
         <location filename="../../src/ui/components/FeedbackDialog.qml" line="171"/>
         <source>Packaging…</source>
         <translation>Compressione…</translation>
+    </message>
+    <message>
+        <source>Feedback includes your message, optional email, app version and submission time. Choose any attachments below. No videos are uploaded. See Privacy policy in Settings.</source>
+        <translation>Feedback includes your message, optional email, app version and submission time. Choose any attachments below. No videos are uploaded. See Privacy policy in Settings.</translation>
+    </message>
+    <message>
+        <source>Include logs and device information</source>
+        <translation>Include logs and device information</translation>
+    </message>
+    <message>
+        <source>Include project and lens settings</source>
+        <translation>Include project and lens settings</translation>
     </message>
 </context>
 <context>
@@ -4350,6 +4366,10 @@ Scegliere il frame rate: </translation>
         <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
         <translation>Controlla il numero di obiettivo di ogni video nella coda. Fai clic destro per modificarlo, poi stabilizza.</translation>
     </message>
+    <message>
+        <source>Search stage %1 of %2</source>
+        <translation>Fase di ricerca %1 di %2</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>
@@ -6281,6 +6301,10 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <source>Playback speed</source>
         <translation>Velocità di riproduzione</translation>
     </message>
+    <message>
+        <source>Not stabilized yet. Return to Videos and tap Stabilize.</source>
+        <translation>Non ancora stabilizzato. Torna ai video e tocca Stabilizza.</translation>
+    </message>
 </context>
 <context>
     <name>VideoInformation</name>
@@ -6318,6 +6342,630 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <location filename="../../src/ui/main_window.qml" line="114"/>
         <source>No</source>
         <translation>No</translation>
+    </message>
+</context>
+<context>
+    <name>MobileSettings</name>
+    <message>
+        <source>App preferences</source>
+        <translation>Preferenze app</translation>
+    </message>
+    <message>
+        <source>Auto rotate</source>
+        <translation>Rotazione automatica</translation>
+    </message>
+    <message>
+        <source>Dynamic zoom</source>
+        <translation>Zoom dinamico</translation>
+    </message>
+    <message>
+        <source>Feedback</source>
+        <translation>Feedback</translation>
+    </message>
+    <message>
+        <source>Horizon lock amount</source>
+        <translation>Intensità horizon lock</translation>
+    </message>
+    <message>
+        <source>Language</source>
+        <translation>Lingua</translation>
+    </message>
+    <message>
+        <source>Lens correction</source>
+        <translation>Correzione lente</translation>
+    </message>
+    <message>
+        <source>Lock horizon</source>
+        <translation>Blocca orizzonte</translation>
+    </message>
+    <message>
+        <source>Smoothness</source>
+        <translation>Smoothness</translation>
+    </message>
+    <message>
+        <source>Stabilization</source>
+        <translation>Stabilizzazione</translation>
+    </message>
+    <message>
+        <source>Static zoom</source>
+        <translation>Crop statico</translation>
+    </message>
+    <message>
+        <source>Theme</source>
+        <translation>Tema</translation>
+    </message>
+    <message>
+        <source>Updates</source>
+        <translation>Aggiornamenti</translation>
+    </message>
+    <message>
+        <source>Zoom</source>
+        <translation>Zoom</translation>
+    </message>
+    <message>
+        <source>About NiYien</source>
+        <translation>About NiYien</translation>
+    </message>
+    <message>
+        <source>Help and support</source>
+        <translation>Help and support</translation>
+    </message>
+    <message>
+        <source>Open-source licenses</source>
+        <translation>Open-source licenses</translation>
+    </message>
+    <message>
+        <source>Privacy policy</source>
+        <translation>Privacy policy</translation>
+    </message>
+</context>
+<context>
+    <name>MobileWorkspace</name>
+    <message>
+        <source>%1 completed · %2 need attention</source>
+        <translation>%1 completati · %2 da verificare</translation>
+    </message>
+    <message>
+        <source>%1 videos completed</source>
+        <translation>%1 video completati</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>Aggiungi</translation>
+    </message>
+    <message>
+        <source>Add files</source>
+        <translation>Aggiungi file</translation>
+    </message>
+    <message>
+        <source>Add folder</source>
+        <translation>Aggiungi cartella</translation>
+    </message>
+    <message>
+        <source>Add media</source>
+        <translation>Aggiungi contenuti</translation>
+    </message>
+    <message>
+        <source>Add videos and gyroscope data to get started.</source>
+        <translation>Aggiungi video e dati del giroscopio per iniziare.</translation>
+    </message>
+    <message>
+        <source>All</source>
+        <translation>Tutti</translation>
+    </message>
+    <message>
+        <source>Back to videos</source>
+        <translation>Torna ai video</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Annulla</translation>
+    </message>
+    <message>
+        <source>Clear queue</source>
+        <translation>Svuota coda</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Chiudi</translation>
+    </message>
+    <message>
+        <source>Continue with all videos. Other clips from the same recording day can use this match when their timestamps are available.</source>
+        <translation>Continua con tutti i video. Le altre clip dello stesso giorno di ripresa possono usare questa corrispondenza se dispongono di riferimenti temporali.</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>Ricerca approfondita</translation>
+    </message>
+    <message>
+        <source>Deep search complete</source>
+        <translation>Ricerca approfondita completata</translation>
+    </message>
+    <message>
+        <source>Deep search · %1</source>
+        <translation>Ricerca approfondita · %1</translation>
+    </message>
+    <message>
+        <source>Deselect</source>
+        <translation>Deseleziona</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>Fatto</translation>
+    </message>
+    <message>
+        <source>Export stabilized video</source>
+        <translation>Esporta video stabilizzato</translation>
+    </message>
+    <message>
+        <source>Exported</source>
+        <translation>Esportato</translation>
+    </message>
+    <message>
+        <source>Exporting</source>
+        <translation>Esportazione</translation>
+    </message>
+    <message>
+        <source>Exporting %1%</source>
+        <translation>Esportazione %1%</translation>
+    </message>
+    <message>
+        <source>Global settings</source>
+        <translation>Impostazioni globali</translation>
+    </message>
+    <message>
+        <source>Gyroscope data</source>
+        <translation>Dati giroscopio</translation>
+    </message>
+    <message>
+        <source>Info</source>
+        <translation>Info</translation>
+    </message>
+    <message>
+        <source>Match found. You can now stabilize.</source>
+        <translation>Corrispondenza trovata. Ora puoi stabilizzare.</translation>
+    </message>
+    <message>
+        <source>Matching videos…</source>
+        <translation>Abbinamento video…</translation>
+    </message>
+    <message>
+        <source>More</source>
+        <translation>Altro</translation>
+    </message>
+    <message>
+        <source>Needs attention</source>
+        <translation>Da verificare</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>Avanti</translation>
+    </message>
+    <message>
+        <source>No gyroscope data. Add a recording or try Deep search.</source>
+        <translation>Nessun dato del giroscopio. Aggiungi una registrazione o prova la ricerca approfondita.</translation>
+    </message>
+    <message>
+        <source>No match found. Try a video with more camera motion, and check the gyro recording, in-camera stabilization and mounting position.</source>
+        <translation>Nessuna corrispondenza trovata. Prova un video con più movimento e controlla la registrazione del giroscopio, la stabilizzazione della fotocamera e la posizione di montaggio.</translation>
+    </message>
+    <message>
+        <source>Original</source>
+        <translation>Originale</translation>
+    </message>
+    <message>
+        <source>Pause</source>
+        <translation>Pausa</translation>
+    </message>
+    <message>
+        <source>Play</source>
+        <translation>Riproduci</translation>
+    </message>
+    <message>
+        <source>Playback position</source>
+        <translation>Posizione di riproduzione</translation>
+    </message>
+    <message>
+        <source>Preparing search…</source>
+        <translation>Preparazione ricerca…</translation>
+    </message>
+    <message>
+        <source>Preparing…</source>
+        <translation>Preparazione…</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>Precedente</translation>
+    </message>
+    <message>
+        <source>Processed %1 / %2</source>
+        <translation>Elaborati %1 / %2</translation>
+    </message>
+    <message>
+        <source>Reading…</source>
+        <translation>Lettura…</translation>
+    </message>
+    <message>
+        <source>Ready</source>
+        <translation>Pronto</translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation>Rimuovi</translation>
+    </message>
+    <message>
+        <source>Reset pairing</source>
+        <translation>Reimposta abbinamento</translation>
+    </message>
+    <message>
+        <source>Retry</source>
+        <translation>Riprova</translation>
+    </message>
+    <message>
+        <source>Search cancelled</source>
+        <translation>Ricerca annullata</translation>
+    </message>
+    <message>
+        <source>Select</source>
+        <translation>Seleziona</translation>
+    </message>
+    <message>
+        <source>Selected %1</source>
+        <translation>%1 selezionati</translation>
+    </message>
+    <message>
+        <source>Settings</source>
+        <translation>Impostazioni</translation>
+    </message>
+    <message>
+        <source>Skipped</source>
+        <translation>Saltato</translation>
+    </message>
+    <message>
+        <source>Stabilize</source>
+        <translation>Stabilizza</translation>
+    </message>
+    <message>
+        <source>Stabilized</source>
+        <translation>Stabilizzato</translation>
+    </message>
+    <message>
+        <source>Stabilizing</source>
+        <translation>Stabilizzazione</translation>
+    </message>
+    <message>
+        <source>Stabilizing %1%</source>
+        <translation>Stabilizzazione %1%</translation>
+    </message>
+    <message>
+        <source>Stop</source>
+        <translation>Ferma</translation>
+    </message>
+    <message>
+        <source>Stop the current task before changing its inputs.</source>
+        <translation>Interrompi l’attività corrente prima di modificarne i file di ingresso.</translation>
+    </message>
+    <message>
+        <source>Stop the current task to adjust processing settings.</source>
+        <translation>Interrompi l’attività corrente per modificare le impostazioni di elaborazione.</translation>
+    </message>
+    <message>
+        <source>Stop this video</source>
+        <translation>Interrompi questo video</translation>
+    </message>
+    <message>
+        <source>Stopped by you. Retry starts this video from the beginning.</source>
+        <translation>Hai interrotto questo video. Un nuovo tentativo riparte dall’inizio.</translation>
+    </message>
+    <message>
+        <source>Stopped · %1 completed</source>
+        <translation>Interrotto · %1 completati</translation>
+    </message>
+    <message>
+        <source>Stopping…</source>
+        <translation>Interruzione…</translation>
+    </message>
+    <message>
+        <source>Sync not confirmed</source>
+        <translation>Sincronizzazione non confermata</translation>
+    </message>
+    <message>
+        <source>Task details</source>
+        <translation>Dettagli attività</translation>
+    </message>
+    <message>
+        <source>This format supports stabilization for editing plugins only.</source>
+        <translation>Questo formato supporta la stabilizzazione solo per i plugin di montaggio.</translation>
+    </message>
+    <message>
+        <source>This video could not be processed. Check its gyroscope data and lens settings.</source>
+        <translation>Impossibile elaborare questo video. Controlla i dati del giroscopio e le impostazioni dell’obiettivo.</translation>
+    </message>
+    <message>
+        <source>This video is being processed. Preview will be available when it finishes.</source>
+        <translation>Questo video è in elaborazione. L’anteprima sarà disponibile al termine.</translation>
+    </message>
+    <message>
+        <source>Unknown</source>
+        <translation>Sconosciuto</translation>
+    </message>
+    <message>
+        <source>Video information</source>
+        <translation>Informazioni video</translation>
+    </message>
+    <message>
+        <source>Videos</source>
+        <translation>Video</translation>
+    </message>
+    <message>
+        <source>Videos %1</source>
+        <translation>Video %1</translation>
+    </message>
+    <message>
+        <source>View</source>
+        <translation>Visualizza</translation>
+    </message>
+    <message>
+        <source>Waiting</source>
+        <translation>In attesa</translation>
+    </message>
+    <message>
+        <source>Your videos, ready to stabilize</source>
+        <translation>I tuoi video, pronti da stabilizzare</translation>
+    </message>
+    <message>
+        <source>‹ Videos</source>
+        <translation>‹ Video</translation>
+    </message>
+    <message>
+        <source>Add folders</source>
+        <translation>Aggiungi cartelle</translation>
+    </message>
+    <message>
+        <source>Add gyroscope data</source>
+        <translation>Aggiungi dati giroscopici</translation>
+    </message>
+    <message>
+        <source>Focal length unknown</source>
+        <translation>Focale sconosciuta</translation>
+    </message>
+    <message>
+        <source>No gyroscope data added</source>
+        <translation>Nessun dato giroscopico aggiunto</translation>
+    </message>
+    <message>
+        <source>Add recordings from an external gyroscope here. Built-in video data is read automatically.</source>
+        <translation>Aggiungi qui le registrazioni di un giroscopio esterno. I dati integrati nel video vengono letti automaticamente.</translation>
+    </message>
+    <message>
+        <source>Add videos to get started.</source>
+        <translation>Aggiungi video per iniziare.</translation>
+    </message>
+    <message>
+        <source>Choose video folders</source>
+        <translation>Scegli cartelle video</translation>
+    </message>
+    <message>
+        <source>Choose videos</source>
+        <translation>Scegli video</translation>
+    </message>
+    <message>
+        <source>External gyroscope</source>
+        <translation>Giroscopio esterno</translation>
+    </message>
+    <message>
+        <source>App</source>
+        <translation>App</translation>
+    </message>
+    <message>
+        <source>Back</source>
+        <translation>Indietro</translation>
+    </message>
+    <message>
+        <source>Changes apply to all videos.</source>
+        <translation>Le modifiche si applicano a tutti i video.</translation>
+    </message>
+    <message>
+        <source>Clear video and gyroscope matches</source>
+        <translation>Cancella gli abbinamenti tra video e giroscopio</translation>
+    </message>
+    <message>
+        <source>Export</source>
+        <translation>Esporta</translation>
+    </message>
+    <message>
+        <source>Lens</source>
+        <translation>Lente</translation>
+    </message>
+    <message>
+        <source>Remove all videos from this list</source>
+        <translation>Rimuovi tutti i video da questo elenco</translation>
+    </message>
+    <message>
+        <source>Choose files</source>
+        <translation>Scegli file</translation>
+    </message>
+    <message>
+        <source>Choose folders</source>
+        <translation>Scegli cartelle</translation>
+    </message>
+    <message>
+        <source>View results</source>
+        <translation>Visualizza risultati</translation>
+    </message>
+    <message>
+        <source>Confirm folder import</source>
+        <translation>Conferma importazione cartella</translation>
+    </message>
+    <message>
+        <source>Import</source>
+        <translation>Importa</translation>
+    </message>
+    <message>
+        <source>Stabilize (for plugins)</source>
+        <translation>Stabilizza (per plugin)</translation>
+    </message>
+    <message>
+        <source>Calibration pair</source>
+        <translation>Coppia di calibrazione</translation>
+    </message>
+    <message>
+        <source>In-camera stabilization on</source>
+        <translation>Stabilizzazione della fotocamera attiva</translation>
+    </message>
+    <message>
+        <source>No gyroscope data</source>
+        <translation>Nessun dato giroscopico</translation>
+    </message>
+    <message>
+        <source>Plugin stabilization only</source>
+        <translation>Solo stabilizzazione per plugin</translation>
+    </message>
+    <message>
+        <source>Skip reason not recorded</source>
+        <translation>Motivo del salto non registrato</translation>
+    </message>
+    <message>
+        <source>Stopped manually</source>
+        <translation>Interrotto manualmente</translation>
+    </message>
+    <message>
+        <source>About NiYien</source>
+        <translation>About NiYien</translation>
+    </message>
+    <message>
+        <source>Export editing project</source>
+        <translation>Export editing project</translation>
+    </message>
+    <message>
+        <source>Feedback</source>
+        <translation>Feedback</translation>
+    </message>
+    <message>
+        <source>Help and support</source>
+        <translation>Help and support</translation>
+    </message>
+    <message>
+        <source>How it works</source>
+        <translation>How it works</translation>
+    </message>
+    <message>
+        <source>Open-source licenses</source>
+        <translation>Open-source licenses</translation>
+    </message>
+    <message>
+        <source>Privacy policy</source>
+        <translation>Privacy policy</translation>
+    </message>
+    <message>
+        <source>Share / Save to Files</source>
+        <translation>Share / Save to Files</translation>
+    </message>
+    <message>
+        <source>Source code</source>
+        <translation>Source code</translation>
+    </message>
+    <message>
+        <source>The demo could not be prepared. Please try again.</source>
+        <translation>The demo could not be prepared. Please try again.</translation>
+    </message>
+    <message>
+        <source>The output file is unavailable. Check the output folder.</source>
+        <translation>The output file is unavailable. Check the output folder.</translation>
+    </message>
+    <message>
+        <source>Try a generated demo</source>
+        <translation>Try a generated demo</translation>
+    </message>
+    <message>
+        <source>Use a supported camera's gyroscope data or import a separate gyroscope file.</source>
+        <translation>Use a supported camera's gyroscope data or import a separate gyroscope file.</translation>
+    </message>
+</context>
+<context>
+    <name>MobileFolderPicker</name>
+    <message>
+        <source>Add %1 folders</source>
+        <translation>Aggiungi %1 cartelle</translation>
+    </message>
+    <message>
+        <source>Choose a location, then select the folders to add. You can also add folders from another location.</source>
+        <translation>Scegli una posizione e seleziona le cartelle. Puoi aggiungerne anche da altre posizioni.</translation>
+    </message>
+    <message>
+        <source>Choose location</source>
+        <translation>Scegli posizione</translation>
+    </message>
+    <message>
+        <source>No subfolders. Select this folder to add its files.</source>
+        <translation>Nessuna sottocartella. Seleziona questa cartella per aggiungere i suoi file.</translation>
+    </message>
+    <message>
+        <source>Open folder</source>
+        <translation>Apri cartella</translation>
+    </message>
+    <message>
+        <source>This folder</source>
+        <translation>Questa cartella</translation>
+    </message>
+    <message>
+        <source>Unable to read this folder. Choose the location again.</source>
+        <translation>Impossibile leggere la cartella. Scegli nuovamente la posizione.</translation>
+    </message>
+    <message>
+        <source>Up one level</source>
+        <translation>Livello superiore</translation>
+    </message>
+    <message>
+        <source>Add this folder</source>
+        <translation>Aggiungi questa cartella</translation>
+    </message>
+    <message>
+        <source>No subfolders</source>
+        <translation>Nessuna sottocartella</translation>
+    </message>
+    <message>
+        <source>Subfolders</source>
+        <translation>Sottocartelle</translation>
+    </message>
+    <message>
+        <source>Browse</source>
+        <translation>Sfoglia</translation>
+    </message>
+    <message>
+        <source>Add %1 files</source>
+        <translation>Aggiungi %1 file</translation>
+    </message>
+    <message>
+        <source>Add location</source>
+        <translation>Aggiungi posizione</translation>
+    </message>
+    <message>
+        <source>Choose a folder once to browse its files here.</source>
+        <translation>Scegli una cartella una volta per esplorarne i file qui.</translation>
+    </message>
+    <message>
+        <source>No matching files</source>
+        <translation>Nessun file corrispondente</translation>
+    </message>
+    <message>
+        <source>Includes files in this folder and up to two levels of subfolders.</source>
+        <translation>Include i file di questa cartella e fino a due livelli di sottocartelle.</translation>
+    </message>
+    <message>
+        <source>Saved folders</source>
+        <translation>Cartelle salvate</translation>
+    </message>
+    <message>
+        <source>Other locations</source>
+        <translation>Altre posizioni</translation>
+    </message>
+</context>
+<context>
+    <name>MobileGyroBar</name>
+    <message>
+        <source>Not added</source>
+        <translation>Non aggiunto</translation>
     </message>
 </context>
 </TS>
