@@ -8,6 +8,8 @@ mod sony;
 #[cfg(test)]
 mod output_dimensions_tests;
 pub mod splines;
+pub mod optical_correction;
+pub use optical_correction::{ OpticalCorrection, OpticalCorrectionSettings };
 pub use file_metadata::*;
 pub use imu_transforms::*;
 pub use sony::{MESH_REFINE_SKIP_PX, MESH_REFINE_THRESHOLD_PX,interpolate_mesh};
