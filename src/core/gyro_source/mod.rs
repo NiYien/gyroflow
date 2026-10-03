@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
+// Ported from upstream gyroflow 322cb312 + eabdc789
 
 mod canon;
 mod file_metadata;
@@ -575,6 +576,24 @@ pub struct GyroSource {
     offsets_adjusted: BTreeMap<i64, f64>, // <timestamp + offset, offset>
 
     pub file_url: String,
+
+    /// Correction measured from the video, composed onto `quaternions` at the end of `integrate`
+    #[serde(default)]
+    pub optical_correction: Option<OpticalCorrection>,
+    /// Whether the last `integrate` applied it: an enabled one that doesn't match the quaternions is stale
+    #[serde(skip)]
+    pub optical_correction_applied: bool,
+    /// `optical_correction::checksum` of the quaternions the last `integrate` composed it onto, or would have
+    #[serde(skip)]
+    pub optical_uncorrected_checksum: u64,
+    /// The context the correction applies in: what `optical_analysis::context_checksum` makes of the current sync, lens
+    /// and frame timing. Kept up to date by `StabilizationManager::refresh_optical_correction`
+    #[serde(skip)]
+    pub optical_context: u64,
+    /// The file's own motion data and sync points, set aside while the motion comes from the video instead, see
+    /// `set_ignore_file_motion`
+    #[serde(skip)]
+    ignored_motion: Option<Arc<(FileMotion, BTreeMap<i64, f64>)>>,
 }
 
 impl GyroSource {
@@ -589,6 +608,52 @@ impl GyroSource {
 
     pub fn has_motion(&self) -> bool {
         self.file_metadata.read().has_motion()
+    }
+
+    /// Sets the file's own motion data aside, and its sync points with it, so the motion comes from the video instead:
+    /// "Analyze image optically" then measures all of it, as for a file without any. For motion data too broken to
+    /// correct. Meanwhile everything reading motion data sees a file without any; the lens, the frame timing and the
+    /// rest of the metadata stay. False brings them back. Returns whether anything changed
+    pub fn set_ignore_file_motion(&mut self, ignore: bool) -> bool {
+        if ignore == self.ignored_motion.is_some() { return false; }
+        if ignore {
+            let motion = self.file_metadata.take_motion();
+            let offsets = std::mem::take(&mut self.offsets);
+            self.clear_offsets();
+            self.ignored_motion = Some(Arc::new((motion, offsets)));
+            // Empty integrator results preserve old quaternions here; the ignored motion must not survive.
+            self.quaternions.clear();
+            self.smoothed_quaternions.clear();
+        } else if let Some(ignored) = self.ignored_motion.take() {
+            let (motion, offsets) = Arc::unwrap_or_clone(ignored);
+            self.file_metadata.restore_motion(motion);
+            self.set_offsets(offsets);
+        }
+        self.apply_transforms();
+        true
+    }
+    pub fn ignores_file_motion(&self) -> bool {
+        self.ignored_motion.is_some()
+    }
+    /// The sync points that belong to the file's motion data, also while it's set aside
+    pub fn file_offsets(&self) -> &BTreeMap<i64, f64> {
+        self.ignored_motion.as_ref().map(|x| &x.1).unwrap_or(&self.offsets)
+    }
+    /// The file's metadata with its motion data, when that's set aside (None otherwise: `file_metadata` has it)
+    pub fn file_metadata_with_ignored_motion(&self) -> Option<FileMetadata> {
+        self.ignored_motion.as_ref().map(|x| self.file_metadata.with_motion(&x.0))
+    }
+
+    /// Replaces the correction; the caller is responsible for reintegrating afterward.
+    pub fn set_optical_correction(&mut self, correction: Option<OpticalCorrection>) {
+        if self.optical_correction.as_ref().is_some_and(|c| !c.video_base.is_empty())
+            && !self.file_metadata.read().has_motion()
+        {
+            // These quaternions came entirely from the correction being replaced.
+            self.quaternions.clear();
+            self.smoothed_quaternions.clear();
+        }
+        self.optical_correction = correction;
     }
 
     pub fn set_use_gravity_vectors(&mut self, v: bool) {
@@ -1753,6 +1818,8 @@ impl GyroSource {
         self.imu_transforms.imu_lpf = 0.0;
         self.imu_transforms.imu_mf = 0;
         self.file_metadata = Default::default();
+        self.optical_correction = None;
+        self.ignored_motion = None;
         self.clear_offsets();
     }
 
@@ -2048,6 +2115,35 @@ impl GyroSource {
             }
             _ => log::error!("Unknown integrator"),
         }
+        drop(file_metadata);
+        self.apply_optical_correction();
+    }
+
+    /// Composes the correction measured from the video onto freshly integrated quaternions - when it was measured
+    /// against these very ones, in this context, see `OpticalCorrection`
+    fn apply_optical_correction(&mut self) {
+        self.optical_correction_applied = false;
+        if let Some(c) = &self.optical_correction {
+            let from_video = !self.file_metadata.read().has_motion() && !c.video_base.is_empty();
+            if from_video {
+                // A file without motion data: what the analysis measured between the frames is all there is
+                self.quaternions = c.base_quats();
+            }
+            self.optical_uncorrected_checksum = optical_correction::checksum(&self.quaternions);
+            if self.optical_correction_applies() {
+                c.apply(&mut self.quaternions);
+                self.optical_correction_applied = true;
+            } else if c.enabled {
+                log::warn!("The optical correction was measured on other motion data (another integration method or filter), sync, lens or frame timing, not applying it");
+            }
+            if from_video {
+                optical_correction::hold_over_clip(&mut self.quaternions, self.duration_ms);
+            }
+        }
+    }
+    /// Whether `integrate` composes the correction onto the quaternions, as things stand
+    pub fn optical_correction_applies(&self) -> bool {
+        self.optical_correction.as_ref().is_some_and(|c| c.enabled && c.measured_on(self.optical_uncorrected_checksum, self.optical_context))
     }
 
     pub fn recompute_smoothness(
@@ -2624,6 +2720,12 @@ impl GyroSource {
         hasher.write_usize(file_metadata.lens_params.len());
         hasher.write_u32(if self.use_gravity_vectors { 1 } else { 0 });
         hasher.write_usize(self.integration_method);
+        if let Some(c) = &self.optical_correction {
+            c.hash_into(&mut hasher);
+            // Switched on or off by the context alone (`refresh_optical_correction`), the correction is the same one, and
+            // where it isn't measured (the ends of the clip, which the rest of this looks at) the quaternions are too
+            hasher.write_u8(self.optical_correction_applied as u8);
+        }
         for (ts, v) in &self.offsets {
             hasher.write_i64(*ts);
             hasher.write_u64(v.to_bits());
@@ -2791,6 +2893,245 @@ mod tests {
                 "axis {axis}: actual={actual:?} expected={expected:?}"
             );
         }
+    }
+
+    fn integrated_optical_fixture() -> GyroSource {
+        let samples = (0..1000).map(|i| {
+            let t = i as f64 / 1000.0;
+            motion_sample(i as f64, [20.0 * (t * 3.0).sin(), 15.0 * (t * 5.0).sin(),
+                10.0 * (t * 7.0).sin()], Some([0.0, 0.0, 9.80665]), None)
+        }).collect();
+        let mut gyro = source_with_motion(metadata_with_motion(false, samples));
+        gyro.integrate();
+        assert!(!gyro.quaternions.is_empty());
+        gyro
+    }
+
+    fn correction_for_quats(quats: &TimeQuat) -> OpticalCorrection {
+        OpticalCorrection {
+            enabled: true,
+            start_us: 200_000.0,
+            spacing_us: 50_000.0,
+            coeffs: vec![[0.002, -0.001, 0.003]; 8],
+            quats_checksum: optical_correction::checksum(quats),
+            context_checksum: 7,
+            ..Default::default()
+        }
+    }
+
+    fn video_only_optical_fixture() -> GyroSource {
+        let mut gyro = source_with_motion(FileMetadata::default());
+        let mut correction = correction_for_quats(&TimeQuat::new());
+        correction.video_base = vec![(200_000, [1.0, 0.0, 0.0, 0.0]),
+            (700_000, [0.995, 0.0, 0.1, 0.0])];
+        correction.quats_checksum = optical_correction::checksum(&correction.base_quats());
+        gyro.optical_context = 7;
+        gyro.set_optical_correction(Some(correction));
+        gyro
+    }
+
+    #[test]
+    fn correction_applies_only_in_its_context() {
+        let mut gyro = integrated_optical_fixture();
+        let uncorrected = gyro.quaternions.clone();
+        gyro.set_optical_correction(Some(correction_for_quats(&uncorrected)));
+        gyro.optical_context = 7;
+        gyro.integrate();
+        assert!(gyro.optical_correction_applied);
+        assert!(gyro.optical_correction_applies());
+        assert_ne!(gyro.quaternions, uncorrected);
+        let mut expected = uncorrected.clone();
+        gyro.optical_correction.as_ref().unwrap().apply(&mut expected);
+        assert_eq!(gyro.quaternions, expected);
+        gyro.optical_context = 8;
+        gyro.integrate();
+        assert!(!gyro.optical_correction_applied);
+        assert!(!gyro.optical_correction_applies());
+        assert_eq!(gyro.quaternions, uncorrected);
+        gyro.optical_context = 7;
+        gyro.optical_correction.as_mut().unwrap().enabled = false;
+        gyro.integrate();
+        assert!(!gyro.optical_correction_applied);
+        assert_eq!(gyro.quaternions, uncorrected);
+    }
+
+    #[test]
+    fn correction_switches_off_with_the_integration_method_and_back() {
+        let mut gyro = integrated_optical_fixture();
+        let uncorrected = gyro.quaternions.clone();
+        gyro.optical_context = 7;
+        gyro.set_optical_correction(Some(correction_for_quats(&uncorrected)));
+        gyro.integrate();
+        assert!(gyro.optical_correction_applied);
+        let corrected = gyro.quaternions.clone();
+        let mut vqf = gyro.clone();
+        vqf.set_optical_correction(None);
+        vqf.integration_method = 2;
+        vqf.integrate();
+        assert_ne!(optical_correction::checksum(&vqf.quaternions),
+            optical_correction::checksum(&uncorrected));
+        gyro.integration_method = 2;
+        gyro.integrate();
+        assert!(!gyro.optical_correction_applied);
+        assert_eq!(gyro.quaternions, vqf.quaternions);
+        gyro.integration_method = 1;
+        gyro.integrate();
+        assert!(gyro.optical_correction_applied);
+        assert_eq!(gyro.quaternions, corrected);
+    }
+
+    #[test]
+    fn video_only_correction_survives_reintegration() {
+        let mut gyro = video_only_optical_fixture();
+        assert!(!gyro.has_motion());
+        gyro.integrate();
+        assert!(gyro.optical_correction_applied);
+        let corrected = gyro.quaternions.clone();
+        assert_eq!(corrected.first_key_value().unwrap().0, &0);
+        assert_eq!(corrected.last_key_value().unwrap().0, &1_000_000);
+        gyro.integrate();
+        assert!(gyro.optical_correction_applied);
+        assert_eq!(gyro.quaternions, corrected);
+    }
+
+    #[test]
+    fn ignoring_file_motion_leaves_no_quaternions() {
+        let mut gyro = integrated_optical_fixture();
+        let uncorrected = gyro.quaternions.clone();
+        gyro.smoothed_quaternions = uncorrected.clone();
+        assert!(gyro.set_ignore_file_motion(true));
+        assert!(gyro.quaternions.is_empty());
+        assert!(gyro.smoothed_quaternions.is_empty());
+        assert!(gyro.set_ignore_file_motion(false));
+        assert_eq!(gyro.quaternions, uncorrected);
+    }
+
+    #[test]
+    fn clearing_a_video_only_correction_leaves_no_quaternions() {
+        let mut gyro = video_only_optical_fixture();
+        gyro.integrate();
+        assert!(!gyro.quaternions.is_empty());
+        gyro.smoothed_quaternions = gyro.quaternions.clone();
+        gyro.set_optical_correction(None);
+        assert!(gyro.quaternions.is_empty());
+        assert!(gyro.smoothed_quaternions.is_empty());
+        gyro.integrate();
+        assert!(gyro.quaternions.is_empty());
+        assert!(!gyro.optical_correction_applied);
+    }
+
+    #[test]
+    fn replacing_a_video_only_correction_clears_without_integrating() {
+        let mut gyro = video_only_optical_fixture();
+        gyro.integrate();
+        gyro.smoothed_quaternions = gyro.quaternions.clone();
+        let mut replacement = gyro.optical_correction.clone().unwrap();
+        replacement.coeffs[0] = [0.004, 0.0, 0.0];
+        gyro.set_optical_correction(Some(replacement));
+        assert!(gyro.quaternions.is_empty());
+        assert!(gyro.smoothed_quaternions.is_empty());
+        gyro.integrate();
+        assert!(gyro.optical_correction_applied);
+        assert!(!gyro.quaternions.is_empty());
+        let mut with_motion = integrated_optical_fixture();
+        let before = with_motion.quaternions.clone();
+        with_motion.set_optical_correction(Some(correction_for_quats(&before)));
+        assert_eq!(with_motion.quaternions, before);
+    }
+
+    #[test]
+    fn checksum_follows_the_applied_flag_of_a_correction() {
+        let mut gyro = integrated_optical_fixture();
+        // A one-point spline does not touch the first or last quaternion hashed by get_checksum.
+        let mut correction = correction_for_quats(&gyro.quaternions);
+        correction.coeffs = vec![[0.002, 0.0, 0.0]];
+        gyro.set_optical_correction(Some(correction));
+        gyro.optical_context = 7;
+        gyro.integrate();
+        assert!(gyro.optical_correction_applied);
+        let applied = gyro.get_checksum();
+        gyro.optical_correction_applied = false;
+        assert_ne!(applied, gyro.get_checksum());
+        gyro.optical_context = 8;
+        gyro.integrate();
+        assert!(!gyro.optical_correction_applied);
+        assert_ne!(applied, gyro.get_checksum());
+        gyro.set_optical_correction(None);
+        let without_correction = gyro.get_checksum();
+        gyro.optical_correction_applied = true;
+        assert_eq!(without_correction, gyro.get_checksum());
+    }
+
+    #[test]
+    fn ignore_file_motion_round_trip() {
+        let mut gyro = integrated_optical_fixture();
+        {
+            let mut md = gyro.file_metadata.write();
+            md.quaternions = sentinel_quaternions();
+            md.gravity_vectors = Some(BTreeMap::from([(0, Vector3::new(0.0, 0.0, 1.0))]));
+            md.image_orientations = Some(sentinel_quaternions());
+        }
+        gyro.set_offsets(BTreeMap::from([(10_000, 2.5), (700_000, -3.25)]));
+        let offsets = gyro.get_offsets().clone();
+        let original = gyro.file_metadata.read().clone();
+        let clone = gyro.clone();
+        assert!(gyro.file_metadata_with_ignored_motion().is_none());
+        assert!(gyro.set_ignore_file_motion(true));
+        assert!(gyro.ignores_file_motion());
+        assert!(!gyro.has_motion());
+        {
+            let ignored = gyro.file_metadata.read();
+            assert!(ignored.raw_imu.is_empty());
+            assert!(ignored.quaternions.is_empty());
+            assert!(ignored.gravity_vectors.is_none());
+            assert!(ignored.image_orientations.is_none());
+        }
+        assert!(gyro.get_offsets().is_empty());
+        assert_eq!(gyro.file_offsets(), &offsets);
+        let restored = gyro.file_metadata_with_ignored_motion().unwrap();
+        assert_eq!(serde_json::to_value(&restored.raw_imu).unwrap(), serde_json::to_value(&original.raw_imu).unwrap());
+        assert_eq!(restored.quaternions, original.quaternions);
+        assert_eq!(restored.gravity_vectors, original.gravity_vectors);
+        assert_eq!(restored.image_orientations, original.image_orientations);
+        assert!(clone.has_motion());
+        assert_eq!(clone.get_offsets(), &offsets);
+        assert!(!gyro.set_ignore_file_motion(true));
+        assert!(gyro.set_ignore_file_motion(false));
+        assert!(!gyro.ignores_file_motion());
+        let restored = gyro.file_metadata.read();
+        assert_eq!(serde_json::to_value(&restored.raw_imu).unwrap(), serde_json::to_value(&original.raw_imu).unwrap());
+        assert_eq!(restored.quaternions, original.quaternions);
+        assert_eq!(restored.gravity_vectors, original.gravity_vectors);
+        assert_eq!(restored.image_orientations, original.image_orientations);
+        drop(restored);
+        assert_eq!(gyro.get_offsets(), &offsets);
+        assert_eq!(gyro.file_offsets(), &offsets);
+        assert!(!gyro.set_ignore_file_motion(false));
+    }
+
+    #[test]
+    fn invalid_duration_does_not_apply_optical_correction() {
+        let mut gyro = video_only_optical_fixture();
+        gyro.duration_ms = 0.0;
+        gyro.quaternions = sentinel_quaternions();
+        gyro.optical_uncorrected_checksum = 123;
+        let before = gyro.quaternions.clone();
+        gyro.integrate();
+        assert_eq!(gyro.quaternions, before);
+        assert_eq!(gyro.optical_uncorrected_checksum, 123);
+        assert!(!gyro.optical_correction_applied);
+    }
+
+    #[test]
+    fn clearing_gyro_source_discards_correction_and_ignored_motion() {
+        let mut gyro = integrated_optical_fixture();
+        gyro.set_optical_correction(Some(correction_for_quats(&gyro.quaternions)));
+        gyro.set_ignore_file_motion(true);
+        gyro.clear();
+        assert!(gyro.optical_correction.is_none());
+        assert!(!gyro.ignores_file_motion());
+        assert!(gyro.file_metadata_with_ignored_motion().is_none());
+        assert!(gyro.file_offsets().is_empty());
     }
 
     fn first_processed_sample(source: &GyroSource) -> TimeIMU {
