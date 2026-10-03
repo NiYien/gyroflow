@@ -1105,6 +1105,45 @@ mod tests {
         p
     }
 
+    /// A rotating camera with a stabilizing correction and nothing optical: what the translation work must leave
+    /// bit-identical
+    fn stabilized_params(readout_time: f64) -> ComputeParams {
+        let mut p = params(vec![0.82], readout_time);
+        p.suppress_rotation = false;
+        {
+            let mut gyro = p.gyro.write();
+            gyro.duration_ms = 1000.0;
+            for i in 0..=10i64 {
+                let a = i as f64 * 0.01;
+                gyro.quaternions.insert(i * 100_000, crate::gyro_source::Quat64::from_euler_angles(a, -0.5 * a, 0.3 * a));
+                gyro.smoothed_quaternions.insert(i * 100_000, crate::gyro_source::Quat64::from_euler_angles(-0.2 * a, 0.1 * a, 0.0));
+            }
+        }
+        p
+    }
+
+    fn bits_hash(values: impl Iterator<Item = f64>) -> u64 {
+        use std::hash::Hasher;
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for v in values { h.write_u64(v.to_bits()); }
+        h.finish()
+    }
+
+    // Taken on the code before the translation work, by running this test with zeros here and copying the values it
+    // prints. Depends on the toolchain's float library and DefaultHasher: take them again the same way after changing either
+    const GOLDEN: (u64, u64, u64) = (18069766615594339656, 2781745888030282519, 11631596161409366322);
+
+    #[test]
+    fn stabilized_transforms_golden() {
+        let p = stabilized_params(12.0);
+        let backward = bits_hash(FrameTransform::at_timestamp(&p, 500.0, 0).matrices.iter().flatten().map(|v| *v as f64));
+        let forward = bits_hash(FrameTransform::at_timestamp_for_points(&p, &POINTS, 500.0, Some(0), false).3.iter().flat_map(|m| m.iter().copied()));
+        let mut q = p.clone();
+        q.calculate_camera_fovs();
+        let zoom = crate::zooming::get_checksum(&q, 0);
+        assert_eq!((backward, forward, zoom), GOLDEN, "got {:?}", (backward, forward, zoom));
+    }
+
     /// Output position of a source pixel: the direction the zoom, the sync and the STMap redistort map go
     fn to_output(p: &ComputeParams, pt: (f32, f32)) -> (f32, f32) {
         let (k, coeffs, _p, rotations, is, mesh, fov, r_limit) =
