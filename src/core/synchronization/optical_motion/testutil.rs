@@ -71,6 +71,11 @@ pub fn synth_window(spec: &SynthSpec) -> (WindowTracks, TimeQuat) {
 
 /// Windows sharing one gyro motion; each start consumes its tracks and observation noise in order.
 pub fn synth_windows(spec: &SynthSpec, starts_ms: &[f64]) -> (Vec<WindowTracks>, TimeQuat) {
+    synth_windows_with_gyro_range(spec, starts_ms, GYRO_RANGE_MS)
+}
+
+/// Windows with an explicit gyro range, for benchmarks that need a wider search domain.
+pub fn synth_windows_with_gyro_range(spec: &SynthSpec, starts_ms: &[f64], gyro_range_ms: (i64, i64)) -> (Vec<WindowTracks>, TimeQuat) {
     let mut rng = XorShift64::new(spec.seed);
 
     // Angular velocity in the camera frame: per axis a sum of sines (frequency Hz, phase rad), `amp_dps` each
@@ -83,7 +88,7 @@ pub fn synth_windows(spec: &SynthSpec, starts_ms: &[f64]) -> (Vec<WindowTracks>,
     };
     let mut quats = TimeQuat::new();
     let mut q = Quat64::identity();
-    for ms in GYRO_RANGE_MS.0..=GYRO_RANGE_MS.1 {
+    for ms in gyro_range_ms.0..=gyro_range_ms.1 {
         quats.insert(ms * 1000, q);
         // 1 ms step with the rate at its middle
         q = Quat64::new_normalize((q * Quat64::from_scaled_axis(omega(ms as f64 + 0.5) * 1e-3)).into_inner());

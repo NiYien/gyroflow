@@ -143,7 +143,7 @@ pub fn run_chunk_judge(curves: &[DeepMatchWindowCurve], scaled_duration_ms: f64,
     let judge_ms = start.elapsed().as_secs_f64() * 1000.0;
     let posterior = posterior_x.map_or_else(|| "none".to_owned(), |x| format!("accepted@{x:.1}ms"));
     let cands = format!("[{}]", candidates.iter().map(|x| format!("{x:.0}")).collect::<Vec<_>>().join(", "));
-    log::info!(target: "sync", "[deep-match] optical judge: windows={} candidates={} radius=±{:.0}ms t_d={:.1}ms posterior={} every_nth={} quats={} frames_fed={} cands={}",
+    log::info!(target: "sync", "[deep-match] optical judge: windows={} candidates={} radius=卤{:.0}ms t_d={:.1}ms posterior={} every_nth={} quats={} frames_fed={} cands={}",
         tracks.windows.len(), candidates.len(), p.radius_ms, t_d_ms, posterior, tracks.every_nth, quats.len(), tracks.frames_fed, cands);
     for (i, window) in windows.iter().enumerate() {
         match window.outcome {
@@ -353,6 +353,42 @@ mod tests {
     use super::*;
     use super::super::search::FailReason;
     use super::super::testutil::{ synth_windows, SynthSpec };
+
+    #[test]
+    #[ignore]
+    fn judge_timing_reference() {
+        let spec = SynthSpec { fps: 30.0, duration_ms: 2500.0, tracks: 1300, ..Default::default() };
+        let starts = [5000.0, 8000.0, 11000.0, 14000.0];
+        let gyro_range = (-30000, 40000);
+        let (windows, quats) = super::super::testutil::synth_windows_with_gyro_range(&spec, &starts, gyro_range);
+        let candidates: Vec<f64> = (-25..25).map(|i| spec.true_offset_ms + i as f64 * 600.0).collect();
+        let intervals = candidate_intervals(&candidates, None, 110.0);
+        assert_eq!(candidates.len(), 50);
+        assert_eq!(intervals.len(), 50);
+        assert_eq!(candidates.iter().filter(|&&c| c == spec.true_offset_ms).count(), 1);
+        assert!(starts.windows(2).all(|s| s[0] + spec.duration_ms <= s[1]));
+        for (i, w) in windows.iter().enumerate() {
+            let (lo, hi) = row_time_span_ms(w).unwrap();
+            for &(a, b) in &intervals {
+                assert!(lo - b - super::super::TABLE_MARGIN_MS >= gyro_range.0 as f64
+                    && hi - a + super::super::TABLE_MARGIN_MS <= gyro_range.1 as f64,
+                    "window {i} interval [{a}, {b}] is outside gyro coverage");
+            }
+        }
+        eprintln!("judge reference: logical_threads={} rayon_threads={} windows=4 fps=30 duration_ms=2500 tracks=1300 candidates=50 radius_ms=110 coarse_points=200 gyro_range_ms={gyro_range:?} coverage=200/200",
+            std::thread::available_parallelism().unwrap().get(), rayon::current_num_threads());
+        let sg = SgCache::new();
+        let cancel = AtomicBool::new(false);
+        let started = std::time::Instant::now();
+        for (i, w) in windows.iter().enumerate() {
+            let window_started = std::time::Instant::now();
+            let (out, stats) = judge_window(w, &quats, &intervals, None, 200, 10.0, &sg, &cancel).unwrap();
+            eprintln!("judge reference window {i}: elapsed_ms={:.3} pairs={} outcome={out:?}", window_started.elapsed().as_secs_f64() * 1000.0, w.pairs.len());
+            assert_eq!(stats.len(), 50);
+            assert!(stats.iter().all(|s| s.min_cost.is_finite()), "window {i} has an unmeasured candidate");
+        }
+        eprintln!("judge reference total: elapsed_ms={:.3} budget_ms=6000", started.elapsed().as_secs_f64() * 1000.0);
+    }
 
     fn window_fixture() -> (Vec<WindowTracks>, TimeQuat, Vec<(f64, f64)>) {
         let spec = SynthSpec { fps: 30.0, duration_ms: 2000.0, tracks: 200, true_offset_ms: -700.0, ..Default::default() };
