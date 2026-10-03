@@ -110,6 +110,8 @@ const DENY_EXACT: &[&str] = &[
     "zoomingMethod",
     "maxZoom",
     "maxZoomIterations",
+    "focalLengthMaxZoomRate",
+    "focalLengthSmoothingEnabled",
     // Synchronization panel.
     "initialOffset",
     "syncSearchSize",
