@@ -2,11 +2,13 @@
 
 //! Optical measurements and pure decisions for one deep-match chunk.
 
-use std::sync::atomic::{ AtomicBool, Ordering::Relaxed };
+use std::{ cell::RefCell, sync::atomic::{ AtomicBool, Ordering::Relaxed }, time::Instant };
 
 use rayon::prelude::*;
 
 use crate::gyro_source::TimeQuat;
+use crate::synchronization::{ deep_match, sync_diag };
+use deep_match::{ DeepMatchVerdict, DeepMatchWindowCurve };
 use super::{ interval_tables, row_time_span_ms, table_for, COARSE_IRLS_ROUNDS };
 use super::cost::{ eval_coarse, eval_full, select_tracks, CostContext, SgCache };
 use super::search::{ brent_min, grid, is_edge, local_minima, FailReason, MIN_MEASURED_FRACTION, MIN_PAIRS };
@@ -46,6 +48,122 @@ pub struct DecideParams { pub t_d_ms: f64, pub radius_ms: f64, pub g_strong: f64
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct IntervalStat { pub lo: f64, pub hi: f64, pub min_ms: f64, pub min_cost: f64, pub interior: bool }
+
+pub struct HandedTracks {
+    pub windows: Vec<WindowTracks>,
+    pub ranges_us: Vec<(i64, i64)>,
+    pub has_tracker: bool,
+    pub every_nth: usize,
+    pub frames_fed: usize,
+    pub track_ms: f64,
+}
+
+thread_local! {
+    static HANDED_TRACKS: RefCell<Option<HandedTracks>> = const { RefCell::new(None) };
+}
+
+/// Keep the handoff on the synchronous caller's thread, including unwinding.
+pub fn with_handed_tracks<R>(tracks: Option<HandedTracks>, f: impl FnOnce() -> R) -> R {
+    struct ClearHandoff;
+    impl Drop for ClearHandoff {
+        fn drop(&mut self) { HANDED_TRACKS.with(|slot| { slot.borrow_mut().take(); }); }
+    }
+    HANDED_TRACKS.with(|slot| { *slot.borrow_mut() = tracks; });
+    let _guard = ClearHandoff;
+    f()
+}
+
+pub fn take_handed_tracks() -> Option<HandedTracks> {
+    HANDED_TRACKS.with(|slot| slot.borrow_mut().take())
+}
+
+/// Reuse one smoothing cache across all windows in the chunk.
+#[allow(clippy::too_many_arguments)]
+pub fn judge_candidates(tracks: &HandedTracks, quats: &TimeQuat, candidates: &[f64], posterior_x: Option<f64>,
+                        p: &DecideParams, coarse_points: usize, cancel: &AtomicBool, progress: &(dyn Fn(f64) + Sync))
+                        -> Option<(JudgeVerdict, Vec<WindowJudge>, Vec<Vec<IntervalStat>>)> {
+    if cancel.load(Relaxed) { return None; }
+    let intervals = candidate_intervals(candidates, posterior_x, p.radius_ms);
+    let sg = SgCache::new();
+    let mut windows = Vec::with_capacity(tracks.windows.len());
+    let mut stats = Vec::with_capacity(tracks.windows.len());
+    for (i, w) in tracks.windows.iter().enumerate() {
+        let (outcome, interval_stats) = judge_window(w, quats, &intervals, posterior_x, coarse_points,
+            super::config::config().coarse_step_ms, &sg, cancel)?;
+        windows.push(WindowJudge { range_us: tracks.ranges_us[i], outcome });
+        stats.push(interval_stats);
+        progress((i + 1) as f64 / tracks.windows.len() as f64);
+    }
+    if cancel.load(Relaxed) { return None; }
+    Some((decide_chunk(&windows, posterior_x, p), windows, stats))
+}
+
+fn log_verdict(verdict: &JudgeVerdict, mode: JudgeMode, track_ms: f64, judge_ms: f64) {
+    let mode = match mode { JudgeMode::On => "on", JudgeMode::Shadow => "shadow" };
+    let suffix = format!("mode={mode} track_ms={track_ms:.0} judge_ms={judge_ms:.0}");
+    match verdict {
+        JudgeVerdict::Found { offset_ms, windows } => log::info!(target: "sync",
+            "[deep-match] optical judge verdict=found offset={offset_ms:.1}ms agree={windows:?} {suffix}"),
+        JudgeVerdict::NoWinner { support_ms } => {
+            let support = support_ms.map_or_else(|| "none".to_owned(), |s| format!("{s:.1}ms"));
+            log::info!(target: "sync", "[deep-match] optical judge verdict=no_winner support={support} {suffix}");
+        }
+        JudgeVerdict::CannotJudge { measured, reason } => log::info!(target: "sync",
+            "[deep-match] optical judge verdict=cannot_judge measured={measured} reason={reason} {suffix}"),
+    }
+}
+
+pub fn run_chunk_judge(curves: &[DeepMatchWindowCurve], scaled_duration_ms: f64, quats: &TimeQuat,
+                       mode: JudgeMode, cancel: &AtomicBool, progress: &(dyn Fn(f64) + Sync)) -> Option<JudgeOutcome> {
+    let tracks = take_handed_tracks();
+    if cancel.load(Relaxed) { return None; }
+    let start = Instant::now();
+    let cannot = |reason, track_ms| {
+        let verdict = JudgeVerdict::CannotJudge { measured: 0, reason };
+        log_verdict(&verdict, mode, track_ms, start.elapsed().as_secs_f64() * 1000.0);
+        Some(JudgeOutcome { mode, verdict })
+    };
+    let Some(tracks) = tracks else { return cannot("no_tracks", 0.0); };
+    if !tracks.has_tracker { return cannot("no_opencv", tracks.track_ms); }
+    if curves.len() < 2 { return cannot("too_few_curves", tracks.track_ms); }
+    let rate = deep_match::drift_rate_ms_per_min();
+    let floor = deep_match::drift_floor_ms();
+    let t_d_ms = deep_match::drift_tolerance_ms(scaled_duration_ms, rate, floor);
+    let posterior_x = match deep_match::decide_posterior(curves, curves.len(), 0, scaled_duration_ms,
+        deep_match::post_conf_min(), deep_match::post_ci95_base_ms(), rate, floor) {
+        DeepMatchVerdict::Accepted { offset_ms } => Some(offset_ms),
+        _ => None,
+    };
+    let candidates = deep_match::forward_candidates(curves, deep_match::fwd_lattice_ms(), deep_match::fwd_nms_ms(), deep_match::optical_top_n());
+    let p = DecideParams { t_d_ms, radius_ms: deep_match::optical_radius_ms() + t_d_ms / 2.0,
+        g_strong: deep_match::optical_g_strong(), support_ratio: deep_match::optical_support_ratio() };
+    let (verdict, windows, stats) = judge_candidates(&tracks, quats, &candidates, posterior_x, &p,
+        deep_match::optical_coarse_points(), cancel, progress)?;
+    if cancel.load(Relaxed) { return None; }
+    let judge_ms = start.elapsed().as_secs_f64() * 1000.0;
+    let posterior = posterior_x.map_or_else(|| "none".to_owned(), |x| format!("accepted@{x:.1}ms"));
+    let cands = format!("[{}]", candidates.iter().map(|x| format!("{x:.0}")).collect::<Vec<_>>().join(", "));
+    log::info!(target: "sync", "[deep-match] optical judge: windows={} candidates={} radius=±{:.0}ms t_d={:.1}ms posterior={} every_nth={} quats={} frames_fed={} cands={}",
+        tracks.windows.len(), candidates.len(), p.radius_ms, t_d_ms, posterior, tracks.every_nth, quats.len(), tracks.frames_fed, cands);
+    for (i, window) in windows.iter().enumerate() {
+        match window.outcome {
+            WindowOutcome::Unmeasured { reason } => log::info!(target: "sync",
+                "[deep-match] optical judge win {i}: unmeasured reason={}", reason.as_str()),
+            WindowOutcome::Measured { best: None, .. } => log::info!(target: "sync",
+                "[deep-match] optical judge win {i}: measured best=- (no interior valley)"),
+            WindowOutcome::Measured { best: Some(best), g, second_ms, at_x } => {
+                let second = second_ms.map_or_else(|| "-".to_owned(), |x| format!("{x:.1}ms"));
+                let strong = if g.is_some_and(|g| g >= p.g_strong) { "yes" } else { "no" };
+                let at_x = at_x.map_or_else(|| "-".to_owned(), |v| format!("{:.1}ms/{:.3}px", v.ms, v.cost));
+                log::info!(target: "sync", "[deep-match] optical judge win {i}: measured best={:.1}ms cost={:.3}px G={:.3} second={} strong={} at_x={}",
+                    best.ms, best.cost, g.unwrap_or(f64::NAN), second, strong, at_x);
+            }
+        }
+        sync_diag::record_deep_match_optical(i, &stats[i]);
+    }
+    log_verdict(&verdict, mode, tracks.track_ms, judge_ms);
+    Some(JudgeOutcome { mode, verdict })
+}
 
 /// Refine with full observations, keeping the measured-pair count of Brent's chosen evaluation.
 fn refine_valley(ctx: &CostContext, center_ms: f64, cancel: &AtomicBool) -> Option<(Valley, usize)> {
@@ -298,6 +416,85 @@ mod tests {
     }
 
     const P: DecideParams = DecideParams { t_d_ms: 10.0, radius_ms: 105.0, g_strong: 1.4, support_ratio: 1.1 };
+    const CANDIDATES: [f64; 8] = [-3700.0, -2700.0, -1700.0, -740.0, 300.0, 1300.0, 2300.0, 3300.0];
+
+    fn handed_fixture() -> (HandedTracks, TimeQuat) {
+        let spec = SynthSpec { fps: 30.0, duration_ms: 2000.0, tracks: 200, true_offset_ms: -700.0, ..Default::default() };
+        let (windows, quats) = synth_windows(&spec, &[5000.0, 8000.0, 11000.0]);
+        (HandedTracks { windows, ranges_us: vec![(5_000_000, 7_000_000), (8_000_000, 10_000_000), (11_000_000, 13_000_000)],
+            has_tracker: true, every_nth: 1, frames_fed: 0, track_ms: 0.0 }, quats)
+    }
+
+    fn empty_handoff() -> HandedTracks {
+        HandedTracks { windows: Vec::new(), ranges_us: Vec::new(), has_tracker: true, every_nth: 1, frames_fed: 0, track_ms: 0.0 }
+    }
+
+    fn candidate_curves() -> Vec<crate::synchronization::deep_match::DeepMatchWindowCurve> {
+        (0..2).map(|range_idx| crate::synchronization::deep_match::DeepMatchWindowCurve {
+            range_idx, t_center_ms: 6000.0 + 3000.0 * range_idx as f64, argmin_ms: -700.0, cost_min: 10.0, n_eff: 100.0,
+            curve: (-160..=120).map(|i| { let x = i as f64 * 25.0;
+                (x, 10.0 + 90.0 * ((x + 700.0).abs() / 300.0).min(1.0)) }).collect(),
+        }).collect()
+    }
+
+    #[test] fn judge_candidates_finds_truth_among_noise() {
+        let (tracks, quats) = handed_fixture();
+        let (verdict, windows, stats) = judge_candidates(&tracks, &quats, &CANDIDATES, None, &P, 200, &AtomicBool::new(false), &|_| {}).unwrap();
+        eprintln!("truth verdict={verdict:?} windows={windows:?} stats={stats:?}");
+        let JudgeVerdict::Found { offset_ms, windows } = verdict else { panic!("STOP: truth candidate was not Found"); };
+        assert!((offset_ms + 700.0).abs() <= 3.0 && windows.len() >= 2);
+    }
+    #[test] fn judge_candidates_without_truth_never_found() {
+        let (tracks, quats) = handed_fixture();
+        let candidates: Vec<f64> = CANDIDATES.into_iter().filter(|&x| x != -740.0).collect();
+        let (verdict, windows, stats) = judge_candidates(&tracks, &quats, &candidates, None, &P, 200, &AtomicBool::new(false), &|_| {}).unwrap();
+        eprintln!("no truth verdict={verdict:?} windows={windows:?} stats={stats:?}");
+        assert!(!matches!(verdict, JudgeVerdict::Found { .. }), "STOP: false Found");
+    }
+    #[test] fn judge_candidates_supports_posterior_x_at_truth() {
+        let (tracks, quats) = handed_fixture();
+        let p = DecideParams { g_strong: 1e9, ..P };
+        let (verdict, windows, _) = judge_candidates(&tracks, &quats, &CANDIDATES, Some(-740.0), &p, 200, &AtomicBool::new(false), &|_| {}).unwrap();
+        let JudgeVerdict::NoWinner { support_ms: Some(s) } = verdict else { panic!("{verdict:?} {windows:?}"); };
+        assert!((s + 700.0).abs() <= 3.0);
+    }
+    #[test] fn handed_tracks_are_scoped_to_the_call() {
+        with_handed_tracks(Some(empty_handoff()), || {
+            assert!(take_handed_tracks().is_some());
+            assert!(take_handed_tracks().is_none());
+        });
+        with_handed_tracks(Some(empty_handoff()), || {});
+        assert!(take_handed_tracks().is_none());
+        let panic = std::panic::catch_unwind(|| with_handed_tracks(Some(empty_handoff()), || panic!("handoff panic")));
+        assert!(panic.is_err());
+        assert!(take_handed_tracks().is_none());
+    }
+    #[test] fn run_chunk_judge_without_tracks_cannot_judge() {
+        let cancel = AtomicBool::new(false);
+        let run = || run_chunk_judge(&[], 15000.0, &TimeQuat::new(), JudgeMode::On, &cancel, &|_| {}).unwrap();
+        assert_eq!(run(), JudgeOutcome { mode: JudgeMode::On, verdict: JudgeVerdict::CannotJudge { measured: 0, reason: "no_tracks" } });
+        with_handed_tracks(Some(HandedTracks { has_tracker: false, ..empty_handoff() }), || {
+            assert_eq!(run().verdict, JudgeVerdict::CannotJudge { measured: 0, reason: "no_opencv" });
+        });
+        with_handed_tracks(Some(empty_handoff()), || {
+            assert_eq!(run().verdict, JudgeVerdict::CannotJudge { measured: 0, reason: "too_few_curves" });
+        });
+    }
+    #[test] fn run_chunk_judge_without_quaternions_cannot_judge() {
+        let curves = candidate_curves();
+        assert!(!crate::synchronization::deep_match::forward_candidates(&curves, 25.0, 10000.0, 50).is_empty());
+        let (tracks, _) = handed_fixture();
+        with_handed_tracks(Some(tracks), || {
+            let outcome = run_chunk_judge(&curves, 15000.0, &TimeQuat::new(), JudgeMode::On, &AtomicBool::new(false), &|_| {}).unwrap();
+            assert_eq!(outcome.verdict, JudgeVerdict::CannotJudge { measured: 0, reason: "too_few_measured" });
+        });
+    }
+    #[test] fn run_chunk_judge_cancelled_records_nothing() {
+        with_handed_tracks(Some(empty_handoff()), || {
+            assert!(run_chunk_judge(&candidate_curves(), 15000.0, &TimeQuat::new(), JudgeMode::On, &AtomicBool::new(true), &|_| panic!("cancelled progress")).is_none());
+            assert!(take_handed_tracks().is_none());
+        });
+    }
     const A: (i64, i64) = (0, 2500);
     const B: (i64, i64) = (3000, 5500);
     const C: (i64, i64) = (6000, 8500);

@@ -110,6 +110,7 @@ struct DiagSession {
     /// Optical motion method: coarse scan and full evaluations per window
     optical_coarse: Vec<CostCurvePoint>,
     optical_fine: Vec<CostCurvePoint>,
+    deep_match_optical: Vec<(usize, super::optical_motion::judge::IntervalStat)>,
 }
 
 struct FlowQualityRecord {
@@ -285,6 +286,7 @@ pub fn init_session() {
         residual_rows: 0,
         optical_coarse: Vec::new(),
         optical_fine: Vec::new(),
+        deep_match_optical: Vec::new(),
     });
 }
 
@@ -498,6 +500,14 @@ pub fn record_optical_curve(range_idx: usize, fine: bool, points: &[(f64, f64)])
                 cost: *cost,
             });
         }
+    }
+}
+
+#[inline]
+pub fn record_deep_match_optical(range_idx: usize, stats: &[super::optical_motion::judge::IntervalStat]) {
+    if !is_enabled() { return; }
+    if let Some(s) = SESSION.lock().as_mut() {
+        s.deep_match_optical.extend(stats.iter().copied().map(|stat| (range_idx, stat)));
     }
 }
 
@@ -1070,6 +1080,9 @@ fn write_all(s: &DiagSession) -> std::io::Result<()> {
     write_axis_weights(s)?;
     write_summary(s)?;
     write_optical_curves(s)?;
+    if !s.deep_match_optical.is_empty() {
+        write_deep_match_optical(&mut open_csv(&s.out_dir, "deep_match_optical.csv")?, &s.deep_match_optical)?;
+    }
     Ok(())
 }
 
@@ -1087,6 +1100,14 @@ fn write_optical_curve(w: &mut impl Write, pts: &[CostCurvePoint]) -> std::io::R
     writeln!(w, "range_idx,offset_ms,cost_px")?;
     for p in pts {
         writeln!(w, "{},{:.4},{:.6}", p.range_idx, p.offset_ms, p.cost)?;
+    }
+    Ok(())
+}
+
+fn write_deep_match_optical(w: &mut impl Write, stats: &[(usize, super::optical_motion::judge::IntervalStat)]) -> std::io::Result<()> {
+    writeln!(w, "range_idx,lo_ms,hi_ms,min_ms,min_cost,interior")?;
+    for (range_idx, s) in stats {
+        writeln!(w, "{},{:.4},{:.4},{:.4},{:.6},{}", range_idx, s.lo, s.hi, s.min_ms, s.min_cost, s.interior)?;
     }
     Ok(())
 }
@@ -1738,6 +1759,22 @@ mod tests {
         let mut out = Vec::new();
         write_optical_curve(&mut out, &pts).unwrap();
         assert_eq!(String::from_utf8(out).unwrap(), "range_idx,offset_ms,cost_px\n0,-700.2500,1.500000\n1,10.0000,NaN\n");
+    }
+
+    #[test]
+    fn deep_match_optical_csv_preserves_interval_measurements() {
+        use super::super::optical_motion::judge::IntervalStat;
+        let stats = [
+            (2, IntervalStat { lo: -845.0, hi: -635.0, min_ms: -695.0, min_cost: 9.5, interior: true }),
+            (3, IntervalStat { lo: 195.0, hi: 405.0, min_ms: f64::NAN, min_cost: f64::NAN, interior: false }),
+        ];
+        let mut out = Vec::new();
+        write_deep_match_optical(&mut out, &stats).unwrap();
+        assert_eq!(String::from_utf8(out).unwrap(), "range_idx,lo_ms,hi_ms,min_ms,min_cost,interior\n2,-845.0000,-635.0000,-695.0000,9.500000,true\n3,195.0000,405.0000,NaN,NaN,false\n");
+        if !is_enabled() {
+            record_deep_match_optical(2, &[stats[0].1]);
+            assert!(SESSION.lock().is_none());
+        }
     }
 
     /// M1 (sync-parallax-suppression): the weighted Pearson aggregate's argmax
