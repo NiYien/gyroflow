@@ -2809,6 +2809,66 @@ Vuoi inviare il tuo profilo?</translation>
         <translation>Filtro mediano</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="321"/>
+        <source>Optical correction</source>
+        <translation>Correzione ottica</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="322"/>
+        <source>Measure the camera rotation from the video itself and correct the motion data where they disagree. Useful when vibrations corrupt the gyro data, e.g. on a hard-mounted FPV camera. The analysis goes through every frame of the selected trim range.</source>
+        <translation>Misura la rotazione della fotocamera dal video stesso e corregge i dati di movimento dove non corrispondono. Utile quando le vibrazioni alterano i dati del giroscopio, ad esempio su una fotocamera FPV montata rigidamente. L'analisi elabora ogni fotogramma dell'intervallo di taglio selezionato.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="346"/>
+        <source>Analyze</source>
+        <translation>Analizza</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="353"/>
+        <source>Clear</source>
+        <translation>Cancella</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="366"/>
+        <source>Click Analyze to measure the motion from the video.</source>
+        <translation>Fai clic su Analizza per misurare il movimento dal video.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="368"/>
+        <source>The motion data, the sync, the lens or the rolling shutter changed since the analysis. Analyze again to apply the correction.</source>
+        <translation>I dati di movimento, la sincronizzazione, l'obiettivo o l'otturatore progressivo sono cambiati dopo l'analisi. Analizza di nuovo per applicare la correzione.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="369"/>
+        <source>Analyze again to apply the new strength.</source>
+        <translation>Analizza di nuovo per applicare la nuova intensità.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="371"/>
+        <source>Measured in %1 of %2 frames, correction %3°</source>
+        <translation>Misurato in %1 di %2 fotogrammi, correzione %3°</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="375"/>
+        <source>Ignore motion data from the file</source>
+        <translation>Ignora i dati di movimento del file</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="376"/>
+        <source>Measure all of the camera motion from the video, like for a file without motion data, instead of correcting the motion data. For motion data too broken to correct, e.g. a gyro that glitches or saturates for seconds at a time.</source>
+        <translation>Misura tutto il movimento della fotocamera dal video, come per un file senza dati di movimento, invece di correggere tali dati. Per dati troppo danneggiati per essere corretti, ad esempio un giroscopio che presenta errori o si satura per diversi secondi consecutivi.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="381"/>
+        <source>Strength</source>
+        <translation>Intensità</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="386"/>
+        <source>How far the correction may take the motion data from what it says. Lower values only correct small, fast errors like vibration. Higher values let the image override the motion data also where it's off by a lot or for longer, like gyro glitches, but follow the image's own mistakes (moving objects, water) more too.</source>
+        <translation>Quanto la correzione può allontanare i dati di movimento dai valori originali. I valori più bassi correggono solo errori piccoli e rapidi, come le vibrazioni. I valori più alti consentono all'immagine di prevalere sui dati di movimento anche in caso di scostamenti grandi o prolungati, come errori del giroscopio, ma seguono maggiormente anche gli errori dell'immagine stessa (oggetti in movimento, acqua).</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="302"/>
         <source>samples</source>
         <translation>campioni</translation>

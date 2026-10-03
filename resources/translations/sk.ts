@@ -2811,6 +2811,66 @@ Chceš nahrať tvoj profil?</translation>
         <translation>Mediánový filter</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="321"/>
+        <source>Optical correction</source>
+        <translation>Optická korekcia</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="322"/>
+        <source>Measure the camera rotation from the video itself and correct the motion data where they disagree. Useful when vibrations corrupt the gyro data, e.g. on a hard-mounted FPV camera. The analysis goes through every frame of the selected trim range.</source>
+        <translation>Meria otáčanie kamery priamo z videa a opravuje pohybové dáta tam, kde sa rozchádzajú. Užitočné, keď vibrácie poškodzujú dáta gyroskopu, napríklad pri pevne pripevnenej FPV kamere. Analýza spracuje každý snímok vybraného rozsahu orezania.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="346"/>
+        <source>Analyze</source>
+        <translation>Analyzovať</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="353"/>
+        <source>Clear</source>
+        <translation>Vymazať</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="366"/>
+        <source>Click Analyze to measure the motion from the video.</source>
+        <translation>Kliknutím na Analyzovať zmeriate pohyb z videa.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="368"/>
+        <source>The motion data, the sync, the lens or the rolling shutter changed since the analysis. Analyze again to apply the correction.</source>
+        <translation>Od analýzy sa zmenili pohybové dáta, synchronizácia, objektív alebo riadková uzávierka. Na použitie korekcie spustite analýzu znova.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="369"/>
+        <source>Analyze again to apply the new strength.</source>
+        <translation>Na použitie novej intenzity spustite analýzu znova.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="371"/>
+        <source>Measured in %1 of %2 frames, correction %3°</source>
+        <translation>Zmerané v %1 z %2 snímok, korekcia %3°</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="375"/>
+        <source>Ignore motion data from the file</source>
+        <translation>Ignorovať pohybové dáta zo súboru</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="376"/>
+        <source>Measure all of the camera motion from the video, like for a file without motion data, instead of correcting the motion data. For motion data too broken to correct, e.g. a gyro that glitches or saturates for seconds at a time.</source>
+        <translation>Meria celý pohyb kamery z videa, rovnako ako pri súbore bez pohybových dát, namiesto opravovania pohybových dát. Pre dáta príliš poškodené na opravu, napríklad keď gyroskop zlyháva alebo sa saturuje na niekoľko sekúnd.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="381"/>
+        <source>Strength</source>
+        <translation>Intenzita</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="386"/>
+        <source>How far the correction may take the motion data from what it says. Lower values only correct small, fast errors like vibration. Higher values let the image override the motion data also where it's off by a lot or for longer, like gyro glitches, but follow the image's own mistakes (moving objects, water) more too.</source>
+        <translation>Ako veľmi sa môžu opravené pohybové dáta odchýliť od pôvodných hodnôt. Nižšie hodnoty opravujú iba malé, rýchle chyby, ako sú vibrácie. Vyššie hodnoty umožňujú obrazu prevážiť nad pohybovými dátami aj pri veľkých alebo dlhších odchýlkach, napríklad chybách gyroskopu, ale viac sledujú aj chyby samotného obrazu (pohybujúce sa objekty, voda).</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="302"/>
         <source>samples</source>
         <translation>vzoriek</translation>

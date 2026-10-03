@@ -2811,6 +2811,66 @@ Do you want to submit your profile?</source>
         <translation>Μέσο φίλτρο</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="321"/>
+        <source>Optical correction</source>
+        <translation>Οπτική διόρθωση</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="322"/>
+        <source>Measure the camera rotation from the video itself and correct the motion data where they disagree. Useful when vibrations corrupt the gyro data, e.g. on a hard-mounted FPV camera. The analysis goes through every frame of the selected trim range.</source>
+        <translation>Μετρά την περιστροφή της κάμερας από το ίδιο το βίντεο και διορθώνει τα δεδομένα κίνησης όπου διαφωνούν. Χρήσιμο όταν οι δονήσεις αλλοιώνουν τα δεδομένα του γυροσκοπίου, π.χ. σε άκαμπτα στερεωμένη κάμερα FPV. Η ανάλυση επεξεργάζεται κάθε καρέ του επιλεγμένου εύρους περικοπής.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="346"/>
+        <source>Analyze</source>
+        <translation>Ανάλυση</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="353"/>
+        <source>Clear</source>
+        <translation>Εκκαθάριση</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="366"/>
+        <source>Click Analyze to measure the motion from the video.</source>
+        <translation>Κάντε κλικ στην Ανάλυση για να μετρήσετε την κίνηση από το βίντεο.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="368"/>
+        <source>The motion data, the sync, the lens or the rolling shutter changed since the analysis. Analyze again to apply the correction.</source>
+        <translation>Τα δεδομένα κίνησης, ο συγχρονισμός, ο φακός ή το κυλιόμενο κλείστρο άλλαξαν μετά την ανάλυση. Αναλύστε ξανά για να εφαρμόσετε τη διόρθωση.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="369"/>
+        <source>Analyze again to apply the new strength.</source>
+        <translation>Αναλύστε ξανά για να εφαρμόσετε τη νέα ένταση.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="371"/>
+        <source>Measured in %1 of %2 frames, correction %3°</source>
+        <translation>Μετρήθηκε σε %1 από %2 καρέ, διόρθωση %3°</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="375"/>
+        <source>Ignore motion data from the file</source>
+        <translation>Παράβλεψη δεδομένων κίνησης από το αρχείο</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="376"/>
+        <source>Measure all of the camera motion from the video, like for a file without motion data, instead of correcting the motion data. For motion data too broken to correct, e.g. a gyro that glitches or saturates for seconds at a time.</source>
+        <translation>Μετρά όλη την κίνηση της κάμερας από το βίντεο, όπως σε αρχείο χωρίς δεδομένα κίνησης, αντί να διορθώνει τα δεδομένα κίνησης. Για δεδομένα πολύ κατεστραμμένα ώστε να διορθωθούν, π.χ. γυροσκόπιο που παρουσιάζει σφάλματα ή κορεσμό για αρκετά δευτερόλεπτα.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="381"/>
+        <source>Strength</source>
+        <translation>Ένταση</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="386"/>
+        <source>How far the correction may take the motion data from what it says. Lower values only correct small, fast errors like vibration. Higher values let the image override the motion data also where it's off by a lot or for longer, like gyro glitches, but follow the image's own mistakes (moving objects, water) more too.</source>
+        <translation>Πόσο μπορεί η διόρθωση να απομακρύνει τα δεδομένα κίνησης από τις αρχικές τιμές τους. Οι χαμηλότερες τιμές διορθώνουν μόνο μικρά, γρήγορα σφάλματα όπως οι δονήσεις. Οι υψηλότερες τιμές επιτρέπουν στην εικόνα να υπερισχύει των δεδομένων κίνησης και σε μεγάλες ή παρατεταμένες αποκλίσεις, όπως σφάλματα γυροσκοπίου, αλλά ακολουθούν περισσότερο και τα σφάλματα της ίδιας της εικόνας (κινούμενα αντικείμενα, νερό).</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="302"/>
         <source>samples</source>
         <translation>δείγματα</translation>

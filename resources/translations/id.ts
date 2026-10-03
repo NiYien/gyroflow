@@ -2808,6 +2808,66 @@ Do you want to submit your profile?</source>
         <translation>Filter median</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="321"/>
+        <source>Optical correction</source>
+        <translation>Koreksi optik</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="322"/>
+        <source>Measure the camera rotation from the video itself and correct the motion data where they disagree. Useful when vibrations corrupt the gyro data, e.g. on a hard-mounted FPV camera. The analysis goes through every frame of the selected trim range.</source>
+        <translation>Mengukur rotasi kamera dari video itu sendiri dan mengoreksi data gerakan saat keduanya tidak sesuai. Berguna saat getaran merusak data giroskop, misalnya pada kamera FPV yang dipasang secara kaku. Analisis memproses setiap bingkai dalam rentang pemangkasan yang dipilih.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="346"/>
+        <source>Analyze</source>
+        <translation>Analisis</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="353"/>
+        <source>Clear</source>
+        <translation>Hapus</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="366"/>
+        <source>Click Analyze to measure the motion from the video.</source>
+        <translation>Klik Analisis untuk mengukur gerakan dari video.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="368"/>
+        <source>The motion data, the sync, the lens or the rolling shutter changed since the analysis. Analyze again to apply the correction.</source>
+        <translation>Data gerakan, sinkronisasi, lensa, atau rana bergulir telah berubah sejak analisis. Analisis ulang untuk menerapkan koreksi.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="369"/>
+        <source>Analyze again to apply the new strength.</source>
+        <translation>Analisis ulang untuk menerapkan kekuatan baru.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="371"/>
+        <source>Measured in %1 of %2 frames, correction %3°</source>
+        <translation>Diukur pada %1 dari %2 bingkai, koreksi %3°</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="375"/>
+        <source>Ignore motion data from the file</source>
+        <translation>Abaikan data gerakan dari berkas</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="376"/>
+        <source>Measure all of the camera motion from the video, like for a file without motion data, instead of correcting the motion data. For motion data too broken to correct, e.g. a gyro that glitches or saturates for seconds at a time.</source>
+        <translation>Mengukur semua gerakan kamera dari video, seperti pada berkas tanpa data gerakan, alih-alih mengoreksi data gerakan. Untuk data gerakan yang terlalu rusak untuk dikoreksi, misalnya giroskop yang mengalami gangguan atau saturasi selama beberapa detik sekaligus.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="381"/>
+        <source>Strength</source>
+        <translation>Kekuatan</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="386"/>
+        <source>How far the correction may take the motion data from what it says. Lower values only correct small, fast errors like vibration. Higher values let the image override the motion data also where it's off by a lot or for longer, like gyro glitches, but follow the image's own mistakes (moving objects, water) more too.</source>
+        <translation>Seberapa jauh koreksi boleh mengubah data gerakan dari nilai aslinya. Nilai rendah hanya mengoreksi kesalahan kecil dan cepat seperti getaran. Nilai tinggi memungkinkan gambar mengesampingkan data gerakan juga saat penyimpangannya besar atau berkepanjangan, seperti gangguan giroskop, tetapi juga lebih mengikuti kesalahan gambar itu sendiri (objek bergerak, air).</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="302"/>
         <source>samples</source>
         <translation>sampel</translation>

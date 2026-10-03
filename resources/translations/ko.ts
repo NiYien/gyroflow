@@ -2810,6 +2810,66 @@ Do you want to submit your profile?</source>
         <translation>중간값 필터</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="321"/>
+        <source>Optical correction</source>
+        <translation>광학 보정</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="322"/>
+        <source>Measure the camera rotation from the video itself and correct the motion data where they disagree. Useful when vibrations corrupt the gyro data, e.g. on a hard-mounted FPV camera. The analysis goes through every frame of the selected trim range.</source>
+        <translation>영상 자체에서 카메라 회전을 측정하고 움직임 데이터와 일치하지 않는 부분을 보정합니다. 단단히 고정된 FPV 카메라 등에서 진동으로 자이로 데이터가 손상될 때 유용합니다. 분석은 선택한 트림 범위의 모든 프레임을 처리합니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="346"/>
+        <source>Analyze</source>
+        <translation>분석</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="353"/>
+        <source>Clear</source>
+        <translation>지우기</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="366"/>
+        <source>Click Analyze to measure the motion from the video.</source>
+        <translation>분석을 클릭하여 영상에서 움직임을 측정하세요.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="368"/>
+        <source>The motion data, the sync, the lens or the rolling shutter changed since the analysis. Analyze again to apply the correction.</source>
+        <translation>분석 이후 움직임 데이터, 동기화, 렌즈 또는 롤링 셔터가 변경되었습니다. 보정을 적용하려면 다시 분석하세요.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="369"/>
+        <source>Analyze again to apply the new strength.</source>
+        <translation>새 강도를 적용하려면 다시 분석하세요.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="371"/>
+        <source>Measured in %1 of %2 frames, correction %3°</source>
+        <translation>%2개 프레임 중 %1개에서 측정, 보정 %3°</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="375"/>
+        <source>Ignore motion data from the file</source>
+        <translation>파일의 움직임 데이터 무시</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="376"/>
+        <source>Measure all of the camera motion from the video, like for a file without motion data, instead of correcting the motion data. For motion data too broken to correct, e.g. a gyro that glitches or saturates for seconds at a time.</source>
+        <translation>움직임 데이터를 보정하는 대신 움직임 데이터가 없는 파일처럼 영상에서 모든 카메라 움직임을 측정합니다. 자이로 오류나 포화가 수초 동안 지속되는 등 보정할 수 없을 정도로 손상된 움직임 데이터에 사용합니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="381"/>
+        <source>Strength</source>
+        <translation>강도</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="386"/>
+        <source>How far the correction may take the motion data from what it says. Lower values only correct small, fast errors like vibration. Higher values let the image override the motion data also where it's off by a lot or for longer, like gyro glitches, but follow the image's own mistakes (moving objects, water) more too.</source>
+        <translation>보정이 움직임 데이터를 원래 값에서 얼마나 벗어나게 할 수 있는지를 설정합니다. 낮은 값은 진동처럼 작고 빠른 오류만 보정합니다. 높은 값은 자이로 오류처럼 편차가 크거나 오래 지속될 때도 영상이 움직임 데이터보다 우선하도록 하지만, 영상 자체의 오류(움직이는 물체, 물)도 더 많이 따라갑니다.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="302"/>
         <source>samples</source>
         <translation>샘플</translation>
