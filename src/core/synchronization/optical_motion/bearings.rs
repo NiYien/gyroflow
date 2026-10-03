@@ -73,3 +73,55 @@ fn bearings(params: &ComputeParams, track_size: (u32, u32), pts: &[(f32, f32)], 
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::tracks::{ Observation, RawPair };
+    use crate::StabilizationManager;
+    use crate::lens_profile::Dimensions;
+
+    // These constants pin the bearings before extracting undistort_points_to_plane and depend on the
+    // toolchain's float library. To refresh them for another toolchain, set them to 0 and copy the values
+    // reported by `just test-core optical_motion::bearings`.
+    const GOLDEN_POINTS: usize = 45;
+    const GOLDEN_FOCAL_BITS: u64 = 4_652_552_666_608_566_272;
+    const GOLDEN_HASH: u64 = 9_618_775_943_658_929_199;
+
+    #[test]
+    fn bearings_bits_unchanged() {
+        let stab = StabilizationManager::default();
+        { let mut p = stab.params.write(); p.size = (1920, 1080); p.fps = 30.0; p.frame_count = 300; p.duration_ms = 10_000.0; }
+        {
+            // A fixed lens with distortion, using the same fields as the frame transform tests.
+            let mut lens = stab.lens.write();
+            lens.calib_dimension = Dimensions { w: 1920, h: 1080 };
+            lens.orig_dimension = lens.calib_dimension.clone();
+            lens.fisheye_params.camera_matrix = vec![[1100.0, 0.0, 960.0], [0.0, 1100.0, 540.0], [0.0, 0.0, 1.0]];
+            lens.fisheye_params.distortion_coeffs = vec![0.05, -0.02, 0.01, -0.005];
+        }
+        let mut params = ComputeParams::from_manager(&stab);
+        params.keyframes.clear();
+        params.lens_correction_amount = 1.0;
+        params.framebuffer_inverted = false;
+        // A 9x5 grid at the tracking size, moved by a few pixels in the second frame.
+        let obs: Vec<Observation> = (0..45u32).map(|i| {
+            let (x, y) = (60.0 + 105.0 * (i % 9) as f32, 50.0 + 110.0 * (i / 9) as f32);
+            Observation { id: i, a: [x, y], b: [x + 3.5, y - 2.25] }
+        }).collect();
+        let raw = RawWindow {
+            pairs: vec![RawPair { a: RawFrame { index: 30, ts_ms: 1000.0 }, b: RawFrame { index: 31, ts_ms: 1000.0 + 1000.0 / 30.0 }, obs }],
+            track_size: (960, 540),
+            ..Default::default()
+        };
+        let w = build_window_tracks(&raw, &params, false, 1016.0);
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        for pd in &w.pairs {
+            for v in pd.va.iter().chain(&pd.vb) {
+                for c in [v.x, v.y, v.z] { h = (h ^ c.to_bits()).wrapping_mul(0x0000_0100_0000_01b3); }
+            }
+        }
+        assert!(w.pairs[0].ids.len() >= 40, "{} valid points", w.pairs[0].ids.len());
+        assert_eq!((w.pairs[0].ids.len(), w.focal_px.to_bits(), h), (GOLDEN_POINTS, GOLDEN_FOCAL_BITS, GOLDEN_HASH));
+    }
+}
