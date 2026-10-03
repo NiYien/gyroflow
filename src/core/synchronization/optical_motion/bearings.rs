@@ -4,14 +4,11 @@
 //! undistorted with the frame's lens data (sensor shift and mesh undone as the render does) and become directions in
 //! the quaternions' frame. Nothing here depends on the offset: it runs once per window.
 
-use nalgebra::{ Matrix3, Vector3 };
+use nalgebra::Vector3;
 use rayon::prelude::*;
 
-use crate::stabilization::{ undistort_points, ComputeParams, FrameTransform };
+use crate::stabilization::{ undistort_points_to_plane, ComputeParams, FrameTransform };
 use super::tracks::{ readout_pos, FrameTiming, PairData, RawFrame, RawWindow, WindowTracks };
-
-/// Undistorted coordinates at or below this are the undistortion's mark for a point it could not invert
-const INVALID_BELOW: f32 = -500_000.0;
 
 /// Frame timings and unit bearings for every pair of the window. `params` must be the measurement params (keyframes cleared, lens_correction_amount 1.0, framebuffer_inverted false).
 ///
@@ -58,19 +55,9 @@ pub fn build_window_tracks(raw: &RawWindow, params: &ComputeParams, horizontal: 
 /// Unit bearings of points tracked at `track_size`, in the quaternions' frame: the axis flips the renderer applies
 /// (`F·R·F`, F = diag(1, -1, -1)). None for a point the undistortion could not invert
 fn bearings(params: &ComputeParams, track_size: (u32, u32), pts: &[(f32, f32)], frame: &FrameTiming) -> Vec<Option<Vector3<f64>>> {
-    if pts.is_empty() { return Vec::new(); }
-    let sx = params.width as f32 / track_size.0.max(1) as f32;
-    let sy = params.height as f32 / track_size.1.max(1) as f32;
-    let full: Vec<(f32, f32)> = pts.iter().map(|p| (p.0 * sx, p.1 * sy)).collect();
-    let (camera_matrix, dist, _p, _rotations, shifts, mesh, _fov, _r_limit) =
-        FrameTransform::at_timestamp_for_points(params, &full, frame.ts_ms, Some(frame.index), false);
-    let shifts = shifts.map(|s| if s.len() == 1 { vec![s[0]; full.len()] } else { s });
-    undistort_points(&full, camera_matrix, &dist, Matrix3::identity(), None, None, params, 1.0, 1.0, frame.ts_ms, shifts, mesh, 0.0)
+    undistort_points_to_plane(pts, frame.ts_ms, frame.index, params, track_size)
         .into_iter()
-        .map(|p| {
-            let valid = p.0.is_finite() && p.1.is_finite() && p.0 > INVALID_BELOW && p.1 > INVALID_BELOW;
-            valid.then(|| Vector3::new(p.0 as f64, -p.1 as f64, -1.0).normalize())
-        })
+        .map(|p| p.map(|(x, y)| Vector3::new(x as f64, -y as f64, -1.0).normalize()))
         .collect()
 }
 

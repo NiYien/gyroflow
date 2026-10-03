@@ -1164,6 +1164,28 @@ pub fn undistort_points_for_optical_flow(
         0.0,
     )
 }
+/// Undistorted coordinates at or below this are the undistortion's mark for a point it could not invert
+const INVALID_BELOW: f32 = -500_000.0;
+
+/// Undistorted normalized plane coordinates of points tracked at `points_dims`, with the frame's sensor shift
+/// and mesh correction undone as the render does. None for a point the undistortion could not invert.
+pub fn undistort_points_to_plane(distorted: &[(f32, f32)], timestamp_ms: f64, frame: usize, params: &ComputeParams, points_dims: (u32, u32)) -> Vec<Option<(f32, f32)>> {
+    if distorted.is_empty() { return Vec::new(); }
+    let sx = params.width as f32 / points_dims.0.max(1) as f32;
+    let sy = params.height as f32 / points_dims.1.max(1) as f32;
+    let full: Vec<(f32, f32)> = distorted.iter().map(|p| (p.0 * sx, p.1 * sy)).collect();
+    let (camera_matrix, dist, _p, _rotations, shifts, mesh, _fov, _r_limit) =
+        FrameTransform::at_timestamp_for_points(params, &full, timestamp_ms, Some(frame), false);
+    let shifts = shifts.map(|s| if s.len() == 1 { vec![s[0]; full.len()] } else { s });
+    undistort_points(&full, camera_matrix, &dist, Matrix3::identity(), None, None, params, 1.0, 1.0, timestamp_ms, shifts, mesh, 0.0)
+        .into_iter()
+        .map(|p| {
+            let valid = p.0.is_finite() && p.1.is_finite() && p.0 > INVALID_BELOW && p.1 > INVALID_BELOW;
+            valid.then(|| (p.0, p.1))
+        })
+        .collect()
+}
+
 // Ported from OpenCV: https://github.com/opencv/opencv/blob/4.x/modules/calib3d/src/fisheye.cpp#L321
 pub fn undistort_points(distorted: &[(f32, f32)], camera_matrix: Matrix3<f64>, distortion_coeffs: &[f64; 24], rotation: Matrix3<f64>, p: Option<Matrix3<f64>>, rot_per_point: Option<Vec<Matrix3<f64>>>, params: &ComputeParams, lens_correction_amount: f64, fov: f64, timestamp_ms: f64, shift_per_point: Option<Vec<(f32, f32, f32, f32, f32)>>, mesh: Option<Vec<f64>>, r_limit: f64) -> Vec<(f32, f32)> {
     // The render samples stretch from the timestamp-selected calibration.
