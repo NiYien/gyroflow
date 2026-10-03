@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
+// Ported from upstream gyroflow 322cb312 + eabdc789
 
 use itertools::Itertools;
 use nalgebra::Vector4;
@@ -210,6 +211,14 @@ pub struct Controller {
     set_imu_orientation: qt_method!(fn(&self, orientation: String)),
     set_imu_bias: qt_method!(fn(&self, bx: f64, by: f64, bz: f64)),
     recompute_gyro: qt_method!(fn(&self)),
+
+    analyze_optically: qt_method!(fn(&mut self)),
+    set_optical_correction_enabled: qt_method!(fn(&self, enabled: bool)),
+    clear_optical_correction: qt_method!(fn(&mut self)),
+    set_ignore_file_motion: qt_method!(fn(&mut self, ignore: bool)),
+    set_optical_correction_strength: qt_method!(fn(&mut self, strength: f64)),
+    optical_correction_info: qt_method!(fn(&self) -> QString),
+    optical_correction_changed: qt_signal!(),
 
     override_video_fps: qt_method!(fn(&self, fps: f64, recompute: bool)),
     get_org_duration_ms: qt_method!(fn(&self) -> f64),
@@ -527,6 +536,7 @@ pub struct Controller {
     preview_pipeline: Arc<AtomicUsize>,
 
     ongoing_computations: BTreeSet<u64>,
+    optical_analysis_running: bool,
 
     device_manager: Option<DeviceManager>,
     device_command_tx: Option<Sender<DeviceCommand>>,
@@ -1603,6 +1613,54 @@ impl Controller {
                     sync.finished_feeding_frames();
                 }
             }
+        });
+    }
+
+    /// "Analyze image optically": tracks every frame of the trim ranges (the whole clip without any) and measures the
+    /// correction of the motion data, see `synchronization::optical_analysis`. Reports progress like the synchronization does
+    fn analyze_optically(&mut self) {
+        // One at a time: the timeline can start an analysis while another one runs.
+        if self.optical_analysis_running { return; }
+        self.optical_analysis_running = true;
+        rendering::clear_log();
+
+        self.sync_in_progress = true;
+        self.sync_in_progress_changed();
+        self.sync_progress(0.0, 0, 0);
+        self.cancel_flag.store(false, SeqCst);
+
+        let progress = util::qt_queued_callback_mut(QPointer::from(self as &Self), |this, (percent, ready, total): (f64, usize, usize)| {
+            this.sync_progress(percent, ready, total);
+        });
+        let finished = util::qt_queued_callback_mut(QPointer::from(self as &Self), |this, result: Result<(), String>| {
+            this.optical_analysis_running = false;
+            this.sync_in_progress = false;
+            this.sync_in_progress_changed();
+            this.sync_progress(1.0, 0, 0);
+            match result {
+                Ok(()) => {
+                    this.stabilizer.invalidate_zooming();
+                    this.request_recompute();
+                    this.chart_data_changed();
+                },
+                Err(e) if e == "Cancelled" => { },
+                Err(e) => {
+                    let mut arg = e;
+                    arg.push_str("\n\n");
+                    arg.push_str(&rendering::get_log());
+                    this.error(QString::from("An error occured: %1"), QString::from(arg), QString::default());
+                }
+            }
+            this.optical_correction_changed();
+        });
+
+        let stabilizer = self.stabilizer.clone();
+        let cancel_flag = self.cancel_flag.clone();
+        let guard = OpGuard::enter(&self.stabilizer.in_flight_count);
+        core::run_threaded(move || {
+            let _guard = guard;
+            // Fitted with the strength set here too, so a long clip's fit doesn't hold up the UI
+            finished(rendering::analyze_optically(&stabilizer, cancel_flag, None, move |percent, ready, total| progress((percent, ready, total))));
         });
     }
 
@@ -3100,6 +3158,9 @@ impl Controller {
         if self.stabilizer.params.read().duration_ms <= 0.0 {
             return;
         }
+        // The recompute brings the optical correction up to date with the sync, the lens and the frame timing, which
+        // may switch it on or off
+        let optical_applied = self.stabilizer.gyro.read().optical_correction_applied;
         let id = self
             .stabilizer
             .recompute_threaded(util::qt_queued_callback_mut(
@@ -3117,6 +3178,11 @@ impl Controller {
         self.ongoing_computations.insert(id);
 
         self.compute_progress(id, 0.0);
+
+        if self.stabilizer.gyro.read().optical_correction_applied != optical_applied {
+            self.chart_data_changed();
+            self.optical_correction_changed();
+        }
     }
 
     fn cancel_current_operation(&mut self) {
@@ -3660,6 +3726,51 @@ impl Controller {
     wrap_simple_method!(set_sync_lpf, v: f64; recompute; chart_data_changed);
     wrap_simple_method!(set_imu_bias, bx: f64, by: f64, bz: f64; recompute; chart_data_changed);
     wrap_simple_method!(recompute_gyro,; recompute; chart_data_changed);
+    wrap_simple_method!(set_optical_correction_enabled, enabled: bool; recompute; chart_data_changed);
+
+    fn clear_optical_correction(&mut self) {
+        self.stabilizer.clear_optical_correction();
+        self.request_recompute();
+        self.chart_data_changed();
+        self.optical_correction_changed();
+    }
+    /// Sets the file's own motion data aside, for the motion measured from the video, or brings it back
+    fn set_ignore_file_motion(&mut self, ignore: bool) {
+        if self.stabilizer.set_ignore_file_motion(ignore) {
+            self.stabilizer.invalidate_zooming();
+            self.request_recompute();
+            self.update_offset_model();
+            self.optical_correction_changed();
+        }
+    }
+    /// Refits the correction to the measurements of the last analysis, when they're still around: a fraction of a
+    /// second, off the UI thread
+    fn set_optical_correction_strength(&mut self, strength: f64) {
+        if !self.stabilizer.set_optical_correction_strength(strength) {
+            return self.optical_correction_changed();
+        }
+        let done = util::qt_queued_callback_mut(QPointer::from(self as &Self), |this, result: Result<bool, String>| {
+            match result {
+                Ok(true) => {
+                    this.stabilizer.invalidate_zooming();
+                    this.request_recompute();
+                    this.chart_data_changed();
+                },
+                Ok(false) => { },
+                Err(e) => this.error(QString::from("An error occured: %1"), QString::from(e), QString::default()),
+            }
+            this.optical_correction_changed();
+        });
+        let stabilizer = self.stabilizer.clone();
+        let guard = OpGuard::enter(&self.stabilizer.in_flight_count);
+        core::run_threaded(move || {
+            let _guard = guard;
+            done(stabilizer.refit_optical_correction());
+        });
+    }
+    fn optical_correction_info(&self) -> QString {
+        QString::from(self.stabilizer.optical_correction_info().to_string())
+    }
     wrap_simple_method!(set_device, v: i32);
 
     fn get_org_duration_ms(&self) -> f64 {
@@ -5995,6 +6106,15 @@ impl Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn optical_analysis_holds_an_op_guard() {
+        // Video loading waits for visible in-flight operations, including the optical analysis.
+        let src = include_str!("controller.rs");
+        let body = &src[src.find("fn analyze_optically(&mut self)").expect("analyze_optically")..];
+        let body = &body[..body.find("\n    fn ").unwrap_or(body.len())];
+        assert!(body.contains("OpGuard::enter(&self.stabilizer.in_flight_count)"));
+    }
 
     // ---- lens-group-now-slot QML structure guards.
     //

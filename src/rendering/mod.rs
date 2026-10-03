@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
+// Ported from upstream gyroflow 322cb312 + eabdc789
 
 mod audio_resampler;
 mod ffmpeg_audio;
@@ -1034,6 +1035,178 @@ where
     crate::util::report_lens_profile_usage(lens_checksum);
 
     Ok(())
+}
+
+/// "Analyze image optically" (Motion data -> Optical correction): decodes the trim ranges (the whole clip without any)
+/// at about 1000 px wide, tracks them and fits the correction to what they measured, see
+/// `synchronization::optical_analysis`. Blocking. `progress` gets the fraction done, and the frames done and in all.
+/// Waits while `pause_flag` is up. Cancelled - by `cancel_flag`, or by another file, a project or Clear replacing what
+/// it measures - it stops decoding and returns "Cancelled"; the first error stops it too
+pub fn analyze_optically(stab: &StabilizationManager, cancel_flag: Arc<AtomicBool>, pause_flag: Option<Arc<AtomicBool>>, progress: impl Fn(f64, usize, usize) + 'static) -> Result<(), String> {
+    use gyroflow_core::synchronization::optical_analysis::{OpticalMotionAnalysis, OpticalMeasurements};
+    use std::sync::atomic::Ordering::{Relaxed, SeqCst};
+
+    // Every decoder attempt belongs to the same operation, even if Clear runs between retries.
+    let operation_generation = stab.optical_generation.load(SeqCst);
+    let operation_cancelled = || cancel_flag.load(Relaxed) || stab.optical_generation.load(SeqCst) != operation_generation;
+    let size = stab.params.read().size;
+    if size.0 == 0 || size.1 == 0 { return Err("Video is not loaded".into()); }
+    let input_file = stab.input_file.read().clone();
+    let gpu_decoding = stab.gpu_decoding.load(SeqCst);
+    // About 1000 px wide is enough: the tracks are averaged over thousands of points per frame
+    let tw = size.0.min(960) as u32;
+    let th = (((size.1 as f64 * tw as f64 / size.0 as f64) / 2.0).round() * 2.0) as u32;
+    let progress = Rc::new(progress);
+    let curve_url = crate::util::resolve_image_sequence_first_frame(&input_file.url, input_file.image_sequence_start)
+        .unwrap_or_else(|| input_file.url.clone());
+    let dng_curve = gyroflow_core::dng_tone_curve::DngToneCurve::from_url(&curve_url).map(Rc::new);
+    if dng_curve.is_some() {
+        ::log::info!(target: "sync", "[dng] tone curve active for optical analysis input");
+    }
+
+    // Decoding errors alone can trigger a retry; analysis errors stay inside the successful decoder result.
+    let try_run = |use_gpu: bool| -> Result<Result<OpticalMeasurements, String>, FFmpegError> {
+        if operation_cancelled() { return Ok(Err("Cancelled".into())); }
+        let analysis = match OpticalMotionAnalysis::from_manager(stab, cancel_flag.clone()) {
+            Ok(analysis) => analysis,
+            Err(e) => return Ok(Err(e)),
+        };
+        if operation_cancelled() { return Ok(Err("Cancelled".into())); }
+        // Only the trim ranges
+        let ranges = analysis.ranges_ms();
+        let mut decoder_options = ffmpeg_next::Dictionary::new();
+        if input_file.image_sequence_fps > 0.0 {
+            let fps = fps_to_rational(input_file.image_sequence_fps);
+            decoder_options.set("framerate", &format!("{}/{}", fps.numerator(), fps.denominator()));
+        }
+        if input_file.image_sequence_start > 0 {
+            decoder_options.set("start_number", &format!("{}", input_file.image_sequence_start));
+        }
+        if let Some(scale) = sync_decoder_scale_string(th as i32, &input_file.url) {
+            decoder_options.set("scale", &scale);
+        }
+
+        let analysis = Rc::new(RefCell::new(analysis));
+        let error = Rc::new(RefCell::new(None::<String>));
+        // What the decoder stops on: the analysis cancelled (it knows of more than `cancel_flag`), or the first error.
+        // Every frame after that would be decoded for nothing
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut proc = VideoProcessor::from_file(&input_file.url, use_gpu, 0, Some(decoder_options))?;
+        let (analysis2, error2, stop2) = (analysis.clone(), error.clone(), stop.clone());
+        let (cancel_flag, pause_flag, progress, dng_curve) = (cancel_flag.clone(), pause_flag.clone(), progress.clone(), dng_curve.clone());
+        let mut last_progress = std::time::Instant::now();
+        proc.on_frame(move |timestamp_us, input_frame, _output_frame, converter, _rate_control| {
+            if let Some(pause_flag) = &pause_flag {
+                while pause_flag.load(Relaxed) && !cancel_flag.load(Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            }
+            let mut a = analysis2.borrow_mut();
+            if stop2.load(Relaxed) || a.is_cancelled() {
+                stop2.store(true, Relaxed);
+                return Ok(());
+            }
+            // Restore the DNG levels before converting them to 8-bit grayscale.
+            if let Some(curve) = &dng_curve {
+                apply_dng_tone_curve(input_frame, curve);
+            }
+            let result = converter.scale(input_frame, Pixel::GRAY8, tw, th).map_err(|e| e.to_string()).and_then(|small_frame| {
+                let (width, height, stride, pixels) = (small_frame.plane_width(0), small_frame.plane_height(0), small_frame.stride(0), small_frame.data(0));
+                a.feed_frame(timestamp_us, width, height, stride, pixels)
+            });
+            if let Err(e) = result {
+                error2.borrow_mut().get_or_insert(e);
+                stop2.store(true, Relaxed);
+            }
+            if last_progress.elapsed().as_millis() > 100 {
+                last_progress = std::time::Instant::now();
+                let (ready, total) = a.progress();
+                progress(ready as f64 / total.max(1) as f64 * 0.99, ready, total);
+            }
+            Ok(())
+        });
+        let decoded = proc.start_decoder_only(ranges, stop);
+        drop(proc);
+        if analysis.borrow().is_cancelled() { return Ok(Err("Cancelled".into())); }
+        if let Some(e) = error.borrow_mut().take() { return Ok(Err(e)); }
+        decoded?;
+        let analysis = match Rc::try_unwrap(analysis) {
+            Ok(analysis) => analysis.into_inner(),
+            Err(_) => return Ok(Err("The decoder is still holding the analysis".into())),
+        };
+        Ok(analysis.finish())
+    };
+
+    let (codec_sig, try_gpu) = if gpu_decoding {
+        let sig = match VideoProcessor::get_video_info(&input_file.url) {
+            Ok(info) => Some(gpu_codec_blocklist::CodecSignature::from(&info)),
+            Err(e) => {
+                ::log::debug!("[optical] codec signature probe failed: {e:?} (proceeding without blocklist consultation)");
+                None
+            }
+        };
+        let blocked = sig.as_ref().is_some_and(gpu_codec_blocklist::is_blocklisted);
+        if blocked {
+            ::log::info!("[optical] skipping GPU for blocklisted signature {:?}", sig);
+        }
+        (sig, !blocked)
+    } else {
+        (None, false)
+    };
+    let result = if try_gpu {
+        match try_run(true) {
+            Err(FFmpegError::GPUDecodingFailed) => {
+                match codec_sig {
+                    Some(sig) => {
+                        ::log::info!("[optical] GPU decode failed for signature {:?}, retrying with software", sig);
+                        gpu_codec_blocklist::record_failure(sig);
+                    }
+                    None => ::log::info!("[optical] GPU decode failed (no signature available), retrying with software"),
+                }
+                try_run(false)
+            }
+            other => other,
+        }
+    } else {
+        try_run(false)
+    };
+    if operation_cancelled() { return Err("Cancelled".into()); }
+    let measurements = result.map_err(|e| e.to_string())??;
+    if measurements.generation != operation_generation { return Err("Cancelled".into()); }
+    // Kept, and fitted with the strength set
+    stab.set_optical_measurements(measurements)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn analysis_retry_starts_a_fresh_analysis() {
+        // The GPU to software retry must not reuse an analysis that already saw the replayed frames.
+        let src = include_str!("mod.rs");
+        let body = &src[src.find("pub fn analyze_optically").unwrap()..];
+        let body = &body[..body.find("\npub fn ").unwrap_or(body.len())];
+        let body = &body[..body.find("#[cfg(test)]").unwrap_or(body.len())];
+        assert!(body.contains("GPUDecodingFailed"), "GPU to software fallback");
+        let attempt = body.find("|use_gpu").expect("per-attempt closure");
+        let created = body.find("OpticalMotionAnalysis::from_manager").expect("analysis created");
+        assert!(created > attempt, "the analysis is created inside the per-attempt closure");
+        let generation = body.find("let operation_generation = stab.optical_generation.load").expect("operation generation");
+        assert!(generation < attempt, "the original generation survives retries");
+        let checks: Vec<_> = body.match_indices("if operation_cancelled() { return Ok(Err").map(|(pos, _)| pos).collect();
+        assert_eq!(checks.len(), 2, "check cancellation before and after constructing each analysis");
+        assert!(attempt < checks[0] && checks[0] < created && created < checks[1]);
+        let accepted = body.find("measurements.generation != operation_generation").expect("measurement generation check");
+        let installed = body.find("stab.set_optical_measurements(measurements)").expect("install measurements");
+        assert!(accepted < installed, "a retry cannot install measurements from a newer generation");
+    }
+
+    #[test]
+    fn analysis_of_an_empty_manager_fails_cleanly() {
+        let stab = gyroflow_core::StabilizationManager::default();
+        assert!(analyze_optically(&stab, Default::default(), None, |_, _, _| ()).is_err());
+    }
 }
 
 pub fn init_log() {
