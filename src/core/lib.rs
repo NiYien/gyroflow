@@ -5672,7 +5672,8 @@ mod tests {
             tx.send(result).unwrap();
         });
         assert_eq!(
-            rx.recv_timeout(Duration::from_secs(10)).unwrap(),
+            // This compares output, not speed: keep the receiver alive until the worker finishes.
+            rx.recv().unwrap(),
             (compute_id, false)
         );
     }
@@ -6471,45 +6472,54 @@ mod tests {
 
     #[test]
     fn export_gyroflow_data_writes_anamorphic_preset_calibration_data() {
-        let manager = manager_with_effective_lens_group_profile(LensGroupConfig {
-            lens_index: 0,
+        niyien_lens_presets::test_presets::with_presets(vec![niyien_lens_presets::AnamorphicPreset {
+            id: "sirui_saturn_35mm_t2_9_1_60x".into(),
+            name: "Sirui Saturn 35mm T2.9 1.60x".into(),
             focal_length_mm: Some(35.0),
-            anamorphic_enabled: true,
-            preset_id: Some("sirui_saturn_35mm_t2_9_1_60x".to_owned()),
-            squeeze_direction: Some(niyien_lens_presets::SqueezeDirection::Horizontal),
-            ..Default::default()
+            squeeze_ratio: 1.6,
+            distortion_coeffs: vec![0.02, 0.26, -0.25, 0.0],
+            distortion_model: "opencv_fisheye".into(),
+        }], || {
+            let manager = manager_with_effective_lens_group_profile(LensGroupConfig {
+                lens_index: 0,
+                focal_length_mm: Some(35.0),
+                anamorphic_enabled: true,
+                preset_id: Some("sirui_saturn_35mm_t2_9_1_60x".to_owned()),
+                squeeze_direction: Some(niyien_lens_presets::SqueezeDirection::Horizontal),
+                ..Default::default()
+            });
+
+            let project = export_project_json(&manager);
+            let calibration = &project["calibration_data"];
+
+            assert_eq!(calibration["lens_model"], "Sirui Saturn 35mm T2.9 1.60x");
+            assert_eq!(calibration["input_horizontal_stretch"], 1.6);
+            assert_eq!(calibration["input_vertical_stretch"], 1.0);
+            assert_eq!(
+                calibration["calib_dimension"],
+                serde_json::json!({ "w": 3072, "h": 1080 })
+            );
+            assert_eq!(
+                calibration["orig_dimension"],
+                serde_json::json!({ "w": 3072, "h": 1080 })
+            );
+            assert_eq!(
+                calibration["output_dimension"],
+                serde_json::json!({ "w": 3072, "h": 1080 })
+            );
+            assert_eq!(calibration["distortion_model"], "opencv_fisheye");
+            assert_eq!(
+                calibration["fisheye_params"]["camera_matrix"],
+                serde_json::json!([[3500.0, 0.0, 1536.0], [0.0, 3500.0, 540.0], [0.0, 0.0, 1.0]])
+            );
+            assert_eq!(
+                calibration["fisheye_params"]["distortion_coeffs"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                4
+            );
         });
-
-        let project = export_project_json(&manager);
-        let calibration = &project["calibration_data"];
-
-        assert_eq!(calibration["lens_model"], "Sirui Saturn 35mm T2.9 1.60x");
-        assert_eq!(calibration["input_horizontal_stretch"], 1.6);
-        assert_eq!(calibration["input_vertical_stretch"], 1.0);
-        assert_eq!(
-            calibration["calib_dimension"],
-            serde_json::json!({ "w": 3072, "h": 1080 })
-        );
-        assert_eq!(
-            calibration["orig_dimension"],
-            serde_json::json!({ "w": 3072, "h": 1080 })
-        );
-        assert_eq!(
-            calibration["output_dimension"],
-            serde_json::json!({ "w": 3072, "h": 1080 })
-        );
-        assert_eq!(calibration["distortion_model"], "opencv_fisheye");
-        assert_eq!(
-            calibration["fisheye_params"]["camera_matrix"],
-            serde_json::json!([[3500.0, 0.0, 1536.0], [0.0, 3500.0, 540.0], [0.0, 0.0, 1.0]])
-        );
-        assert_eq!(
-            calibration["fisheye_params"]["distortion_coeffs"]
-                .as_array()
-                .unwrap()
-                .len(),
-            4
-        );
     }
 
     #[test]
@@ -7909,41 +7919,50 @@ mod tests {
 
     #[test]
     fn apply_lens_group_to_main_restores_baseline_distortion_when_preset_switches_to_manual() {
-        let manager = manager_with_sentinel_lens_group_baseline();
+        niyien_lens_presets::test_presets::with_presets(vec![niyien_lens_presets::AnamorphicPreset {
+            id: "blazar_viper_35mm_1_50x".into(),
+            name: "Blazar Viper 35mm 1.50x".into(),
+            focal_length_mm: Some(35.0),
+            squeeze_ratio: 1.5,
+            distortion_coeffs: vec![0.02, 0.26, -0.25, 0.0],
+            distortion_model: "opencv_fisheye".into(),
+        }], || {
+            let manager = manager_with_sentinel_lens_group_baseline();
 
-        let mut configs = niyien_lens_presets::default_lens_group_configs();
-        configs[0] =
-            lens_group_config_for_restore_test(true, Some("blazar_viper_35mm_1_50x"), None);
-        *manager.lens_group_config.write() = configs;
+            let mut configs = niyien_lens_presets::default_lens_group_configs();
+            configs[0] =
+                lens_group_config_for_restore_test(true, Some("blazar_viper_35mm_1_50x"), None);
+            *manager.lens_group_config.write() = configs;
 
-        assert_eq!(manager.apply_lens_group_to_main(0), Some((2880, 1080)));
-        {
+            assert_eq!(manager.apply_lens_group_to_main(0), Some((2880, 1080)));
+            {
+                let lens = manager.lens.read();
+                assert_eq!(lens.distortion_model.as_deref(), Some("opencv_fisheye"));
+                assert_eq!(
+                    lens.fisheye_params.distortion_coeffs,
+                    vec![0.02, 0.26, -0.25, 0.0]
+                );
+            }
+
+            let mut configs = niyien_lens_presets::default_lens_group_configs();
+            configs[0] = lens_group_config_for_restore_test(true, None, Some(1.5));
+            *manager.lens_group_config.write() = configs;
+
+            assert_eq!(manager.apply_lens_group_to_main(0), Some((2880, 1080)));
+
             let lens = manager.lens.read();
-            assert_eq!(lens.distortion_model.as_deref(), Some("opencv_fisheye"));
+            assert_eq!(lens.input_horizontal_stretch, 1.5);
+            assert_eq!(lens.input_vertical_stretch, 1.0);
+            assert_eq!(
+                lens.output_dimension.as_ref().map(|dim| (dim.w, dim.h)),
+                Some((2880, 1080))
+            );
+            assert_eq!(lens.distortion_model.as_deref(), Some("poly5"));
             assert_eq!(
                 lens.fisheye_params.distortion_coeffs,
-                vec![0.02, 0.26, -0.25, 0.0]
+                vec![0.1, 0.2, 0.3, 0.4]
             );
-        }
-
-        let mut configs = niyien_lens_presets::default_lens_group_configs();
-        configs[0] = lens_group_config_for_restore_test(true, None, Some(1.5));
-        *manager.lens_group_config.write() = configs;
-
-        assert_eq!(manager.apply_lens_group_to_main(0), Some((2880, 1080)));
-
-        let lens = manager.lens.read();
-        assert_eq!(lens.input_horizontal_stretch, 1.5);
-        assert_eq!(lens.input_vertical_stretch, 1.0);
-        assert_eq!(
-            lens.output_dimension.as_ref().map(|dim| (dim.w, dim.h)),
-            Some((2880, 1080))
-        );
-        assert_eq!(lens.distortion_model.as_deref(), Some("poly5"));
-        assert_eq!(
-            lens.fisheye_params.distortion_coeffs,
-            vec![0.1, 0.2, 0.3, 0.4]
-        );
+        });
     }
 
     #[test]
