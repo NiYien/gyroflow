@@ -11,6 +11,7 @@
 pub mod bearings;
 pub mod config;
 pub mod cost;
+pub mod judge;
 pub mod quat_table;
 pub mod rates;
 pub mod search;
