@@ -210,9 +210,13 @@ fn reset_deep_match_decode_attempt(stab: &StabilizationManager) {
     stab.pose_estimator.clear();
     let scan_k = deep_match::scan_k_target();
     let forward = deep_match::forward_armed();
+    let judge = deep_match::optical_judge_armed();
     deep_match::arm(scan_k);
     if forward {
         deep_match::arm_forward();
+    }
+    if let Some(mode) = judge {
+        deep_match::arm_optical_judge(mode);
     }
 }
 
@@ -978,6 +982,8 @@ struct DeepMatchState {
     // Pool runs advance to the next candidate on a broken gyro file instead
     // of terminating (one bad file must not kill the pool search).
     pool_run: bool,
+    // Read the optical toggle once when the deep search starts.
+    optical_judge: bool,
     // Posterior-peak verification pass (deep-match-peak-verification):
     // present while a verification probe is in flight for the current chunk.
     verify: Option<DeepMatchVerify>,
@@ -14564,6 +14570,10 @@ impl RenderQueue {
         self.start_deep_match_with_plan(job_id, plan, probe_lens_index, true)
     }
 
+    fn deep_match_optical_judge_enabled(&self) -> bool {
+        self.batch_sync_optical && cfg!(feature = "opencv")
+    }
+
     // Shared launch path for manual (single full-span probe) and pool runs:
     // snapshots the pre-probe stores once for the WHOLE plan, fills the first
     // probe's chunk plan and spawns its background load.
@@ -14591,6 +14601,7 @@ impl RenderQueue {
         );
         state.probe_plan = plan;
         state.pool_run = pool_run;
+        state.optical_judge = self.deep_match_optical_judge_enabled();
         let video_duration_ms = stab.params.read().duration_ms;
         let total_ms = self
             .gyro_files
@@ -14763,7 +14774,7 @@ impl RenderQueue {
     // launches the sync-only run. Re-entrant per chunk.
     fn continue_deep_gyro_match(&mut self, job_id: u32, loaded: bool) {
         use gyroflow_core::synchronization::deep_match;
-        let Some((gyro_index, current_chunk, chunk_count, current_probe, probe_count, probe_tier, pool_run)) = self
+        let Some((gyro_index, current_chunk, chunk_count, current_probe, probe_count, probe_tier, pool_run, optical_judge)) = self
             .deep_match_pending
             .get(&job_id)
             .map(|s| (
@@ -14774,6 +14785,7 @@ impl RenderQueue {
                 s.probe_plan.len().max(1),
                 s.probe_plan.get(s.current_probe).map(|t| t.tier).unwrap_or(3),
                 s.pool_run,
+                s.optical_judge,
             ))
         else {
             return;
@@ -15062,6 +15074,11 @@ impl RenderQueue {
         if !is_auto_probe {
             deep_match::arm_forward();
         }
+        if !is_auto_probe && optical_judge {
+            if let Some(mode) = deep_match::optical_env_mode() {
+                deep_match::arm_optical_judge(mode);
+            }
+        }
         // Run the job through the same sync-only path batch repair uses:
         // export_project=2 + expected membership routes the worker into the
         // defer branch (sync, then stop — no encode); batch_sync_job_ids
@@ -15169,6 +15186,7 @@ impl RenderQueue {
             probe_plan: Vec::new(),
             current_probe: 0,
             pool_run: false,
+            optical_judge: false,
             verify: None,
         }
     }
@@ -15232,6 +15250,7 @@ impl RenderQueue {
         // forward-armed chunk scans (never by verification probes or the
         // auto-probe).
         let forward = deep_match::take_forward();
+        let optical = deep_match::take_optical_judge();
         // How far this chunk's window loop got. MUST be read before take()
         // (which resets the counters) — reading it after yields zeroes and
         // silently misclassifies every empty chunk as ProbeNotRun again.
@@ -15276,6 +15295,49 @@ impl RenderQueue {
             if self.deep_match_pending.get(&job_id).map(|s| s.verify.is_some()).unwrap_or(false) {
                 self.finish_deep_match_verify(job_id, stab, curves);
                 return;
+            }
+            use gyroflow_core::synchronization::optical_motion::judge::{JudgeMode, JudgeOutcome, JudgeVerdict};
+            match optical {
+                Some(JudgeOutcome { mode: JudgeMode::On, verdict }) => {
+                    let found = matches!(&verdict, JudgeVerdict::Found { .. });
+                    match verdict {
+                        JudgeVerdict::Found { offset_ms, .. }
+                        | JudgeVerdict::NoWinner { support_ms: Some(offset_ms) } => {
+                            let verdict = deep_match::DeepMatchVerdict::Accepted { offset_ms };
+                            ::log::info!(
+                                target: "sync",
+                                "[deep-match] probe {}/{} chunk {}/{} finish: job={} windows={} scanned={} gated={} offsets={:?} verdict={:?}",
+                                current_probe + 1, probe_count,
+                                current_chunk + 1, chunk_count, job_id, offsets_ms.len(),
+                                windows_scanned, windows_gated, offsets_ms, verdict
+                            );
+                            ::log::info!(target: "sync", "[deep-match] optical judge {}: offset={:.1}ms (forward/verify/drift skipped)",
+                                if found { "found" } else { "support" }, offset_ms);
+                            self.terminate_deep_match(job_id, stab, verdict);
+                            return;
+                        }
+                        JudgeVerdict::NoWinner { support_ms: None } => {
+                            let verdict = deep_match::DeepMatchVerdict::WeakValley { worst_ratio: 1.0 };
+                            ::log::info!(
+                                target: "sync",
+                                "[deep-match] probe {}/{} chunk {}/{} finish: job={} windows={} scanned={} gated={} offsets={:?} verdict={:?}",
+                                current_probe + 1, probe_count,
+                                current_chunk + 1, chunk_count, job_id, offsets_ms.len(),
+                                windows_scanned, windows_gated, offsets_ms, verdict
+                            );
+                            ::log::info!(target: "sync", "[deep-match] optical judge no_winner → chunk not found (forward/verify/drift skipped)");
+                            self.consume_deep_match_verdict(job_id, stab, verdict);
+                            return;
+                        }
+                        JudgeVerdict::CannotJudge { .. } => {
+                            ::log::info!(target: "sync", "[deep-match] optical judge cannot_judge → existing chain decides");
+                        }
+                    }
+                }
+                Some(JudgeOutcome { mode: JudgeMode::Shadow, verdict }) => {
+                    ::log::info!(target: "sync", "[deep-match] optical judge (shadow) would={:?} — existing chain decides", verdict);
+                }
+                None => {}
             }
             // Posterior owns the decision when enabled AND curves were captured
             // (a real posterior probe records curves, never legacy stats). The
@@ -24005,6 +24067,149 @@ mod tests {
         let state = queue.deep_match_pending.get(&1).expect("run must stay pending");
         assert_eq!(state.current_chunk, 1, "skip must leave the advance flow unchanged");
         assert!(queue.deep_match_results.is_empty(), "no rescue for non-collinear argmins");
+    }
+
+    fn optical_judge_chunk_fixture(
+        mode: core::synchronization::optical_motion::judge::JudgeMode,
+        verdict: core::synchronization::optical_motion::judge::JudgeVerdict,
+        rescue: bool,
+        cancelled: bool,
+    ) -> (RenderQueue, Arc<StabilizationManager>) {
+        use gyroflow_core::synchronization::{deep_match, optical_motion::judge::JudgeOutcome};
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = setup_deep_match_job(&mut queue, true);
+        simulate_deep_match_probe_chunks(
+            &mut queue, &stab,
+            vec![(0.0, 7_200_000.0), (7_000_000.0, 14_200_000.0)], 0,
+        );
+        stab.params.write().duration_ms = 6_588_832.0;
+        let peaks = if rescue { [-100.5, -63.4, -42.7] } else { [-100.0, 80.0, -90.0] };
+        deep_match::arm(3);
+        let outcome = JudgeOutcome { mode, verdict };
+        deep_match::arm_optical_judge(outcome.mode);
+        deep_match::record_optical_judge(outcome);
+        for (idx, center) in [1_317_766.0, 2_635_533.0, 3_953_299.0].into_iter().enumerate() {
+            deep_match::record_curve(drift_curve(idx, center, peaks[idx]));
+        }
+        queue.jobs[&1].cancel_flag.store(cancelled, SeqCst);
+        queue.record_batch_sync_result(1, vec![
+            sync_candidate(1, 1000.0, peaks[0], 0.9),
+            sync_candidate(1, 2000.0, peaks[1], 0.9),
+            sync_candidate(1, 3000.0, peaks[2], 0.9),
+        ], vec![]);
+        (queue, stab)
+    }
+
+    #[test]
+    fn deep_match_optical_found_accepts_without_verification() {
+        use gyroflow_core::synchronization::optical_motion::judge::{JudgeMode, JudgeVerdict};
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let (queue, _) = optical_judge_chunk_fixture(JudgeMode::On,
+            JudgeVerdict::Found { offset_ms: -63.0, windows: vec![0, 1] }, false, false);
+        assert!(queue.deep_match_results.contains_key(&1));
+        assert!(queue.deep_match_pending.is_empty(), "acceptance must skip advance and verification");
+        assert_eq!(queue.deep_match_results[&1].offset_ms, -63.0);
+    }
+
+    #[test]
+    fn deep_match_optical_support_accepts() {
+        use gyroflow_core::synchronization::optical_motion::judge::{JudgeMode, JudgeVerdict};
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let (queue, _) = optical_judge_chunk_fixture(JudgeMode::On,
+            JudgeVerdict::NoWinner { support_ms: Some(-63.0) }, false, false);
+        assert!(queue.deep_match_results.contains_key(&1));
+        assert!(queue.deep_match_pending.is_empty(), "support must skip advance and verification");
+        assert_eq!(queue.deep_match_results[&1].offset_ms, -63.0);
+    }
+
+    #[test]
+    fn deep_match_optical_no_winner_advances_without_verification() {
+        use gyroflow_core::synchronization::optical_motion::judge::{JudgeMode, JudgeVerdict};
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let (queue, _) = optical_judge_chunk_fixture(JudgeMode::On,
+            JudgeVerdict::NoWinner { support_ms: None }, false, false);
+        let state = queue.deep_match_pending.get(&1).expect("run must stay pending");
+        assert_eq!(state.current_chunk, 1);
+        assert!(state.verify.is_none());
+        assert!(queue.deep_match_results.is_empty());
+    }
+
+    #[test]
+    fn deep_match_optical_cannot_judge_keeps_existing_flow() {
+        use gyroflow_core::synchronization::optical_motion::judge::{JudgeMode, JudgeVerdict};
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let (queue, _) = optical_judge_chunk_fixture(JudgeMode::On,
+            JudgeVerdict::CannotJudge { measured: 0, reason: "no_tracks" }, true, false);
+        assert!(queue.deep_match_results.contains_key(&1), "existing drift rescue must accept");
+        assert!(queue.deep_match_pending.is_empty());
+    }
+
+    #[test]
+    fn deep_match_optical_shadow_keeps_existing_flow() {
+        use gyroflow_core::synchronization::optical_motion::judge::{JudgeMode, JudgeVerdict};
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let (queue, _) = optical_judge_chunk_fixture(JudgeMode::Shadow,
+            JudgeVerdict::Found { offset_ms: -63.0, windows: vec![0, 1] }, false, false);
+        let state = queue.deep_match_pending.get(&1).expect("run must stay pending");
+        assert_eq!(state.current_chunk, 1);
+        assert!(state.verify.is_none());
+        assert!(queue.deep_match_results.is_empty());
+    }
+
+    #[test]
+    fn deep_match_optical_cancelled_chunk_rolls_back() {
+        use gyroflow_core::synchronization::optical_motion::judge::{JudgeMode, JudgeVerdict};
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let (queue, stab) = optical_judge_chunk_fixture(JudgeMode::On,
+            JudgeVerdict::Found { offset_ms: -63.0, windows: vec![0, 1] }, false, true);
+        assert!(queue.deep_match_pending.is_empty());
+        assert!(queue.deep_match_results.is_empty());
+        assert_eq!(queue.jobs[&1].additional_data, r#"{"original":true}"#);
+        let lens = stab.lens.read();
+        assert_eq!(lens.name, "");
+        assert_eq!(lens.sync_settings.as_ref().unwrap()["offset_method"], 2);
+        assert!(lens.sync_settings.as_ref().unwrap().get("one_shot").is_none());
+        let gyro = stab.gyro.read();
+        assert!(gyro.file_metadata.read().keep_video_gyro);
+        assert_eq!(gyro.file_url, "file:///builtin-source.mp4");
+    }
+
+    #[test]
+    fn deep_match_decode_retry_preserves_optical_judge_arm() {
+        use gyroflow_core::synchronization::{deep_match, optical_motion::judge::{JudgeMode, JudgeOutcome, JudgeVerdict}};
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = setup_deep_match_job(&mut queue, true);
+        deep_match::arm(3);
+        deep_match::arm_forward();
+        deep_match::arm_optical_judge(JudgeMode::On);
+        deep_match::record_optical_judge(JudgeOutcome { mode: JudgeMode::On,
+            verdict: JudgeVerdict::Found { offset_ms: -63.0, windows: vec![0, 1] } });
+        reset_deep_match_decode_attempt(&stab);
+        assert_eq!(deep_match::optical_judge_armed(), Some(JudgeMode::On));
+        assert_eq!(deep_match::take_optical_judge(), None);
+        deep_match::take();
+    }
+
+    #[test]
+    fn deep_match_optical_toggle_requires_opencv_build() {
+        let mut queue = RenderQueue::default();
+        queue.batch_sync_optical = true;
+        assert_eq!(queue.deep_match_optical_judge_enabled(), cfg!(feature = "opencv"));
+        queue.batch_sync_optical = false;
+        assert!(!queue.deep_match_optical_judge_enabled());
+    }
+
+    #[test]
+    fn deep_match_optical_never_armed_for_verify_or_auto_probe() {
+        let src = include_str!("render_queue.rs");
+        let verify = &src[src.find("fn launch_deep_match_verify_probe(").unwrap()..src.find("fn finish_deep_match_verify(").unwrap()];
+        assert!(!verify.contains("arm_optical_judge"));
+        // Assemble needles at runtime so this test does not match its own source.
+        let arm = ["deep_match::arm_optical", "_judge(mode)"].concat();
+        let gate = ["if !is_auto_probe", " && optical_judge {"].concat();
+        assert_eq!(src.matches(arm.as_str()).count(), 2, "chunk launch + decode retry only");
+        assert_eq!(src.matches(gate.as_str()).count(), 1);
     }
 
     #[test]
