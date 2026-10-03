@@ -75,6 +75,10 @@ pub struct AutosyncProcess {
     /// Optical motion method (`offset_method` 3 in `synchronize` mode): the feature tracking session. None for every
     /// other run, which then takes none of the optical paths below
     optical: Option<super::optical_motion::OpticalSession>,
+    /// Separate tracking session for the armed deep-match optical judge.
+    optical_judge: Option<super::optical_motion::OpticalSession>,
+    judge_every_nth: usize,
+    judge_frames_fed: AtomicUsize,
     /// The frames are read out along x (optical motion method)
     horizontal_readout: bool,
     /// `progress_cb` for the optical tracking threads, which start before `on_progress` sets it
@@ -440,6 +444,27 @@ impl AutosyncProcess {
             None
         };
 
+        let (optical_judge, judge_every_nth) = if sync_params.offset_method == 0
+            && mode == "synchronize"
+            && super::deep_match::optical_judge_armed().is_some()
+        {
+            use super::optical_motion as optical;
+            let every_nth = optical::judge::judge_every_nth(scaled_fps, super::deep_match::optical_fps());
+            let session = optical::OpticalSession::new(
+                scaled_ranges_us.len(),
+                scaled_fps,
+                every_nth,
+                cancel_flag.clone(),
+                &|| optical::default_tracker(optical::config::config()),
+                Arc::new(|| {}),
+            );
+            log::info!(target: "sync", "[deep-match] optical judge session: windows={} every_nth={} has_tracker={}",
+                scaled_ranges_us.len(), every_nth, session.has_tracker());
+            (Some(session), every_nth)
+        } else {
+            (None, 1)
+        };
+
         Ok(Self {
             frame_count,
             org_fps,
@@ -466,6 +491,9 @@ impl AutosyncProcess {
             cancel_flag,
             thread_pool,
             optical,
+            optical_judge,
+            judge_every_nth,
+            judge_frames_fed: AtomicUsize::new(0),
             horizontal_readout,
             optical_progress_cb,
         })
@@ -577,6 +605,16 @@ impl AutosyncProcess {
             }
             return true;
         }
+        if let Some(judge) = &self.optical_judge {
+            if let Some(img) = &img {
+                if super::optical_motion::tracks::frame_index(ts_no_offset, self.scaled_fps) % self.judge_every_nth == 0 {
+                    for window in super::optical_motion::windows_containing(&self.scaled_ranges_us, timestamp_us) {
+                        judge.feed(window, ts_no_offset, super::optical_motion::crop_to_width(img.clone(), width));
+                        self.judge_frames_fed.fetch_add(1, SeqCst);
+                    }
+                }
+            }
+        }
         if in_user_ranges || in_probe {
             let valid_image = img.is_some();
             self.total_read_frames.fetch_add(1, SeqCst);
@@ -678,6 +716,7 @@ impl AutosyncProcess {
         // Optical motion method: close the tracking queues and wait for the tracking threads. Every frame fed has
         // then been reported done, so the spin-wait below ends at once
         let optical_raw = self.optical.as_ref().map(|session| session.finish());
+        let judge_raw = self.optical_judge.as_ref().map(|session| session.finish());
         // §5.1/§5.2 were once early-return cancel checks but they leaked
         // stale rayon-pool tasks: the run_threaded OpGuard would drop while
         // tasks remained queued, wait_until_idle in the racing load_video
@@ -770,6 +809,27 @@ impl AutosyncProcess {
             crate::synchronization::sync_diag::flush_and_close();
             return;
         }
+
+        let handed = judge_raw.map(|raw| {
+            use super::optical_motion as optical;
+            // Match method 3's measurement parameters and window order.
+            let mut params = self.compute_params.read().clone();
+            params.framebuffer_inverted = false;
+            let windows = self.thread_pool.install(|| {
+                raw.iter().zip(&self.scaled_ranges_us).map(|(r, &(from, to))| {
+                    optical::bearings::build_window_tracks(r, &params, self.horizontal_readout, (from + to) as f64 / 2.0 / 1000.0)
+                }).collect()
+            });
+            let session = self.optical_judge.as_ref().unwrap();
+            optical::judge::HandedTracks {
+                windows,
+                ranges_us: self.scaled_ranges_us.clone(),
+                has_tracker: session.has_tracker(),
+                every_nth: self.judge_every_nth,
+                frames_fed: self.judge_frames_fed.load(SeqCst),
+                track_ms: session.timings().track_ms,
+            }
+        });
 
         let offset_method = self.sync_params.offset_method;
 
@@ -978,13 +1038,22 @@ impl AutosyncProcess {
                 if let Some(r) = self.lazy_probe_scaled_range() {
                     sync_ranges.push(r);
                 }
-                let mut offsets = self.strip_probe_offsets(self.estimator.find_offsets(
-                    &sync_ranges,
-                    &self.sync_params,
-                    &self.compute_params.read(),
-                    progress_cb2,
-                    self.cancel_flag.clone(),
-                ));
+                let has_handed = handed.is_some();
+                // Set the thread-local handoff inside the pool that runs the armed search.
+                let find_first = || super::optical_motion::judge::with_handed_tracks(handed, || {
+                    self.strip_probe_offsets(self.estimator.find_offsets(
+                        &sync_ranges,
+                        &self.sync_params,
+                        &self.compute_params.read(),
+                        progress_cb2,
+                        self.cancel_flag.clone(),
+                    ))
+                });
+                let mut offsets = if has_handed {
+                    self.thread_pool.install(find_first)
+                } else {
+                    find_first()
+                };
                 if check_negative {
                     // §5.8 before second find_offsets retry pass
                     if self.cancel_flag.load(SeqCst) {
@@ -1440,6 +1509,101 @@ mod tests {
             offset_method: 3,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn judge_session_only_when_armed_for_essential_synchronize() {
+        use crate::synchronization::{deep_match, optical_motion::judge::JudgeMode};
+        let _g = deep_match::TEST_MTX.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = deep_match::take();
+        let stab = manager_with_motion();
+        let make = |offset_method: usize, mode: &str| {
+            AutosyncProcess::from_manager(&stab, &[0.5], SyncParams { offset_method, ..optical_params() }, mode.into(), Arc::new(AtomicBool::new(false))).unwrap()
+        };
+        deep_match::arm(2);
+        deep_match::arm_optical_judge(JudgeMode::On);
+        assert!(make(0, "synchronize").optical_judge.is_some());
+        assert!(make(2, "synchronize").optical_judge.is_none());
+        assert!(make(0, "estimate_rolling_shutter").optical_judge.is_none());
+        assert!(make(0, "guess_imu_orientation").optical_judge.is_none());
+        let optical = make(3, "synchronize");
+        assert!(optical.optical.is_some() && optical.optical_judge.is_none());
+        let _ = deep_match::take();
+        assert!(make(0, "synchronize").optical_judge.is_none());
+    }
+
+    #[test]
+    fn judge_session_leaves_frame_counters_alone() {
+        use crate::synchronization::{deep_match, optical_motion::judge::JudgeMode};
+        let _g = deep_match::TEST_MTX.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = deep_match::take();
+        let make = || AutosyncProcess::from_manager(&manager_with_motion(), &[0.25, 0.75], SyncParams { offset_method: 0, ..optical_params() }, "synchronize".into(), Arc::new(AtomicBool::new(false))).unwrap();
+        let unarmed = make();
+        deep_match::arm(2);
+        deep_match::arm_optical_judge(JudgeMode::On);
+        let armed = make();
+        let mut accepted = 0;
+        for i in 0..90i64 {
+            let feed = |sync: &AutosyncProcess| sync.feed_frame(i * 1_000_000 / 30, i as usize, 64, 64, 72, &[128; 72 * 64]);
+            let a = feed(&armed);
+            let b = feed(&unarmed);
+            assert_eq!(a, b);
+            accepted += usize::from(a);
+        }
+        armed.wait_for_frame_tasks();
+        unarmed.wait_for_frame_tasks();
+        assert_eq!(accepted, 32);
+        assert_eq!(armed.total_read_frames.load(SeqCst), unarmed.total_read_frames.load(SeqCst));
+        assert_eq!(armed.judge_every_nth, 1);
+        assert_eq!(armed.judge_frames_fed.load(SeqCst), accepted);
+        assert_eq!(unarmed.judge_frames_fed.load(SeqCst), 0);
+        let _ = deep_match::take();
+    }
+
+    #[test]
+    fn judge_feeds_every_nth_frame() {
+        use crate::synchronization::{deep_match, optical_motion::judge::JudgeMode};
+        let _g = deep_match::TEST_MTX.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = deep_match::take();
+        let stab = manager_with_motion();
+        {
+            let mut params = stab.params.write();
+            params.fps = 60.0;
+            params.frame_count = 180;
+        }
+        deep_match::arm(2);
+        deep_match::arm_optical_judge(JudgeMode::On);
+        let sync = AutosyncProcess::from_manager(&stab, &[0.25, 0.75], SyncParams { offset_method: 0, ..optical_params() }, "synchronize".into(), Arc::new(AtomicBool::new(false))).unwrap();
+        let mut in_windows = 0;
+        let mut every_nth = 0;
+        for i in 0..180i64 {
+            let ts = i * 1_000_000 / 60 + 1;
+            let in_window = sync.scaled_ranges_us.iter().any(|&(from, to)| (from..=to).contains(&ts));
+            in_windows += usize::from(in_window);
+            every_nth += usize::from(in_window && i % 2 == 0);
+            sync.feed_frame(ts, i as usize, 64, 64, 64, &[128; 64 * 64]);
+        }
+        sync.wait_for_frame_tasks();
+        assert_eq!(sync.judge_every_nth, 2);
+        assert_eq!(every_nth, in_windows / 2);
+        assert_eq!(sync.judge_frames_fed.load(SeqCst), every_nth);
+        let _ = deep_match::take();
+    }
+
+    #[test]
+    fn judge_handoff_wraps_only_the_first_find_offsets() {
+        let src = include_str!("autosync.rs");
+        let fin = &src[src.find("pub fn finished_feeding_frames").unwrap()..];
+        // Assemble the needle at runtime so the test's own source does not match it.
+        let needle = ["with_handed", "_tracks("].concat();
+        assert_eq!(fin.matches(needle.as_str()).count(), 1);
+    }
+
+    #[test]
+    fn optical_branch_still_returns_before_the_judge_feed() {
+        let src = include_str!("autosync.rs");
+        let feed = &src[src.find("pub fn feed_frame").unwrap()..src.find("pub fn wait_for_frame_tasks").unwrap()];
+        assert!(feed.find("if let Some(session) = &self.optical").unwrap() < feed.find("if let Some(judge) = &self.optical_judge").unwrap());
     }
 
     #[test]
