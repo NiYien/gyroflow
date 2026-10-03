@@ -2,6 +2,7 @@
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
 
 mod canon;
+mod camera_view;
 mod file_metadata;
 mod imu_transforms;
 mod sony;
@@ -2066,7 +2067,9 @@ impl GyroSource {
             compute_params,
         );
         let source_duration_ms = compute_params.scaled_duration_ms;
-        let mut smoothed_quaternions = source_quaternions.clone();
+        drop(file_metadata);
+        let mut smoothed_quaternions =
+            camera_view::smoothing_quaternions(self, &source_quaternions, compute_params);
 
         for (ts, q) in smoothed_quaternions.iter_mut() {
             use crate::KeyframeType;

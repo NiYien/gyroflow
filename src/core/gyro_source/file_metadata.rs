@@ -247,6 +247,11 @@ impl FileMetadata {
     pub fn has_motion(&self) -> bool {
         !self.raw_imu.is_empty() || !self.quaternions.is_empty()
     }
+    pub(crate) fn has_camera_view_compensation(&self) -> bool {
+        self.detected_source.as_deref()
+            .is_some_and(|source| source == "Sony" || source.starts_with("Sony "))
+            && (!self.camera_stab_data.is_empty() || self.has_mesh_correction())
+    }
     /// Number of `lens_params` samples that feed the projection. The map also holds entries with
     /// nothing but the descriptive values, for cameras that report those but no geometry at all
     pub fn lens_geometry_count(&self) -> usize {

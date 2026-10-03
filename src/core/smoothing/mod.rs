@@ -156,6 +156,25 @@ impl Smoothing {
         for fov in &compute_params.camera_diagonal_fovs {
             hasher.write_u64(fov.to_bits());
         }
+        if compute_params.smoothing_uses_camera_view {
+            // A constant focal length does not make the recorded view constant:
+            // its principal point, distortion and IS projection can still change.
+            hasher.write_u64(compute_params.lens.get_checksum());
+            hasher.write_u8(compute_params.lens.lens_group_override as u8);
+            hasher.write_u64(compute_params.light_refraction_coefficient.to_bits());
+            hasher.write_i32(compute_params.lens_metadata_delay_frames);
+            hasher.write_usize(compute_params.width);
+            hasher.write_usize(compute_params.height);
+            hasher.write_usize(compute_params.frame_count);
+            hasher.write_u64(compute_params.scaled_fps.to_bits());
+            hasher.write_u64(compute_params.scaled_duration_ms.to_bits());
+            hasher.write_u64(compute_params.keyframes.get_checksum_for(&[
+                crate::KeyframeType::LightRefractionCoeff,
+            ]));
+            for focal_length in &compute_params.focal_lengths {
+                hasher.write_u64(focal_length.unwrap_or_default().to_bits());
+            }
+        }
         hasher.finish()
     }
 

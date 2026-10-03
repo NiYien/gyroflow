@@ -34,6 +34,8 @@ pub struct ComputeParams {
     pub gyro_offsets: BTreeMap<i64, f64>,
     pub lens: LensProfile,
     pub camera_diagonal_fovs: Vec<f64>,
+    // Set alongside the camera FOVs so smoothing tracks the geometry it reads.
+    pub smoothing_uses_camera_view: bool,
 
     pub frame_count: usize,
     pub fov_scale: f64,
@@ -125,6 +127,7 @@ impl ComputeParams {
             gyro: mgr.gyro.clone(),
             lens,
             camera_diagonal_fovs: Vec::new(),
+            smoothing_uses_camera_view: false,
 
             smoothing_fov_limit_per_frame: Vec::new(),
             max_zoom: params.max_zoom.clone(),
@@ -224,6 +227,7 @@ impl ComputeParams {
         let frame_count = {
             let gyro = self.gyro.read();
             let file_metadata = gyro.file_metadata.read();
+            self.smoothing_uses_camera_view = file_metadata.has_camera_view_compensation();
             if file_metadata.lens_params.len() > 1 || !file_metadata.lens_positions.is_empty() {
                 self.frame_count
             } else {
