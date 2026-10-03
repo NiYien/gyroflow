@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::collections::hash_map::DefaultHasher;
+use std::collections::{hash_map::DefaultHasher, HashMap};
 use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
 
@@ -106,6 +106,40 @@ struct TranslationCurvePoint {
     shift: nalgebra::Vector3<f64>,
 }
 
+const CONFIDENCE_SIGMA_US: i128 = 250_000;
+const CONFIDENCE_RADIUS_US: i128 = 3 * CONFIDENCE_SIGMA_US;
+
+#[derive(Default)]
+struct ZeroConfidenceCache {
+    suffixes: HashMap<(i128, i128), Vec<f64>>,
+    #[cfg(test)]
+    evaluated_weights: usize,
+}
+
+impl ZeroConfidenceCache {
+    fn sum(&mut self, distance_us: i128, interval_us: i128) -> f64 {
+        if distance_us > CONFIDENCE_RADIUS_US { return 0.0; }
+        let remainder = distance_us % interval_us;
+        let first = if remainder == 0 { interval_us } else { remainder };
+        #[cfg(test)]
+        let evaluated_weights = &mut self.evaluated_weights;
+        // Integer timestamps put all queries with this remainder on the same finite grid.
+        let suffix = self.suffixes.entry((interval_us, remainder)).or_insert_with(|| {
+            let count = ((CONFIDENCE_RADIUS_US - first) / interval_us + 1) as usize;
+            let mut suffix = vec![0.0; count + 1];
+            for index in (0..count).rev() {
+                let distance = first + index as i128 * interval_us;
+                let weight = (-0.5 * (distance as f64 / CONFIDENCE_SIGMA_US as f64).powi(2)).exp();
+                suffix[index] = weight + suffix[index + 1];
+            }
+            #[cfg(test)]
+            { *evaluated_weights += count; }
+            suffix
+        });
+        suffix[((distance_us - first) / interval_us) as usize]
+    }
+}
+
 fn median(values: &mut [f64]) -> f64 {
     if values.is_empty() { return 0.0; }
     values.sort_by(f64::total_cmp);
@@ -155,6 +189,7 @@ impl OpticalTranslation {
         let requested_sigma = if self.settings.smoothness_s.is_finite() { self.settings.smoothness_s } else { OpticalTranslationSettings::default().smoothness_s };
         let reference = if self.settings.reference.is_finite() { self.settings.reference } else { 0.0 };
         let mut smoothness = Vec::new();
+        let mut zero_confidence = ZeroConfidenceCache::default();
         let mut start = 0;
         while start < samples.len() {
             let mut end = start + 1;
@@ -174,7 +209,13 @@ impl OpticalTranslation {
             let times: Vec<_> = segment.iter().map(|sample| time_difference_s(sample.timestamp_us, segment[0].timestamp_us)).collect();
             let positions: Vec<_> = segment.iter().map(|sample| nalgebra::Vector3::new(sample.position[0] as f64, sample.position[1] as f64, sample.position[2] as f64)).collect();
             let last = segment.len() - 1;
+            let left_interval_us = segment[1].timestamp_us as i128 - segment[0].timestamp_us as i128;
+            let right_interval_us = segment[last].timestamp_us as i128 - segment[last - 1].timestamp_us as i128;
             for i in 0..segment.len() {
+                if i == 0 || i == last {
+                    self.curve.push(TranslationCurvePoint { timestamp_us: segment[i].timestamp_us, segment: segment[i].segment, shift: nalgebra::Vector3::zeros() });
+                    continue;
+                }
                 let mut sum = nalgebra::Vector3::zeros();
                 let mut weight_sum = 0.0;
                 let radius = 3.0 * sigma;
@@ -199,7 +240,7 @@ impl OpticalTranslation {
                     sum += (positions[last] * 2.0 - positions[j]) * weight;
                     weight_sum += weight;
                 }
-                let confidence_sigma = 0.25;
+                let confidence_sigma = CONFIDENCE_SIGMA_US as f64 / 1e6;
                 let confidence_radius = 3.0 * confidence_sigma;
                 let confidence_left = times.partition_point(|time| *time < times[i] - confidence_radius);
                 let confidence_right = times.partition_point(|time| *time <= times[i] + confidence_radius);
@@ -211,18 +252,10 @@ impl OpticalTranslation {
                     confidence_weight_sum += weight;
                 }
                 // Continue the nearest endpoint interval with zero confidence outside the segment.
-                let left_interval = time_difference_s(segment[1].timestamp_us, segment[0].timestamp_us);
-                let right_interval = time_difference_s(segment[last].timestamp_us, segment[last - 1].timestamp_us);
-                let mut distance = times[i] + left_interval;
-                while distance <= confidence_radius {
-                    confidence_weight_sum += (-0.5 * (distance / confidence_sigma).powi(2)).exp();
-                    distance += left_interval;
-                }
-                let mut distance = times[last] - times[i] + right_interval;
-                while distance <= confidence_radius {
-                    confidence_weight_sum += (-0.5 * (distance / confidence_sigma).powi(2)).exp();
-                    distance += right_interval;
-                }
+                let left_distance_us = segment[i].timestamp_us as i128 - segment[0].timestamp_us as i128 + left_interval_us;
+                let right_distance_us = segment[last].timestamp_us as i128 - segment[i].timestamp_us as i128 + right_interval_us;
+                confidence_weight_sum += zero_confidence.sum(left_distance_us, left_interval_us);
+                confidence_weight_sum += zero_confidence.sum(right_distance_us, right_interval_us);
                 let ramp = 1.0_f64.min(times[i] / confidence_sigma).min((times[last] - times[i]) / confidence_sigma).max(0.0);
                 let confidence = confidence_sum / confidence_weight_sum * ramp;
                 let shift = (positions[i] - sum / weight_sum) * (reference * confidence * segment[i].ref_inv_depth as f64);
@@ -465,5 +498,60 @@ mod tests {
         let want = residual * confidence * 0.4;
         assert!((got - want).abs() < 1e-12, "got {got} want {want}");
         assert!(got < residual * 0.4, "outside confidence must remain zero");
+    }
+
+    fn naive_zero_confidence_weight_sum(mut distance_us: i128, interval_us: i128) -> f64 {
+        let mut sum = 0.0;
+        while distance_us <= 750_000 {
+            sum += (-0.5 * (distance_us as f64 / 250_000.0).powi(2)).exp();
+            distance_us += interval_us;
+        }
+        sum
+    }
+
+    #[test]
+    fn cached_zero_confidence_weights_match_discrete_sums() {
+        let mut cache = ZeroConfidenceCache::default();
+        for (distance, interval) in [(100_000, 100_000), (100_010, 100_003), (27_182, 12_345), (750_000, 250_000), (1_000_000, 1_000_000)] {
+            let got = cache.sum(distance, interval);
+            let want = naive_zero_confidence_weight_sum(distance, interval);
+            assert!((got - want).abs() < 1e-12 * want.max(1.0), "distance={distance} interval={interval} got {got} want {want}");
+        }
+    }
+
+    #[test]
+    fn dense_zero_confidence_grid_is_built_once_for_different_queries() {
+        let mut cache = ZeroConfidenceCache::default();
+        let first = cache.sum(1, 1);
+        assert_eq!(cache.evaluated_weights, 750_000);
+        let second = cache.sum(2, 1);
+        assert!((second - (first - (-0.5 * (1.0_f64 / 250_000.0).powi(2)).exp())).abs() < 1e-9);
+        for distance in [100_000, 200_000, 500_000, 750_000] {
+            let got = cache.sum(distance, 1);
+            let want = naive_zero_confidence_weight_sum(distance, 1);
+            assert!((got - want).abs() < 1e-12 * want.max(1.0), "distance={distance} got {got} want {want}");
+        }
+        assert_eq!(cache.evaluated_weights, 750_000, "queries on the same grid must reuse the suffix weights");
+        assert_eq!(cache.suffixes.len(), 1);
+    }
+
+    #[test]
+    fn dense_endpoint_compensation_matches_the_unoptimized_discrete_formula() {
+        let samples = vec![
+            TranslationSample { timestamp_us: 0, position: [0.0; 3], ref_inv_depth: 1.0, confidence: 1.0, track_age_s: 100.0, segment: 0 },
+            TranslationSample { timestamp_us: 1, position: [1.0, 0.0, 0.0], ref_inv_depth: 1.0, confidence: 1.0, track_age_s: 100.0, segment: 0 },
+            TranslationSample { timestamp_us: 1_000_000, position: [0.0; 3], ref_inv_depth: 1.0, confidence: 1.0, track_age_s: 100.0, segment: 0 },
+        ];
+        let t = built(samples, OpticalTranslationSettings { smoothness_s: 0.001, ..Default::default() }, 0.0);
+        let g1 = (-0.5 * (1.0_f64 / 1000.0).powi(2)).exp();
+        let g2 = (-0.5 * (2.0_f64 / 1000.0).powi(2)).exp();
+        let residual = 1.0 - (1.0 - g2) / (1.0 + g1 + g2);
+        let real_weight = 1.0 + (-0.5 * (1.0_f64 / 250_000.0).powi(2)).exp();
+        let denominator = real_weight + naive_zero_confidence_weight_sum(2, 1);
+        let want = residual * real_weight / denominator * (1.0 / 250_000.0);
+        let got = t.shift_at(0.001).x;
+        assert!((got - want).abs() < 1e-12 * want.abs(), "got {got} want {want}");
+        assert_eq!(t.shift_at(0.0).norm(), 0.0);
+        assert_eq!(t.shift_at(1000.0).norm(), 0.0);
     }
 }
