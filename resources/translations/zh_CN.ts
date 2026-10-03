@@ -4739,6 +4739,16 @@ Please provide frame rate: </source>
         <source>AI SYNC</source>
         <translation>AI 同步</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="456"/>
+        <source>Optical sync</source>
+        <translation>光学同步</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="457"/>
+        <source>Synchronize by tracking features in the video instead of using optical flow. Also used by batch matching and deep matching. Experimental: it may find no sync point for extreme rotation or very smooth motion.</source>
+        <translation>通过跟踪画面中的特征点来同步，不使用光流。批量匹配和深度匹配同样使用。实验功能：极端旋转或非常平滑的运动可能找不到同步点。</translation>
+    </message>
 </context>
 <context>
     <name>SliderWithField</name>

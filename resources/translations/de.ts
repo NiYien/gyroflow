@@ -4686,6 +4686,16 @@ Bitte Bildrate in FPS angeben: </translation>
         <source>AI SYNC</source>
         <translation>AI-Sync</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="456"/>
+        <source>Optical sync</source>
+        <translation>Optische Synchronisierung</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="457"/>
+        <source>Synchronize by tracking features in the video instead of using optical flow. Also used by batch matching and deep matching. Experimental: it may find no sync point for extreme rotation or very smooth motion.</source>
+        <translation>Synchronisiert durch Verfolgung von Bildmerkmalen im Video statt durch optischen Fluss. Wird auch beim Stapelabgleich und Tiefenabgleich verwendet. Experimentell: Bei extremer Drehung oder sehr gleichmäßiger Bewegung wird möglicherweise kein Synchronisierungspunkt gefunden.</translation>
+    </message>
 </context>
 <context>
     <name>SliderWithField</name>

@@ -4349,6 +4349,16 @@ Please provide frame rate: </source>
         <source>AI SYNC</source>
         <translation type="unfinished"></translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="456"/>
+        <source>Optical sync</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="457"/>
+        <source>Synchronize by tracking features in the video instead of using optical flow. Also used by batch matching and deep matching. Experimental: it may find no sync point for extreme rotation or very smooth motion.</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>SliderWithField</name>

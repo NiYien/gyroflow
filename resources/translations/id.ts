@@ -4683,6 +4683,16 @@ Silakan masukan frame rate: </translation>
         <source>AI SYNC</source>
         <translation>Sinkronisasi AI</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="456"/>
+        <source>Optical sync</source>
+        <translation>Sinkronisasi optik</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="457"/>
+        <source>Synchronize by tracking features in the video instead of using optical flow. Also used by batch matching and deep matching. Experimental: it may find no sync point for extreme rotation or very smooth motion.</source>
+        <translation>Menyinkronkan dengan melacak fitur dalam video alih-alih menggunakan aliran optik. Juga digunakan untuk pencocokan batch dan pencocokan mendalam. Eksperimental: mungkin tidak menemukan titik sinkronisasi saat rotasi ekstrem atau gerakan sangat halus.</translation>
+    </message>
 </context>
 <context>
     <name>SliderWithField</name>

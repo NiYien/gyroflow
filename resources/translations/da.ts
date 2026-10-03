@@ -4687,6 +4687,16 @@ Angiv venligst billedhastighed: </translation>
         <source>AI SYNC</source>
         <translation>AI-sync</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="456"/>
+        <source>Optical sync</source>
+        <translation>Optisk synkronisering</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="457"/>
+        <source>Synchronize by tracking features in the video instead of using optical flow. Also used by batch matching and deep matching. Experimental: it may find no sync point for extreme rotation or very smooth motion.</source>
+        <translation>Synkroniserer ved at spore detaljer i videoen i stedet for at bruge optisk flow. Bruges også til batchmatchning og dyb matchning. Eksperimentelt: ved ekstrem rotation eller meget jævn bevægelse findes muligvis intet synkroniseringspunkt.</translation>
+    </message>
 </context>
 <context>
     <name>SliderWithField</name>

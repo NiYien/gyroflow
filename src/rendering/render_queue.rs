@@ -25250,6 +25250,21 @@ mod tests {
     }
 
     #[test]
+    fn optical_sync_checkbox_is_one_way_and_unpersisted() {
+        let qml = include_str!("../ui/menu/SimpleStabilization.qml");
+        for needle in [
+            "id: opticalSyncCb;",
+            "render_queue.batch_sync_optical = checked;",
+            "render_queue.set_jobs_sync_offset_method(checked ? 3 : 2);",
+            "controller.has_optical_sync_support()",
+            "Component.onCompleted: render_queue.batch_sync_optical = checked;",
+        ] {
+            assert!(qml.contains(needle), "missing: {needle}");
+        }
+        assert!(!qml.contains("simpleOpticalSync"), "the optical sync toggle must not be persisted");
+    }
+
+    #[test]
     fn ai_sync_writes_to_batch_sync_ai_method_are_guarded_by_neuflow_support() {
         // Hiding the AI SYNC checkbox is not a guard. `visible: false` only affects
         // painting: the element is still instantiated, `checked` is still evaluated

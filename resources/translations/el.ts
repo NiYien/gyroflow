@@ -4688,6 +4688,16 @@ Please provide frame rate: </source>
         <source>AI SYNC</source>
         <translation>Συγχρονισμός AI</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="456"/>
+        <source>Optical sync</source>
+        <translation>Οπτικός συγχρονισμός</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="457"/>
+        <source>Synchronize by tracking features in the video instead of using optical flow. Also used by batch matching and deep matching. Experimental: it may find no sync point for extreme rotation or very smooth motion.</source>
+        <translation>Συγχρονίζει παρακολουθώντας χαρακτηριστικά στο βίντεο αντί να χρησιμοποιεί οπτική ροή. Χρησιμοποιείται επίσης στη μαζική και στη βαθιά αντιστοίχιση. Πειραματικό: μπορεί να μη βρει σημείο συγχρονισμού σε ακραία περιστροφή ή πολύ ομαλή κίνηση.</translation>
+    </message>
 </context>
 <context>
     <name>SliderWithField</name>

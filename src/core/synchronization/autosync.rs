@@ -1639,9 +1639,9 @@ mod tests {
     }
 
     #[test]
-    fn simple_mode_never_sends_the_optical_offset_method() {
+    fn simple_mode_sends_the_optical_offset_method_only_when_opted_in() {
         let qml = include_str!("../../ui/menu/Synchronization.qml");
-        assert!(qml.contains("\"offset_method\":      (isSimple && offsetMethod.currentIndex === 3) ? 2 : offsetMethod.currentIndex,"));
+        assert!(qml.contains("\"offset_method\":      (isSimple && render_queue.batch_sync_optical) ? 3 : ((isSimple && offsetMethod.currentIndex === 3) ? 2 : offsetMethod.currentIndex),"));
         assert!(qml.contains("QT_TRANSLATE_NOOP(\"Popup\", \"Optical motion\")"));
     }
 }

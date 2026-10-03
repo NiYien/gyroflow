@@ -4680,6 +4680,16 @@ Lütfen frame rate&apos;i belirtin: </translation>
         <source>AI SYNC</source>
         <translation>AI senkronizasyonu</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="456"/>
+        <source>Optical sync</source>
+        <translation>Optik senkronizasyon</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="457"/>
+        <source>Synchronize by tracking features in the video instead of using optical flow. Also used by batch matching and deep matching. Experimental: it may find no sync point for extreme rotation or very smooth motion.</source>
+        <translation>Optik akış yerine videodaki özellikleri izleyerek senkronize eder. Toplu eşleştirme ve derin eşleştirmede de kullanılır. Deneysel: aşırı dönüş veya çok yumuşak hareket sırasında senkronizasyon noktası bulamayabilir.</translation>
+    </message>
 </context>
 <context>
     <name>SliderWithField</name>

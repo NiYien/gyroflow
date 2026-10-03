@@ -4687,6 +4687,16 @@ Podaj ilość klatek na sekundę: </translation>
         <source>AI SYNC</source>
         <translation>Synchronizacja AI</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="456"/>
+        <source>Optical sync</source>
+        <translation>Synchronizacja optyczna</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="457"/>
+        <source>Synchronize by tracking features in the video instead of using optical flow. Also used by batch matching and deep matching. Experimental: it may find no sync point for extreme rotation or very smooth motion.</source>
+        <translation>Synchronizuje przez śledzenie cech w filmie zamiast używania przepływu optycznego. Używana także w dopasowaniu wsadowym i głębokim. Eksperymentalna: przy skrajnym obrocie lub bardzo płynnym ruchu może nie znaleźć punktu synchronizacji.</translation>
+    </message>
 </context>
 <context>
     <name>SliderWithField</name>

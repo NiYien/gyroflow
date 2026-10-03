@@ -4687,6 +4687,16 @@ Forneça a taxa de quadros:</translation>
         <source>AI SYNC</source>
         <translation>Sincronização IA</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="456"/>
+        <source>Optical sync</source>
+        <translation>Sincronização óptica</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="457"/>
+        <source>Synchronize by tracking features in the video instead of using optical flow. Also used by batch matching and deep matching. Experimental: it may find no sync point for extreme rotation or very smooth motion.</source>
+        <translation>Sincroniza seguindo características no vídeo em vez de usar fluxo óptico. Também utilizada na correspondência em lote e na correspondência profunda. Experimental: pode não encontrar nenhum ponto de sincronização com rotação extrema ou movimento muito suave.</translation>
+    </message>
 </context>
 <context>
     <name>SliderWithField</name>

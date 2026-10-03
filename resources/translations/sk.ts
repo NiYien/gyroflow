@@ -4687,6 +4687,16 @@ Prosím nastav snímkovú frekvenciu:</translation>
         <source>AI SYNC</source>
         <translation>AI synchronizácia</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="456"/>
+        <source>Optical sync</source>
+        <translation>Optická synchronizácia</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="457"/>
+        <source>Synchronize by tracking features in the video instead of using optical flow. Also used by batch matching and deep matching. Experimental: it may find no sync point for extreme rotation or very smooth motion.</source>
+        <translation>Synchronizuje sledovaním prvkov vo videu namiesto optického toku. Používa sa aj pri dávkovom a hĺbkovom párovaní. Experimentálne: pri extrémnej rotácii alebo veľmi plynulom pohybe nemusí nájsť žiadny synchronizačný bod.</translation>
+    </message>
 </context>
 <context>
     <name>SliderWithField</name>

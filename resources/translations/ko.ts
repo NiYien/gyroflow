@@ -4686,6 +4686,16 @@ Please provide frame rate: </source>
         <source>AI SYNC</source>
         <translation>AI 동기화</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="456"/>
+        <source>Optical sync</source>
+        <translation>광학 동기화</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="457"/>
+        <source>Synchronize by tracking features in the video instead of using optical flow. Also used by batch matching and deep matching. Experimental: it may find no sync point for extreme rotation or very smooth motion.</source>
+        <translation>광학 흐름 대신 영상의 특징점을 추적하여 동기화합니다. 일괄 매칭과 심층 매칭에도 사용됩니다. 실험적 기능: 극심한 회전이나 매우 부드러운 움직임에서는 동기화 지점을 찾지 못할 수 있습니다.</translation>
+    </message>
 </context>
 <context>
     <name>SliderWithField</name>

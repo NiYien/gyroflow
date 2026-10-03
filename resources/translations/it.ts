@@ -4684,6 +4684,16 @@ Scegliere il frame rate: </translation>
         <source>AI SYNC</source>
         <translation>Sincronizzazione IA</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="456"/>
+        <source>Optical sync</source>
+        <translation>Sincronizzazione ottica</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="457"/>
+        <source>Synchronize by tracking features in the video instead of using optical flow. Also used by batch matching and deep matching. Experimental: it may find no sync point for extreme rotation or very smooth motion.</source>
+        <translation>Sincronizza seguendo le caratteristiche nel video anziché utilizzare il flusso ottico. Utilizzata anche per l’abbinamento in batch e l’abbinamento approfondito. Sperimentale: potrebbe non trovare alcun punto di sincronizzazione in caso di rotazione estrema o movimento molto fluido.</translation>
+    </message>
 </context>
 <context>
     <name>SliderWithField</name>

@@ -4686,6 +4686,16 @@ S&apos;il vous plait, indiquez le nombre d&apos;images par seconde :</translatio
         <source>AI SYNC</source>
         <translation>Synchro IA</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="456"/>
+        <source>Optical sync</source>
+        <translation>Synchronisation optique</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="457"/>
+        <source>Synchronize by tracking features in the video instead of using optical flow. Also used by batch matching and deep matching. Experimental: it may find no sync point for extreme rotation or very smooth motion.</source>
+        <translation>Synchronise en suivant les caractéristiques de l’image dans la vidéo plutôt qu’en utilisant le flux optique. Également utilisée pour l’association par lots et l’association approfondie. Expérimental : une rotation extrême ou un mouvement très fluide peut empêcher de trouver un point de synchronisation.</translation>
+    </message>
 </context>
 <context>
     <name>SliderWithField</name>

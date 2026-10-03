@@ -4686,6 +4686,16 @@ Anna kuvanopeus:</translation>
         <source>AI SYNC</source>
         <translation>AI-synkronointi</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="456"/>
+        <source>Optical sync</source>
+        <translation>Optinen synkronointi</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="457"/>
+        <source>Synchronize by tracking features in the video instead of using optical flow. Also used by batch matching and deep matching. Experimental: it may find no sync point for extreme rotation or very smooth motion.</source>
+        <translation>Synkronoi seuraamalla videon piirteitä optisen virtauksen sijaan. Käytetään myös erä- ja syväkohdistuksessa. Kokeellinen: voimakas kierto tai hyvin tasainen liike voi estää synkronointipisteen löytymisen.</translation>
+    </message>
 </context>
 <context>
     <name>SliderWithField</name>

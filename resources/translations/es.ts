@@ -4685,6 +4685,16 @@ Por favor, indique la velocidad del fotograma: </translation>
         <source>AI SYNC</source>
         <translation>Sincronización IA</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="456"/>
+        <source>Optical sync</source>
+        <translation>Sincronización óptica</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="457"/>
+        <source>Synchronize by tracking features in the video instead of using optical flow. Also used by batch matching and deep matching. Experimental: it may find no sync point for extreme rotation or very smooth motion.</source>
+        <translation>Sincroniza siguiendo características del vídeo en lugar de utilizar flujo óptico. También se utiliza en la asociación por lotes y la asociación profunda. Experimental: puede no encontrar ningún punto de sincronización con rotación extrema o movimiento muy suave.</translation>
+    </message>
 </context>
 <context>
     <name>SliderWithField</name>
