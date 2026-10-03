@@ -109,11 +109,27 @@ struct TranslationCurvePoint {
 const CONFIDENCE_SIGMA_US: i128 = 250_000;
 const CONFIDENCE_RADIUS_US: i128 = 3 * CONFIDENCE_SIGMA_US;
 
-#[derive(Default)]
+const ZERO_CONFIDENCE_CACHE_BYTES: usize = 32 * 1024 * 1024;
+const ZERO_CONFIDENCE_CACHE_GRIDS: usize = 2048;
+
 struct ZeroConfidenceCache {
     suffixes: HashMap<(i128, i128), Vec<f64>>,
+    payload_bytes: usize,
+    payload_limit: usize,
+    grid_limit: usize,
     #[cfg(test)]
     evaluated_weights: usize,
+}
+
+impl Default for ZeroConfidenceCache {
+    fn default() -> Self {
+        Self {
+            suffixes: HashMap::new(), payload_bytes: 0,
+            payload_limit: ZERO_CONFIDENCE_CACHE_BYTES, grid_limit: ZERO_CONFIDENCE_CACHE_GRIDS,
+            #[cfg(test)]
+            evaluated_weights: 0,
+        }
+    }
 }
 
 impl ZeroConfidenceCache {
@@ -121,22 +137,36 @@ impl ZeroConfidenceCache {
         if distance_us > CONFIDENCE_RADIUS_US { return 0.0; }
         let remainder = distance_us % interval_us;
         let first = if remainder == 0 { interval_us } else { remainder };
-        #[cfg(test)]
-        let evaluated_weights = &mut self.evaluated_weights;
-        // Integer timestamps put all queries with this remainder on the same finite grid.
-        let suffix = self.suffixes.entry((interval_us, remainder)).or_insert_with(|| {
-            let count = ((CONFIDENCE_RADIUS_US - first) / interval_us + 1) as usize;
-            let mut suffix = vec![0.0; count + 1];
-            for index in (0..count).rev() {
-                let distance = first + index as i128 * interval_us;
-                let weight = (-0.5 * (distance as f64 / CONFIDENCE_SIGMA_US as f64).powi(2)).exp();
-                suffix[index] = weight + suffix[index + 1];
+        let key = (interval_us, remainder);
+        let index = ((distance_us - first) / interval_us) as usize;
+        if let Some(suffix) = self.suffixes.get(&key) { return suffix[index]; }
+        let count = ((CONFIDENCE_RADIUS_US - first) / interval_us + 1) as usize;
+        let payload = (count + 1) * std::mem::size_of::<f64>();
+        if payload > self.payload_limit.saturating_sub(self.payload_bytes) || self.suffixes.len() >= self.grid_limit {
+            // Stream every term when another cached grid would exceed either resource budget.
+            let mut distance = distance_us;
+            let mut sum = 0.0;
+            while distance <= CONFIDENCE_RADIUS_US {
+                sum += (-0.5 * (distance as f64 / CONFIDENCE_SIGMA_US as f64).powi(2)).exp();
+                #[cfg(test)]
+                { self.evaluated_weights += 1; }
+                distance += interval_us;
             }
-            #[cfg(test)]
-            { *evaluated_weights += count; }
-            suffix
-        });
-        suffix[((distance_us - first) / interval_us) as usize]
+            return sum;
+        }
+        // Integer timestamps put all queries with this remainder on the same finite grid.
+        let mut suffix = vec![0.0; count + 1];
+        for index in (0..count).rev() {
+            let distance = first + index as i128 * interval_us;
+            let weight = (-0.5 * (distance as f64 / CONFIDENCE_SIGMA_US as f64).powi(2)).exp();
+            suffix[index] = weight + suffix[index + 1];
+        }
+        #[cfg(test)]
+        { self.evaluated_weights += count; }
+        let sum = suffix[index];
+        self.payload_bytes += payload;
+        self.suffixes.insert(key, suffix);
+        sum
     }
 }
 
@@ -553,5 +583,48 @@ mod tests {
         assert!((got - want).abs() < 1e-12 * want.abs(), "got {got} want {want}");
         assert_eq!(t.shift_at(0.0).norm(), 0.0);
         assert_eq!(t.shift_at(1000.0).norm(), 0.0);
+    }
+
+    #[test]
+    fn zero_confidence_cache_respects_its_payload_budget() {
+        let mut cache = ZeroConfidenceCache { payload_limit: 64, ..Default::default() };
+        let cached = cache.sum(100_000, 100_000);
+        assert_eq!(cache.payload_bytes, 64);
+        assert_eq!(cache.suffixes.len(), 1);
+        let evaluated = cache.evaluated_weights;
+        for distance in [10_000, 110_000, 210_000] {
+            let got = cache.sum(distance, 100_000);
+            assert_eq!(got, naive_zero_confidence_weight_sum(distance, 100_000), "budget fallback must keep every discrete term");
+            assert_eq!(cache.payload_bytes, 64);
+            assert_eq!(cache.suffixes.len(), 1);
+        }
+        let after_fallback = cache.evaluated_weights;
+        assert!(after_fallback > evaluated);
+        assert_eq!(cache.sum(100_000, 100_000), cached, "already cached grids remain usable at the budget limit");
+        assert_eq!(cache.evaluated_weights, after_fallback);
+        let mut none = ZeroConfidenceCache { payload_limit: 0, ..Default::default() };
+        assert_eq!(none.sum(100_000, 100_000), naive_zero_confidence_weight_sum(100_000, 100_000));
+        assert_eq!(none.payload_bytes, 0);
+        assert!(none.suffixes.is_empty());
+    }
+
+    #[test]
+    fn zero_confidence_cache_respects_its_grid_budget() {
+        let mut cache = ZeroConfidenceCache { grid_limit: 2, ..Default::default() };
+        cache.sum(100_000, 100_000);
+        cache.sum(200_000, 200_000);
+        assert_eq!(cache.suffixes.len(), 2);
+        let payload = cache.payload_bytes;
+        let got = cache.sum(150_000, 150_000);
+        assert_eq!(got, naive_zero_confidence_weight_sum(150_000, 150_000));
+        assert_eq!(cache.suffixes.len(), 2);
+        assert_eq!(cache.payload_bytes, payload);
+        let evaluated = cache.evaluated_weights;
+        cache.sum(300_000, 100_000);
+        assert_eq!(cache.evaluated_weights, evaluated, "a different query on a cached grid must still reuse its weights");
+        let mut none = ZeroConfidenceCache { grid_limit: 0, ..Default::default() };
+        assert_eq!(none.sum(100_000, 100_000), naive_zero_confidence_weight_sum(100_000, 100_000));
+        assert!(none.suffixes.is_empty());
+        assert_eq!(none.payload_bytes, 0);
     }
 }
