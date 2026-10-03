@@ -30,6 +30,7 @@ mod autosync;
 pub mod batch_clock;
 pub mod deep_match;
 pub mod lens_delay;
+pub mod optical_analysis;
 pub mod optical_motion;
 pub mod optimsync;
 pub mod posterior;
