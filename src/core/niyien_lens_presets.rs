@@ -632,7 +632,7 @@ pub fn resolve_anamorphic_config(config: Option<&LensGroupConfig>) -> Option<Res
 }
 
 fn find_preset_by_id(preset_id: &str) -> Option<AnamorphicPreset> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     if let Some(preset) = test_presets::find(preset_id) {
         return Some(preset);
     }
@@ -1251,8 +1251,8 @@ fn settings_dir() -> PathBuf {
     crate::settings::data_dir()
 }
 
-#[cfg(test)]
-pub(crate) mod test_presets {
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_presets {
     use super::AnamorphicPreset;
     use std::cell::RefCell;
 
@@ -1265,7 +1265,7 @@ pub(crate) mod test_presets {
     }
 
     /// Supplies fixed catalog inputs to one test without changing other threads or the user's files.
-    pub(crate) fn with_presets<R>(presets: Vec<AnamorphicPreset>, test: impl FnOnce() -> R) -> R {
+    pub fn with_presets<R>(presets: Vec<AnamorphicPreset>, test: impl FnOnce() -> R) -> R {
         struct Restore(Option<Vec<AnamorphicPreset>>);
         impl Drop for Restore {
             fn drop(&mut self) {

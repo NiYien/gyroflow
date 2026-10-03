@@ -135,6 +135,8 @@ neuflow-burn = ["dep:burn", "dep:burn-store", "dep:cubecl-runtime", "dep:burn-on
 neuflow = ["neuflow-ort", "neuflow-burn"]
 # Dev-only: enables the sync_replay offline decision-replay bin.
 sync-replay = []
+# Dev-only fixtures for application tests; never enabled by default.
+test-support = []
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.22"
