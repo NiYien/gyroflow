@@ -319,6 +319,7 @@ pub struct StabilizationManager {
     #[cfg(feature = "opencv")]
     pub lens_calibrator: Arc<RwLock<Option<LensCalibrator>>>,
 
+    pub optical_generation: Arc<AtomicU64>,
     pub current_compute_id: Arc<AtomicU64>,
     pub smoothing_checksum: Arc<AtomicU64>,
     pub zooming_checksum: Arc<AtomicU64>,
@@ -406,6 +407,7 @@ impl Default for StabilizationManager {
             gyro: Arc::new(RwLock::new(GyroSource::new())),
             lens: Arc::new(RwLock::new(LensProfile::default())),
 
+            optical_generation: Arc::new(AtomicU64::new(0)),
             current_compute_id: Arc::new(AtomicU64::new(0)),
             smoothing_checksum: Arc::new(AtomicU64::new(0)),
             zooming_checksum: Arc::new(AtomicU64::new(0)),
