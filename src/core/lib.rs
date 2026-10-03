@@ -2883,18 +2883,26 @@ impl StabilizationManager {
     /// changed since the analysis started (another file, a project, Clear: `optical_generation`), they're dropped
     /// instead, as "Cancelled"
     pub fn set_optical_measurements(&self, m: synchronization::optical_analysis::OpticalMeasurements) -> Result<(), String> {
+        self.set_optical_measurements_with_cancel(m, &AtomicBool::new(false))
+    }
+    /// Fits and keeps measurements, unless the analysis was cancelled before the commit.
+    pub fn set_optical_measurements_with_cancel(&self, m: synchronization::optical_analysis::OpticalMeasurements, cancel_flag: &AtomicBool) -> Result<(), String> {
         let m = Arc::new(m);
         let context = self.optical_context();
         loop {
             // A copy: the strength slider would wait for the fit on the settings lock
             let settings = *self.optical_settings.read();
             let correction = synchronization::optical_analysis::solve(&m, &settings)?;
+            #[cfg(test)]
+            tests::OPTICAL_MEASUREMENTS_BEFORE_COMMIT.with(|hook| { if let Some(hook) = hook.take() { hook(); } });
             let mut kept = self.optical_measurements.write();
-            if self.optical_generation.load(SeqCst) != m.generation { return Err("Cancelled".into()); }
-            // Moved during the fit: the refit that asked for found no measurements to refit yet, so it's up to this one
-            if *self.optical_settings.read() != settings { continue; }
-            *kept = Some(m);
             let mut gyro = self.gyro.write();
+            // Match the import/export lock order and keep the settings stable through replacement.
+            let current_settings = self.optical_settings.read();
+            if cancel_flag.load(SeqCst) || self.optical_generation.load(SeqCst) != m.generation { return Err("Cancelled".into()); }
+            // Moved during the fit: the refit that asked for found no measurements to refit yet, so it's up to this one
+            if *current_settings != settings { continue; }
+            *kept = Some(m);
             gyro.optical_context = context;
             gyro.set_optical_correction(Some(correction));
             break;
@@ -2925,8 +2933,13 @@ impl StabilizationManager {
         let mut c = synchronization::optical_analysis::solve(&m, &settings)?;
         {
             let kept = self.optical_measurements.read();
-            if !kept.as_ref().is_some_and(|k| Arc::ptr_eq(k, &m)) || *self.optical_settings.read() != settings { return Ok(false); }
+            if !kept.as_ref().is_some_and(|k| Arc::ptr_eq(k, &m)) { return Ok(false); }
+            #[cfg(test)]
+            tests::OPTICAL_REFIT_BEFORE_COMMIT.with(|hook| { if let Some(hook) = hook.take() { hook(); } });
             let mut gyro = self.gyro.write();
+            // Validate under the commit locks so an older fit cannot replace a newer strength.
+            let current_settings = self.optical_settings.read();
+            if *current_settings != settings { return Ok(false); }
             let Some(fitted) = &gyro.optical_correction else { return Ok(false) };
             c.enabled = fitted.enabled;
             gyro.set_optical_correction(Some(c));
@@ -2963,7 +2976,8 @@ impl StabilizationManager {
         if let Some(settings) = fitted_with {
             // Fitted with another strength than the one set, and the measurements to refit aren't here any more (a
             // project loaded from disk keeps only the correction): only another analysis applies the new one
-            info["outdated"] = (settings != *self.optical_settings.read() && self.valid_optical_measurements().is_none()).into();
+            let current_settings = *self.optical_settings.read();
+            info["outdated"] = (settings != current_settings && self.valid_optical_measurements().is_none()).into();
         }
         info
     }
@@ -5378,6 +5392,11 @@ mod tests {
     use super::*;
     use serial_test::serial;
 
+    thread_local! {
+        pub(super) static OPTICAL_REFIT_BEFORE_COMMIT: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = Default::default();
+        pub(super) static OPTICAL_MEASUREMENTS_BEFORE_COMMIT: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = Default::default();
+    }
+
     #[test]
     fn plugin_external_io_deny_ignores_project_video_and_gyro_paths() {
         let temp = tempfile::tempdir().unwrap();
@@ -5663,6 +5682,63 @@ mod tests {
         let correction = gyro.optical_correction.as_ref().unwrap();
         assert_eq!(correction.settings.strength, 0.9);
         assert!(!correction.enabled);
+    }
+
+    #[test]
+    fn optical_commit_stale_refit_cannot_overwrite_latest_strength() {
+        let manager = Arc::new(optical_project_manager());
+        manager.set_optical_measurements(optical_fixture_measurements(&manager, manager.optical_generation.load(SeqCst))).unwrap();
+        manager.set_optical_correction_enabled(false);
+        assert!(manager.set_optical_correction_strength(0.2));
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (resume_tx, resume_rx) = std::sync::mpsc::channel();
+        let worker_manager = manager.clone();
+        let old = std::thread::spawn(move || {
+            OPTICAL_REFIT_BEFORE_COMMIT.with(|hook| hook.replace(Some(Box::new(move || {
+                ready_tx.send(()).unwrap();
+                resume_rx.recv().unwrap();
+            }))));
+            worker_manager.refit_optical_correction()
+        });
+        ready_rx.recv().unwrap();
+        assert!(manager.set_optical_correction_strength(0.9));
+        let latest_result = manager.refit_optical_correction();
+        let latest = manager.gyro.read().optical_correction.clone().unwrap();
+        resume_tx.send(()).unwrap();
+        let old_result = old.join().unwrap();
+        assert_eq!(latest_result, Ok(true));
+        let gyro = manager.gyro.read();
+        let installed = gyro.optical_correction.as_ref().unwrap();
+        assert_eq!(installed.settings.strength, 0.9, "the older worker must not replace the latest fit");
+        assert_eq!(installed.coeffs, latest.coeffs);
+        assert!(!installed.enabled);
+        assert_eq!(old_result, Ok(false));
+    }
+
+    #[test]
+    fn optical_commit_cancel_after_fit_preserves_installed_state() {
+        let manager = optical_project_manager();
+        manager.set_optical_measurements(optical_fixture_measurements(&manager, manager.optical_generation.load(SeqCst))).unwrap();
+        manager.set_optical_correction_enabled(false);
+        let kept = manager.optical_measurements.read().clone().unwrap();
+        let before = manager.gyro.read().clone();
+        let mut measurements = optical_fixture_measurements(&manager, manager.optical_generation.load(SeqCst));
+        measurements.frames += 1;
+        let cancel = Arc::new(AtomicBool::new(false));
+        let hook_cancel = cancel.clone();
+        OPTICAL_MEASUREMENTS_BEFORE_COMMIT.with(|hook| hook.replace(Some(Box::new(move || {
+            hook_cancel.store(true, SeqCst);
+        }))));
+        let result = manager.set_optical_measurements_with_cancel(measurements, &cancel);
+        assert_eq!(result, Err("Cancelled".into()));
+        assert!(Arc::ptr_eq(manager.optical_measurements.read().as_ref().unwrap(), &kept));
+        let after = manager.gyro.read();
+        assert_eq!(serde_json::to_value(&after.optical_correction).unwrap(), serde_json::to_value(&before.optical_correction).unwrap());
+        assert_eq!(after.optical_context, before.optical_context);
+        assert_eq!(after.optical_uncorrected_checksum, before.optical_uncorrected_checksum);
+        assert_eq!(after.optical_correction_applied, before.optical_correction_applied);
+        assert_eq!(after.quaternions, before.quaternions);
+        assert_eq!(after.smoothed_quaternions, before.smoothed_quaternions);
     }
 
     #[test]

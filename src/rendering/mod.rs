@@ -1175,7 +1175,7 @@ pub fn analyze_optically(stab: &StabilizationManager, cancel_flag: Arc<AtomicBoo
     let measurements = result.map_err(|e| e.to_string())??;
     if measurements.generation != operation_generation { return Err("Cancelled".into()); }
     // Kept, and fitted with the strength set
-    stab.set_optical_measurements(measurements)
+    stab.set_optical_measurements_with_cancel(measurements, &cancel_flag)
 }
 
 #[cfg(test)]
@@ -1199,7 +1199,7 @@ mod tests {
         assert_eq!(checks.len(), 2, "check cancellation before and after constructing each analysis");
         assert!(attempt < checks[0] && checks[0] < created && created < checks[1]);
         let accepted = body.find("measurements.generation != operation_generation").expect("measurement generation check");
-        let installed = body.find("stab.set_optical_measurements(measurements)").expect("install measurements");
+        let installed = body.find("stab.set_optical_measurements_with_cancel(measurements, &cancel_flag)").expect("install measurements");
         assert!(accepted < installed, "a retry cannot install measurements from a newer generation");
     }
 
