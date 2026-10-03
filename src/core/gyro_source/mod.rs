@@ -2752,6 +2752,38 @@ mod tests {
         source
     }
 
+    #[test]
+    fn integration_and_checksum_golden() {
+        // Pins integration and checksum without an optical correction on this toolchain.
+        // To obtain the baseline, set GOLDEN to 0, run this test and copy the reported value.
+        const GOLDEN: u64 = 10629399600516531805;
+        let samples = (0..2000).map(|i| {
+            let t = i as f64 / 1000.0;
+            motion_sample(i as f64, [
+                20.0 * (t * 3.0).sin(),
+                15.0 * (t * 5.0).sin(),
+                10.0 * (t * 7.0).sin(),
+            ], Some([0.0, 0.0, 9.80665]), None)
+        }).collect::<Vec<_>>();
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        let mut eat = |v: u64| h = (h ^ v).wrapping_mul(0x0000_0100_0000_01b3);
+        for method in [1, 2] {
+            let mut gyro = source_with_motion(metadata_with_motion(false, samples.clone()));
+            gyro.duration_ms = 2000.0;
+            gyro.integration_method = method;
+            gyro.integrate();
+            assert!(!gyro.quaternions.is_empty());
+            for (k, q) in &gyro.quaternions {
+                eat(*k as u64);
+                for c in [q.w, q.i, q.j, q.k] {
+                    eat(c.to_bits());
+                }
+            }
+            eat(gyro.get_checksum());
+        }
+        assert_eq!(h, GOLDEN);
+    }
+
     fn assert_vector_close(actual: [f64; 3], expected: [f64; 3]) {
         for axis in 0..3 {
             assert!(
