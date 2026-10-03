@@ -65,6 +65,12 @@ impl XorShift64 {
 /// the gyro quaternions it was made from (gyro time = video time - `true_offset_ms`, 1 kHz over -8000..20000 ms).
 /// Without the observation noise every motion costs exactly 0 at the truth, so the noise is part of the fixture.
 pub fn synth_window(spec: &SynthSpec) -> (WindowTracks, TimeQuat) {
+    let (mut windows, quats) = synth_windows(spec, &[WINDOW_START_MS]);
+    (windows.remove(0), quats)
+}
+
+/// Windows sharing one gyro motion; each start consumes its tracks and observation noise in order.
+pub fn synth_windows(spec: &SynthSpec, starts_ms: &[f64]) -> (Vec<WindowTracks>, TimeQuat) {
     let mut rng = XorShift64::new(spec.seed);
 
     // Angular velocity in the camera frame: per axis a sum of sines (frequency Hz, phase rad), `amp_dps` each
@@ -85,39 +91,56 @@ pub fn synth_window(spec: &SynthSpec) -> (WindowTracks, TimeQuat) {
 
     let dt = 1000.0 / spec.fps;
     let n_frames = (spec.duration_ms / dt).round() as usize;
-    let frames: Vec<FrameTiming> = (0..n_frames).map(|k| {
-        let ts_ms = WINDOW_START_MS + k as f64 * dt;
-        FrameTiming { index: (ts_ms / dt).round() as usize, ts_ms, mid_ms: ts_ms, readout_ms: spec.readout_ms }
-    }).collect();
+    let windows = starts_ms.iter().map(|&start_ms| {
+        let frames: Vec<FrameTiming> = (0..n_frames).map(|k| {
+            let ts_ms = start_ms + k as f64 * dt;
+            FrameTiming { index: (ts_ms / dt).round() as usize, ts_ms, mid_ms: ts_ms, readout_ms: spec.readout_ms }
+        }).collect();
 
-    // Tracks: a world direction within the field of view at the window's middle, a parallax drift direction and a
-    // fixed position along the readout in [0, 1)
-    let q_mid = GyroSource::clamped_quat_at_gyro_timestamp(&quats, WINDOW_START_MS + spec.duration_ms / 2.0 - spec.true_offset_ms);
-    let half_fov = HALF_FOV_DEG.to_radians();
-    let tracks: Vec<(Vector3<f64>, Vector3<f64>, f32)> = (0..spec.tracks).map(|_| {
-        let (ax, ay) = (rng.range(-half_fov, half_fov), rng.range(-half_fov, half_fov));
-        let w = q_mid * Vector3::new(ax.tan(), ay.tan(), -1.0).normalize();
-        let d = Vector3::new(rng.gauss(), rng.gauss(), rng.gauss()).normalize();
-        let f = (rng.next_u64() >> 40) as f32 / (1u32 << 24) as f32;
-        (w, d, f)
-    }).collect();
+        // Tracks: a world direction within the field of view at the window's middle, a parallax drift direction and a
+        // fixed position along the readout in [0, 1)
+        let q_mid = GyroSource::clamped_quat_at_gyro_timestamp(&quats, start_ms + spec.duration_ms / 2.0 - spec.true_offset_ms);
+        let half_fov = HALF_FOV_DEG.to_radians();
+        let tracks: Vec<(Vector3<f64>, Vector3<f64>, f32)> = (0..spec.tracks).map(|_| {
+            let (ax, ay) = (rng.range(-half_fov, half_fov), rng.range(-half_fov, half_fov));
+            let w = q_mid * Vector3::new(ax.tan(), ay.tan(), -1.0).normalize();
+            let d = Vector3::new(rng.gauss(), rng.gauss(), rng.gauss()).normalize();
+            let f = (rng.next_u64() >> 40) as f32 / (1u32 << 24) as f32;
+            (w, d, f)
+        }).collect();
 
-    // One observation per (frame, track), shared by the two pairs the frame belongs to, each with its own noise
-    let sigma = spec.noise_px / spec.focal_px;
-    let bearings: Vec<Vec<Vector3<f64>>> = frames.iter().map(|fr| {
-        tracks.iter().map(|(w, d, f)| {
-            let world = (w + d * (spec.parallax * (fr.ts_ms - WINDOW_START_MS) / 1000.0)).normalize();
-            let q = GyroSource::clamped_quat_at_gyro_timestamp(&quats, row_time_ms(fr, *f) - spec.true_offset_ms);
-            let n = Vector3::new(rng.gauss(), rng.gauss(), rng.gauss()) * sigma;
-            (q.inverse() * world + n).normalize()
-        }).collect()
-    }).collect();
+        // One observation per (frame, track), shared by the two pairs the frame belongs to, each with its own noise
+        let sigma = spec.noise_px / spec.focal_px;
+        let bearings: Vec<Vec<Vector3<f64>>> = frames.iter().map(|fr| {
+            tracks.iter().map(|(w, d, f)| {
+                let world = (w + d * (spec.parallax * (fr.ts_ms - start_ms) / 1000.0)).normalize();
+                let q = GyroSource::clamped_quat_at_gyro_timestamp(&quats, row_time_ms(fr, *f) - spec.true_offset_ms);
+                let n = Vector3::new(rng.gauss(), rng.gauss(), rng.gauss()) * sigma;
+                (q.inverse() * world + n).normalize()
+            }).collect()
+        }).collect();
 
-    let ids: Vec<u32> = (0..spec.tracks as u32).collect();
-    let pos: Vec<f32> = tracks.iter().map(|t| t.2).collect();
-    let pairs = (1..n_frames).map(|k| PairData {
-        seq: k - 1, a: frames[k - 1], b: frames[k], ids: ids.clone(),
-        va: bearings[k - 1].clone(), vb: bearings[k].clone(), fa: pos.clone(), fb: pos.clone(),
+        let ids: Vec<u32> = (0..spec.tracks as u32).collect();
+        let pos: Vec<f32> = tracks.iter().map(|t| t.2).collect();
+        let pairs = (1..n_frames).map(|k| PairData {
+            seq: k - 1, a: frames[k - 1], b: frames[k], ids: ids.clone(),
+            va: bearings[k - 1].clone(), vb: bearings[k].clone(), fa: pos.clone(), fb: pos.clone(),
+        }).collect();
+        WindowTracks { pairs, focal_px: spec.focal_px }
     }).collect();
-    (WindowTracks { pairs, focal_px: spec.focal_px }, quats)
+    (windows, quats)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test] fn synth_window_golden() {
+        let spec = SynthSpec { fps: 30.0, duration_ms: 1000.0, tracks: 50, ..Default::default() };
+        let (w, quats) = synth_window(&spec);
+        let sum: f64 = w.pairs.iter().flat_map(|p| p.va.iter().chain(&p.vb)).flat_map(|v| v.iter()).sum();
+        let middle_w = quats.values().nth(quats.len() / 2).unwrap().w;
+        // Captured from the failing pre-refactor assertion with both expected values set to zero.
+        assert_eq!((sum, middle_w), (-2824.6429587792795, 0.9948696147650294));
+    }
 }

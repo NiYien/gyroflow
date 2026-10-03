@@ -25,11 +25,11 @@ use std::sync::atomic::{ AtomicBool, Ordering };
 use rayon::prelude::*;
 
 /// A window needs this many frame pairs, and its output valley this many measured ones
-const MIN_PAIRS: usize = 20;
+pub(super) const MIN_PAIRS: usize = 20;
 /// The output valley also needs this fraction of the window's frame pairs measured
-const MIN_MEASURED_FRACTION: f64 = 0.3;
+pub(super) const MIN_MEASURED_FRACTION: f64 = 0.3;
 /// The best coarse point may not lie within this many grid steps of a search interval end or an invalid grid point
-const EDGE_STEPS: f64 = 2.0;
+pub(super) const EDGE_STEPS: f64 = 2.0;
 /// Valleys closer to c1 than this are left to the near check, ms
 const MIN_VALLEY_SEP_MS: f64 = 50.0;
 /// Far candidates taken from the coarse curve
@@ -278,7 +278,7 @@ enum Kind { C1, Far, Near }
 /// So the lowest valid grid point (the first one on ties) is always a local minimum: its run's points next to it
 /// cost more, the one before it strictly because it is the first lowest. It is therefore c1, the lowest local minimum,
 /// and the spec's fallback for a curve without local minima cannot arise.
-fn local_minima(costs: &[f64], intervals: &[Range<usize>]) -> Vec<usize> {
+pub(super) fn local_minima(costs: &[f64], intervals: &[Range<usize>]) -> Vec<usize> {
     let mut minima = Vec::new();
     for interval in intervals {
         let mut i = interval.start;
@@ -300,7 +300,7 @@ fn local_minima(costs: &[f64], intervals: &[Range<usize>]) -> Vec<usize> {
 }
 
 /// Whether grid point `i` lies within EDGE_STEPS grid steps of an end of a search interval or of an invalid grid point
-fn is_edge(xs: &[f64], costs: &[f64], intervals: &[(f64, f64)], i: usize, step_ms: f64) -> bool {
+pub(super) fn is_edge(xs: &[f64], costs: &[f64], intervals: &[(f64, f64)], i: usize, step_ms: f64) -> bool {
     let reach = EDGE_STEPS * step_ms + EPS_MS;
     let x = xs[i];
     intervals.iter().any(|&(lo, hi)| (x - lo).abs() <= reach || (hi - x).abs() <= reach)

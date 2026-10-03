@@ -1,8 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Pure decisions from the optical measurements of one deep-match chunk.
+//! Optical measurements and pure decisions for one deep-match chunk.
 
-use super::search::FailReason;
+use std::sync::atomic::{ AtomicBool, Ordering::Relaxed };
+
+use rayon::prelude::*;
+
+use crate::gyro_source::TimeQuat;
+use super::{ interval_tables, row_time_span_ms, table_for, COARSE_IRLS_ROUNDS };
+use super::cost::{ eval_coarse, eval_full, select_tracks, CostContext, SgCache };
+use super::search::{ brent_min, grid, is_edge, local_minima, FailReason, MIN_MEASURED_FRACTION, MIN_PAIRS };
+use super::tracks::WindowTracks;
+
+const REFINE_HALF_MS: f64 = 10.0;
+const REFINE_TOL_MS: f64 = 1.0;
+const REFINE_MAX_EVALS: usize = 6;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JudgeMode { On, Shadow }
@@ -31,6 +43,107 @@ pub struct JudgeOutcome { pub mode: JudgeMode, pub verdict: JudgeVerdict }
 
 #[derive(Clone, Copy, Debug)]
 pub struct DecideParams { pub t_d_ms: f64, pub radius_ms: f64, pub g_strong: f64, pub support_ratio: f64 }
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct IntervalStat { pub lo: f64, pub hi: f64, pub min_ms: f64, pub min_cost: f64, pub interior: bool }
+
+/// Refine with full observations, keeping the measured-pair count of Brent's chosen evaluation.
+fn refine_valley(ctx: &CostContext, center_ms: f64, cancel: &AtomicBool) -> Option<(Valley, usize)> {
+    let mut best = (Valley { ms: center_ms, cost: f64::INFINITY }, 0);
+    brent_min(&mut |d| {
+        if cancel.load(Relaxed) { return f64::INFINITY; }
+        let sample = eval_full(ctx, d).filter(|r| r.bands > 0 && r.cost_px.is_finite());
+        let cost = sample.map_or(f64::INFINITY, |r| r.cost_px);
+        if cost <= best.0.cost {
+            best = (Valley { ms: d, cost }, sample.map_or(0, |r| r.pairs_measured));
+        }
+        cost
+    }, center_ms - REFINE_HALF_MS, center_ms + REFINE_HALF_MS, REFINE_TOL_MS, REFINE_MAX_EVALS);
+    if cancel.load(Relaxed) { None } else { Some(best) }
+}
+
+/// Judge candidate intervals within one window, on the caller's current Rayon pool.
+pub fn judge_window(w: &WindowTracks, quats: &TimeQuat, intervals: &[(f64, f64)], x: Option<f64>,
+                    coarse_points: usize, step_ms: f64, sg: &SgCache, cancel: &AtomicBool)
+                    -> Option<(WindowOutcome, Vec<IntervalStat>)> {
+    if cancel.load(Relaxed) { return None; }
+    let mut stats: Vec<IntervalStat> = intervals.iter().map(|&(lo, hi)| IntervalStat {
+        lo, hi, min_ms: f64::NAN, min_cost: f64::NAN, interior: false,
+    }).collect();
+    let unmeasured = |reason| WindowOutcome::Unmeasured { reason };
+    if w.pairs.len() < MIN_PAIRS { return Some((unmeasured(FailReason::WindowTooShort), stats)); }
+    let Some((lo, hi)) = row_time_span_ms(w) else { return Some((unmeasured(FailReason::FewMeasurements), stats)); };
+    let tables = interval_tables(quats, (lo, hi), intervals);
+    let ctxs: Vec<CostContext> = tables.iter().map(|quats| CostContext { window: w, quats, sg }).collect();
+    let subset = select_tracks(w, coarse_points);
+    let mut xs = Vec::new();
+    let mut ranges = Vec::with_capacity(intervals.len());
+    for interval in intervals {
+        let start = xs.len();
+        xs.extend(grid(std::slice::from_ref(interval), step_ms));
+        ranges.push(start..xs.len());
+    }
+    let costs: Option<Vec<f64>> = xs.par_iter().map(|&d| {
+        if cancel.load(Relaxed) { return None; }
+        Some(eval_coarse(&ctxs[table_for(intervals, d)], &subset, d, COARSE_IRLS_ROUNDS)
+            .filter(|c| c.is_finite()).unwrap_or(f64::NAN))
+    }).collect();
+    let costs = costs?;
+    if cancel.load(Relaxed) { return None; }
+    if costs.iter().all(|c| c.is_nan()) {
+        let covered = ranges.iter().enumerate().any(|(i, range)| range.clone().any(|k| tables[i].covers(lo - xs[k], hi - xs[k])));
+        let reason = if covered { FailReason::FewMeasurements } else { FailReason::NoGyroOverlap };
+        return Some((unmeasured(reason), stats));
+    }
+
+    let minima = local_minima(&costs, &ranges);
+    let mut levels = Vec::with_capacity(intervals.len());
+    let mut valleys = Vec::with_capacity(intervals.len());
+    for (i, range) in ranges.iter().enumerate() {
+        let level = range.clone().filter(|&k| costs[k].is_finite()).min_by(|&a, &b| costs[a].total_cmp(&costs[b]));
+        let interior = |k: usize| !is_edge(&xs[range.clone()], &costs[range.clone()],
+            std::slice::from_ref(&intervals[i]), k - range.start, step_ms);
+        let valley = minima.iter().copied().filter(|k| range.contains(k) && interior(*k))
+            .min_by(|&a, &b| costs[a].total_cmp(&costs[b]));
+        if let Some(k) = level {
+            stats[i].min_ms = xs[k];
+            stats[i].min_cost = costs[k];
+            stats[i].interior = minima.contains(&k) && interior(k);
+        }
+        levels.push(level);
+        valleys.push(valley);
+    }
+    let Some((best_interval, best_grid)) = valleys.iter().enumerate().filter_map(|(i, &k)| k.map(|k| (i, k)))
+        .min_by(|a, b| costs[a.1].total_cmp(&costs[b.1])) else {
+        return Some((WindowOutcome::Measured { best: None, g: None, second_ms: None, at_x: None }, stats));
+    };
+    let (best, pairs) = refine_valley(&ctxs[best_interval], xs[best_grid], cancel)?;
+    if !best.cost.is_finite() || pairs < MIN_PAIRS || (pairs as f64) < MIN_MEASURED_FRACTION * w.pairs.len() as f64 {
+        return Some((unmeasured(FailReason::FewMeasurements), stats));
+    }
+    // All valid coarse points in other intervals compete, including boundary minima and interval levels.
+    let second_grid = levels.iter().enumerate().filter(|&(i, _)| i != best_interval)
+        .filter_map(|(i, &k)| k.map(|k| (i, k))).min_by(|a, b| costs[a.1].total_cmp(&costs[b.1]));
+    let second = match second_grid {
+        Some((i, k)) => Some((i, refine_valley(&ctxs[i], xs[k], cancel)?.0)),
+        None => None,
+    };
+    let measured_second = second.filter(|(_, v)| v.cost.is_finite());
+    let g = measured_second.map(|(_, v)| {
+        if best.cost > 0.0 { v.cost / best.cost } else if v.cost > 0.0 { f64::INFINITY } else { 1.0 }
+    });
+    let at_x = match x.and_then(|x| intervals.iter().position(|&(lo, hi)| lo <= x && x <= hi)) {
+        Some(i) if i == best_interval => Some(best),
+        Some(i) if second.is_some_and(|(j, _)| j == i) => second.map(|(_, v)| v).filter(|v| v.cost.is_finite()),
+        Some(i) => match levels[i] {
+            Some(k) => Some(refine_valley(&ctxs[i], xs[k], cancel)?.0).filter(|v| v.cost.is_finite()),
+            None => None,
+        },
+        None => None,
+    };
+    if cancel.load(Relaxed) { return None; }
+    Some((WindowOutcome::Measured { best: Some(best), g, second_ms: measured_second.map(|(_, v)| v.ms), at_x }, stats))
+}
 
 /// Candidate neighbourhoods, with a separate posterior neighbourhood when needed.
 pub fn candidate_intervals(candidates: &[f64], posterior_x: Option<f64>, radius_ms: f64) -> Vec<(f64, f64)> {
@@ -121,6 +234,68 @@ pub fn is_decisive(outcome: Option<&JudgeOutcome>) -> bool {
 mod tests {
     use super::*;
     use super::super::search::FailReason;
+    use super::super::testutil::{ synth_windows, SynthSpec };
+
+    fn window_fixture() -> (Vec<WindowTracks>, TimeQuat, Vec<(f64, f64)>) {
+        let spec = SynthSpec { fps: 30.0, duration_ms: 2000.0, tracks: 200, true_offset_ms: -700.0, ..Default::default() };
+        let (ws, quats) = synth_windows(&spec, &[5000.0]);
+        let intervals = candidate_intervals(&[-3700.0, -2700.0, -1700.0, -740.0, 300.0, 1300.0, 2300.0, 3300.0], None, 105.0);
+        (ws, quats, intervals)
+    }
+    #[test] fn judge_window_picks_the_truth_interval() {
+        let (ws, quats, intervals) = window_fixture();
+        let (out, stats) = judge_window(&ws[0], &quats, &intervals, None, 200, 10.0, &SgCache::new(), &AtomicBool::new(false)).unwrap();
+        let WindowOutcome::Measured { best: Some(best), g: Some(g), .. } = out else { panic!("{out:?}"); };
+        assert!((best.ms + 700.0).abs() <= 3.0 && g >= 1.4, "best {best:?} G {g}");
+        assert!(stats.iter().find(|s| s.lo == -845.0).unwrap().interior);
+    }
+    #[test] fn judge_window_edge_minimum_is_not_a_valley() {
+        let (ws, quats, _) = window_fixture();
+        let (out, _) = judge_window(&ws[0], &quats, &[(-680.0, -470.0)], None, 200, 10.0, &SgCache::new(), &AtomicBool::new(false)).unwrap();
+        assert!(matches!(out, WindowOutcome::Measured { .. }), "{out:?}");
+        if let WindowOutcome::Measured { best: Some(best), .. } = out {
+            assert!(best.ms - -680.0 > 20.0 && -470.0 - best.ms > 20.0, "{best:?}");
+        }
+    }
+    #[test] fn judge_window_partial_coverage_still_finds_truth() {
+        let (ws, quats, mut intervals) = window_fixture();
+        intervals.push((-13100.0, -12800.0));
+        let sg = SgCache::new();
+        let (out, stats) = judge_window(&ws[0], &quats, &intervals, None, 200, 10.0, &sg, &AtomicBool::new(false)).unwrap();
+        let WindowOutcome::Measured { best: Some(best), .. } = out else { panic!("{out:?}"); };
+        assert!((best.ms + 700.0).abs() <= 3.0, "{best:?}");
+        let stat = stats.last().unwrap();
+        let table = super::super::interval_tables(&quats, super::super::row_time_span_ms(&ws[0]).unwrap(), &[(-13100.0, -12800.0)]);
+        let ctx = CostContext { window: &ws[0], quats: &table[0], sg: &sg };
+        let subset = select_tracks(&ws[0], 200);
+        let invalid: Vec<f64> = super::super::search::grid(&[(-13100.0, -12800.0)], 10.0).into_iter()
+            .filter(|&d| eval_coarse(&ctx, &subset, d, super::super::COARSE_IRLS_ROUNDS).is_none_or(|c| !c.is_finite())).collect();
+        assert!(!invalid.is_empty());
+        if stat.min_ms.is_finite() && invalid.iter().any(|d| (stat.min_ms - d).abs() <= 20.0) {
+            assert!(!stat.interior, "{stat:?}");
+        }
+    }
+    #[test] fn judge_window_too_few_pairs_is_unmeasured() {
+        let (ws, quats) = synth_windows(&SynthSpec { fps: 30.0, duration_ms: 500.0, tracks: 200, ..Default::default() }, &[5000.0]);
+        assert_eq!(ws[0].pairs.len(), 14);
+        let (out, _) = judge_window(&ws[0], &quats, &[(-845.0, -635.0)], None, 200, 10.0, &SgCache::new(), &AtomicBool::new(false)).unwrap();
+        assert_eq!(out, WindowOutcome::Unmeasured { reason: FailReason::WindowTooShort });
+    }
+    #[test] fn judge_window_uncovered_is_unmeasured() {
+        let (ws, quats, _) = window_fixture();
+        let (out, _) = judge_window(&ws[0], &quats, &[(49_900.0, 50_100.0)], None, 200, 10.0, &SgCache::new(), &AtomicBool::new(false)).unwrap();
+        assert_eq!(out, WindowOutcome::Unmeasured { reason: FailReason::NoGyroOverlap });
+    }
+    #[test] fn judge_window_reports_cost_at_x() {
+        let (ws, quats, intervals) = window_fixture();
+        let (out, _) = judge_window(&ws[0], &quats, &intervals, Some(1300.0), 200, 10.0, &SgCache::new(), &AtomicBool::new(false)).unwrap();
+        let WindowOutcome::Measured { best: Some(best), at_x: Some(at_x), .. } = out else { panic!("{out:?}"); };
+        assert!((1195.0..=1405.0).contains(&at_x.ms) && at_x.cost >= best.cost, "best {best:?} at_x {at_x:?}");
+    }
+    #[test] fn judge_window_cancelled_returns_none() {
+        let (ws, quats, intervals) = window_fixture();
+        assert!(judge_window(&ws[0], &quats, &intervals, None, 200, 10.0, &SgCache::new(), &AtomicBool::new(true)).is_none());
+    }
 
     const P: DecideParams = DecideParams { t_d_ms: 10.0, radius_ms: 105.0, g_strong: 1.4, support_ratio: 1.1 };
     const A: (i64, i64) = (0, 2500);
