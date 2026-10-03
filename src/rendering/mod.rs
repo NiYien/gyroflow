@@ -10,6 +10,7 @@ mod ffmpeg_video;
 mod ffmpeg_video_converter;
 pub mod gpu_codec_blocklist;
 pub mod mdk_processor;
+pub mod optical_correction_smoke;
 pub mod render_queue;
 pub mod sync_regress;
 pub mod video_processor;
