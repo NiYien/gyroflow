@@ -3056,15 +3056,15 @@ mod tests {
 
     #[test]
     fn finalcut_registration_diagnostic_requires_one_production_path() {
-        let root = tempfile::tempdir().unwrap();
-        let app = write_finalcut_test_app(root.path(), "2.1.2");
+        // PlugInKit emits POSIX paths even when this parser test runs on Windows.
+        let app = PathBuf::from("/Applications/NiYien FCP.app");
         let production = finalcut_xpc_path(&app);
         let development =
             PathBuf::from("/tmp/DerivedData/Debug/GyroflowNiYienFinalCutEffect.pluginkit");
         let output = format!(
             "com.niyien.gyroflow.finalcut.effect(1.1)\t{}\n\
              com.niyien.gyroflow.finalcut.effect(1.1)\t{}\n",
-            production.display(),
+            production.to_string_lossy().replace('\\', "/"),
             development.display()
         );
         let paths = parse_finalcut_registration_paths(&output);

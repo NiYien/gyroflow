@@ -12,6 +12,7 @@ pub mod bearings;
 pub mod config;
 pub mod cost;
 pub mod quat_table;
+pub mod rates;
 pub mod search;
 #[cfg(feature = "use-opencv")] pub mod tracker;
 pub mod tracks;
@@ -401,6 +402,27 @@ fn row_time_span_ms(w: &WindowTracks) -> Option<(f64, f64)> {
         .flat_map(|pd| pd.fa.iter().map(|&f| row_time_ms(&pd.a, f)).chain(pd.fb.iter().map(|&f| row_time_ms(&pd.b, f))))
         .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), t| (lo.min(t), hi.max(t)));
     (lo <= hi).then_some((lo, hi))
+}
+
+/// Logs fitted optical rates against gyro rates from the same frame pairs at the output offset.
+pub fn log_rate_fit(seg: usize, window: &WindowTracks, quats: &TimeQuat, row: (f64, f64, f64, f64)) {
+    let mut ok = 0;
+    let mut fit = Vec::new();
+    let mut gyro = Vec::new();
+    for pd in &window.pairs {
+        let Some(rate) = cost::pair_rotation_rate(pd) else { continue; };
+        ok += 1;
+        if row.3 != 0.0 {
+            if let Some(reference) = rates::pair_gyro_rate(pd, quats, row.1) {
+                fit.push(rates::quat_rate_to_chart_dps(rate));
+                gyro.push(rates::quat_rate_to_chart_dps(reference));
+            }
+        }
+    }
+    let r = rates::axis_pearson(&fit, &gyro, 2.0)
+        .map(|r| r.map_or("-".to_string(), |r| format!("{:.2}", r)));
+    log::info!(target: "sync", "[optical] seg {}: rate_fit pairs={}/{} r=[{},{},{}]",
+        seg, ok, window.pairs.len(), r[0], r[1], r[2]);
 }
 
 /// The `[optical] run:` line of a finished run (target `sync`). `track_ms` and `decode_wait_ms` as in

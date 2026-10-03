@@ -2826,6 +2826,66 @@ Haluatko lähettää profiilisi tähän?</translation>
         <translation>Mediaanisuodatin</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="321"/>
+        <source>Optical correction</source>
+        <translation>Optinen korjaus</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="322"/>
+        <source>Measure the camera rotation from the video itself and correct the motion data where they disagree. Useful when vibrations corrupt the gyro data, e.g. on a hard-mounted FPV camera. The analysis goes through every frame of the selected trim range.</source>
+        <translation>Mittaa kameran kierron itse videosta ja korjaa liiketiedot kohdissa, joissa ne poikkeavat toisistaan. Hyödyllinen, kun tärinä vääristää gyroskoopin tietoja, esimerkiksi jäykästi kiinnitetyssä FPV-kamerassa. Analyysi käsittelee valitun leikkausalueen jokaisen ruudun.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="346"/>
+        <source>Analyze</source>
+        <translation>Analysoi</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="353"/>
+        <source>Clear</source>
+        <translation>Tyhjennä</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="366"/>
+        <source>Click Analyze to measure the motion from the video.</source>
+        <translation>Mittaa liike videosta napsauttamalla Analysoi.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="368"/>
+        <source>The motion data, the sync, the lens or the rolling shutter changed since the analysis. Analyze again to apply the correction.</source>
+        <translation>Liiketiedot, synkronointi, objektiivi tai vierivä suljin ovat muuttuneet analyysin jälkeen. Analysoi uudelleen ottaaksesi korjauksen käyttöön.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="369"/>
+        <source>Analyze again to apply the new strength.</source>
+        <translation>Analysoi uudelleen ottaaksesi uuden voimakkuuden käyttöön.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="371"/>
+        <source>Measured in %1 of %2 frames, correction %3°</source>
+        <translation>Mitattu %1 ruudussa %2 ruudusta, korjaus %3°</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="375"/>
+        <source>Ignore motion data from the file</source>
+        <translation>Ohita tiedoston liiketiedot</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="376"/>
+        <source>Measure all of the camera motion from the video, like for a file without motion data, instead of correcting the motion data. For motion data too broken to correct, e.g. a gyro that glitches or saturates for seconds at a time.</source>
+        <translation>Mittaa kameran kaiken liikkeen videosta, kuten tiedostolle ilman liiketietoja, liiketietojen korjaamisen sijaan. Tarkoitettu liian vaurioituneille liiketiedoille, esimerkiksi gyroskoopille, joka antaa virheellisiä tai saturoituneita arvoja useita sekunteja kerrallaan.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="381"/>
+        <source>Strength</source>
+        <translation>Voimakkuus</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="386"/>
+        <source>How far the correction may take the motion data from what it says. Lower values only correct small, fast errors like vibration. Higher values let the image override the motion data also where it's off by a lot or for longer, like gyro glitches, but follow the image's own mistakes (moving objects, water) more too.</source>
+        <translation>Kuinka paljon korjaus saa poiketa liiketietojen alkuperäisistä arvoista. Pienemmät arvot korjaavat vain pieniä, nopeita virheitä, kuten tärinää. Suuremmat arvot antavat kuvan ohittaa liiketiedot myös suurissa tai pitkäkestoisissa poikkeamissa, kuten gyroskooppivirheissä, mutta seuraavat enemmän myös kuvan omia virheitä (liikkuvat kohteet, vesi).</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="302"/>
         <source>samples</source>
         <translation>näytteitä</translation>
@@ -4705,6 +4765,16 @@ Anna kuvanopeus:</translation>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="427"/>
         <source>AI SYNC</source>
         <translation>AI-synkronointi</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="456"/>
+        <source>Optical sync</source>
+        <translation>Optinen synkronointi</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="457"/>
+        <source>Synchronize by tracking features in the video instead of using optical flow. Also used by batch matching and deep matching. Experimental: it may find no sync point for extreme rotation or very smooth motion.</source>
+        <translation>Synkronoi seuraamalla videon piirteitä optisen virtauksen sijaan. Käytetään myös erä- ja syväkohdistuksessa. Kokeellinen: voimakas kierto tai hyvin tasainen liike voi estää synkronointipisteen löytymisen.</translation>
     </message>
 </context>
 <context>

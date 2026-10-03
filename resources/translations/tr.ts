@@ -2823,6 +2823,66 @@ Profilinizi yüklemek istiyor musunuz?</translation>
         <translation>Medyan filtre</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="321"/>
+        <source>Optical correction</source>
+        <translation>Optik düzeltme</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="322"/>
+        <source>Measure the camera rotation from the video itself and correct the motion data where they disagree. Useful when vibrations corrupt the gyro data, e.g. on a hard-mounted FPV camera. The analysis goes through every frame of the selected trim range.</source>
+        <translation>Kamera dönüşünü videonun kendisinden ölçer ve uyuşmadıkları yerlerde hareket verilerini düzeltir. Örneğin sabit monte edilmiş bir FPV kamerada titreşimler jiroskop verilerini bozduğunda yararlıdır. Analiz, seçilen kırpma aralığındaki her kareyi işler.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="346"/>
+        <source>Analyze</source>
+        <translation>Analiz et</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="353"/>
+        <source>Clear</source>
+        <translation>Temizle</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="366"/>
+        <source>Click Analyze to measure the motion from the video.</source>
+        <translation>Videodan hareketi ölçmek için Analiz et'e tıklayın.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="368"/>
+        <source>The motion data, the sync, the lens or the rolling shutter changed since the analysis. Analyze again to apply the correction.</source>
+        <translation>Analizden sonra hareket verileri, senkronizasyon, lens veya yuvarlanan deklanşör değişti. Düzeltmeyi uygulamak için yeniden analiz edin.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="369"/>
+        <source>Analyze again to apply the new strength.</source>
+        <translation>Yeni gücü uygulamak için yeniden analiz edin.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="371"/>
+        <source>Measured in %1 of %2 frames, correction %3°</source>
+        <translation>%2 karenin %1 tanesinde ölçüldü, düzeltme %3°</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="375"/>
+        <source>Ignore motion data from the file</source>
+        <translation>Dosyadaki hareket verilerini yok say</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="376"/>
+        <source>Measure all of the camera motion from the video, like for a file without motion data, instead of correcting the motion data. For motion data too broken to correct, e.g. a gyro that glitches or saturates for seconds at a time.</source>
+        <translation>Hareket verilerini düzeltmek yerine, hareket verisi olmayan bir dosyada olduğu gibi tüm kamera hareketini videodan ölçer. Birkaç saniye boyunca arızalanan veya doygunluğa ulaşan bir jiroskop gibi, düzeltilemeyecek kadar bozuk hareket verileri için kullanılır.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="381"/>
+        <source>Strength</source>
+        <translation>Güç</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="386"/>
+        <source>How far the correction may take the motion data from what it says. Lower values only correct small, fast errors like vibration. Higher values let the image override the motion data also where it's off by a lot or for longer, like gyro glitches, but follow the image's own mistakes (moving objects, water) more too.</source>
+        <translation>Düzeltmenin hareket verilerini özgün değerlerinden ne kadar uzaklaştırabileceği. Düşük değerler yalnızca titreşim gibi küçük ve hızlı hataları düzeltir. Yüksek değerler, jiroskop arızaları gibi büyük veya uzun süren sapmalarda da görüntünün hareket verilerinin yerine geçmesine izin verir, ancak görüntünün kendi hatalarını (hareketli nesneler, su) da daha fazla izler.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="302"/>
         <source>samples</source>
         <translation>örnek</translation>
@@ -4699,6 +4759,16 @@ Lütfen frame rate&apos;i belirtin: </translation>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="427"/>
         <source>AI SYNC</source>
         <translation>AI senkronizasyonu</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="456"/>
+        <source>Optical sync</source>
+        <translation>Optik senkronizasyon</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="457"/>
+        <source>Synchronize by tracking features in the video instead of using optical flow. Also used by batch matching and deep matching. Experimental: it may find no sync point for extreme rotation or very smooth motion.</source>
+        <translation>Optik akış yerine videodaki özellikleri izleyerek senkronize eder. Toplu eşleştirme ve derin eşleştirmede de kullanılır. Deneysel: aşırı dönüş veya çok yumuşak hareket sırasında senkronizasyon noktası bulamayabilir.</translation>
     </message>
 </context>
 <context>

@@ -4,14 +4,11 @@
 //! undistorted with the frame's lens data (sensor shift and mesh undone as the render does) and become directions in
 //! the quaternions' frame. Nothing here depends on the offset: it runs once per window.
 
-use nalgebra::{ Matrix3, Vector3 };
+use nalgebra::Vector3;
 use rayon::prelude::*;
 
-use crate::stabilization::{ undistort_points, ComputeParams, FrameTransform };
+use crate::stabilization::{ undistort_points_to_plane, ComputeParams, FrameTransform };
 use super::tracks::{ readout_pos, FrameTiming, PairData, RawFrame, RawWindow, WindowTracks };
-
-/// Undistorted coordinates at or below this are the undistortion's mark for a point it could not invert
-const INVALID_BELOW: f32 = -500_000.0;
 
 /// Frame timings and unit bearings for every pair of the window. `params` must be the measurement params (keyframes cleared, lens_correction_amount 1.0, framebuffer_inverted false).
 ///
@@ -58,18 +55,60 @@ pub fn build_window_tracks(raw: &RawWindow, params: &ComputeParams, horizontal: 
 /// Unit bearings of points tracked at `track_size`, in the quaternions' frame: the axis flips the renderer applies
 /// (`F·R·F`, F = diag(1, -1, -1)). None for a point the undistortion could not invert
 fn bearings(params: &ComputeParams, track_size: (u32, u32), pts: &[(f32, f32)], frame: &FrameTiming) -> Vec<Option<Vector3<f64>>> {
-    if pts.is_empty() { return Vec::new(); }
-    let sx = params.width as f32 / track_size.0.max(1) as f32;
-    let sy = params.height as f32 / track_size.1.max(1) as f32;
-    let full: Vec<(f32, f32)> = pts.iter().map(|p| (p.0 * sx, p.1 * sy)).collect();
-    let (camera_matrix, dist, _p, _rotations, shifts, mesh, _fov, _r_limit) =
-        FrameTransform::at_timestamp_for_points(params, &full, frame.ts_ms, Some(frame.index), false);
-    let shifts = shifts.map(|s| if s.len() == 1 { vec![s[0]; full.len()] } else { s });
-    undistort_points(&full, camera_matrix, &dist, Matrix3::identity(), None, None, params, 1.0, 1.0, frame.ts_ms, shifts, mesh, 0.0)
+    undistort_points_to_plane(pts, frame.ts_ms, frame.index, params, track_size)
         .into_iter()
-        .map(|p| {
-            let valid = p.0.is_finite() && p.1.is_finite() && p.0 > INVALID_BELOW && p.1 > INVALID_BELOW;
-            valid.then(|| Vector3::new(p.0 as f64, -p.1 as f64, -1.0).normalize())
-        })
+        .map(|p| p.map(|(x, y)| Vector3::new(x as f64, -y as f64, -1.0).normalize()))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::tracks::{ Observation, RawPair };
+    use crate::StabilizationManager;
+    use crate::lens_profile::Dimensions;
+
+    // These constants pin the bearings before extracting undistort_points_to_plane and depend on the
+    // toolchain's float library. To refresh them for another toolchain, set them to 0 and copy the values
+    // reported by `just test-core optical_motion::bearings`.
+    const GOLDEN_POINTS: usize = 45;
+    const GOLDEN_FOCAL_BITS: u64 = 4_652_552_666_608_566_272;
+    const GOLDEN_HASH: u64 = 9_618_775_943_658_929_199;
+
+    #[test]
+    fn bearings_bits_unchanged() {
+        let stab = StabilizationManager::default();
+        { let mut p = stab.params.write(); p.size = (1920, 1080); p.fps = 30.0; p.frame_count = 300; p.duration_ms = 10_000.0; }
+        {
+            // A fixed lens with distortion, using the same fields as the frame transform tests.
+            let mut lens = stab.lens.write();
+            lens.calib_dimension = Dimensions { w: 1920, h: 1080 };
+            lens.orig_dimension = lens.calib_dimension.clone();
+            lens.fisheye_params.camera_matrix = vec![[1100.0, 0.0, 960.0], [0.0, 1100.0, 540.0], [0.0, 0.0, 1.0]];
+            lens.fisheye_params.distortion_coeffs = vec![0.05, -0.02, 0.01, -0.005];
+        }
+        let mut params = ComputeParams::from_manager(&stab);
+        params.keyframes.clear();
+        params.lens_correction_amount = 1.0;
+        params.framebuffer_inverted = false;
+        // A 9x5 grid at the tracking size, moved by a few pixels in the second frame.
+        let obs: Vec<Observation> = (0..45u32).map(|i| {
+            let (x, y) = (60.0 + 105.0 * (i % 9) as f32, 50.0 + 110.0 * (i / 9) as f32);
+            Observation { id: i, a: [x, y], b: [x + 3.5, y - 2.25] }
+        }).collect();
+        let raw = RawWindow {
+            pairs: vec![RawPair { a: RawFrame { index: 30, ts_ms: 1000.0 }, b: RawFrame { index: 31, ts_ms: 1000.0 + 1000.0 / 30.0 }, obs }],
+            track_size: (960, 540),
+            ..Default::default()
+        };
+        let w = build_window_tracks(&raw, &params, false, 1016.0);
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        for pd in &w.pairs {
+            for v in pd.va.iter().chain(&pd.vb) {
+                for c in [v.x, v.y, v.z] { h = (h ^ c.to_bits()).wrapping_mul(0x0000_0100_0000_01b3); }
+            }
+        }
+        assert!(w.pairs[0].ids.len() >= 40, "{} valid points", w.pairs[0].ids.len());
+        assert_eq!((w.pairs[0].ids.len(), w.focal_px.to_bits(), h), (GOLDEN_POINTS, GOLDEN_FOCAL_BITS, GOLDEN_HASH));
+    }
 }

@@ -107,6 +107,7 @@ pub struct FrameTiming { pub index: usize, pub ts_ms: f64, pub mid_ms: f64, pub 
 
 /// `seq` is the pair's index in `WindowTracks::pairs`; ids are never reused across tracker resets,
 /// so "same id and adjacent seq" means continuous.
+#[derive(Clone)]
 pub struct PairData {
     pub seq: usize, pub a: FrameTiming, pub b: FrameTiming, pub ids: Vec<u32>,
     pub va: Vec<Vector3<f64>>, pub vb: Vec<Vector3<f64>>, pub fa: Vec<f32>, pub fb: Vec<f32>,

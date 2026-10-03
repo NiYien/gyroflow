@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2024 Adrian <adrian.eddy at gmail>
+// Ported from upstream gyroflow 322cb312 + eabdc789
 
 use parking_lot::RwLock;
 use std::collections::BTreeMap;
@@ -590,6 +591,23 @@ impl MeshCorrections {
 }
 
 // ------------- ReadOnlyFileMetadata -------------
+/// The motion data of a file, taken out of its metadata while it's ignored, see `GyroSource::set_ignore_file_motion`
+#[derive(Default, Clone, Debug)]
+pub struct FileMotion {
+    pub raw_imu:            Vec<TimeIMU>,
+    pub quaternions:        TimeQuat,
+    pub gravity_vectors:    Option<TimeVec>,
+    pub image_orientations: Option<TimeQuat>,
+}
+impl FileMotion {
+    fn put_into(self, md: &mut FileMetadata) {
+        md.raw_imu = self.raw_imu;
+        md.quaternions = self.quaternions;
+        md.gravity_vectors = self.gravity_vectors;
+        md.image_orientations = self.image_orientations;
+    }
+}
+
 // Make a thread-safe read-only wrapper for FileMetadata, because once it's read, it's never changed
 #[derive(Clone)]
 pub struct ReadOnlyFileMetadata(pub Arc<RwLock<FileMetadata>>);
@@ -607,11 +625,39 @@ impl ReadOnlyFileMetadata {
     pub fn read(&self) -> parking_lot::RwLockReadGuard<'_, FileMetadata> {
         self.0.read()
     }
+    /// Changes the metadata into a copy of its own, never in place: every clone of a `GyroSource` shares the one it
+    /// was cloned with (a render queue job's, a running analysis's), and a change is only ever meant for this one
+    fn modify(&mut self, f: impl FnOnce(&mut FileMetadata)) {
+        let mut md = self.0.read().clone();
+        f(&mut md);
+        self.0 = Arc::new(RwLock::new(md));
+    }
     pub fn set_raw_imu(&mut self, v: Vec<TimeIMU>) {
         self.0.write().raw_imu = v;
     }
     pub fn write(&self) -> parking_lot::RwLockWriteGuard<'_, FileMetadata> {
         self.0.write()
+    }
+    /// Takes the motion data out: from then on it's metadata of a file without any
+    pub fn take_motion(&mut self) -> FileMotion {
+        let mut motion = FileMotion::default();
+        self.modify(|md| motion = FileMotion {
+            raw_imu:            std::mem::take(&mut md.raw_imu),
+            quaternions:        std::mem::take(&mut md.quaternions),
+            gravity_vectors:    md.gravity_vectors.take(),
+            image_orientations: md.image_orientations.take(),
+        });
+        motion
+    }
+    /// Puts back what `take_motion` took out
+    pub fn restore_motion(&mut self, motion: FileMotion) {
+        self.modify(|md| motion.put_into(md));
+    }
+    /// A copy of the metadata with `motion` back in
+    pub fn with_motion(&self, motion: &FileMotion) -> FileMetadata {
+        let mut md = self.0.read().clone();
+        motion.clone().put_into(&mut md);
+        md
     }
 }
 impl serde::Serialize for ReadOnlyFileMetadata {
@@ -769,6 +815,96 @@ pub(crate) fn classify_in_camera_stabilization(
 mod tests {
     use super::super::Quat64;
     use super::*;
+
+    fn metadata_with_motion() -> FileMetadata {
+        FileMetadata {
+            raw_imu: vec![TimeIMU {
+                timestamp_ms: 1.0,
+                gyro: Some([1.0, 2.0, 3.0]),
+                accl: Some([0.0, 9.81, 0.0]),
+                magn: Some([0.1, 0.2, 0.3]),
+            }],
+            quaternions: BTreeMap::from([(1000, Quat64::from_euler_angles(0.1, 0.2, 0.3))]),
+            gravity_vectors: Some(BTreeMap::from([(1000, nalgebra::Vector3::new(0.0, 9.81, 0.0))])),
+            image_orientations: Some(BTreeMap::from([(2000, Quat64::from_euler_angles(0.3, 0.2, 0.1))])),
+            imu_orientation: Some("XYZ".into()),
+            frame_rate: Some(30.0),
+            detected_source: Some("Sony".into()),
+            keep_video_gyro: true,
+            is_komodo: true,
+            lens_positions: BTreeMap::from([(1000, 35.0)]),
+            per_frame_time_offsets: vec![0.25, -0.25],
+            additional_data: serde_json::json!({"preserved": true}),
+            duration_ms: 2000.0,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn take_and_restore_motion_round_trip() {
+        let original = metadata_with_motion();
+        let expected = serde_json::to_value(&original).unwrap();
+        let mut without_motion = original.clone();
+        without_motion.raw_imu.clear();
+        without_motion.quaternions.clear();
+        without_motion.gravity_vectors = None;
+        without_motion.image_orientations = None;
+        let mut md = ReadOnlyFileMetadata::from(original.clone());
+
+        let motion = md.take_motion();
+        assert!(!md.read().has_motion());
+        assert_eq!(serde_json::to_value(&*md.read()).unwrap(), serde_json::to_value(&without_motion).unwrap());
+        assert_eq!(serde_json::to_value(&motion.raw_imu).unwrap(), serde_json::to_value(&original.raw_imu).unwrap());
+        assert_eq!(motion.quaternions, original.quaternions);
+        assert_eq!(motion.gravity_vectors, original.gravity_vectors);
+        assert_eq!(motion.image_orientations, original.image_orientations);
+
+        md.restore_motion(motion);
+        assert!(md.read().has_motion());
+        assert_eq!(serde_json::to_value(&*md.read()).unwrap(), expected);
+    }
+
+    #[test]
+    fn take_motion_leaves_other_clones_alone() {
+        let mut md = ReadOnlyFileMetadata::from(metadata_with_motion());
+        let other = md.clone();
+        let expected = serde_json::to_value(&*other.read()).unwrap();
+        assert!(Arc::ptr_eq(&md.0, &other.0));
+
+        let motion = md.take_motion();
+        assert!(!md.read().has_motion());
+        assert!(other.read().has_motion());
+        assert_eq!(serde_json::to_value(&*other.read()).unwrap(), expected);
+        assert!(!Arc::ptr_eq(&md.0, &other.0));
+
+        let ignored_clone = md.clone();
+        let ignored_snapshot = serde_json::to_value(&*ignored_clone.read()).unwrap();
+        md.restore_motion(motion);
+        assert_eq!(serde_json::to_value(&*md.read()).unwrap(), expected);
+        assert_eq!(serde_json::to_value(&*other.read()).unwrap(), expected);
+        assert_eq!(serde_json::to_value(&*ignored_clone.read()).unwrap(), ignored_snapshot);
+        assert!(!ignored_clone.read().has_motion());
+    }
+
+    #[test]
+    fn with_motion_returns_a_copy() {
+        let mut md = ReadOnlyFileMetadata::from(metadata_with_motion());
+        let expected = serde_json::to_value(&*md.read()).unwrap();
+        let motion = md.take_motion();
+        let ignored_clone = md.clone();
+        let ignored_snapshot = serde_json::to_value(&*md.read()).unwrap();
+
+        let mut full = md.with_motion(&motion);
+        assert!(full.has_motion());
+        assert_eq!(serde_json::to_value(&full).unwrap(), expected);
+        full.raw_imu.clear();
+        full.frame_rate = Some(60.0);
+        assert!(!md.read().has_motion());
+        assert_eq!(serde_json::to_value(&*md.read()).unwrap(), ignored_snapshot);
+        assert_eq!(serde_json::to_value(&*ignored_clone.read()).unwrap(), ignored_snapshot);
+        assert!(Arc::ptr_eq(&md.0, &ignored_clone.0));
+        assert_eq!(serde_json::to_value(&md.with_motion(&motion)).unwrap(), expected);
+    }
 
     #[test]
     fn stabilization_off_short_circuits_before_any_compensation_lookup() {

@@ -254,15 +254,21 @@ mod tests {
         }
     }
 
+    fn shell_status(command: String) -> std::process::ExitStatus {
+        // Windows must use an explicitly selected POSIX shell, not the WSL PATH shim.
+        let executable = std::env::var_os("GYROFLOW_TEST_POSIX_SHELL").unwrap_or_else(|| {
+            assert!(!cfg!(target_os = "windows"), "Set GYROFLOW_TEST_POSIX_SHELL to a verified Git Bash executable");
+            "/bin/sh".into()
+        });
+        std::process::Command::new(executable)
+            .arg("-c")
+            .arg(command)
+            .status()
+            .expect("the explicitly selected test shell must start")
+    }
+
     fn shell(command: String) {
-        assert!(
-            std::process::Command::new("/bin/sh")
-                .arg("-c")
-                .arg(command)
-                .status()
-                .unwrap()
-                .success()
-        );
+        assert!(shell_status(command).success());
     }
 
     #[test]
@@ -377,11 +383,7 @@ mod tests {
         let tx = fixture(root.path(), false, true);
         std::fs::write(&tx.companion, b"old-app").unwrap();
         std::fs::write(tx.journal(), b"another-transaction").unwrap();
-        let status = std::process::Command::new("/bin/sh")
-            .arg("-c")
-            .arg(tx.install_command(&root.path().join("source.app")))
-            .status()
-            .unwrap();
+        let status = shell_status(tx.install_command(&root.path().join("source.app")));
         assert!(!status.success());
         assert_eq!(std::fs::read(tx.journal()).unwrap(), b"another-transaction");
         assert_eq!(std::fs::read(&tx.companion).unwrap(), b"old-app");

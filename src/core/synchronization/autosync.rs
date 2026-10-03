@@ -407,6 +407,8 @@ impl AutosyncProcess {
         // Optical motion method: its own tracking threads take the frames instead of the Sync pool (spec §5.1). A
         // tracked frame counts as detected; tracking is the first 0.6 of the progress
         let optical = if sync_params.offset_method == 3 && mode == "synchronize" {
+            estimator.sync_results.write().clear();
+            estimator.recalculate_gyro_data(org_fps, true);
             let detected = total_detected_frames.clone();
             let read = total_read_frames.clone();
             let progress = optical_progress_cb.clone();
@@ -434,6 +436,7 @@ impl AutosyncProcess {
                 on_frame_done,
             ))
         } else {
+            estimator.optical_rates.write().clear();
             None
         };
 
@@ -746,8 +749,15 @@ impl AutosyncProcess {
                 self.emit_canceled_progress();
                 return;
             };
+            let search_ms = t_search.elapsed().as_secs_f64() * 1000.0;
+            let samples = self.thread_pool.install(|| optical::rates::rate_samples(&windows));
+            for (i, &row) in rows.iter().enumerate() {
+                optical::log_rate_fit(i, &windows[i], &quats, row);
+            }
+            self.estimator.replace_optical_rates(&self.scaled_ranges_us, samples);
+            self.estimator.recalculate_gyro_data(self.org_fps, true);
             if let Some(session) = &self.optical {
-                optical::log_run(rows.len(), &session.timings(), t_search.elapsed().as_secs_f64() * 1000.0);
+                optical::log_run(rows.len(), &session.timings(), search_ms);
             }
             if let Some(cb) = &self.finished_cb {
                 cb(AutosyncResult::Offsets(rows));
@@ -1402,6 +1412,7 @@ mod tests {
         assert!(optical < feed.find("self.thread_pool.spawn").unwrap(), "optical frames must not reach the Sync pool");
         let fin = &src[src.find("pub fn finished_feeding_frames").unwrap()..];
         assert!(fin.find("solve_windows").unwrap() < fin.find("neuflow_processing").unwrap());
+        assert!(fin.find("rate_samples").unwrap() < fin.find("cb(AutosyncResult::Offsets(rows))").unwrap());
         assert!(src.contains("sync_params.offset_method == 3 && mode == \"synchronize\""));
     }
 
@@ -1429,6 +1440,31 @@ mod tests {
             offset_method: 3,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn optical_session_drops_the_other_methods_curve_and_keeps_optical_rates() {
+        use crate::gyro_source::TimeIMU;
+        let stab = manager_with_motion();
+        // Keep an earlier optical sample while dropping the other method's leftover curve.
+        stab.pose_estimator.estimated_gyro.write().insert(9, TimeIMU { timestamp_ms: 0.009, gyro: Some([9.0; 3]), accl: None, magn: None });
+        stab.pose_estimator.optical_rates.write().insert(5, [1.0; 3]);
+        let _sync = AutosyncProcess::from_manager(&stab, &[0.5], optical_params(), "synchronize".into(), Arc::new(AtomicBool::new(false))).unwrap();
+        let g = stab.pose_estimator.estimated_gyro.read();
+        assert_eq!(g.keys().copied().collect::<Vec<_>>(), vec![5]);
+        assert_eq!(g[&5].gyro, Some([1.0; 3]));
+        assert_eq!(stab.pose_estimator.optical_rates.read().len(), 1);
+    }
+
+    #[test]
+    fn non_optical_runs_clear_only_optical_rates() {
+        use crate::gyro_source::TimeIMU;
+        let stab = manager_with_motion();
+        stab.pose_estimator.estimated_gyro.write().insert(5, TimeIMU { timestamp_ms: 0.005, gyro: Some([1.0; 3]), accl: None, magn: None });
+        stab.pose_estimator.optical_rates.write().insert(5, [1.0; 3]);
+        let _sync = AutosyncProcess::from_manager(&stab, &[0.5], SyncParams { offset_method: 2, ..optical_params() }, "synchronize".into(), Arc::new(AtomicBool::new(false))).unwrap();
+        assert_eq!(stab.pose_estimator.estimated_gyro.read().len(), 1);
+        assert!(stab.pose_estimator.optical_rates.read().is_empty());
     }
 
     #[test]
@@ -1471,6 +1507,8 @@ mod tests {
         let rest: Vec<f64> = rest.iter().map(|p| (p.0 * 1000.0).round() / 1000.0).collect();
         assert_eq!(rest, vec![0.6, 0.795, 0.99, 1.0]);
         assert_eq!(*progress.last().unwrap(), (1.0, 32, 32));
+        assert!(stab.pose_estimator.optical_rates.read().is_empty());
+        assert!(stab.pose_estimator.estimated_gyro.read().is_empty());
         assert!(stab.pose_estimator.sync_results.read().is_empty());
     }
 
@@ -1602,9 +1640,9 @@ mod tests {
     }
 
     #[test]
-    fn simple_mode_never_sends_the_optical_offset_method() {
+    fn simple_mode_sends_the_optical_offset_method_only_when_opted_in() {
         let qml = include_str!("../../ui/menu/Synchronization.qml");
-        assert!(qml.contains("\"offset_method\":      (isSimple && offsetMethod.currentIndex === 3) ? 2 : offsetMethod.currentIndex,"));
+        assert!(qml.contains("\"offset_method\":      (isSimple && render_queue.batch_sync_optical) ? 3 : ((isSimple && offsetMethod.currentIndex === 3) ? 2 : offsetMethod.currentIndex),"));
         assert!(qml.contains("QT_TRANSLATE_NOOP(\"Popup\", \"Optical motion\")"));
     }
 }

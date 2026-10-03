@@ -632,6 +632,10 @@ pub fn resolve_anamorphic_config(config: Option<&LensGroupConfig>) -> Option<Res
 }
 
 fn find_preset_by_id(preset_id: &str) -> Option<AnamorphicPreset> {
+    #[cfg(any(test, feature = "test-support"))]
+    if let Some(preset) = test_presets::find(preset_id) {
+        return Some(preset);
+    }
     load_presets()
         .into_iter()
         .find(|preset| preset.id == preset_id)
@@ -1245,6 +1249,52 @@ fn format_source_path(root: Option<&Path>, file: &str, built_in: bool) -> String
 
 fn settings_dir() -> PathBuf {
     crate::settings::data_dir()
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_presets {
+    use super::AnamorphicPreset;
+    use std::cell::RefCell;
+
+    thread_local! {
+        static PRESETS: RefCell<Option<Vec<AnamorphicPreset>>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn find(id: &str) -> Option<AnamorphicPreset> {
+        PRESETS.with(|presets| presets.borrow().as_ref()?.iter().find(|preset| preset.id == id).cloned())
+    }
+
+    /// Supplies fixed catalog inputs to one test without changing other threads or the user's files.
+    pub fn with_presets<R>(presets: Vec<AnamorphicPreset>, test: impl FnOnce() -> R) -> R {
+        struct Restore(Option<Vec<AnamorphicPreset>>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                PRESETS.with(|presets| { presets.replace(self.0.take()); });
+            }
+        }
+        let previous = PRESETS.with(|stored| stored.replace(Some(presets)));
+        let _restore = Restore(previous);
+        test()
+    }
+
+    #[test]
+    fn nested_preset_fixture_restores_after_a_panic() {
+        let preset = |name: &str| AnamorphicPreset { id: "fixed-test-preset".into(), name: name.into(), ..Default::default() };
+        assert!(find("fixed-test-preset").is_none());
+        with_presets(vec![preset("outer")], || {
+            let failed = std::panic::catch_unwind(|| {
+                with_presets(vec![preset("inner")], || {
+                    assert_eq!(find("fixed-test-preset").unwrap().name, "inner");
+                    panic!("fixture cleanup sentinel");
+                });
+            });
+            assert!(failed.is_err());
+            assert_eq!(find("fixed-test-preset").unwrap().name, "outer");
+            let other = std::thread::spawn(|| find("fixed-test-preset")).join().unwrap();
+            assert!(other.is_none());
+        });
+        assert!(find("fixed-test-preset").is_none());
+    }
 }
 
 #[cfg(test)]

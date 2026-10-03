@@ -1870,6 +1870,7 @@ pub struct RenderQueue {
 
     pub queue: qt_property!(RefCell<SimpleListModel<RenderQueueItem>>; NOTIFY queue_changed),
     jobs: HashMap<u32, Job>,
+    pending_sync_offset_methods: HashMap<u32, u64>,
 
     // mounting-rotation-home-value: the mounting angle the user owns (the
     // "home" value persisted in settings), mirrored here from
@@ -1952,6 +1953,7 @@ pub struct RenderQueue {
     // (NeuFlow v2 Burn) for batch sync; when false, of_method=2 (DIS).
     // Driven by SimpleStabilization.qml::aiSyncCb and persisted via QSettings.
     pub batch_sync_ai_method: qt_property!(bool; NOTIFY batch_sync_ai_method_changed),
+    pub batch_sync_optical: qt_property!(bool; NOTIFY batch_sync_optical_changed),
 
     pub progress_changed: qt_signal!(),
     pub queue_changed: qt_signal!(),
@@ -1960,6 +1962,7 @@ pub struct RenderQueue {
     pub auto_rotate_changed: qt_signal!(),
     pub simple_mode_changed: qt_signal!(),
     pub batch_sync_ai_method_changed: qt_signal!(),
+    pub batch_sync_optical_changed: qt_signal!(),
 
     pub render_progress: qt_signal!(job_id: u32, progress: f64, current_frame: usize, total_frames: usize, finished: bool, start_time: f64, is_conversion: bool),
     pub encoder_initialized: qt_signal!(job_id: u32, encoder_name: String),
@@ -1982,6 +1985,7 @@ pub struct RenderQueue {
 
     apply_to_all: qt_method!(fn(&mut self, data: String, additional_data: String, to_job_id: u32)),
     set_pending_output_format: qt_method!(fn(&mut self, options_json: String)),
+    set_jobs_sync_offset_method: qt_method!(fn(&mut self, method: u32)),
     // mounting-rotation-propagation: called by MountingPresetSelector on every
     // mounting change so already-queued jobs follow the new device orientation
     // (the add_file snapshot only covers jobs enqueued after the change).
@@ -5313,6 +5317,7 @@ impl RenderQueue {
             self.queue_changed();
         }
         self.jobs.remove(&job_id);
+        self.pending_sync_offset_methods.remove(&job_id);
         self.render_jobs_after_pending_reset.remove(&job_id);
         self.batch_sync_job_ids.remove(&job_id);
         self.expected_batch_sync_job_ids.remove(&job_id);
@@ -5969,6 +5974,11 @@ impl RenderQueue {
                     Ok(_) => {
                         stab.set_output_size(opts.output_width, opts.output_height);
                         if let Some(job) = self.jobs.get_mut(&job_id) {
+                            if let Some(method) = self.pending_sync_offset_methods.remove(&job_id) {
+                                if let Some(old) = rewrite_sync_offset_method(&stab, method) {
+                                    ::log::info!(target: "sync", "[optical-toggle] job={} offset_method {} -> {}", job_id, old, method);
+                                }
+                            }
                             job.stab = Some(stab);
                         }
                     }
@@ -6480,15 +6490,15 @@ impl RenderQueue {
                 }
             }
         }
-        let mut additional_data = additional_data.to_owned();
-        if let Ok(serde_json::Value::Object(mut obj)) =
-            serde_json::from_str(&additional_data) as serde_json::Result<serde_json::Value>
-        {
-            if let Ok(output) = serde_json::to_value(&render_options) {
-                obj.insert("output".into(), output);
-            }
-            additional_data = serde_json::to_string(&obj).unwrap_or_default();
+        // A snapshot must remain an object even when the job has no valid additional data.
+        let mut obj = match serde_json::from_str::<serde_json::Value>(additional_data) {
+            Ok(serde_json::Value::Object(obj)) => obj,
+            _ => serde_json::Map::new(),
+        };
+        if let Ok(output) = serde_json::to_value(&render_options) {
+            obj.insert("output".into(), output);
         }
+        let additional_data = serde_json::to_string(&obj).unwrap_or_default();
         if let Ok(data) = stab.export_gyroflow_data(typ, &additional_data, None) {
             return Some(data);
         }
@@ -10447,6 +10457,51 @@ impl RenderQueue {
         });
     }
 
+    pub fn set_jobs_sync_offset_method(&mut self, method: u32) {
+        if !matches!(method, 2 | 3) {
+            ::log::warn!(target: "sync", "[optical-toggle] invalid offset_method {}", method);
+            return;
+        }
+        let method = method as u64;
+        let mut rewritten = 0;
+        for (&job_id, job) in self.jobs.iter_mut() {
+            if self.queue.borrow().iter().any(|item| item.job_id == job_id && item.status == JobStatus::Rendering) { continue; }
+            let mut old_method = None;
+            let mut changed;
+            if let Some(stab) = job.stab.as_ref() {
+                old_method = rewrite_sync_offset_method(stab, method);
+                changed = old_method.is_some();
+                self.pending_sync_offset_methods.remove(&job_id);
+            } else {
+                self.pending_sync_offset_methods.insert(job_id, method);
+                changed = true;
+                ::log::info!(target: "sync", "[optical-toggle] job={} offset_method pending -> {} (stabilizer released)", job_id, method);
+            }
+            match serde_json::from_str::<serde_json::Value>(&job.additional_data) {
+                Ok(serde_json::Value::Object(obj)) => {
+                    let old = obj.get("synchronization").and_then(|sync| sync.get("offset_method"));
+                    if old.is_none() || matches!(old.and_then(|value| value.as_u64()), Some(2 | 3)) {
+                        if let Some(patched) = patch_additional_data_offset_method(&job.additional_data, method) {
+                            if old.and_then(|value| value.as_u64()) != Some(method) {
+                                changed = true;
+                                old_method = old_method.or_else(|| old.and_then(|value| value.as_u64()));
+                            }
+                            job.additional_data = patched;
+                        }
+                    }
+                }
+                _ => ::log::warn!(target: "sync", "[optical-toggle] job={} invalid additional_data JSON", job_id),
+            }
+            if changed {
+                rewritten += 1;
+                if job.stab.is_some() {
+                    ::log::info!(target: "sync", "[optical-toggle] job={} offset_method {} -> {}", job_id, old_method.map(|old| old.to_string()).unwrap_or_else(|| "missing".into()), method);
+                }
+            }
+        }
+        ::log::info!(target: "sync", "[optical-toggle] rewrote {} job(s) to offset_method {}", rewritten, method);
+    }
+
     pub fn set_pending_output_format(&mut self, options_json: String) {
         let Ok(options) = serde_json::from_str::<serde_json::Value>(&options_json) else { return; };
         let Some(codec) = options.get("codec").and_then(|v| v.as_str()) else { return; };
@@ -13146,6 +13201,7 @@ impl RenderQueue {
         // QML so this stays false there; if a method=4 somehow leaks through,
         // OpticalFlowMethod::detect_features falls back to DIS with a log error.
         let default_of_method: u64 = if self.batch_sync_ai_method { 4 } else { 2 };
+        let optical = self.batch_sync_optical;
 
         core::run_threaded(move || {
             let t_bg = std::time::Instant::now();
@@ -14076,7 +14132,7 @@ impl RenderQueue {
                     "calc_initial_fast": false,
                     "pose_method": 0,
                     "of_method": default_of_method,
-                    "offset_method": 2,
+                    "offset_method": batch_offset_method(optical),
                     "auto_sync_points": true
                 }));
                 drop(lens);
@@ -14136,6 +14192,9 @@ impl RenderQueue {
                         search_size_s,
                         every_nth_frame,
                     ) {
+                        item.additional_data = patched;
+                    }
+                    if let Some(patched) = patch_additional_data_offset_method(&item.additional_data, batch_offset_method(optical)) {
                         item.additional_data = patched;
                     }
 
@@ -14651,7 +14710,12 @@ impl RenderQueue {
             },
         );
         let load_stab = stab;
+        #[cfg(test)]
+        let test_completion = tests::deep_match_load_completion();
         core::run_threaded(move || {
+            // The test's creating thread must survive until all Qt posting below has returned.
+            #[cfg(test)]
+            let _test_completion = test_completion;
             // Probe loads bypass the built-in-gyro arbitration: deep match is
             // an explicit user request to test this .bin against the job, and
             // keep_video_gyro jobs would otherwise silently refuse it. The
@@ -15827,7 +15891,7 @@ impl RenderQueue {
                         "calc_initial_fast": false,
                         "pose_method": 0,
                         "of_method": 2,
-                        "offset_method": 2,
+                        "offset_method": batch_offset_method(self.batch_sync_optical),
                         "auto_sync_points": true
                     }));
                 }
@@ -15841,6 +15905,9 @@ impl RenderQueue {
                         3.0,
                         deep_match_every_nth_frame,
                     ) {
+                        job.additional_data = patched;
+                    }
+                    if let Some(patched) = patch_additional_data_offset_method(&job.additional_data, batch_offset_method(self.batch_sync_optical)) {
                         job.additional_data = patched;
                     }
                 }
@@ -17018,6 +17085,27 @@ fn batch_sync_every_nth_frame(
         return 1;
     };
     ((fps / 49.0).floor() as i64).max(1)
+}
+
+fn batch_offset_method(optical: bool) -> u64 {
+    if optical { 3 } else { 2 }
+}
+
+fn patch_additional_data_offset_method(additional_data: &str, method: u64) -> Option<String> {
+    let serde_json::Value::Object(mut obj) = serde_json::from_str::<serde_json::Value>(additional_data).ok()? else { return None; };
+    let sync = obj.entry("synchronization".to_owned()).or_insert_with(|| serde_json::json!({}));
+    sync.as_object_mut()?.insert("offset_method".into(), method.into());
+    serde_json::to_string(&serde_json::Value::Object(obj)).ok()
+}
+
+fn rewrite_sync_offset_method(stab: &StabilizationManager, method: u64) -> Option<u64> {
+    let mut lens = stab.lens.write();
+    let sync = lens.sync_settings.as_mut()?;
+    let old = sync.get("offset_method")?.as_u64()?;
+    if matches!(old, 2 | 3) && old != method {
+        sync["offset_method"] = method.into();
+        Some(old)
+    } else { None }
 }
 
 // [batch-match-high-fps-duration-precedence] Merge the per-clip batch-sync
@@ -21103,132 +21191,182 @@ mod tests {
         queue
     }
 
+    thread_local! {
+        static DEEP_MATCH_LOAD_COMPLETIONS: std::cell::RefCell<Option<Vec<std::sync::mpsc::Receiver<()>>>> = const { std::cell::RefCell::new(None) };
+    }
+
+    pub(super) struct DeepMatchLoadCompletion(Option<std::sync::mpsc::Sender<()>>);
+
+    impl Drop for DeepMatchLoadCompletion {
+        fn drop(&mut self) {
+            if let Some(completed) = self.0.take() {
+                let _ = completed.send(());
+            }
+        }
+    }
+
+    pub(super) fn deep_match_load_completion() -> DeepMatchLoadCompletion {
+        let sender = DEEP_MATCH_LOAD_COMPLETIONS.with(|pending| {
+            let mut pending = pending.borrow_mut();
+            let pending = pending.as_mut()?;
+            let (sender, receiver) = std::sync::mpsc::channel();
+            pending.push(receiver);
+            Some(sender)
+        });
+        DeepMatchLoadCompletion(sender)
+    }
+
+    fn with_finished_deep_match_loads(expected: usize, test: impl FnOnce()) {
+        struct Restore(Option<Vec<std::sync::mpsc::Receiver<()>>>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                let pending = DEEP_MATCH_LOAD_COMPLETIONS.with(|pending| pending.replace(self.0.take()));
+                // Completion is sent after on_loaded has returned, not merely after file I/O.
+                for completed in pending.unwrap_or_default() {
+                    completed.recv().expect("every spawned load must finish its Qt posting before this test thread exits");
+                }
+            }
+        }
+        let previous = DEEP_MATCH_LOAD_COMPLETIONS.with(|pending| pending.replace(Some(Vec::new())));
+        let scope = Restore(previous);
+        test();
+        let count = DEEP_MATCH_LOAD_COMPLETIONS.with(|pending| pending.borrow().as_ref().unwrap().len());
+        assert_eq!(count, expected, "the fixture must wait for every deep-match load this test starts");
+        drop(scope);
+    }
+
     #[test]
     fn bootstrap_failure_triggers_one_focused_auto_probe() {
-        use gyroflow_core::synchronization::batch_clock;
-        const H: i64 = 3_600_000;
-        let mut queue = bootstrap_failed_queue();
-        // First two dead vanguards: below the trigger threshold.
-        queue.record_batch_sync_points(1, Vec::new());
-        queue.record_batch_sync_points(2, Vec::new());
-        assert!(queue.auto_probe.is_none());
-        // Third one completes → window declared bootstrap-failed → probe.
-        queue.record_batch_sync_points(3, Vec::new());
-        let probe = queue.auto_probe.as_ref().expect("auto-probe must launch");
-        assert_eq!(probe.job_id, 1, "longest-first tie-breaks on job id");
-        assert_eq!(probe.candidates, vec![1, 2], "ladder capped at PROBE_MAX_CLIPS");
-        assert!(!probe.widened);
-        assert!(probe.hold_range_ms.0 <= H as f64 && probe.hold_range_ms.1 >= (H + 120_000) as f64);
-        assert_eq!(queue.auto_probe_windows_done, 1);
-        assert_eq!(queue.auto_probe_attempted_ms.len(), 1);
-        // The probe run is registered through the shared single-flight state
-        // with a focused (windowed) chunk plan around the predicted position.
-        let state = queue.deep_match_pending.get(&1).expect("probe pending");
-        let predicted = H as f64 - 196_640.0;
-        assert!(
-            state.chunk_plan[0].0 <= predicted && state.chunk_plan[0].1 >= predicted,
-            "focused chunk {:?} must bracket the predicted position {predicted:.0}",
-            state.chunk_plan[0]
-        );
-        // Manual deep-match entry is single-flight-blocked while it runs.
-        assert_eq!(
-            queue.start_deep_gyro_match(2, 0, -1).to_string(),
-            "deep_match_in_flight"
-        );
-        // A repeated scan neither stacks probes nor spends budget again.
-        queue.scan_auto_probe_triggers();
-        assert_eq!(queue.auto_probe_windows_done, 1);
-        assert!(
-            queue
-                .auto_probe_attempted_ms
-                .iter()
-                .all(|a| (a - H as f64).abs() <= batch_clock::LOCAL_WINDOW_MS),
-            "one attempted entry for this window only"
-        );
-        assert_eq!(queue.auto_probe_attempted_ms.len(), 1);
+        with_finished_deep_match_loads(1, || {
+            use gyroflow_core::synchronization::batch_clock;
+            const H: i64 = 3_600_000;
+            let mut queue = bootstrap_failed_queue();
+            // First two dead vanguards: below the trigger threshold.
+            queue.record_batch_sync_points(1, Vec::new());
+            queue.record_batch_sync_points(2, Vec::new());
+            assert!(queue.auto_probe.is_none());
+            // Third one completes → window declared bootstrap-failed → probe.
+            queue.record_batch_sync_points(3, Vec::new());
+            let probe = queue.auto_probe.as_ref().expect("auto-probe must launch");
+            assert_eq!(probe.job_id, 1, "longest-first tie-breaks on job id");
+            assert_eq!(probe.candidates, vec![1, 2], "ladder capped at PROBE_MAX_CLIPS");
+            assert!(!probe.widened);
+            assert!(probe.hold_range_ms.0 <= H as f64 && probe.hold_range_ms.1 >= (H + 120_000) as f64);
+            assert_eq!(queue.auto_probe_windows_done, 1);
+            assert_eq!(queue.auto_probe_attempted_ms.len(), 1);
+            // The probe run is registered through the shared single-flight state
+            // with a focused (windowed) chunk plan around the predicted position.
+            let state = queue.deep_match_pending.get(&1).expect("probe pending");
+            let predicted = H as f64 - 196_640.0;
+            assert!(
+                state.chunk_plan[0].0 <= predicted && state.chunk_plan[0].1 >= predicted,
+                "focused chunk {:?} must bracket the predicted position {predicted:.0}",
+                state.chunk_plan[0]
+            );
+            // Manual deep-match entry is single-flight-blocked while it runs.
+            assert_eq!(
+                queue.start_deep_gyro_match(2, 0, -1).to_string(),
+                "deep_match_in_flight"
+            );
+            // A repeated scan neither stacks probes nor spends budget again.
+            queue.scan_auto_probe_triggers();
+            assert_eq!(queue.auto_probe_windows_done, 1);
+            assert!(
+                queue
+                    .auto_probe_attempted_ms
+                    .iter()
+                    .all(|a| (a - H as f64).abs() <= batch_clock::LOCAL_WINDOW_MS),
+                "one attempted entry for this window only"
+            );
+            assert_eq!(queue.auto_probe_attempted_ms.len(), 1);
+        });
     }
 
     #[test]
     fn auto_probe_ladder_walks_clips_then_widens_then_gives_up() {
-        let mut queue = bootstrap_failed_queue();
-        queue.record_batch_sync_points(1, Vec::new());
-        queue.record_batch_sync_points(2, Vec::new());
-        queue.record_batch_sync_points(3, Vec::new());
-        assert_eq!(queue.auto_probe.as_ref().unwrap().job_id, 1);
+        with_finished_deep_match_loads(3, || {
+            let mut queue = bootstrap_failed_queue();
+            queue.record_batch_sync_points(1, Vec::new());
+            queue.record_batch_sync_points(2, Vec::new());
+            queue.record_batch_sync_points(3, Vec::new());
+            assert_eq!(queue.auto_probe.as_ref().unwrap().job_id, 1);
 
-        // Rung 1: miss on clip 1 → clip 2, same window.
-        queue.deep_match_pending.remove(&1);
-        queue.advance_auto_probe_ladder("not_in_range");
-        let p = queue.auto_probe.as_ref().expect("ladder continues");
-        assert_eq!((p.job_id, p.clip_ord, p.widened), (2, 1, false));
-        assert!(queue.deep_match_pending.contains_key(&2));
+            // Rung 1: miss on clip 1 → clip 2, same window.
+            queue.deep_match_pending.remove(&1);
+            queue.advance_auto_probe_ladder("not_in_range");
+            let p = queue.auto_probe.as_ref().expect("ladder continues");
+            assert_eq!((p.job_id, p.clip_ord, p.widened), (2, 1, false));
+            assert!(queue.deep_match_pending.contains_key(&2));
 
-        // Rung 2: clips exhausted → widen once, back on the best clip.
-        queue.deep_match_pending.remove(&2);
-        queue.advance_auto_probe_ladder("low_motion");
-        let p = queue.auto_probe.as_ref().expect("widened rung");
-        assert_eq!((p.job_id, p.clip_ord, p.widened), (1, 0, true));
+            // Rung 2: clips exhausted → widen once, back on the best clip.
+            queue.deep_match_pending.remove(&2);
+            queue.advance_auto_probe_ladder("low_motion");
+            let p = queue.auto_probe.as_ref().expect("widened rung");
+            assert_eq!((p.job_id, p.clip_ord, p.widened), (1, 0, true));
 
-        // Rung 3: widened miss → give up; window stays as it is, budget
-        // spent, the attempted ledger keeps it from re-triggering.
-        queue.deep_match_pending.remove(&1);
-        queue.advance_auto_probe_ladder("not_in_range");
-        assert!(queue.auto_probe.is_none(), "ladder exhausted → give up");
-        assert!(queue.deep_match_pending.is_empty());
-        assert_eq!(queue.auto_probe_windows_done, 1);
-        // The give-up rescan must not restart the same window.
-        queue.scan_auto_probe_triggers();
-        assert!(queue.auto_probe.is_none());
+            // Rung 3: widened miss → give up; window stays as it is, budget
+            // spent, the attempted ledger keeps it from re-triggering.
+            queue.deep_match_pending.remove(&1);
+            queue.advance_auto_probe_ladder("not_in_range");
+            assert!(queue.auto_probe.is_none(), "ladder exhausted → give up");
+            assert!(queue.deep_match_pending.is_empty());
+            assert_eq!(queue.auto_probe_windows_done, 1);
+            // The give-up rescan must not restart the same window.
+            queue.scan_auto_probe_triggers();
+            assert!(queue.auto_probe.is_none());
+        });
     }
 
     #[test]
     fn auto_probe_hit_registers_window_anchor_and_recuts() {
-        use gyroflow_core::synchronization::batch_clock::ConfirmedOffsetSource;
-        use gyroflow_core::synchronization::deep_match::DeepMatchVerdict;
-        const H: i64 = 3_600_000;
-        let mut queue = bootstrap_failed_queue();
-        queue.record_batch_sync_points(1, Vec::new());
-        queue.record_batch_sync_points(2, Vec::new());
-        queue.record_batch_sync_points(3, Vec::new());
-        let chunk_base = queue.deep_match_pending[&1].chunk_plan[0].0;
-        let anchor_center = queue.batch_clock_center_ms;
+        with_finished_deep_match_loads(1, || {
+            use gyroflow_core::synchronization::batch_clock::ConfirmedOffsetSource;
+            use gyroflow_core::synchronization::deep_match::DeepMatchVerdict;
+            const H: i64 = 3_600_000;
+            let mut queue = bootstrap_failed_queue();
+            queue.record_batch_sync_points(1, Vec::new());
+            queue.record_batch_sync_points(2, Vec::new());
+            queue.record_batch_sync_points(3, Vec::new());
+            let chunk_base = queue.deep_match_pending[&1].chunk_plan[0].0;
+            let anchor_center = queue.batch_clock_center_ms;
 
-        // The probe finds the truth: content start at file-relative
-        // 3_600_000 − 193_850 (true shift −193850 vs borrowed −196640).
-        // Park the queue first so the re-cut requeue's dispatch stays inert
-        // and the row assertions below are deterministic (live runs dispatch
-        // immediately — covered by the scheduling assertions elsewhere).
-        queue.status = QString::from("stopped");
-        let file_offset = -(H as f64 - 193_850.0);
-        let stab = queue.jobs[&1].stab.clone();
-        queue.terminate_deep_match(
-            1,
-            stab,
-            DeepMatchVerdict::Accepted { offset_ms: file_offset + chunk_base },
-        );
+            // The probe finds the truth: content start at file-relative
+            // 3_600_000 − 193_850 (true shift −193850 vs borrowed −196640).
+            // Park the queue first so the re-cut requeue's dispatch stays inert
+            // and the row assertions below are deterministic (live runs dispatch
+            // immediately — covered by the scheduling assertions elsewhere).
+            queue.status = QString::from("stopped");
+            let file_offset = -(H as f64 - 193_850.0);
+            let stab = queue.jobs[&1].stab.clone();
+            queue.terminate_deep_match(
+                1,
+                stab,
+                DeepMatchVerdict::Accepted { offset_ms: file_offset + chunk_base },
+            );
 
-        // Window anchor registered at the probe clip's capture time…
-        let near = queue
-            .batch_clock
-            .nearest_confirmed(H as f64, 0)
-            .expect("window anchor");
-        assert_eq!(near.source, ConfirmedOffsetSource::Anchor);
-        assert_eq!(near.created_at_ms, H as f64);
-        assert!((near.wall_clock_offset_ms - -193_850.0).abs() <= 1.0);
-        // …without touching the learned shift, the direction centre or the
-        // deep-match pin registry.
-        assert_eq!(queue.learned_clock_shift_ms, None);
-        assert_eq!(queue.batch_clock_center_ms, anchor_center);
-        assert!(queue.deep_match_results.is_empty());
-        // Probe resolved; the window's damaged jobs re-cut against the anchor.
-        assert!(queue.auto_probe.is_none());
-        let recut: BTreeSet<u32> = [1, 2, 3].into_iter().collect();
-        assert_eq!(queue.batch_sync_recut_pending, recut);
-        assert!(queue.completed_batch_sync_job_ids.is_empty());
-        for job_id in [1u32, 2, 3] {
-            let idx = queue.jobs[&job_id].queue_index;
-            assert_eq!(queue.queue.borrow()[idx].status, JobStatus::Queued);
-        }
+            // Window anchor registered at the probe clip's capture time…
+            let near = queue
+                .batch_clock
+                .nearest_confirmed(H as f64, 0)
+                .expect("window anchor");
+            assert_eq!(near.source, ConfirmedOffsetSource::Anchor);
+            assert_eq!(near.created_at_ms, H as f64);
+            assert!((near.wall_clock_offset_ms - -193_850.0).abs() <= 1.0);
+            // …without touching the learned shift, the direction centre or the
+            // deep-match pin registry.
+            assert_eq!(queue.learned_clock_shift_ms, None);
+            assert_eq!(queue.batch_clock_center_ms, anchor_center);
+            assert!(queue.deep_match_results.is_empty());
+            // Probe resolved; the window's damaged jobs re-cut against the anchor.
+            assert!(queue.auto_probe.is_none());
+            let recut: BTreeSet<u32> = [1, 2, 3].into_iter().collect();
+            assert_eq!(queue.batch_sync_recut_pending, recut);
+            assert!(queue.completed_batch_sync_job_ids.is_empty());
+            for job_id in [1u32, 2, 3] {
+                let idx = queue.jobs[&job_id].queue_index;
+                assert_eq!(queue.queue.borrow()[idx].status, JobStatus::Queued);
+            }
+        });
     }
 
     // ---- posterior-peak verification (deep-match-peak-verification) ----
@@ -22520,11 +22658,191 @@ mod tests {
         let ad: serde_json::Value =
             serde_json::from_str(&queue.jobs[&1].additional_data).unwrap();
         assert_eq!(ad["original"], true);
+        assert_eq!(ad["synchronization"]["offset_method"], 2);
         assert!(
             (ad["synchronization"]["initial_offset"].as_f64().unwrap() - (-5.0005)).abs() < 1e-9
         );
     }
 
+    #[test]
+    fn patch_offset_method_writes_only_that_key() {
+        let out: serde_json::Value = serde_json::from_str(&patch_additional_data_offset_method(r#"{"synchronization":{"initial_offset":-1.5,"offset_method":2}}"#, 3).unwrap()).unwrap();
+        assert_eq!(out["synchronization"]["offset_method"], 3);
+        assert_eq!(out["synchronization"]["initial_offset"], -1.5);
+        let created: serde_json::Value = serde_json::from_str(&patch_additional_data_offset_method("{}", 3).unwrap()).unwrap();
+        assert_eq!(created["synchronization"]["offset_method"], 3);
+        assert!(patch_additional_data_offset_method("[]", 3).is_none());
+        assert!(patch_additional_data_offset_method("not json", 3).is_none());
+    }
+
+    #[test]
+    fn set_jobs_rewrites_lens_and_mirror() {
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        queue.jobs.get_mut(&1).unwrap().additional_data = r#"{"synchronization":{"offset_method":2}}"#.into();
+        queue.set_jobs_sync_offset_method(3);
+        let job = &queue.jobs[&1];
+        assert_eq!(job.stab.as_ref().unwrap().lens.read().sync_settings.as_ref().unwrap()["offset_method"], 3);
+        let ad: serde_json::Value = serde_json::from_str(&job.additional_data).unwrap();
+        assert_eq!(ad["synchronization"]["offset_method"], 3);
+        queue.set_jobs_sync_offset_method(2);
+        assert_eq!(queue.jobs[&1].stab.as_ref().unwrap().lens.read().sync_settings.as_ref().unwrap()["offset_method"], 2);
+    }
+
+    #[test]
+    fn set_jobs_skips_rendering_jobs() {
+        let mut queue = queue_with_eta_job(JobStatus::Rendering);
+        queue.set_jobs_sync_offset_method(3);
+        assert_eq!(queue.jobs[&1].stab.as_ref().unwrap().lens.read().sync_settings.as_ref().unwrap()["offset_method"], 2);
+    }
+
+    #[test]
+    fn set_jobs_keeps_essential_and_ncc_methods() {
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        queue.jobs[&1].stab.as_ref().unwrap().lens.write().sync_settings.as_mut().unwrap()["offset_method"] = 0.into();
+        queue.jobs.get_mut(&1).unwrap().additional_data = r#"{"synchronization":{"offset_method":1}}"#.into();
+        queue.set_jobs_sync_offset_method(3);
+        assert_eq!(queue.jobs[&1].stab.as_ref().unwrap().lens.read().sync_settings.as_ref().unwrap()["offset_method"], 0);
+        let ad: serde_json::Value = serde_json::from_str(&queue.jobs[&1].additional_data).unwrap();
+        assert_eq!(ad["synchronization"]["offset_method"], 1);
+    }
+
+    #[test]
+    fn set_jobs_tolerates_non_json_additional_data() {
+        let mut queue = queue_with_eta_job(JobStatus::Queued);   // additional_data is ""
+        queue.set_jobs_sync_offset_method(3);
+        assert_eq!(queue.jobs[&1].additional_data, "");
+        assert_eq!(queue.jobs[&1].stab.as_ref().unwrap().lens.read().sync_settings.as_ref().unwrap()["offset_method"], 3);
+    }
+
+    #[test]
+    fn set_jobs_rejects_other_methods() {
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        queue.set_jobs_sync_offset_method(1);
+        assert_eq!(queue.jobs[&1].stab.as_ref().unwrap().lens.read().sync_settings.as_ref().unwrap()["offset_method"], 2);
+    }
+
+    #[test]
+    fn queue_snapshot_preserves_project_with_non_object_additional_data() {
+        let queue = queue_with_eta_job(JobStatus::Finished);
+        let job = &queue.jobs[&1];
+        for additional in ["", "not json", "null", "[]", "42", "true"] {
+            let data = RenderQueue::get_gyroflow_data_internal(job.stab.as_ref().unwrap(), additional, &job.render_options).unwrap();
+            let snapshot: serde_json::Value = serde_json::from_str(&data).unwrap();
+            println!("additional={:?} snapshot={}", additional, snapshot);
+            assert!(snapshot.is_object(), "additional={:?} snapshot={}", additional, snapshot);
+            assert_eq!(snapshot["videofile"], "file:///eta-test.mp4");
+            assert_eq!(snapshot["calibration_data"]["sync_settings"]["offset_method"], 2);
+            assert!(snapshot["output"].is_object());
+        }
+    }
+
+    #[test]
+    fn queue_snapshot_preserves_valid_additional_data_merge() {
+        let queue = queue_with_eta_job(JobStatus::Finished);
+        let job = &queue.jobs[&1];
+        let data = RenderQueue::get_gyroflow_data_internal(job.stab.as_ref().unwrap(), r#"{"custom":{"kept":true},"synchronization":{"offset_method":3},"output":{"ignored":true}}"#, &job.render_options).unwrap();
+        let snapshot: serde_json::Value = serde_json::from_str(&data).unwrap();
+        assert_eq!(snapshot["videofile"], "file:///eta-test.mp4");
+        assert_eq!(snapshot["calibration_data"]["sync_settings"]["offset_method"], 2);
+        assert_eq!(snapshot["custom"]["kept"], true);
+        assert_eq!(snapshot["synchronization"]["offset_method"], 3);
+        assert_eq!(snapshot["output"], serde_json::to_value(&job.render_options).unwrap());
+    }
+
+    #[test]
+    fn set_jobs_reaches_a_job_whose_stab_was_released() {
+        // A finished export releases the stabilizer and keeps only project_data: reset_job rebuilds from it and never
+        // reads additional_data, so the toggle has to be applied to the rebuilt stabilizer
+        let mut queue = queue_with_eta_job(JobStatus::Finished);
+        let project_data = {
+            let job = queue.jobs.get(&1).unwrap();
+            RenderQueue::get_gyroflow_data_internal(job.stab.as_ref().unwrap(), &job.additional_data, &job.render_options).unwrap()
+        };
+        {
+            let job = queue.jobs.get_mut(&1).unwrap();
+            job.project_data = Some(project_data);
+            job.stab = None;
+        }
+        queue.set_jobs_sync_offset_method(3);
+        assert_eq!(queue.pending_sync_offset_methods.get(&1), Some(&3));
+        queue.reset_job(1);
+        let job = &queue.jobs[&1];
+        assert_eq!(job.stab.as_ref().unwrap().lens.read().sync_settings.as_ref().unwrap()["offset_method"], 3);
+        assert!(queue.pending_sync_offset_methods.is_empty());
+    }
+
+    #[test]
+    fn remove_cleans_pending_method_for_a_released_job() {
+        let mut queue = queue_with_eta_job(JobStatus::Finished);
+        let project_data = {
+            let job = queue.jobs.get(&1).unwrap();
+            RenderQueue::get_gyroflow_data_internal(job.stab.as_ref().unwrap(), &job.additional_data, &job.render_options).unwrap()
+        };
+        {
+            let job = queue.jobs.get_mut(&1).unwrap();
+            job.project_data = Some(project_data);
+            job.stab = None;
+        }
+        queue.set_jobs_sync_offset_method(3);
+        assert_eq!(queue.pending_sync_offset_methods.get(&1), Some(&3));
+        queue.remove(1);
+        assert!(!queue.jobs.contains_key(&1));
+        assert!(queue.pending_sync_offset_methods.is_empty());
+    }
+
+    #[test]
+    fn deep_match_landing_follows_the_optical_toggle() {
+        use gyroflow_core::synchronization::deep_match;
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        queue.batch_sync_optical = true;
+        let stab = setup_deep_match_job(&mut queue, true);
+        simulate_deep_match_probe(&mut queue, &stab);
+
+        deep_match::arm(2);
+        deep_match::record(deep_match_stats(0.1));
+        deep_match::record(deep_match_stats(0.2));
+        queue.record_batch_sync_result(
+            1,
+            vec![
+                sync_candidate(1, 1000.0, -5000.0, 0.9),
+                sync_candidate(1, 2000.0, -5001.0, 0.9),
+            ],
+            vec![],
+        );
+
+        assert!(queue.deep_match_results.contains_key(&1), "expected Accepted");
+        {
+            let gyro = stab.gyro.read();
+            let fm = gyro.file_metadata.read();
+            assert!(fm.keep_video_gyro, "built-in gyro must be restored on keep material");
+            assert_eq!(fm.raw_imu.len(), 1);
+            assert_eq!(gyro.file_url, "file:///builtin-source.mp4");
+        }
+        let lens = stab.lens.read();
+        assert_eq!(lens.name, "", "probe-injected lens must not leak");
+        let ss = lens.sync_settings.clone().unwrap();
+        assert_eq!(ss["offset_method"], 3);
+        assert!((ss["initial_offset"].as_f64().unwrap() - (-5.0005)).abs() < 1e-9);
+        let ad: serde_json::Value =
+            serde_json::from_str(&queue.jobs[&1].additional_data).unwrap();
+        assert_eq!(ad["original"], true);
+        assert_eq!(ad["synchronization"]["offset_method"], 3);
+        assert!(
+            (ad["synchronization"]["initial_offset"].as_f64().unwrap() - (-5.0005)).abs() < 1e-9
+        );
+    }
+
+    #[test]
+    fn batch_match_follows_the_optical_toggle() {
+        assert_eq!(batch_offset_method(true), 3);
+        assert_eq!(batch_offset_method(false), 2);
+        // "\nmod tests {" also matches under CRLF line endings; the implementation has no other line starting like it
+        let src = include_str!("render_queue.rs");
+        let implementation = &src[..src.find("\nmod tests {").expect("test module marker")];
+        assert_eq!(implementation.matches("\"offset_method\": batch_offset_method(").count(), 2, "apply_match and deep landing");
+        assert!(implementation.matches("patch_additional_data_offset_method(").count() >= 3, "apply_match, deep landing, set_jobs");
+    }
     #[test]
     fn deep_match_success_keeps_bin_for_regular_material() {
         use gyroflow_core::synchronization::deep_match;
@@ -25103,6 +25421,21 @@ mod tests {
     }
 
     #[test]
+    fn optical_sync_checkbox_is_one_way_and_unpersisted() {
+        let qml = include_str!("../ui/menu/SimpleStabilization.qml");
+        for needle in [
+            "id: opticalSyncCb;",
+            "render_queue.batch_sync_optical = checked;",
+            "render_queue.set_jobs_sync_offset_method(checked ? 3 : 2);",
+            "controller.has_optical_sync_support()",
+            "Component.onCompleted: render_queue.batch_sync_optical = checked;",
+        ] {
+            assert!(qml.contains(needle), "missing: {needle}");
+        }
+        assert!(!qml.contains("simpleOpticalSync"), "the optical sync toggle must not be persisted");
+    }
+
+    #[test]
     fn ai_sync_writes_to_batch_sync_ai_method_are_guarded_by_neuflow_support() {
         // Hiding the AI SYNC checkbox is not a guard. `visible: false` only affects
         // painting: the element is still instantiated, `checked` is still evaluated
@@ -25548,26 +25881,44 @@ mod tests {
         assert_eq!(display["lens_group_display_direction"], "V");
     }
 
+    fn with_fixed_lens_presets(test: impl FnOnce()) {
+        use niyien_lens_presets::{AnamorphicPreset, test_presets::with_presets};
+        with_presets(vec![
+            AnamorphicPreset {
+                id: "blazar_viper_35mm_1_50x".into(), name: "Blazar Viper 35mm 1.50x".into(),
+                focal_length_mm: Some(35.0), squeeze_ratio: 1.5,
+                distortion_coeffs: vec![0.01, -0.02, 0.03, -0.04], distortion_model: "opencv_fisheye".into(),
+            },
+            AnamorphicPreset {
+                id: "sirui_xingchen_50mm_1_33x".into(), name: "Sirui star 50mm 1.33x".into(),
+                focal_length_mm: Some(50.0), squeeze_ratio: 1.33,
+                distortion_coeffs: vec![0.02, -0.01, 0.04, -0.03], distortion_model: "opencv_fisheye".into(),
+            },
+        ], test);
+    }
+
     #[test]
     fn display_params_show_anamorphic_preset_ratio() {
-        let queue = queue_with_lens_display_job(
-            true,
-            niyien_lens_presets::LensGroupConfig {
-                lens_index: 0,
-                focal_length_mm: Some(50.0),
-                anamorphic_enabled: true,
-                preset_id: Some("sirui_xingchen_50mm_1_33x".to_owned()),
-                squeeze_direction: Some(niyien_lens_presets::SqueezeDirection::Horizontal),
-                ..Default::default()
-            },
-            auto_focal_metadata(),
-        );
+        with_fixed_lens_presets(|| {
+            let queue = queue_with_lens_display_job(
+                true,
+                niyien_lens_presets::LensGroupConfig {
+                    lens_index: 0,
+                    focal_length_mm: Some(50.0),
+                    anamorphic_enabled: true,
+                    preset_id: Some("sirui_xingchen_50mm_1_33x".to_owned()),
+                    squeeze_direction: Some(niyien_lens_presets::SqueezeDirection::Horizontal),
+                    ..Default::default()
+                },
+                auto_focal_metadata(),
+            );
 
-        let display = job_display_params(&queue);
+            let display = job_display_params(&queue);
 
-        assert_eq!(display["lens_group_display_mode"], "global");
-        assert_eq!(display["lens_group_display_ratio"], 1.33);
-        assert_eq!(display["lens_group_display_direction"], "H");
+            assert_eq!(display["lens_group_display_mode"], "global");
+            assert_eq!(display["lens_group_display_ratio"], 1.33);
+            assert_eq!(display["lens_group_display_direction"], "H");
+        });
     }
 
     #[test]
@@ -26249,76 +26600,80 @@ mod tests {
 
     #[test]
     fn selected_job_lens_group_manual_anamorphic_restores_baseline_distortion_after_preset() {
-        let mut job = job_with_sentinel_lens_group_baseline(lens_group_config_for_restore_test(
-            true,
-            Some("blazar_viper_35mm_1_50x"),
-            None,
-        ));
+        with_fixed_lens_presets(|| {
+            let mut job = job_with_sentinel_lens_group_baseline(lens_group_config_for_restore_test(
+                true,
+                Some("blazar_viper_35mm_1_50x"),
+                None,
+            ));
 
-        let preset_data = export_project_data_with_effective_job_lens_group(&job, true);
-        let preset_project: serde_json::Value = serde_json::from_str(&preset_data).unwrap();
-        assert_eq!(
-            preset_project["calibration_data"]["distortion_model"],
-            "opencv_fisheye"
-        );
+            let preset_data = export_project_data_with_effective_job_lens_group(&job, true);
+            let preset_project: serde_json::Value = serde_json::from_str(&preset_data).unwrap();
+            assert_eq!(
+                preset_project["calibration_data"]["distortion_model"],
+                "opencv_fisheye"
+            );
 
-        replace_job_lens_group_config(
-            &mut job,
-            lens_group_config_for_restore_test(true, None, Some(1.5)),
-        );
+            replace_job_lens_group_config(
+                &mut job,
+                lens_group_config_for_restore_test(true, None, Some(1.5)),
+            );
 
-        let project_data = export_project_data_with_effective_job_lens_group(&job, true);
-        let project: serde_json::Value = serde_json::from_str(&project_data).unwrap();
-        let calibration = &project["calibration_data"];
+            let project_data = export_project_data_with_effective_job_lens_group(&job, true);
+            let project: serde_json::Value = serde_json::from_str(&project_data).unwrap();
+            let calibration = &project["calibration_data"];
 
-        assert_eq!(calibration["input_horizontal_stretch"], 1.5);
-        assert_eq!(
-            calibration["output_dimension"],
-            serde_json::json!({ "w": 2880, "h": 1080 })
-        );
-        assert_eq!(calibration["distortion_model"], "poly5");
-        assert_eq!(
-            calibration["fisheye_params"]["distortion_coeffs"],
-            serde_json::json!([0.1, 0.2, 0.3, 0.4])
-        );
+            assert_eq!(calibration["input_horizontal_stretch"], 1.5);
+            assert_eq!(
+                calibration["output_dimension"],
+                serde_json::json!({ "w": 2880, "h": 1080 })
+            );
+            assert_eq!(calibration["distortion_model"], "poly5");
+            assert_eq!(
+                calibration["fisheye_params"]["distortion_coeffs"],
+                serde_json::json!([0.1, 0.2, 0.3, 0.4])
+            );
+        });
     }
 
     #[test]
     fn selected_job_lens_group_disabled_anamorphic_restores_baseline_distortion_after_preset() {
-        let mut job = job_with_sentinel_lens_group_baseline(lens_group_config_for_restore_test(
-            true,
-            Some("blazar_viper_35mm_1_50x"),
-            None,
-        ));
+        with_fixed_lens_presets(|| {
+            let mut job = job_with_sentinel_lens_group_baseline(lens_group_config_for_restore_test(
+                true,
+                Some("blazar_viper_35mm_1_50x"),
+                None,
+            ));
 
-        let preset_data = export_project_data_with_effective_job_lens_group(&job, true);
-        let preset_project: serde_json::Value = serde_json::from_str(&preset_data).unwrap();
-        assert_eq!(
-            preset_project["calibration_data"]["distortion_model"],
-            "opencv_fisheye"
-        );
+            let preset_data = export_project_data_with_effective_job_lens_group(&job, true);
+            let preset_project: serde_json::Value = serde_json::from_str(&preset_data).unwrap();
+            assert_eq!(
+                preset_project["calibration_data"]["distortion_model"],
+                "opencv_fisheye"
+            );
 
-        replace_job_lens_group_config(
-            &mut job,
-            lens_group_config_for_restore_test(false, None, None),
-        );
+            replace_job_lens_group_config(
+                &mut job,
+                lens_group_config_for_restore_test(false, None, None),
+            );
 
-        let project_data = export_project_data_with_effective_job_lens_group(&job, true);
-        let project: serde_json::Value = serde_json::from_str(&project_data).unwrap();
-        let calibration = &project["calibration_data"];
+            let project_data = export_project_data_with_effective_job_lens_group(&job, true);
+            let project: serde_json::Value = serde_json::from_str(&project_data).unwrap();
+            let calibration = &project["calibration_data"];
 
-        assert_eq!(calibration["input_horizontal_stretch"], 1.0);
-        assert_eq!(calibration["input_vertical_stretch"], 1.0);
-        assert!(calibration["output_dimension"].is_null());
-        assert_ne!(
-            calibration["output_dimension"],
-            serde_json::json!({ "w": 2880, "h": 1080 })
-        );
-        assert_eq!(calibration["distortion_model"], "poly5");
-        assert_eq!(
-            calibration["fisheye_params"]["distortion_coeffs"],
-            serde_json::json!([0.1, 0.2, 0.3, 0.4])
-        );
+            assert_eq!(calibration["input_horizontal_stretch"], 1.0);
+            assert_eq!(calibration["input_vertical_stretch"], 1.0);
+            assert!(calibration["output_dimension"].is_null());
+            assert_ne!(
+                calibration["output_dimension"],
+                serde_json::json!({ "w": 2880, "h": 1080 })
+            );
+            assert_eq!(calibration["distortion_model"], "poly5");
+            assert_eq!(
+                calibration["fisheye_params"]["distortion_coeffs"],
+                serde_json::json!([0.1, 0.2, 0.3, 0.4])
+            );
+        });
     }
 
     #[test]
@@ -26366,71 +26721,73 @@ mod tests {
 
     #[test]
     fn selected_job_lens_group_override_exports_effective_anamorphic_lens_model() {
-        let stab = Arc::new(StabilizationManager::default());
-        {
-            let mut params = stab.params.write();
-            params.size = (1920, 1080);
-            params.frame_count = 1;
-            params.fps = 30.0;
-        }
-        let metadata = core::gyro_source::FileMetadata {
-            additional_data: serde_json::json!({ "lens_index": 0 }),
-            unit_pixel_focal_length: Some(100.0),
-            ..Default::default()
-        };
-        {
-            let mut gyro = stab.gyro.write();
-            gyro.file_metadata = metadata.clone().into();
-        }
-        let base_lens_metadata = JobLensMetadataBackup::from_metadata(&metadata);
+        with_fixed_lens_presets(|| {
+            let stab = Arc::new(StabilizationManager::default());
+            {
+                let mut params = stab.params.write();
+                params.size = (1920, 1080);
+                params.frame_count = 1;
+                params.fps = 30.0;
+            }
+            let metadata = core::gyro_source::FileMetadata {
+                additional_data: serde_json::json!({ "lens_index": 0 }),
+                unit_pixel_focal_length: Some(100.0),
+                ..Default::default()
+            };
+            {
+                let mut gyro = stab.gyro.write();
+                gyro.file_metadata = metadata.clone().into();
+            }
+            let base_lens_metadata = JobLensMetadataBackup::from_metadata(&metadata);
 
-        let mut local_configs = niyien_lens_presets::default_lens_group_configs();
-        local_configs[0].focal_length_mm = Some(35.0);
-        local_configs[0].anamorphic_enabled = true;
-        local_configs[0].preset_id = Some("sirui_xingchen_50mm_1_33x".to_owned());
-        local_configs[0].squeeze_direction =
-            Some(niyien_lens_presets::SqueezeDirection::Horizontal);
-        let job = Job {
-            queue_index: 0,
-            render_options: RenderOptions::default(),
-            base_render_output_size: Some((1920, 1080)),
-            original_output_size: (0, 0),
-            auto_rotate: false,
-            additional_data: String::new(),
-            cancel_flag: Default::default(),
-            render_epoch: Default::default(),
-            lens_apply_guard: Default::default(),
-            manual_camera_project_generation: 0,
-            pending_reset_requeue: false,
-            project_data: None,
-            last_finished_export_project: None,
-            last_written_offsets: None,
-            stab: Some(stab),
-            base_lens_metadata: Some(base_lens_metadata),
-            lens_group_config_override: Some(JobLensGroupOverride {
-                configs: local_configs,
-                enabled_groups: vec![true, false, false, false, false, false],
-            }),
-            lens_group_index: Some(0),
-            video_created_at: None,
-            plugin_only: false,
-            original_video_rotation: 0.0,
-            lens_index_override: None,
-            focal_length_override: None,
-        };
+            let mut local_configs = niyien_lens_presets::default_lens_group_configs();
+            local_configs[0].focal_length_mm = Some(35.0);
+            local_configs[0].anamorphic_enabled = true;
+            local_configs[0].preset_id = Some("sirui_xingchen_50mm_1_33x".to_owned());
+            local_configs[0].squeeze_direction =
+                Some(niyien_lens_presets::SqueezeDirection::Horizontal);
+            let job = Job {
+                queue_index: 0,
+                render_options: RenderOptions::default(),
+                base_render_output_size: Some((1920, 1080)),
+                original_output_size: (0, 0),
+                auto_rotate: false,
+                additional_data: String::new(),
+                cancel_flag: Default::default(),
+                render_epoch: Default::default(),
+                lens_apply_guard: Default::default(),
+                manual_camera_project_generation: 0,
+                pending_reset_requeue: false,
+                project_data: None,
+                last_finished_export_project: None,
+                last_written_offsets: None,
+                stab: Some(stab),
+                base_lens_metadata: Some(base_lens_metadata),
+                lens_group_config_override: Some(JobLensGroupOverride {
+                    configs: local_configs,
+                    enabled_groups: vec![true, false, false, false, false, false],
+                }),
+                lens_group_index: Some(0),
+                video_created_at: None,
+                plugin_only: false,
+                original_video_rotation: 0.0,
+                lens_index_override: None,
+                focal_length_override: None,
+            };
 
-        let project_data = export_project_data_with_effective_job_lens_group(&job, true);
-        let project: serde_json::Value = serde_json::from_str(&project_data).unwrap();
+            let project_data = export_project_data_with_effective_job_lens_group(&job, true);
+            let project: serde_json::Value = serde_json::from_str(&project_data).unwrap();
 
-        assert_eq!(
-            project["calibration_data"]["lens_model"],
-            "Sirui star 50mm 1.33x"
-        );
-        assert_eq!(project["calibration_data"]["input_horizontal_stretch"], 1.33);
-        assert_eq!(
-            project["calibration_data"]["output_dimension"],
-            serde_json::json!({ "w": 2554, "h": 1080 })
-        );
+            assert_eq!(
+                project["calibration_data"]["lens_model"],
+                "Sirui star 50mm 1.33x"
+            );
+            assert_eq!(project["calibration_data"]["input_horizontal_stretch"], 1.33);
+            assert_eq!(
+                project["calibration_data"]["output_dimension"],
+                serde_json::json!({ "w": 2554, "h": 1080 })
+            );
+        });
     }
 
     #[test]
@@ -28879,7 +29236,7 @@ mod tests {
 
         assert!(
             dialog.contains(
-                "property var extensions: [ \"mp4\", \"mov\", \"mxf\", \"mkv\", \"webm\", \"insv\", \"gyroflow\", \"png\", \"jpg\", \"exr\", \"dng\", \"braw\", \"r3d\", \"nev\", \"crm\" ]"
+                "property var extensions: [ \"mp4\", \"mov\", \"mts\", \"m2ts\", \"mxf\", \"mkv\", \"webm\", \"insv\", \"gyroflow\", \"png\", \"jpg\", \"exr\", \"dng\", \"braw\", \"r3d\", \"nev\", \"crm\" ]"
             ),
             "main file dialog extensions must remain the video/project set used by batch routing"
         );
@@ -28932,43 +29289,50 @@ mod tests {
     #[test]
     fn video_area_video_load_after_project_reloads_matching_associated_gyroflow() {
         let qml = include_str!("../ui/VideoArea.qml");
-        let fn_idx = qml
-            .find("function loadFile")
-            .expect("VideoArea.loadFile exists");
-        let remaining = &qml[fn_idx..];
-        let next_fn_idx = remaining
-            .find("function loadCrmProxyPair")
-            .expect("loadFile block end marker exists");
-        let body = &remaining[..next_fn_idx];
+        let load_start = qml.find("function loadFile").expect("VideoArea.loadFile exists");
+        let prompt_start = qml[load_start..].find("function maybePromptAssociatedGyroflow")
+            .map(|index| load_start + index).expect("associated project prompt is deferred");
+        let prompt_end = qml[prompt_start..].find("function loadCrmProxyPair")
+            .map(|index| prompt_start + index).expect("associated prompt block end marker exists");
+        let load = &qml[load_start..prompt_start];
+        let prompt = &qml[prompt_start..prompt_end];
+        assert!(!load.contains("const hadProjectFile = !!controller.project_file_url"),
+            "stale project_file_url must not suppress associated project handling");
+        assert!(load.contains("const skipAssociatedGyroflow = !!suppressAssociatedGyroflow")
+            && load.contains("root.skipAssociatedGyroflowOnLoad = !!suppressAssociatedGyroflow;"),
+            "only explicit project/batch context may suppress the deferred prompt");
+        assert!(!load.contains("messageBox(Modal.Question, qsTr(\"There's a %1 file associated"),
+            "associated project prompts must wait for metadata instead of running in loadFile");
 
-        assert!(
-            !body.contains("const hadProjectFile = !!controller.project_file_url"),
-            "VideoArea.loadFile must not suppress associated .gyroflow prompts based only on stale project_file_url"
-        );
-        assert!(
-            body.contains("const skipAssociatedGyroflow = !!suppressAssociatedGyroflow"),
-            "only explicit project/batch context may suppress associated .gyroflow handling"
-        );
-        assert!(
-            body.contains("if (!root.pendingGyroflowData && !skipAssociatedGyroflow)"),
-            "associated .gyroflow prompt must be guarded by the suppression flag"
-        );
-        assert!(
-            body.contains("const gfUrl = filesystem.get_file_url(folder, gfFilename, false)"),
-            "associated .gyroflow URL must be computed once for project match and prompt handling"
-        );
-        assert!(
-            body.contains("activeProjectFileUrl && activeProjectFileUrl == gfUrl.toString()"),
-            "loading the video for the active project must reload the matching .gyroflow automatically"
-        );
-        assert!(
-            body.contains("Qt.callLater(() => loadFile(gfUrl, true, 0, \"\", true))"),
-            "automatic project reload must suppress recursive associated .gyroflow handling"
-        );
-        assert!(
-            body.contains("messageBox(Modal.Question"),
-            "non-matching associated .gyroflow files must still prompt the user"
-        );
+        let lookup = prompt.find("const gfUrl = filesystem.get_file_url(folder, gfFilename, false)")
+            .expect("associated project URL is computed once");
+        let mut previous = 0;
+        for marker in [
+            "const suppress = root.skipAssociatedGyroflowOnLoad;",
+            "root.skipAssociatedGyroflowOnLoad = false;",
+            "if (root.pendingGyroflowData) return;",
+            "if (suppress) return;",
+            "if (!vid.loaded) return;",
+            "if (!vidInfo.filename) return;",
+        ] {
+            let index = prompt.find(marker).expect(marker);
+            assert!(previous <= index && index < lookup, "{marker} must precede the associated project lookup");
+            previous = index;
+        }
+        assert!(prompt.contains("activeProjectFileUrl && activeProjectFileUrl == gfUrl.toString()"),
+            "the active matching project must reload automatically");
+        assert!(prompt.contains("Qt.callLater(() => loadFile(gfUrl, true, 0, \"\", true))"),
+            "automatic project reload must suppress recursive associated project handling");
+        assert!(prompt.contains("messageBox(Modal.Question"),
+            "a different associated project must still ask the user");
+
+        let loaded_start = qml.find("function fileLoaded(md: var)").expect("metadata completion handler exists");
+        let loaded_end = qml[loaded_start..].find("property bool errorShown")
+            .map(|index| loaded_start + index).expect("metadata completion block end marker exists");
+        let loaded = &qml[loaded_start..loaded_end];
+        let metadata = loaded.find("vidInfo.loadFromVideoMetadata(").expect("video metadata is installed");
+        let call = loaded.find("root.maybePromptAssociatedGyroflow();").expect("metadata completion calls the prompt");
+        assert!(metadata < call, "the associated project prompt must see installed video metadata");
     }
 
     #[test]
@@ -29380,14 +29744,17 @@ mod tests {
             qml.contains("visible: dlg.canStopProgress;"),
             "per-row Stop control must only be shown for cancellable progress"
         );
-        assert!(
-            qml.contains("function isDonePendingJob(id)"),
-            "multi-selection reset must be able to detect done_pending rows"
-        );
-        assert!(
-            qml.contains("if (dlg.isDonePendingJob(id)) continue;"),
-            "multi-selection reset must skip done_pending rows"
-        );
+        let stop = qml.split("visible: dlg.canStopProgress;").nth(1).expect("the Stop control is gated")
+            .lines().find(|line| line.trim_start().starts_with("onClicked:"))
+            .expect("the Stop control has a handler");
+        assert_eq!(stop.trim(), "onClicked: render_queue.stop_job(job_id);",
+            "the Stop control must cancel only its row and must never reset done_pending rows");
+        let restart = qml.split("visible: dlg.isSkipped && dlg.skipReason === \"user_stopped\";").nth(1)
+            .expect("restart is only available for explicitly stopped rows")
+            .split("IconButton {").next().unwrap();
+        let reset = restart.find("render_queue.reset_job(job_id);").expect("restart resets its stopped row");
+        let render = restart.find("render_queue.render_job(job_id);").expect("restart renders its stopped row");
+        assert!(reset < render, "only an explicitly stopped row is reset before restarting");
     }
 
     #[test]

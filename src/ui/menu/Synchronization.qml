@@ -149,7 +149,7 @@ MenuItem {
             "every_nth_frame":    everyNthFrame.value,
             "time_per_syncpoint": timePerSyncpoint.value,
             "of_method":          ofMethod,
-            "offset_method":      (isSimple && offsetMethod.currentIndex === 3) ? 2 : offsetMethod.currentIndex,
+            "offset_method":      (isSimple && render_queue.batch_sync_optical) ? 3 : ((isSimple && offsetMethod.currentIndex === 3) ? 2 : offsetMethod.currentIndex),
             "pose_method":        poseMethod.currentIndex,
             "auto_sync_points":   experimentalAutoSyncPoints.checked,
         };

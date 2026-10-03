@@ -2828,6 +2828,66 @@ Do you want to submit your profile?</source>
         <translation>中央フィルター</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="321"/>
+        <source>Optical correction</source>
+        <translation>光学補正</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="322"/>
+        <source>Measure the camera rotation from the video itself and correct the motion data where they disagree. Useful when vibrations corrupt the gyro data, e.g. on a hard-mounted FPV camera. The analysis goes through every frame of the selected trim range.</source>
+        <translation>映像そのものからカメラの回転を測定し、モーションデータと一致しない部分を補正します。固定されたFPVカメラなど、振動によってジャイロデータが乱れる場合に有効です。解析は選択したトリム範囲の全フレームを処理します。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="346"/>
+        <source>Analyze</source>
+        <translation>解析</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="353"/>
+        <source>Clear</source>
+        <translation>クリア</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="366"/>
+        <source>Click Analyze to measure the motion from the video.</source>
+        <translation>「解析」をクリックして、映像から動きを測定してください。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="368"/>
+        <source>The motion data, the sync, the lens or the rolling shutter changed since the analysis. Analyze again to apply the correction.</source>
+        <translation>解析後にモーションデータ、同期、レンズ、またはローリングシャッターが変更されました。補正を適用するには再解析してください。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="369"/>
+        <source>Analyze again to apply the new strength.</source>
+        <translation>新しい強度を適用するには再解析してください。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="371"/>
+        <source>Measured in %1 of %2 frames, correction %3°</source>
+        <translation>%2フレーム中%1フレームで測定、補正%3°</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="375"/>
+        <source>Ignore motion data from the file</source>
+        <translation>ファイル内のモーションデータを無視</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="376"/>
+        <source>Measure all of the camera motion from the video, like for a file without motion data, instead of correcting the motion data. For motion data too broken to correct, e.g. a gyro that glitches or saturates for seconds at a time.</source>
+        <translation>モーションデータを補正する代わりに、モーションデータのないファイルと同様に、カメラのすべての動きを映像から測定します。ジャイロの異常や飽和が数秒続くなど、補正できないほど損傷したモーションデータに使用します。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="381"/>
+        <source>Strength</source>
+        <translation>強度</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="386"/>
+        <source>How far the correction may take the motion data from what it says. Lower values only correct small, fast errors like vibration. Higher values let the image override the motion data also where it's off by a lot or for longer, like gyro glitches, but follow the image's own mistakes (moving objects, water) more too.</source>
+        <translation>補正によってモーションデータを元の値からどの程度変更できるかを指定します。低い値では、振動などの小さく速い誤差のみを補正します。高い値では、ジャイロの異常など、大きな誤差や長く続く誤差でも映像がモーションデータより優先されますが、映像自体の誤差（動く物体、水面）にも追従しやすくなります。</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="302"/>
         <source>samples</source>
         <translation>サンプル</translation>
@@ -4707,6 +4767,16 @@ Please provide frame rate: </source>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="427"/>
         <source>AI SYNC</source>
         <translation>AI 同期</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="456"/>
+        <source>Optical sync</source>
+        <translation>光学同期</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="457"/>
+        <source>Synchronize by tracking features in the video instead of using optical flow. Also used by batch matching and deep matching. Experimental: it may find no sync point for extreme rotation or very smooth motion.</source>
+        <translation>オプティカルフローの代わりに動画内の特徴点を追跡して同期します。一括マッチングと詳細マッチングにも使用されます。実験的機能：極端な回転や非常に滑らかな動きでは同期ポイントが見つからない場合があります。</translation>
     </message>
 </context>
 <context>
