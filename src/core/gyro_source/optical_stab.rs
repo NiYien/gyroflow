@@ -63,40 +63,46 @@ pub fn prior(quats: &TimeQuat, cutoff_hz: f64, times_us: &[f64]) -> Vec<Vector3<
     let last = times_us.iter().copied().filter(|t| t.is_finite()).fold(f64::NEG_INFINITY, f64::max);
     let sigma_us = 0.1325 / cutoff_hz * 1e6;
     let step_us = sigma_us / 8.0;
-    let start = first - 3.0 * sigma_us;
-    let end = last + 3.0 * sigma_us;
-    let count = ((end - start) / step_us).ceil() + 1.0;
-    if !start.is_finite() || !end.is_finite() || !step_us.is_finite() || step_us <= 0.0 ||
-        start + step_us == start || !count.is_finite() || count < 1.0 || count >= usize::MAX as f64 {
+    // Absolute gyro time fixes the phase, even when sparse measurements and the dense cache query different ranges.
+    let first_index = (first / step_us).floor() - 24.0;
+    let last_index = (last / step_us).ceil() + 24.0;
+    if !step_us.is_finite() || step_us <= 0.0 || !first_index.is_finite() || !last_index.is_finite() ||
+        first_index < i64::MIN as f64 || last_index >= i64::MAX as f64 || last_index < first_index ||
+        !(first_index * step_us).is_finite() || !(last_index * step_us).is_finite() ||
+        (first_index + 1.0) * step_us == first_index * step_us {
         return zeros();
     }
-    let count = count as usize;
+    let first_index = first_index as i64;
+    let last_index = last_index as i64;
+    let Ok(count) = usize::try_from(last_index as i128 - first_index as i128 + 1) else { return zeros(); };
+    if count < 49 { return zeros(); }
     let mut grid = Vec::new();
     if grid.try_reserve_exact(count).is_err() { return zeros(); }
     for i in 0..count {
-        grid.push(GyroSource::clamped_quat_at_gyro_timestamp(quats, (start + i as f64 * step_us) / 1000.0));
+        // Form every timestamp from its absolute integer index so changing the batch cannot change rounding.
+        let time_us = (first_index as i128 + i as i128) as f64 * step_us;
+        grid.push(GyroSource::clamped_quat_at_gyro_timestamp(quats, time_us / 1000.0));
     }
     let weights: Vec<_> = (-24..=24).map(|j| (-0.5 * (j as f64 / 8.0).powi(2)).exp()).collect();
+    let weight_sum: f64 = weights.iter().sum();
     let mut lowpass = Vec::new();
-    if lowpass.try_reserve_exact(count).is_err() { return zeros(); }
-    for (i, q) in grid.iter().enumerate() {
+    if lowpass.try_reserve_exact(count - 48).is_err() { return zeros(); }
+    // The padding covers the complete kernel for both interpolation nodes of every finite query.
+    for i in 24..count - 24 {
+        let q = grid[i];
         let mut sum = Vector3::zeros();
-        let mut weight_sum = 0.0;
         for (j, weight) in weights.iter().enumerate() {
-            let index = i as i128 + j as i128 - 24;
-            if index >= 0 && index < count as i128 {
-                sum += finite_vector((q.inverse() * grid[index as usize]).scaled_axis()) * *weight;
-                weight_sum += *weight;
-            }
+            sum += finite_vector((q.inverse() * grid[i + j - 24]).scaled_axis()) * *weight;
         }
-        lowpass.push(*q * Quat64::from_scaled_axis(sum / weight_sum));
+        lowpass.push(q * Quat64::from_scaled_axis(sum / weight_sum));
     }
     times_us.iter().map(|time| {
         if !time.is_finite() { return Vector3::zeros(); }
-        let coordinate = ((*time - start) / step_us).clamp(0.0, (count - 1) as f64);
-        let left = coordinate.floor() as usize;
-        let right = (left + 1).min(count - 1);
-        let lp = lowpass[left].slerp(&lowpass[right], coordinate - left as f64);
+        let coordinate = *time / step_us;
+        let floor = coordinate.floor();
+        let left = (floor - (first_index as i128 + 24) as f64) as usize;
+        let right = (left + 1).min(lowpass.len() - 1);
+        let lp = lowpass[left].slerp(&lowpass[right], coordinate - floor);
         let q = GyroSource::clamped_quat_at_gyro_timestamp(quats, *time / 1000.0);
         let h = finite_vector((lp.inverse() * q).scaled_axis());
         Vector3::new(h.y, h.x, h.z)
@@ -413,6 +419,36 @@ mod tests {
         assert_ne!(value.at(5_000_000.0), snapshot_sample);
     }
 
+    #[test]
+    fn prior_is_independent_of_the_query_batch() {
+        let quats = rotations(1, 0.7);
+        let time = 5_011_000.0;
+        let single = prior(&quats, 0.5, &[time])[0];
+        for companion in [-2_345_000.0, 0.0, 4_998_203.0, 6_789_123.0, 24_000_000.0] {
+            let batch = prior(&quats, 0.5, &[companion, time, f64::NAN]);
+            let difference = (batch[1] - single).norm();
+            assert!(difference <= 1e-12, "companion={companion} difference={difference}");
+            assert_eq!(batch[2], Vector3::zeros());
+        }
+    }
+
+    #[test]
+    fn sparse_prior_cancels_the_prior_in_dense_rebuild() {
+        let quats = rotations(1, 0.7);
+        let time = 5_011_000.0;
+        let sparse_prior = prior(&quats, 0.5, &[time])[0];
+        // A zero measured shift gives u = -s0. Constant coefficients reproduce that sparse sample.
+        let coefficient = [-sparse_prior.x as f32, -sparse_prior.y as f32, -sparse_prior.z as f32];
+        let mut value = OpticalStabReconstruction {
+            enabled: true, applies: true, start_us: time - 5000.0, spacing_us: 1000.0,
+            coeffs: vec![coefficient; 12], cutoff_hz: 0.5, ..Default::default()
+        };
+        let rounding_residual = value.u_at(time) + sparse_prior;
+        value.rebuild(&quats, &StabReconConfig::DEFAULT);
+        let difference = (value.at(time) - rounding_residual).norm();
+        assert!(difference <= 1e-12, "dense versus sparse prior difference={difference}");
+        assert!(value.at(time).norm() <= rounding_residual.norm() + 1e-12);
+    }
     #[test]
     fn cutoff_grid_and_defaults_follow_the_spec() {
         assert_eq!(StabReconConfig::DEFAULT, StabReconConfig { cutoff_hz: None, max_deg: 3.0 });
