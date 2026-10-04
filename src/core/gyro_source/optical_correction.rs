@@ -114,7 +114,7 @@ impl OpticalCorrection {
 
 /// Control points as 16-bit integers of a common scale: the full range of the largest one, which leaves the rest a
 /// resolution far below a pixel
-mod quantized {
+pub(crate) mod quantized {
     use serde::{ Deserialize, Deserializer, Serialize, Serializer };
     #[derive(Serialize, Deserialize)]
     struct Q { scale: f32, v: Vec<i16> }
