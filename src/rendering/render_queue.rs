@@ -4875,7 +4875,13 @@ impl RenderQueue {
         true
     }
 
+    fn active_stab_reconstruction(stab: &StabilizationManager) -> bool {
+        stab.refresh_optical_correction();
+        stab.gyro.read().optical_stab.as_ref().is_some_and(|s| s.is_active())
+    }
+
     fn stabilization_blocks_processing(stab: &StabilizationManager) -> bool {
+        if Self::active_stab_reconstruction(stab) { return false; }
         let gyro = stab.gyro.read();
         let md = gyro.file_metadata.read();
         md.additional_data
@@ -4885,10 +4891,17 @@ impl RenderQueue {
     }
 
     fn job_is_stabilization_blocked(&self, job_id: u32) -> bool {
+        let stab = self.jobs.get(&job_id).and_then(|job| job.stab.as_ref());
+        if stab.is_some_and(|stab| Self::active_stab_reconstruction(stab)) { return false; }
         self.queue.borrow().iter().any(|item| {
             item.job_id == job_id && item.skip_reason.to_string() == "image_stabilization"
-        }) || self.jobs.get(&job_id).and_then(|job| job.stab.as_ref())
-            .is_some_and(|stab| Self::stabilization_blocks_processing(stab))
+        }) || stab.is_some_and(|stab| Self::stabilization_blocks_processing(stab))
+    }
+
+    fn incoming_stabilization_blocked(&self, job_id: u32, stab: &StabilizationManager) -> bool {
+        if Self::active_stab_reconstruction(stab) { return false; }
+        let historical_block = self.queue.borrow().iter().any(|item| item.job_id == job_id && item.skip_reason.to_string() == "image_stabilization");
+        Self::stabilization_blocks_processing(stab) || historical_block || self.job_is_stabilization_blocked(job_id)
     }
 
     fn skip_stabilization_blocked_job(&mut self, job_id: u32) -> bool {
@@ -4929,8 +4942,7 @@ impl RenderQueue {
                     let project_url = self.stabilizer.input_file.read().project_file_url.clone();
                     // An edit must not create or overwrite a project for a
                     // clip the queue has already excluded from processing.
-                    let stabilization_blocked = self.job_is_stabilization_blocked(job_id)
-                        || Self::stabilization_blocks_processing(&self.stabilizer);
+                    let stabilization_blocked = self.incoming_stabilization_blocked(job_id, &self.stabilizer);
                     if let Some(project_url) = project_url.filter(|_| !stabilization_blocked) {
                         // Save project file on disk
                         if let Err(e) = self.stabilizer.export_gyroflow_file(
@@ -4983,6 +4995,7 @@ impl RenderQueue {
             (render_options.output_width, render_options.output_height),
         );
 
+        let stabilization_blocked = self.incoming_stabilization_blocked(job_id, &stab);
         let params = stab.params.read();
         let trim_ratio = params.get_trim_ratio();
         let video_url = stab.input_file.read().url.clone();
@@ -5065,12 +5078,6 @@ impl RenderQueue {
         });
         normalize_render_options_for_bit_depth(&mut render_options, source_pix_fmt, job_id);
 
-        // in-camera-stabilization-gate: read the parse-time verdict. Absent key
-        // (older parse path, or a source whose brand never emits the tag) reads
-        // false, so the gate can only ever add skips, never remove them.
-        let stabilization_blocked = Self::stabilization_blocks_processing(&stab)
-            || self.job_is_stabilization_blocked(job_id);
-
         // queue-edit-writeback: an edit (trim, smoothing, output settings) does
         // NOT invalidate the job's sync results — the offsets ride along in the
         // written-back stab — so the sync badge always survives. A project-export
@@ -5132,6 +5139,7 @@ impl RenderQueue {
                     itm.processing_progress = progress;
                 } else {
                     itm.status = JobStatus::Queued;
+                    if itm.skip_reason.to_string() == "image_stabilization" { itm.skip_reason = QString::default(); }
                     itm.current_frame = 0;
                     itm.total_frames = (params.frame_count as f64 * trim_ratio).ceil() as u64;
                 }
@@ -5160,10 +5168,7 @@ impl RenderQueue {
                 end_timestamp: 0,
                 processing_progress: 0.0,
                 error_string: QString::default(),
-                // in-camera-stabilization-gate: marked at enqueue rather than in
-                // start()'s pre-scan (as plugin_only is), because the reason is a
-                // fixed property of the clip — it can never stop holding, so
-                // there is nothing to defer to dispatch time.
+                // Block at enqueue unless a current reconstruction restores the sensor compensation.
                 skip_reason: if stabilization_blocked {
                     QString::from("image_stabilization")
                 } else {
@@ -25104,6 +25109,65 @@ mod tests {
             queue.match_results.as_ref().and_then(|r| r.global_offset_ms),
             Some(99)
         );
+    }
+
+    fn reconstructed_queue_manager() -> Arc<StabilizationManager> {
+        let stab = edited_preview_stab();
+        let duration = stab.params.read().duration_ms;
+        {
+            let mut gyro = stab.gyro.write(); gyro.duration_ms = duration;
+            let quats: core::gyro_source::TimeQuat = [0, (duration * 1000.0).round() as i64].into_iter().map(|t| (t, core::gyro_source::Quat64::identity())).collect();
+            gyro.file_metadata.write().quaternions = quats;
+            gyro.file_metadata.write().additional_data = serde_json::json!({"stabilization_blocks_processing": true});
+            gyro.integrate();
+        }
+        stab
+    }
+    fn install_queue_reconstruction(stab: &StabilizationManager) {
+        let mut s = core::gyro_source::OpticalStabReconstruction::default();
+        s.enabled = true; s.start_us = -100_000.0; s.spacing_us = 100_000.0;
+        s.coeffs = vec![[0.001, -0.0003, 0.0001]; (stab.params.read().duration_ms / 100.0).ceil() as usize + 4]; s.cutoff_hz = 0.3;
+        s.quats_checksum = core::gyro_source::optical_correction::checksum(&stab.gyro.read().quaternions);
+        s.context_checksum = core::synchronization::optical_analysis::context_checksum(&core::synchronization::optical_analysis::measurement_params(stab));
+        stab.gyro.write().optical_stab = Some(s); stab.set_stab_reconstruction_enabled(true);
+    }
+    #[test]
+    fn reconstructed_jobs_pass_the_stabilization_gate() {
+        let stab = reconstructed_queue_manager(); assert!(RenderQueue::stabilization_blocks_processing(&stab));
+        install_queue_reconstruction(&stab); assert!(!RenderQueue::stabilization_blocks_processing(&stab));
+        stab.set_offset(500_000, 12.0); assert!(RenderQueue::stabilization_blocks_processing(&stab));
+        stab.remove_offset(500_000); assert!(!RenderQueue::stabilization_blocks_processing(&stab));
+        stab.set_ignore_file_motion(true); assert!(RenderQueue::stabilization_blocks_processing(&stab));
+        stab.set_ignore_file_motion(false); assert!(!RenderQueue::stabilization_blocks_processing(&stab));
+        let original = stab.gyro.read().file_metadata.read().quaternions.clone();
+        stab.gyro.write().file_metadata.write().quaternions.clear(); assert!(RenderQueue::stabilization_blocks_processing(&stab));
+        stab.gyro.write().file_metadata.write().quaternions = original; stab.recompute_gyro(); assert!(!RenderQueue::stabilization_blocks_processing(&stab));
+        stab.clear_optical_correction(); assert!(RenderQueue::stabilization_blocks_processing(&stab));
+    }
+    #[test]
+    fn reconstructed_jobs_edit_writeback_unlocks_only_current_reconstruction() {
+        let dir = tempfile::tempdir().unwrap(); let path = dir.path().join("reconstructed.gyroflow");
+        let mut q = recovery_queue(&[(1, JobStatus::Skipped, "image_stabilization", "", false)]);
+        q.stabilizer = reconstructed_queue_manager();
+        let previous = reconstructed_queue_manager(); install_queue_reconstruction(&previous);
+        q.jobs.get_mut(&1).unwrap().stab = Some(previous);
+        let incoming_without_reconstruction = edited_preview_stab();
+        assert!(q.incoming_stabilization_blocked(1, &incoming_without_reconstruction));
+        q.stabilizer.input_file.write().project_file_url = Some(filesystem::path_to_url(&path.to_string_lossy()));
+        install_queue_reconstruction(&q.stabilizer); q.editing_job_id = 1;
+        q.add(serde_json::json!({"output": RenderOptions::default()}).to_string(), QString::default());
+        assert_eq!(row_status(&q, 1), (JobStatus::Queued, String::new())); assert!(!q.job_is_stabilization_blocked(1));
+        let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(saved["gyro_source"]["optical_stab_reconstruction"].is_string());
+        q.stabilizer.set_offset(500_000, 12.0); q.editing_job_id = 1;
+        q.add(serde_json::json!({"output": RenderOptions::default()}).to_string(), QString::default());
+        assert_eq!(row_status(&q, 1), (JobStatus::Skipped, "image_stabilization".into()));
+        q.stabilizer.remove_offset(500_000); q.editing_job_id = 1;
+        q.add(serde_json::json!({"output": RenderOptions::default()}).to_string(), QString::default());
+        assert_eq!(row_status(&q, 1), (JobStatus::Queued, String::new()));
+        q.stabilizer.clear_optical_correction(); q.editing_job_id = 1;
+        q.add(serde_json::json!({"output": RenderOptions::default()}).to_string(), QString::default());
+        assert_eq!(row_status(&q, 1), (JobStatus::Skipped, "image_stabilization".into()));
     }
 
     #[test]

@@ -307,6 +307,10 @@ impl Default for SyncData {
     }
 }
 
+pub(crate) fn stab_default_from_metadata(md: &gyro_source::FileMetadata) -> bool {
+    md.additional_data.get("stabilization_blocks_processing").and_then(|v| v.as_bool()).unwrap_or(false)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OpticalUi {
     pub correction_enabled: bool,
@@ -1447,6 +1451,10 @@ impl StabilizationManager {
                     fm.is_komodo,
                 )
             };
+            if is_main_video {
+                let enabled = { let gyro = self.gyro.read(); let md = gyro.file_metadata.read(); stab_default_from_metadata(&md) };
+                self.set_stab_reconstruction_enabled(enabled);
+            }
             log::info!(
                 "[load_gyro_data] end url='{}' elapsed_ms={:.1} canceled=false raw_imu={} quats={} lens_params={} lens_positions={} creation_date_utc={:?} accurate_ts={} detected={:?} is_komodo={}",
                 url,
@@ -2852,23 +2860,58 @@ impl StabilizationManager {
     pub fn set_imu_median_filter(&self, size: i32) {
         self.gyro.write().imu_transforms.imu_mf = size;
     }
-    pub fn set_optical_correction(&self, correction: Option<gyro_source::OpticalCorrection>) {
+    pub fn set_optical_correction(&self, mut correction: Option<gyro_source::OpticalCorrection>) {
+        if let Some(c) = &correction {
+            let mut ui = self.optical_ui.write();
+            ui.correction_enabled = c.enabled;
+            if c.enabled { ui.stab_enabled = false; }
+        }
         let context = correction.is_some().then(|| self.optical_context());
+        #[cfg(test)]
+        tests::TRANSLATION_SETTER_BEFORE_SYNC.with(|hook| { if let Some(hook) = hook.take() { hook(); } });
         {
             let mut gyro = self.gyro.write();
+            let ui = self.optical_ui.read();
+            if let Some(c) = &mut correction { c.enabled = ui.correction_enabled; }
             if let Some(context) = context { gyro.optical_context = context; }
             gyro.set_optical_correction(correction);
+            if let Some(s) = &mut gyro.optical_stab { s.enabled = ui.stab_enabled; }
         }
         self.recompute_gyro();
     }
     pub fn set_optical_correction_enabled(&self, enabled: bool) {
-        self.optical_ui.write().correction_enabled = enabled;
-        let changed = self.gyro.write().optical_correction.as_mut().map(|c| std::mem::replace(&mut c.enabled, enabled) != enabled).unwrap_or_default();
-        if changed { self.recompute_gyro(); }
+        {
+            let mut ui = self.optical_ui.write();
+            ui.correction_enabled = enabled;
+            if enabled { ui.stab_enabled = false; }
+        }
+        if self.sync_optical_translation_from_ui() { self.recompute_gyro(); }
+    }
+    pub fn set_stab_reconstruction_enabled(&self, enabled: bool) {
+        {
+            let mut ui = self.optical_ui.write();
+            ui.stab_enabled = enabled;
+            if enabled { ui.correction_enabled = false; ui.translation_enabled = false; }
+        }
+        self.sync_optical_translation_from_ui();
+        self.recompute_gyro();
+    }
+    pub fn stab_reconstruction_info(&self) -> serde_json::Value {
+        let gyro = self.gyro.read();
+        let ui = self.optical_ui.read();
+        let s = gyro.optical_stab.as_ref();
+        serde_json::json!({
+            "available": s.is_some(), "enabled": s.is_some_and(|s| s.enabled), "requested": ui.stab_enabled,
+            "stale": s.is_some_and(|s| s.enabled && !s.applies),
+            "frames": s.map_or(0, |s| s.frames), "measured_frames": s.map_or(0, |s| s.measured_frames),
+            "max_deg": s.map_or(0.0, |s| s.max_deg), "cutoff_hz": s.map_or(0.0, |s| s.cutoff_hz),
+            "analyzed_without": s.is_none() && (gyro.optical_correction.is_some() || gyro.optical_translation.is_some()),
+            "has_motion": gyro.has_motion(), "ignore_file_motion": gyro.ignores_file_motion(),
+        })
     }
     pub fn clear_optical_correction(&self) {
         self.invalidate_optical_measurements();
-        self.gyro.write().optical_translation = None;
+        { let mut gyro = self.gyro.write(); gyro.optical_translation = None; gyro.optical_stab = None; }
         self.set_optical_correction(None);
     }
     /// Drops the kept measurements and moves `optical_generation` on: an analysis still running stops, and a refit
@@ -2889,13 +2932,14 @@ impl StabilizationManager {
     pub fn refresh_optical_correction(&self) -> bool {
         {
             let gyro = self.gyro.read();
-            if gyro.optical_correction.is_none() && gyro.optical_translation.is_none() { return false; }
+            if gyro.optical_correction.is_none() && gyro.optical_translation.is_none() && gyro.optical_stab.is_none() { return false; }
         }
         let context = self.optical_context();
         let mut gyro = self.gyro.write();
         gyro.optical_context = context;
         let translation_changed = gyro.optical_translation.as_ref().is_some_and(|t| t.applies != gyro.optical_translation_applies());
-        if gyro.optical_correction_applies() == gyro.optical_correction_applied && !translation_changed { return false; }
+        let stab_changed = gyro.optical_stab.as_ref().is_some_and(|s| s.applies != gyro.optical_stab_applies());
+        if gyro.optical_correction_applies() == gyro.optical_correction_applied && !translation_changed && !stab_changed { return false; }
         gyro.integrate();
         drop(gyro);
         self.invalidate_smoothing();
@@ -2919,40 +2963,69 @@ impl StabilizationManager {
     /// Fits and keeps measurements, unless the analysis was cancelled before the commit.
     pub fn set_optical_measurements_with_cancel(&self, m: synchronization::optical_analysis::OpticalMeasurements, cancel_flag: &AtomicBool) -> Result<(), String> {
         let m = Arc::new(m);
-        let context = self.optical_context();
+        let cancelled = || cancel_flag.load(SeqCst) || self.optical_generation.load(SeqCst) != m.generation;
+        if cancelled() { return Err("Cancelled".into()); }
+        let mut stab_error = None;
+        let reconstruction = if m.stab_requested && !m.stab_bands.is_empty() {
+            let quats = {
+                let mut gyro = self.gyro.read().clone();
+                if gyro.optical_correction.take().is_some() { gyro.integrate(); }
+                gyro.quaternions
+            };
+            match synchronization::optical_analysis::solve_stab_with_cancel(&m, &quats, &gyro_source::StabReconConfig::resolved(), cancelled) {
+                Ok(s) => Some(s),
+                Err(error) => { ::log::warn!("Failed to reconstruct in-camera stabilization: {}", error); stab_error = Some(error); None }
+            }
+        } else {
+            if m.stab_requested { ::log::info!("No usable in-camera stabilization measurements, no reconstruction installed"); }
+            None
+        };
         loop {
-            // A copy: the strength slider would wait for the fit on the settings lock
             let settings = *self.optical_settings.read();
-            let mut correction = synchronization::optical_analysis::solve(&m, &settings)?;
-            #[cfg(test)]
-            tests::OPTICAL_MEASUREMENTS_BEFORE_COMMIT.with(|hook| { if let Some(hook) = hook.take() { hook(); } });
-            let mut kept = self.optical_measurements.write();
-            let mut gyro = self.gyro.write();
-            // Match the import/export lock order and keep the settings stable through replacement.
-            let current_settings = self.optical_settings.read();
-            if cancel_flag.load(SeqCst) || self.optical_generation.load(SeqCst) != m.generation { return Err("Cancelled".into()); }
-            // Moved during the fit: the refit that asked for found no measurements to refit yet, so it's up to this one
-            if *current_settings != settings { continue; }
-            let ui = self.optical_ui.read();
-            correction.enabled = ui.correction_enabled;
-            gyro.optical_translation = if m.translation_requested && m.translation_samples.iter().any(|s| s.confidence > 0.0) {
-                let mut translation = gyro_source::OpticalTranslation::new(m.translation_samples.clone(), ui.translation_settings);
-                translation.enabled = ui.translation_enabled;
-                translation.quats_checksum = m.quats_checksum;
-                translation.context_checksum = m.context_checksum;
-                translation.frames = m.frames;
-                translation.measured_frames = m.translation_samples.iter().filter(|s| s.confidence > 0.0).count();
-                Some(translation)
+            let mut correction = if !m.stab_requested || !m.bands.is_empty() {
+                match synchronization::optical_analysis::solve(&m, &settings) {
+                    Ok(c) => Some(c),
+                    Err(error) if m.stab_requested => { ::log::warn!("Failed to fit optical rotation correction: {}", error); None },
+                    Err(error) => return Err(error),
+                }
+            } else { None };
+            let mut translation = if m.translation_requested && m.translation_samples.iter().any(|s| s.confidence > 0.0) {
+                let mut t = gyro_source::OpticalTranslation::new(m.translation_samples.clone(), self.optical_ui.read().translation_settings);
+                t.quats_checksum = m.quats_checksum; t.context_checksum = m.context_checksum;
+                t.frames = m.frames; t.measured_frames = m.translation_samples.iter().filter(|s| s.confidence > 0.0).count();
+                Some(t)
             } else {
                 if m.translation_requested { ::log::info!("No usable optical translation measurements, no translation result installed"); }
                 None
             };
-            *kept = Some(m);
+            if cancelled() { return Err("Cancelled".into()); }
+            if reconstruction.is_none() && correction.is_none() && translation.is_none() {
+                return Err(stab_error.unwrap_or_else(|| "Not enough of the image could be tracked".into()));
+            }
+            #[cfg(test)]
+            tests::OPTICAL_MEASUREMENTS_BEFORE_COMMIT.with(|hook| { if let Some(hook) = hook.take() { hook(); } });
+            let context = self.optical_context();
+            let mut kept = self.optical_measurements.write();
+            let mut gyro = self.gyro.write();
+            let current_settings = self.optical_settings.read();
+            if cancelled() { return Err("Cancelled".into()); }
+            if *current_settings != settings { continue; }
+            let ui = self.optical_ui.read();
+            if let Some(c) = &mut correction { c.enabled = ui.correction_enabled; }
+            if let Some(t) = &mut translation {
+                t.enabled = ui.translation_enabled;
+                if t.settings != ui.translation_settings { t.set_settings(ui.translation_settings); }
+            }
+            gyro.optical_stab = reconstruction.clone();
+            if let Some(s) = &mut gyro.optical_stab { s.enabled = ui.stab_enabled; }
+            gyro.optical_translation = translation;
+            *kept = Some(m.clone());
             gyro.optical_context = context;
-            gyro.set_optical_correction(Some(correction));
+            gyro.set_optical_correction(correction);
             break;
         }
         self.recompute_gyro();
+        self.refresh_optical_correction();
         Ok(())
     }
     /// The kept measurements, as long as the correction they gave still sits on what they were measured on: the same
@@ -3028,8 +3101,8 @@ impl StabilizationManager {
     }
 
     pub fn set_translation_stabilization_enabled(&self, enabled: bool) {
-        self.optical_ui.write().translation_enabled = enabled;
-        self.sync_optical_translation_from_ui();
+        { let mut ui = self.optical_ui.write(); ui.translation_enabled = enabled; if enabled { ui.stab_enabled = false; } }
+        if self.sync_optical_translation_from_ui() { self.recompute_gyro(); }
         self.invalidate_zooming();
     }
     pub fn set_translation_reference(&self, reference: f64) {
@@ -3047,16 +3120,19 @@ impl StabilizationManager {
         self.sync_optical_translation_from_ui();
         self.invalidate_zooming();
     }
-    fn sync_optical_translation_from_ui(&self) {
+    fn sync_optical_translation_from_ui(&self) -> bool {
         #[cfg(test)]
         tests::TRANSLATION_SETTER_BEFORE_SYNC.with(|hook| { if let Some(hook) = hook.take() { hook(); } });
         let mut gyro = self.gyro.write();
+        let ui = self.optical_ui.read();
+        let mut changed = false;
+        if let Some(c) = gyro.optical_correction.as_mut() { changed |= std::mem::replace(&mut c.enabled, ui.correction_enabled) != ui.correction_enabled; }
+        if let Some(s) = gyro.optical_stab.as_mut() { changed |= std::mem::replace(&mut s.enabled, ui.stab_enabled) != ui.stab_enabled; }
         if let Some(t) = gyro.optical_translation.as_mut() {
-            // Read the latest UI state under the commit locks so delayed setters cannot restore an older snapshot.
-            let ui = self.optical_ui.read();
             t.enabled = ui.translation_enabled;
             if t.settings != ui.translation_settings { t.set_settings(ui.translation_settings); }
         }
+        changed
     }
     pub fn translation_stabilization_info(&self) -> serde_json::Value {
         let (translation, ui, analyzed_without, has_motion, ignore_file_motion) = {
@@ -3614,9 +3690,16 @@ impl StabilizationManager {
     }
 
     pub fn get_cloned(&self) -> StabilizationManager {
+        let (mut gyro, mut ui) = { let gyro = self.gyro.read(); (gyro.clone(), *self.optical_ui.read()) };
+        if ui.stab_enabled { ui.correction_enabled = false; ui.translation_enabled = false; }
+        let mut changed = false;
+        if let Some(c) = &mut gyro.optical_correction { changed |= std::mem::replace(&mut c.enabled, ui.correction_enabled) != ui.correction_enabled; }
+        if let Some(s) = &mut gyro.optical_stab { changed |= std::mem::replace(&mut s.enabled, ui.stab_enabled) != ui.stab_enabled; }
+        if let Some(t) = &mut gyro.optical_translation { t.enabled = ui.translation_enabled; }
+        if changed { gyro.integrate(); }
         StabilizationManager {
             params: Arc::new(RwLock::new(self.params.read().clone())),
-            gyro: Arc::new(RwLock::new(self.gyro.read().clone())),
+            gyro: Arc::new(RwLock::new(gyro)),
             lens: Arc::new(RwLock::new(self.lens.read().clone())),
             keyframes: Arc::new(RwLock::new(self.keyframes.read().clone())),
             smoothing: Arc::new(RwLock::new(self.smoothing.read().clone())),
@@ -3627,7 +3710,7 @@ impl StabilizationManager {
             lens_group_manual_edit: self.lens_group_manual_edit.clone(),
             lens_profile_db: self.lens_profile_db.clone(),
             optical_settings: Arc::new(RwLock::new(*self.optical_settings.read())),
-            optical_ui: Arc::new(RwLock::new(*self.optical_ui.read())),
+            optical_ui: Arc::new(RwLock::new(ui)),
 
             // NOT cloned:
             // optical_measurements: they take a lot of memory, and a clone has nothing to refit
@@ -3900,8 +3983,9 @@ impl StabilizationManager {
                 "integration_method": gyro.integration_method,
                 "sample_index":       gyro.file_load_options.sample_index,
                 "detected_source":    gyro.file_metadata.read().detected_source,
-                "optical_correction_enabled": gyro.optical_correction.as_ref().map(|c| c.enabled),
+                "optical_correction_enabled": gyro.optical_correction.as_ref().map(|_| optical_ui.correction_enabled),
                 "optical_correction_strength": optical_strength,
+                "stab_reconstruction_enabled": optical_ui.stab_enabled,
                 "translation_stabilization_enabled": optical_ui.translation_enabled,
                 "translation_reference": optical_ui.translation_settings.reference,
                 "translation_smoothness": optical_ui.translation_settings.smoothness_s,
@@ -3968,6 +4052,9 @@ impl StabilizationManager {
             // The analysis took a pass over every frame, so it's kept with the project whatever its type
             if let Some(c) = gyro.optical_correction.as_ref().and_then(util::compress_to_base91_cbor) {
                 obj.insert("optical_correction".into(), serde_json::Value::String(c));
+            }
+            if let Some(s) = gyro.optical_stab.as_ref().and_then(util::compress_to_base91_cbor) {
+                obj.insert("optical_stab_reconstruction".into(), serde_json::Value::String(s));
             }
             if let Some(t) = gyro.optical_translation.as_ref().and_then(util::compress_to_base91_cbor) {
                 obj.insert("optical_translation".into(), serde_json::Value::String(t));
@@ -4546,10 +4633,14 @@ impl StabilizationManager {
                 if let Some(v) = obj.get("optical_correction_strength").and_then(|x| x.as_f64()) {
                     self.optical_settings.write().strength = v;
                 }
+                let metadata_stab_default = stab_default_from_metadata(&gyro.file_metadata.read());
                 {
                     let mut ui = self.optical_ui.write();
                     if let Some(v) = obj.get("optical_correction_enabled").and_then(|x| x.as_bool()) { ui.correction_enabled = v; }
                     if let Some(v) = obj.get("translation_stabilization_enabled").and_then(|x| x.as_bool()) { ui.translation_enabled = v; }
+                    if let Some(v) = obj.get("stab_reconstruction_enabled").and_then(|x| x.as_bool()) { ui.stab_enabled = v; }
+                    else if !*is_preset { ui.stab_enabled = metadata_stab_default; }
+                    if ui.stab_enabled { ui.correction_enabled = false; ui.translation_enabled = false; }
                     if let Some(v) = obj.get("translation_reference").and_then(|x| x.as_f64()) { ui.translation_settings.reference = v.clamp(0.0, 2.0); }
                     if let Some(v) = obj.get("translation_smoothness").and_then(|x| x.as_f64()) { ui.translation_settings.smoothness_s = v.clamp(0.1, 10.0); }
                     if let Some(v) = obj.get("translation_along_axis").and_then(|x| x.as_bool()) { ui.translation_settings.along_axis = v; }
@@ -4561,6 +4652,13 @@ impl StabilizationManager {
                     }
                 }
                 if !*is_preset {
+                    gyro.optical_stab = None;
+                    if let Some(value) = obj.get("optical_stab_reconstruction") {
+                        match util::decompress_from_base91_cbor::<gyro_source::OpticalStabReconstruction>(value.as_str().unwrap_or_default()) {
+                            Ok(s) => gyro.optical_stab = Some(s),
+                            Err(error) => ::log::warn!("Failed to load in-camera stabilization reconstruction: {:?}", error),
+                        }
+                    }
                     gyro.optical_translation = None;
                     if let Some(value) = obj.get("optical_translation") {
                         match util::decompress_from_base91_cbor::<gyro_source::OpticalTranslation>(value.as_str().unwrap_or_default()) {
@@ -4588,6 +4686,14 @@ impl StabilizationManager {
                         Err(error) => ::log::warn!("Failed to load optical correction: {:?}", error),
                     }
                 }
+
+                {
+                    let ui = self.optical_ui.read();
+                    if let Some(c) = &mut gyro.optical_correction { c.enabled = ui.correction_enabled; }
+                    if let Some(t) = &mut gyro.optical_translation { t.enabled = ui.translation_enabled; }
+                    if let Some(s) = &mut gyro.optical_stab { s.enabled = ui.stab_enabled; }
+                }
+                gyro.apply_transforms();
 
                 {
                     // The curves of a project file only stand in until the next recompute: they may come from another build
@@ -4623,6 +4729,7 @@ impl StabilizationManager {
                 obj.remove("smoothed_focal_lengths");
                 obj.remove("optical_correction");
                 obj.remove("optical_translation");
+                obj.remove("optical_stab_reconstruction");
             }
             if let Some(lens) = obj.get("calibration_data") {
                 let mut l = self.lens.write();
@@ -5682,6 +5789,7 @@ mod tests {
         let enabled = fields.remove("optical_correction_enabled");
         let strength = fields.remove("optical_correction_strength");
         let ignored = fields.remove("ignore_file_motion");
+        assert_eq!(fields.remove("stab_reconstruction_enabled"), Some(serde_json::json!(false)));
         assert_eq!(fields.remove("translation_stabilization_enabled"), Some(serde_json::json!(false)));
         assert_eq!(fields.remove("translation_reference"), Some(serde_json::json!(1.0)));
         assert_eq!(fields.remove("translation_smoothness"), Some(serde_json::json!(1.0)));
@@ -5751,6 +5859,185 @@ mod tests {
         m.translation_requested = true;
         m.translation_samples = translation_samples(m.frames);
         manager.set_optical_measurements(m).unwrap();
+    }
+
+    fn optical_fixture_stab(manager: &StabilizationManager) -> gyro_source::OpticalStabReconstruction {
+        let mut s = gyro_source::OpticalStabReconstruction::default();
+        s.enabled = true; s.start_us = -100_000.0; s.spacing_us = 100_000.0;
+        s.coeffs = vec![[0.001, -0.0003, 0.0001]; 103]; s.cutoff_hz = 0.3;
+        let quats = { let mut gyro = manager.gyro.read().clone(); if gyro.optical_correction.take().is_some() { gyro.integrate(); } gyro.quaternions };
+        s.quats_checksum = gyro_source::optical_correction::checksum(&quats);
+        s.context_checksum = manager.optical_context(); s.frames = 300; s.measured_frames = 299;
+        s.rebuild(&quats, &gyro_source::StabReconConfig::DEFAULT);
+        s
+    }
+    fn install_stab(manager: &StabilizationManager) {
+        let s = optical_fixture_stab(manager);
+        manager.gyro.write().optical_stab = Some(s);
+        manager.set_stab_reconstruction_enabled(true);
+        manager.refresh_optical_correction();
+    }
+    fn stab_install_measurements(m: &StabilizationManager) -> synchronization::optical_analysis::OpticalMeasurements {
+        use synchronization::optical_analysis::sensor;
+        let mut measurements = optical_fixture_measurements(m, m.optical_generation.load(SeqCst));
+        measurements.bands.clear(); measurements.stab_requested = true;
+        let gyro = m.gyro.read();
+        let times: Vec<_> = (0..31).map(|i| i as f64 * 1e6 / 30.0).collect();
+        let truth = gyro_source::optical_stab::prior(&gyro.quaternions, 0.3, &times);
+        for (i, t) in times.windows(2).enumerate() {
+            let pair = sensor::tests::physical_pair(i * 2 + 7, t[0], t[1],
+                GyroSource::clamped_quat_at_gyro_timestamp(&gyro.quaternions, t[0] / 1000.0),
+                GyroSource::clamped_quat_at_gyro_timestamp(&gyro.quaternions, t[1] / 1000.0), truth[i], truth[i + 1]);
+            for band in 0..6 {
+                let indices: Vec<_> = pair.points.iter().enumerate().filter_map(|(i, p)| (p.band == band).then_some(i)).collect();
+                if let Some(b) = sensor::fit_band_shift(&pair, &indices) { measurements.stab_bands.push(b); }
+            }
+            measurements.stab_pairs.push(pair);
+        }
+        measurements
+    }
+    #[test]
+    fn optical_stab_install_is_independent_and_keeps_measurement_fingerprints() {
+        let m = optical_project_manager(); m.set_stab_reconstruction_enabled(true);
+        let measurements = stab_install_measurements(&m);
+        let context = measurements.context_checksum; let checksum = measurements.quats_checksum;
+        OPTICAL_MEASUREMENTS_BEFORE_COMMIT.with(|hook| hook.replace(Some(Box::new({
+            let m = m.clone(); move || m.set_offset(5_000_000, 12.0)
+        }))));
+        m.set_optical_measurements(measurements).unwrap();
+        assert!(m.gyro.read().optical_correction.is_none());
+        { let gyro = m.gyro.read(); let s = gyro.optical_stab.as_ref().unwrap();
+            assert_eq!(s.context_checksum, context); assert_eq!(s.quats_checksum, checksum); assert!(!s.is_active()); }
+        m.remove_offset(5_000_000); m.refresh_optical_correction();
+        assert!(m.gyro.read().optical_stab.as_ref().unwrap().is_active());
+        let mut missing = stab_install_measurements(&m); missing.stab_bands.clear();
+        assert!(m.set_optical_measurements(missing).is_err());
+        assert!(m.gyro.read().optical_stab.as_ref().unwrap().is_active());
+    }
+    #[test]
+    fn optical_stab_install_rejects_changed_quaternions_and_cancellation() {
+        let m = optical_project_manager(); m.set_stab_reconstruction_enabled(true);
+        let measurements = stab_install_measurements(&m);
+        let original = m.gyro.read().file_metadata.read().quaternions.clone();
+        m.gyro.write().file_metadata.write().quaternions.values_mut().for_each(|q| *q *= Quat64::from_euler_angles(0.0, 0.01, 0.0));
+        m.recompute_gyro(); assert!(m.set_optical_measurements(measurements).is_err());
+        assert!(m.gyro.read().optical_stab.is_none());
+        m.gyro.write().file_metadata.write().quaternions = original.clone(); m.recompute_gyro();
+        let measurements = stab_install_measurements(&m);
+        OPTICAL_MEASUREMENTS_BEFORE_COMMIT.with(|hook| hook.replace(Some(Box::new({
+            let m = m.clone(); move || { m.gyro.write().file_metadata.write().quaternions.values_mut().for_each(|q| *q *= Quat64::from_euler_angles(0.0, 0.01, 0.0)); m.recompute_gyro(); }
+        }))));
+        m.set_optical_measurements(measurements).unwrap(); assert!(!m.gyro.read().optical_stab.as_ref().unwrap().is_active());
+        m.gyro.write().file_metadata.write().quaternions = original; m.recompute_gyro(); m.refresh_optical_correction();
+        assert!(m.gyro.read().optical_stab.as_ref().unwrap().is_active());
+        let measurements = stab_install_measurements(&m);
+        let flag = Arc::new(AtomicBool::new(false));
+        OPTICAL_MEASUREMENTS_BEFORE_COMMIT.with(|hook| hook.replace(Some(Box::new({ let flag = flag.clone(); move || flag.store(true, SeqCst) }))));
+        assert_eq!(m.set_optical_measurements_with_cancel(measurements, &flag).unwrap_err(), "Cancelled");
+    }
+    #[test]
+    fn optical_stab_latest_explicit_request_wins_without_results() {
+        let m = optical_project_manager();
+        for operation in 0..3 {
+            TRANSLATION_SETTER_BEFORE_SYNC.with(|hook| hook.replace(Some(Box::new({
+                let m = m.clone(); move || match operation { 0 => m.set_translation_stabilization_enabled(true),
+                    1 => m.set_optical_correction_enabled(true), _ => m.set_stab_reconstruction_enabled(true) }
+            }))));
+            match operation { 0 | 1 => m.set_stab_reconstruction_enabled(true), _ => m.set_optical_correction_enabled(true) }
+            let ui = *m.optical_ui.read();
+            assert_eq!(ui.stab_enabled, operation == 2); assert!(!(ui.stab_enabled && (ui.translation_enabled || ui.correction_enabled)));
+        }
+        m.set_translation_stabilization_enabled(true); m.set_optical_correction_enabled(true);
+        assert!(m.optical_ui.read().translation_enabled && m.optical_ui.read().correction_enabled);
+    }
+    #[test]
+    fn optical_stab_delayed_public_install_applies_the_latest_request() {
+        let manager = Arc::new(optical_project_manager());
+        install_translation(&manager); install_stab(&manager);
+        let correction = optical_fixture_correction(&manager);
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (resume_tx, resume_rx) = std::sync::mpsc::channel();
+        let worker_manager = manager.clone();
+        let worker = std::thread::spawn(move || {
+            TRANSLATION_SETTER_BEFORE_SYNC.with(|hook| hook.replace(Some(Box::new(move || {
+                ready_tx.send(()).unwrap(); resume_rx.recv().unwrap();
+            }))));
+            worker_manager.set_optical_correction(Some(correction));
+        });
+        ready_rx.recv_timeout(std::time::Duration::from_secs(30)).unwrap();
+        manager.set_stab_reconstruction_enabled(true);
+        resume_tx.send(()).unwrap(); worker.join().unwrap();
+        let ui = *manager.optical_ui.read();
+        let gyro = manager.gyro.read();
+        assert!(ui.stab_enabled && !ui.correction_enabled && !ui.translation_enabled);
+        assert!(gyro.optical_stab.as_ref().unwrap().enabled);
+        assert!(!gyro.optical_correction.as_ref().unwrap().enabled);
+        assert!(!gyro.optical_translation.as_ref().unwrap().enabled);
+    }
+
+    #[test]
+    fn optical_stab_project_and_preset_normalize_conflicting_requests() {
+        let m = optical_project_manager(); install_translation(&m); install_stab(&m);
+        let mut p = optical_export(&m); p["gyro_source"]["optical_correction_enabled"] = true.into();
+        p["gyro_source"]["translation_stabilization_enabled"] = true.into();
+        let restored = optical_import(&p); restored.recompute_blocking();
+        let ui = *restored.optical_ui.read(); assert!(ui.stab_enabled && !ui.translation_enabled && !ui.correction_enabled);
+        assert!(restored.gyro.read().optical_stab.as_ref().unwrap().is_active());
+        let preset_data = serde_json::json!({"videofile": "", "gyro_source": {"stab_reconstruction_enabled": true, "optical_correction_enabled": true, "translation_stabilization_enabled": true}});
+        let mut preset = false;
+        m.import_gyroflow_data(preset_data.to_string().as_bytes(), true, None, |_| (), Arc::new(AtomicBool::new(false)), &mut preset, true).unwrap();
+        assert!(preset); let ui = *m.optical_ui.read(); assert!(ui.stab_enabled && !ui.translation_enabled && !ui.correction_enabled);
+        assert!(!m.gyro.read().optical_translation.as_ref().unwrap().enabled);
+        p["gyro_source"]["optical_stab_reconstruction"] = "invalid".into(); p["videofile"] = "file:///fixture.mp4".into();
+        assert!(optical_import(&p).gyro.read().optical_stab.is_none());
+    }
+
+    #[test]
+    fn stab_result_round_trips_through_the_project() {
+        let manager = optical_project_manager(); install_stab(&manager); manager.recompute_blocking();
+        for typ in [GyroflowProjectType::Simple, GyroflowProjectType::WithGyroData, GyroflowProjectType::WithProcessedData] {
+            let p: serde_json::Value = serde_json::from_str(&manager.export_gyroflow_data(typ, "{}", None).unwrap()).unwrap();
+            assert_eq!(p["gyro_source"]["stab_reconstruction_enabled"], true);
+            assert!(p["gyro_source"]["optical_stab_reconstruction"].is_string());
+        }
+        let restored = optical_import(&optical_export(&manager)); restored.recompute_blocking();
+        assert!(restored.gyro.read().optical_stab.as_ref().unwrap().is_active());
+        assert_eq!(*restored.optical_ui.read(), *manager.optical_ui.read());
+        assert_eq!(restored.stab_reconstruction_info()["measured_frames"], 299);
+        let cloned = manager.get_cloned(); manager.clear_optical_correction(); cloned.recompute_blocking();
+        assert!(cloned.gyro.read().optical_stab.as_ref().unwrap().is_active());
+        assert!(manager.gyro.read().optical_stab.is_none());
+    }
+    #[test]
+    fn ticking_stab_switches_the_rotation_correction_off() {
+        let m = optical_project_manager(); m.set_translation_stabilization_enabled(true); install_translation(&m); install_stab(&m);
+        let ui = *m.optical_ui.read(); assert!(ui.stab_enabled && !ui.translation_enabled && !ui.correction_enabled);
+        assert!(!m.gyro.read().optical_correction.as_ref().unwrap().enabled);
+        assert!(!m.gyro.read().optical_translation.as_ref().unwrap().enabled);
+        m.set_translation_stabilization_enabled(true); assert!(!m.optical_ui.read().stab_enabled);
+        assert!(!m.gyro.read().optical_stab.as_ref().unwrap().enabled);
+        m.set_stab_reconstruction_enabled(true); let c = optical_fixture_correction(&m); m.set_optical_correction(Some(c));
+        assert!(m.optical_ui.read().correction_enabled && !m.optical_ui.read().stab_enabled);
+        assert!(!m.gyro.read().optical_stab.as_ref().unwrap().enabled);
+    }
+    #[test]
+    fn stab_goes_stale_with_the_sync_and_comes_back() {
+        let m = optical_project_manager(); install_stab(&m); assert_eq!(m.stab_reconstruction_info()["stale"], false);
+        m.set_offset(5_000_000, 12.0); m.refresh_optical_correction(); assert_eq!(m.stab_reconstruction_info()["stale"], true);
+        m.remove_offset(5_000_000); m.refresh_optical_correction(); assert!(m.gyro.read().optical_stab.as_ref().unwrap().is_active());
+        m.set_ignore_file_motion(true); assert!(!m.gyro.read().optical_stab.as_ref().unwrap().is_active());
+        m.set_ignore_file_motion(false); m.refresh_optical_correction(); assert!(m.gyro.read().optical_stab.as_ref().unwrap().is_active());
+        let original = m.gyro.read().file_metadata.read().quaternions.clone();
+        m.gyro.write().file_metadata.write().quaternions.clear(); m.refresh_optical_correction();
+        assert!(!m.gyro.read().optical_stab.as_ref().unwrap().is_active());
+        m.gyro.write().file_metadata.write().quaternions = original; m.recompute_gyro(); m.refresh_optical_correction();
+        assert!(m.gyro.read().optical_stab.as_ref().unwrap().is_active());
+    }
+    #[test]
+    fn stab_checkbox_starts_from_the_gate() {
+        let mut md = gyro_source::FileMetadata::default(); assert!(!stab_default_from_metadata(&md));
+        md.additional_data = serde_json::json!({"stabilization_blocks_processing": true}); assert!(stab_default_from_metadata(&md));
+        md.additional_data["stabilization_blocks_processing"] = false.into(); assert!(!stab_default_from_metadata(&md));
     }
 
     #[test]

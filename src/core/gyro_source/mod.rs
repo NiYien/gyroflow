@@ -2144,7 +2144,10 @@ impl GyroSource {
         }
         if let Some(s) = &mut self.optical_stab {
             s.rebuild(&self.quaternions, &StabReconConfig::resolved());
-            s.applies = s.measured_on(self.optical_uncorrected_checksum, self.optical_context);
+        }
+        let stab_applies = self.optical_stab_applies();
+        if let Some(s) = &mut self.optical_stab {
+            s.applies = stab_applies;
         }
         let translation_applies = self.optical_translation_applies();
         if let Some(t) = &mut self.optical_translation {
@@ -2164,6 +2167,11 @@ impl GyroSource {
                 optical_correction::hold_over_clip(&mut self.quaternions, self.duration_ms);
             }
         }
+    }
+    /// Whether the reconstruction matches the available file motion and current context.
+    pub fn optical_stab_applies(&self) -> bool {
+        self.optical_stab.as_ref().is_some_and(|s| s.measured_on(self.optical_uncorrected_checksum, self.optical_context)
+            && !self.ignores_file_motion() && self.has_motion())
     }
     /// Whether the translation matches the uncorrected motion and current context.
     pub fn optical_translation_applies(&self) -> bool {

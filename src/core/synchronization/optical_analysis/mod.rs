@@ -989,6 +989,62 @@ mod tests {
     }
 
     #[cfg(feature = "use-opencv")]
+    #[test]
+    fn reconstruction_reproduces_the_recorded_compensation() {
+        use crate::gyro_source::{CameraStabData, splines::CatmullRom};
+        let yaw = |t: f64| 0.005 * (std::f64::consts::TAU * 3.0 * t).sin();
+        let body = |t: f64| crate::Quat64::from_euler_angles(0.0, yaw(t), 0.0);
+        let recorded = analysis_fixture(60, body);
+        {
+            let gyro = recorded.gyro.write();
+            let mut md = gyro.file_metadata.write();
+            md.detected_source = Some("Sony test".into());
+            for frame in 0..60 {
+                let mut ibis = CatmullRom::new();
+                for row in [0.0, 1080.0] { ibis.add_point(row, Vector3::new(1000.0 * yaw(frame as f64 / 30.0).tan(), 0.0, 0.0)); }
+                md.camera_stab_data.push(CameraStabData { sensor_size: (1920, 1080), crop_area: (0.0, 0.0, 1920.0, 1080.0),
+                    pixel_pitch: (1, 1), ibis_spline: ibis, ..Default::default() });
+            }
+        }
+        recorded.recompute_blocking();
+        let reconstructed = recorded.get_cloned();
+        reconstructed.gyro.write().file_metadata = crate::gyro_source::ReadOnlyFileMetadata::from({
+            let gyro = recorded.gyro.read(); let mut md = gyro.file_metadata.read().clone(); md.camera_stab_data.clear(); md
+        });
+        reconstructed.set_stab_reconstruction_enabled(true);
+        // World rays are projected through the true body, then through the inverse known sensor SE(2).
+        let m = analyze_pairs(&reconstructed, 60, |frame| {
+            let t = frame as f64 / 30.0;
+            (0..400).map(|id| {
+                let u = (id % 20) as f64 * 48.0 + 24.0; let v = (id / 20) as f64 * 27.0 + 13.5;
+                let world = Vector3::new((u - 480.0) / 100.0, (270.0 - v) / 100.0, -5.0);
+                let point = body(t).inverse() * world;
+                (id, [(480.0 + 500.0 * point.x / -point.z - 500.0 * yaw(t).tan()) as f32,
+                    (270.0 - 500.0 * point.y / -point.z) as f32])
+            }).collect()
+        });
+        assert!(m.stab_requested && !m.stab_bands.is_empty());
+        reconstructed.set_optical_measurements(m).unwrap(); reconstructed.recompute_blocking();
+        assert!(reconstructed.gyro.read().optical_stab.as_ref().unwrap().is_active());
+        let reference = ComputeParams::from_manager(&recorded); let actual = ComputeParams::from_manager(&reconstructed);
+        let grid: Vec<_> = [360.0, 960.0, 1560.0].into_iter().flat_map(|x| [180.0, 540.0, 900.0].into_iter().map(move |y| (x, y))).collect();
+        let render = |p: &ComputeParams, frame: usize| {
+            let t = frame as f64 * 1000.0 / 30.0;
+            let (k, coeffs, _, rotations, shifts, mesh, fov, limit) = FrameTransform::at_timestamp_for_points(p, &grid, t, Some(frame), true);
+            let shifts = shifts.map(|s| if s.len() == 1 { vec![s[0]; grid.len()] } else { s });
+            crate::stabilization::undistort_points(&grid, k, &coeffs, rotations[0], None, Some(rotations), p, 1.0, fov, t, shifts, mesh, limit)
+        };
+        let mut maximum = 0.0f64;
+        for frame in 15..45 {
+            for (a, b) in render(&reference, frame).iter().zip(render(&actual, frame)) {
+                maximum = maximum.max(((a.0 - b.0) as f64).hypot((a.1 - b.1) as f64));
+            }
+        }
+        println!("reconstruction recorded renderer maximum={maximum} px");
+        assert!(maximum <= 0.1, "recorded renderer mismatch: {maximum} px");
+    }
+
+    #[cfg(feature = "use-opencv")]
     fn golden_scene(translation: bool) -> OpticalMeasurements {
         let body = |t: f64| crate::Quat64::from_euler_angles(
             0.3f64.to_radians() * (std::f64::consts::TAU * 3.3 * t).sin(),
