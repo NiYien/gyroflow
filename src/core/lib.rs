@@ -3019,35 +3019,34 @@ impl StabilizationManager {
 
     pub fn set_translation_stabilization_enabled(&self, enabled: bool) {
         self.optical_ui.write().translation_enabled = enabled;
-        if let Some(t) = self.gyro.write().optical_translation.as_mut() { t.enabled = enabled; }
+        self.sync_optical_translation_from_ui();
         self.invalidate_zooming();
     }
     pub fn set_translation_reference(&self, reference: f64) {
-        let settings = {
-            let mut ui = self.optical_ui.write();
-            ui.translation_settings.reference = reference.clamp(0.0, 2.0);
-            ui.translation_settings
-        };
-        if let Some(t) = self.gyro.write().optical_translation.as_mut() { t.set_settings(settings); }
+        self.optical_ui.write().translation_settings.reference = reference.clamp(0.0, 2.0);
+        self.sync_optical_translation_from_ui();
         self.invalidate_zooming();
     }
     pub fn set_translation_smoothness(&self, seconds: f64) {
-        let settings = {
-            let mut ui = self.optical_ui.write();
-            ui.translation_settings.smoothness_s = seconds.clamp(0.1, 10.0);
-            ui.translation_settings
-        };
-        if let Some(t) = self.gyro.write().optical_translation.as_mut() { t.set_settings(settings); }
+        self.optical_ui.write().translation_settings.smoothness_s = seconds.clamp(0.1, 10.0);
+        self.sync_optical_translation_from_ui();
         self.invalidate_zooming();
     }
     pub fn set_translation_along_axis(&self, along_axis: bool) {
-        let settings = {
-            let mut ui = self.optical_ui.write();
-            ui.translation_settings.along_axis = along_axis;
-            ui.translation_settings
-        };
-        if let Some(t) = self.gyro.write().optical_translation.as_mut() { t.set_settings(settings); }
+        self.optical_ui.write().translation_settings.along_axis = along_axis;
+        self.sync_optical_translation_from_ui();
         self.invalidate_zooming();
+    }
+    fn sync_optical_translation_from_ui(&self) {
+        #[cfg(test)]
+        tests::TRANSLATION_SETTER_BEFORE_SYNC.with(|hook| { if let Some(hook) = hook.take() { hook(); } });
+        let mut gyro = self.gyro.write();
+        if let Some(t) = gyro.optical_translation.as_mut() {
+            // Read the latest UI state under the commit locks so delayed setters cannot restore an older snapshot.
+            let ui = self.optical_ui.read();
+            t.enabled = ui.translation_enabled;
+            if t.settings != ui.translation_settings { t.set_settings(ui.translation_settings); }
+        }
     }
     pub fn translation_stabilization_info(&self) -> serde_json::Value {
         let (translation, ui, analyzed_without, has_motion, ignore_file_motion) = {
@@ -4544,6 +4543,12 @@ impl StabilizationManager {
                     if let Some(v) = obj.get("translation_reference").and_then(|x| x.as_f64()) { ui.translation_settings.reference = v.clamp(0.0, 2.0); }
                     if let Some(v) = obj.get("translation_smoothness").and_then(|x| x.as_f64()) { ui.translation_settings.smoothness_s = v.clamp(0.1, 10.0); }
                     if let Some(v) = obj.get("translation_along_axis").and_then(|x| x.as_bool()) { ui.translation_settings.along_axis = v; }
+                    if *is_preset {
+                        if let Some(t) = gyro.optical_translation.as_mut() {
+                            t.enabled = ui.translation_enabled;
+                            if t.settings != ui.translation_settings { t.set_settings(ui.translation_settings); }
+                        }
+                    }
                 }
                 if !*is_preset {
                     gyro.optical_translation = None;
@@ -5518,6 +5523,7 @@ mod tests {
     use serial_test::serial;
 
     thread_local! {
+        pub(super) static TRANSLATION_SETTER_BEFORE_SYNC: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = Default::default();
         pub(super) static OPTICAL_REFIT_BEFORE_COMMIT: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = Default::default();
         pub(super) static OPTICAL_MEASUREMENTS_BEFORE_COMMIT: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = Default::default();
     }
@@ -5936,6 +5942,101 @@ mod tests {
         assert!(restored.gyro.read().optical_translation.is_none());
         assert!(result["gyro_source"].get("optical_translation").is_none());
         assert!(restored.optical_ui.read().translation_enabled);
+    }
+
+    #[test]
+    fn translation_concurrent_setting_setters_apply_the_latest_ui() {
+        let manager = Arc::new(optical_project_manager());
+        install_translation(&manager);
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (resume_tx, resume_rx) = std::sync::mpsc::channel();
+        let worker_manager = manager.clone();
+        let worker = std::thread::spawn(move || {
+            TRANSLATION_SETTER_BEFORE_SYNC.with(|hook| hook.replace(Some(Box::new(move || {
+                ready_tx.send(()).unwrap();
+                resume_rx.recv().unwrap();
+            }))));
+            worker_manager.set_translation_reference(0.5);
+        });
+        ready_rx.recv_timeout(std::time::Duration::from_secs(30)).unwrap();
+        manager.set_translation_smoothness(2.0);
+        manager.set_translation_along_axis(true);
+        resume_tx.send(()).unwrap();
+        worker.join().unwrap();
+        let ui = *manager.optical_ui.read();
+        let result = manager.gyro.read().optical_translation.clone().unwrap();
+        assert_eq!(ui.translation_settings.reference, 0.5);
+        assert_eq!(ui.translation_settings.smoothness_s, 2.0);
+        assert!(ui.translation_settings.along_axis);
+        assert_eq!(result.settings, ui.translation_settings);
+        let mut rebuilt = result.clone();
+        rebuilt.set_settings(ui.translation_settings);
+        assert_eq!(result.shift_at(100.0), rebuilt.shift_at(100.0));
+    }
+
+    #[test]
+    fn translation_concurrent_enabled_setters_apply_the_latest_ui() {
+        let manager = Arc::new(optical_project_manager());
+        install_translation(&manager);
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (resume_tx, resume_rx) = std::sync::mpsc::channel();
+        let worker_manager = manager.clone();
+        let worker = std::thread::spawn(move || {
+            TRANSLATION_SETTER_BEFORE_SYNC.with(|hook| hook.replace(Some(Box::new(move || {
+                ready_tx.send(()).unwrap();
+                resume_rx.recv().unwrap();
+            }))));
+            worker_manager.set_translation_stabilization_enabled(true);
+        });
+        ready_rx.recv_timeout(std::time::Duration::from_secs(30)).unwrap();
+        manager.set_translation_stabilization_enabled(false);
+        resume_tx.send(()).unwrap();
+        worker.join().unwrap();
+        assert!(!manager.optical_ui.read().translation_enabled);
+        assert!(!manager.gyro.read().optical_translation.as_ref().unwrap().enabled);
+        assert_eq!(manager.translation_stabilization_info()["enabled"], false);
+    }
+
+    #[test]
+    fn translation_preset_updates_the_retained_result_from_ui() {
+        let manager = optical_project_manager();
+        manager.set_translation_stabilization_enabled(true);
+        install_translation(&manager);
+        manager.recompute_blocking();
+        let original = manager.gyro.read().optical_translation.clone().unwrap();
+        assert!(original.enabled && original.applies);
+        let payload = gyro_source::OpticalTranslation::new(translation_samples(5), Default::default());
+        let preset = serde_json::json!({
+            "title": "Gyroflow data file", "version": 4, "videofile": "",
+            "gyro_source": {
+                "translation_stabilization_enabled": false, "translation_reference": 0.4,
+                "translation_smoothness": 2.5, "translation_along_axis": true,
+                "optical_translation": util::compress_to_base91_cbor(&payload).unwrap(),
+            },
+        });
+        let mut is_preset = false;
+        let imported = manager.import_gyroflow_data(preset.to_string().as_bytes(), true, None, |_| (),
+            Arc::new(AtomicBool::new(false)), &mut is_preset, true).unwrap();
+        assert!(is_preset);
+        assert!(imported["gyro_source"].get("optical_translation").is_none());
+        manager.recompute_blocking();
+        let ui = *manager.optical_ui.read();
+        let result = manager.gyro.read().optical_translation.clone().unwrap();
+        assert!(!ui.translation_enabled);
+        assert_eq!(ui.translation_settings.reference, 0.4);
+        assert_eq!(ui.translation_settings.smoothness_s, 2.5);
+        assert!(ui.translation_settings.along_axis);
+        assert!(!result.enabled);
+        assert_eq!(result.settings, ui.translation_settings);
+        assert_eq!(result.samples, original.samples);
+        assert_eq!(result.quats_checksum, original.quats_checksum);
+        assert_eq!(result.context_checksum, original.context_checksum);
+        let without = manager.get_cloned();
+        without.gyro.write().optical_translation = None;
+        let with_params = ComputeParams::from_manager(&manager);
+        let without_params = ComputeParams::from_manager(&without);
+        assert_eq!(stabilization::FrameTransform::at_timestamp(&with_params, 100.0, 0).matrices,
+            stabilization::FrameTransform::at_timestamp(&without_params, 100.0, 0).matrices);
     }
 
     #[test]
