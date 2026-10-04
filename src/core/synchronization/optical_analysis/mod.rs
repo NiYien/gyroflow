@@ -326,16 +326,10 @@ impl OpticalMotionAnalysis {
         let index = crate::frame_at_timestamp(ts_ms, self.scaled_fps).max(0) as usize;
         if self.last.map(|l| index <= l.index).unwrap_or(false) { return Ok(()); } // a repeated frame
 
-        if self.track_size != (width, height) {
-            self.track_size = (width, height);
-            let (k, ..) = FrameTransform::get_lens_data_at_timestamp(&self.params, ts_ms, false);
-            self.focal_px = k[(0, 0)] * width as f64 / self.params.width.max(1) as f64;
-        }
-        let frame = self.frame(index, ts_ms);
         let continuous = self.last.map(|l| index == l.index + 1).unwrap_or(false);
 
         #[cfg(feature = "use-opencv")]
-        {
+        let obs = {
             if !continuous { self.tracker.reset(); }
             let obs = if pixels.len() < stride * height as usize {
                 Vec::new()
@@ -352,21 +346,43 @@ impl OpticalMotionAnalysis {
                 }
                 obs
             };
-            if continuous && !obs.is_empty() {
-                if let Some(a) = self.last {
-                    self.pairs.push_back(Pair { seq: self.next_seq, a, b: frame, obs });
-                    self.next_seq += 1;
-                    if self.vision.is_some() { self.chain_vision(); }
-                }
+            obs
+        };
+        #[cfg(not(feature = "use-opencv"))]
+        let obs = { let _ = (continuous, stride, pixels); Vec::new() };
+        self.push_tracked_frame(index, ts_ms, (width, height), obs);
+        Ok(())
+    }
+
+    /// Common path for decoded tracks and synthetic observations.
+    fn push_tracked_frame(&mut self, index: usize, ts_ms: f64, size: (u32, u32), obs: Vec<Observation>) {
+        if self.track_size != size {
+            self.track_size = size;
+            let (k, ..) = FrameTransform::get_lens_data_at_timestamp(&self.params, ts_ms, false);
+            self.focal_px = k[(0, 0)] * size.0 as f64 / self.params.width.max(1) as f64;
+        }
+        let frame = self.frame(index, ts_ms);
+        let continuous = self.last.map(|l| index == l.index + 1).unwrap_or(false);
+        if continuous && !obs.is_empty() {
+            if let Some(a) = self.last {
+                self.pairs.push_back(Pair { seq: self.next_seq, a, b: frame, obs });
+                self.next_seq += 1;
+                if self.vision.is_some() { self.chain_vision(); }
             }
         }
-        #[cfg(not(feature = "use-opencv"))]
-        { let _ = (continuous, stride, pixels); }
-
         self.last = Some(frame);
         self.frames += 1;
         self.process(false);
-        Ok(())
+    }
+
+    #[cfg(all(test, feature = "use-opencv"))]
+    fn push_test_pair(&mut self, a_index: usize, b_index: usize, obs: Vec<Observation>) {
+        if self.is_cancelled() { return; }
+        if self.last.map(|l| a_index > l.index).unwrap_or(true) {
+            self.push_tracked_frame(a_index, crate::timestamp_at_frame(a_index as i32, self.scaled_fps), (960, 540), Vec::new());
+        }
+        if self.last.map(|l| b_index <= l.index).unwrap_or(false) { return; }
+        self.push_tracked_frame(b_index, crate::timestamp_at_frame(b_index as i32, self.scaled_fps), (960, 540), obs);
     }
 
     /// Measures everything tracked so far, however recent
@@ -652,6 +668,105 @@ mod tests {
             p.duration_ms = 10_000.0;
         }
         stab
+    }
+
+    /// 1920x1080 at 30 fps, pinhole f = 1000 px, orientation sampled at 1 kHz, no sync offsets.
+    #[cfg(feature = "use-opencv")]
+    fn analysis_fixture(frames: usize, orientation: impl Fn(f64) -> crate::Quat64) -> StabilizationManager {
+        let stab = manager();
+        let duration_ms = frames as f64 * 1000.0 / 30.0;
+        stab.init_from_video_data(duration_ms, 30.0, frames, (1920, 1080));
+        stab.set_size(1920, 1080);
+        stab.set_output_size(1920, 1080);
+        stab.lens.write().load_from_json_value(&serde_json::json!({
+            "calib_dimension": {"w":1920,"h":1080},
+            "distortion_model":"opencv_standard",
+            "fisheye_params": {
+                "camera_matrix":[[1000.0,0.0,960.0],[0.0,1000.0,540.0],[0.0,0.0,1.0]],
+                "distortion_coeffs":[0.0,0.0,0.0,0.0]
+            }
+        }));
+        let mut gyro = stab.gyro.write();
+        gyro.duration_ms = duration_ms;
+        gyro.quaternions = (0..=duration_ms.ceil() as i64)
+            .map(|ms| (ms * 1000, orientation(ms as f64 / 1000.0))).collect();
+        gyro.file_metadata.write().quaternions = gyro.quaternions.clone();
+        assert!(gyro.has_motion());
+        drop(gyro);
+        stab
+    }
+
+    /// Project quaternion coordinates (x right, y up, looking down -z) to the tracked image.
+    #[cfg(feature = "use-opencv")]
+    fn project(p: Vector3<f64>) -> [f32; 2] {
+        [(480.0 + 500.0 * p.x / -p.z) as f32, (270.0 - 500.0 * p.y / -p.z) as f32]
+    }
+
+    #[cfg(feature = "use-opencv")]
+    fn analyze_pairs(stab: &StabilizationManager, frames: usize, observe: impl Fn(usize) -> Vec<(u32, [f32; 2])>) -> OpticalMeasurements {
+        let mut analysis = OpticalMotionAnalysis::from_manager(stab, Arc::new(AtomicBool::new(false))).unwrap();
+        let mut previous = observe(0);
+        for frame in 1..frames {
+            let current = observe(frame);
+            let by_id: HashMap<_, _> = previous.into_iter().collect();
+            let obs = current.iter().filter_map(|(id, b)| by_id.get(id).map(|a| Observation { id: *id, a: *a, b: *b })).collect();
+            analysis.push_test_pair(frame - 1, frame, obs);
+            previous = current;
+        }
+        analysis.finish().unwrap()
+    }
+
+    #[cfg(feature = "use-opencv")]
+    fn golden_scene(translation: bool) -> OpticalMeasurements {
+        assert!(!translation, "translation is not implemented in the baseline");
+        let body = |t: f64| crate::Quat64::from_euler_angles(
+            0.3f64.to_radians() * (std::f64::consts::TAU * 3.3 * t).sin(),
+            0.3f64.to_radians() * (std::f64::consts::TAU * 2.0 * t).sin(), 0.0);
+        let stab = analysis_fixture(90, body);
+        analyze_pairs(&stab, 90, |frame| {
+            let t = frame as f64 / 30.0;
+            let observed = body(t) * crate::Quat64::from_euler_angles(
+                0.05f64.to_radians() * (std::f64::consts::TAU * 7.0 * t).sin(), 0.0, 0.0);
+            (0..400).map(|id| {
+                let u = (id % 20) as f64 * 48.0 + 24.0;
+                let v = (id / 20) as f64 * 27.0 + 13.5;
+                let world = Vector3::new((u - 480.0) * 5.0 / 500.0, (270.0 - v) * 5.0 / 500.0, -5.0);
+                (id, project(observed.inverse() * world))
+            }).collect()
+        })
+    }
+
+    #[cfg(feature = "use-opencv")]
+    fn bits_hash(values: impl Iterator<Item = f64>) -> u64 {
+        use std::hash::Hasher;
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for v in values { h.write_u64(v.to_bits()); }
+        h.finish()
+    }
+
+    // Captured before translation work with zero here, after three processes confirmed the sorted hash.
+    // Depends on the toolchain's float library and DefaultHasher; recapture after changing either.
+    #[cfg(feature = "use-opencv")]
+    const BANDS_GOLDEN: u64 = 291084217601240974;
+
+    /// Ignore tied band times: their HashMap collection order changes between processes.
+    #[cfg(feature = "use-opencv")]
+    fn bands_hash(bands: &[BandMeasurement]) -> u64 {
+        let mut rows: Vec<Vec<u64>> = bands.iter().map(|b| {
+            [b.pair as f64, b.ta_us, b.tb_us].into_iter()
+                .chain(b.rho.iter().copied()).chain(b.info.iter().copied()).map(f64::to_bits).collect()
+        }).collect();
+        rows.sort();
+        bits_hash(rows.into_iter().flatten().map(f64::from_bits))
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn bands_golden_without_translation() {
+        let m = golden_scene(false);
+        let h = bands_hash(&m.bands);
+        assert!(!m.bands.is_empty());
+        assert_eq!(h, BANDS_GOLDEN, "got {h}");
     }
 
     #[test]
