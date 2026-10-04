@@ -508,6 +508,10 @@ fn converged(predicted_px: f64, accepted_px: f64, relative_cost: f64) -> bool {
     predicted_px <= 1e-4 && accepted_px <= 1e-4 && relative_cost <= 1e-8
 }
 
+fn accepts_trial(old_cost: f64, trial_cost: f64, slope: f64, alpha: f64) -> bool {
+    trial_cost.is_finite() && trial_cost <= old_cost + 1e-4 * alpha * slope
+}
+
 pub(super) fn solve_sensor<'a>(
     pairs: &[SensorPair],
     bands: &[SensorBand],
@@ -708,9 +712,7 @@ pub(super) fn solve_sensor<'a>(
             if std::env::var_os("GYROFLOW_SENSOR_TEST_DIAGNOSTICS").is_some() {
                 println!("sensor GN trial alpha={alpha} cost={trial_cost} relative={relative} step={movement} armijo_bound={}",old_cost+1e-4*alpha*slope);
             }
-            if trial_cost.is_finite()
-                && (trial_cost <= old_cost + 1e-4 * alpha * slope || (step == 0 && done))
-            {
+            if accepts_trial(old_cost, trial_cost, slope, alpha) {
                 accepted = Some((candidate, trial_cost, movement, alpha, done));
                 break;
             }
@@ -751,6 +753,22 @@ pub(super) fn solve_sensor<'a>(
 mod tests {
     use super::*;
     use nalgebra::{DMatrix, DVector, UnitQuaternion};
+
+    #[test]
+    fn sensor_microstep_cannot_bypass_armijo() {
+        let old_cost: f64 = 1.0;
+        let slope: f64 = -2e-8;
+        let predicted = 8e-5;
+        let movement = 8e-5;
+        let trial_cost = old_cost + 5e-9;
+        let done = converged(predicted, movement, (trial_cost - old_cost).abs() / old_cost.max(1.0));
+        assert!(done);
+        assert!(slope.abs() / old_cost.max(1.0) > 1e-8, "the pre-trial convergence check must not exit");
+        assert!(!accepts_trial(old_cost, trial_cost, slope, 1.0), "a converged microstep must still satisfy Armijo");
+        assert!(!accepts_trial(old_cost, old_cost - 1e-13, slope, 1.0), "a decrease smaller than the Armijo requirement is insufficient");
+        assert!(accepts_trial(old_cost, old_cost + 1e-4 * slope, slope, 1.0));
+        assert!(!accepts_trial(old_cost, f64::NAN, slope, 1.0));
+    }
 
     #[test]
     fn sensor_band_assembly_matches_dense_with_overlapping_knots_and_regularization() {
