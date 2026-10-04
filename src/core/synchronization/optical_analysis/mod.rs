@@ -18,6 +18,7 @@
 
 pub mod solver;
 pub mod odometry;
+pub mod translation;
 
 use std::collections::{ HashMap, VecDeque };
 use std::sync::{ Arc, atomic::{ AtomicBool, AtomicU64, Ordering::{ Relaxed, SeqCst } } };

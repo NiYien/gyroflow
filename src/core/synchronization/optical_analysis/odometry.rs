@@ -19,18 +19,18 @@ use nalgebra::{ Matrix3, Matrix3x6, Matrix6, Rotation3, Vector3, Vector6 };
 use super::MIN_BAND_POINTS;
 
 /// Tracking noise, pixels of the tracked frame
-const NOISE_PX: f64 = 0.3;
+pub(super) const NOISE_PX: f64 = 0.3;
 /// Residuals beyond this count less (Cauchy), pixels of the tracked frame
-const ROBUST_PX: f64 = 1.5;
+pub(super) const ROBUST_PX: f64 = 1.5;
 /// Gauss-Newton iterations per frame pair
-const ITERATIONS: usize = 4;
+pub(super) const ITERATIONS: usize = 4;
 /// How unsure the velocity is with nothing known yet, per axis (variance, in units of the median inverse depth)
-const VELOCITY_VAR_START: f64 = 1e-2;
+pub(super) const VELOCITY_VAR_START: f64 = 1e-2;
 /// How much the velocity may change from one frame pair to the next: a fixed part and a part relative to it
-const VELOCITY_NOISE: f64 = 2e-4;
-const VELOCITY_NOISE_REL: f64 = 0.03;
+pub(super) const VELOCITY_NOISE: f64 = 2e-4;
+pub(super) const VELOCITY_NOISE_REL: f64 = 0.03;
 /// How much an inverse depth may change from one frame pair to the next, relative to it
-const DEPTH_NOISE_REL: f64 = 0.05;
+pub(super) const DEPTH_NOISE_REL: f64 = 0.05;
 
 pub struct VisualOdometry {
     /// Per track: inverse depth at the last frame and its variance
