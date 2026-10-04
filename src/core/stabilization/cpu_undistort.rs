@@ -1212,10 +1212,10 @@ impl SensorProjection {
     pub(crate) fn sensor_to_ray(&self, sensor: Vector2<f64>) -> Option<Vector3<f64>> {
         if !sensor.iter().all(|v| v.is_finite()) || !self.focal_full.iter().all(|v| v.is_finite() && *v > 0.0) { return None; }
         let distorted = (sensor - self.principal_full).component_div(&self.focal_full);
-        let inverse = self.model.undistort_point((distorted.x as f32, distorted.y as f32), &self.kernel)?;
-        let forward = self.model.distort_point(inverse.0, inverse.1, 1.0, &self.kernel);
-        if !self.optical_roundtrip_matches(Vector2::new(forward.0 as f64, forward.1 as f64), distorted) { return None; }
-        let mut p = Vector2::new(inverse.0 as f64, inverse.1 as f64);
+        let inverse = super::distortion_models::sensor_projection::inverse(&self.model, distorted, &self.kernel)?;
+        let forward = super::distortion_models::sensor_projection::forward(&self.model, inverse, &self.kernel)?;
+        if !self.optical_roundtrip_matches(forward, distorted) { return None; }
+        let mut p = inverse;
         let coefficient = self.kernel.light_refraction_coefficient as f64;
         if !coefficient.is_finite() { return None; }
         if coefficient != 1.0 && coefficient > 0.0 {
@@ -1243,11 +1243,11 @@ impl SensorProjection {
                 p *= sine / (1.0 - sine * sine).sqrt() / radius;
             }
         }
-        let distorted = self.model.distort_point(p.x as f32, p.y as f32, 1.0, &self.kernel);
+        let distorted = super::distortion_models::sensor_projection::forward(&self.model, p, &self.kernel)?;
         // Finiteness alone cannot detect a folded polynomial or a different inverse root.
-        let inverse = self.model.undistort_point(distorted, &self.kernel)?;
-        if !self.optical_roundtrip_matches(Vector2::new(inverse.0 as f64, inverse.1 as f64), p) { return None; }
-        let sensor = Vector2::new(distorted.0 as f64, distorted.1 as f64).component_mul(&self.focal_full) + self.principal_full;
+        let inverse = super::distortion_models::sensor_projection::inverse(&self.model, distorted, &self.kernel)?;
+        if !self.optical_roundtrip_matches(inverse, p) { return None; }
+        let sensor = distorted.component_mul(&self.focal_full) + self.principal_full;
         sensor.iter().all(|v| v.is_finite()).then_some(sensor)
     }
 

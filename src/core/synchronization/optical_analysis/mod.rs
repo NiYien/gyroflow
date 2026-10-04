@@ -20,6 +20,7 @@ pub mod solver;
 pub mod odometry;
 pub mod translation;
 pub(crate) mod sensor;
+mod sensor_solver;
 
 use std::collections::{ HashMap, VecDeque };
 use std::sync::{ Arc, atomic::{ AtomicBool, AtomicU64, Ordering::{ Relaxed, SeqCst } } };
@@ -143,6 +144,54 @@ pub fn solve_with(m: &OpticalMeasurements, settings: &OpticalCorrectionSettings,
         measured_frames: m.measured_frames,
         rms_deg,
     })
+}
+
+/// Reconstructs the sensor correction against the same uncorrected motion used during analysis.
+pub fn solve_stab(m: &OpticalMeasurements, quats: &TimeQuat, config: &crate::gyro_source::optical_stab::StabReconConfig) -> Result<crate::gyro_source::optical_stab::OpticalStabReconstruction, String> {
+    solve_stab_with_cancel(m, quats, config, || false)
+}
+
+pub(crate) fn solve_stab_with_cancel(m: &OpticalMeasurements, quats: &TimeQuat, config: &crate::gyro_source::optical_stab::StabReconConfig, cancel: impl Fn() -> bool) -> Result<crate::gyro_source::optical_stab::OpticalStabReconstruction, String> {
+    use crate::gyro_source::optical_stab::OpticalStabReconstruction;
+    if cancel() { return Err("Cancelled".into()); }
+    if optical_correction::checksum(quats) != m.quats_checksum {
+        log::warn!("Sensor reconstruction rejected: motion checksum changed after analysis");
+        return Err("Motion data changed after analysis; analyze again".into());
+    }
+    let params = SolverParams { spacing_us: 1e6 / m.scaled_fps.max(1.0) / 6.0, ridge: 1e-5, ..Default::default() };
+    let mut fit = sensor_solver::solve_sensor(&m.stab_pairs, &m.stab_bands, quats, config.cutoff_hz, &params, &cancel).map_err(|error| {
+        log::warn!("Sensor reconstruction failed: {error:?}");
+        match error {
+            sensor_solver::SensorSolveError::NoMeasurements => "Not enough of the image could be tracked".to_string(),
+            sensor_solver::SensorSolveError::Cancelled => "Cancelled".to_string(),
+            _ => format!("Sensor reconstruction failed: {error:?}"),
+        }
+    })?;
+    log::info!("Sensor reconstruction converged: iterations={} initial_cost={} final_cost={} max_step_px={} knots={} band_bytes={}", fit.iterations, fit.initial_cost, fit.final_cost, fit.max_step_px, fit.solution.coeffs.len(), fit.band_bytes);
+    #[cfg(test)]
+    if std::env::var_os("GYROFLOW_SENSOR_TEST_DIAGNOSTICS").is_some() {
+        println!("sensor solved test={} iterations={} initial_cost={} final_cost={} max_step_px={} knots={} band_bytes={}",std::thread::current().name().unwrap_or("unnamed"),fit.iterations,fit.initial_cost,fit.final_cost,fit.max_step_px,fit.solution.coeffs.len(),fit.band_bytes);
+    }
+    if cancel() { return Err("Cancelled".into()); }
+    let mut result = OpticalStabReconstruction::default();
+    result.enabled = true;
+    result.start_us = fit.solution.start_us;
+    result.spacing_us = params.spacing_us;
+    result.coeffs = fit.solution.coeffs.iter().map(|v| [v.x as f32, v.y as f32, v.z as f32]).collect();
+    result.cutoff_hz = fit.cutoff_hz;
+    result.quats_checksum = m.quats_checksum;
+    result.context_checksum = m.context_checksum;
+    result.frames = m.frames;
+    result.measured_frames = fit.measured_pairs;
+    result.rebuild_with_prior(&mut fit.prior_sampler,config,&cancel).map_err(|error| {
+        log::warn!("Sensor reconstruction rebuild failed: {error:?}");
+        if error==crate::gyro_source::optical_stab::PriorError::Cancelled {"Cancelled".to_string()} else {format!("Sensor reconstruction prior failed: {error:?}")}
+    })?;
+    log::debug!("Sensor prior cache nodes={} panels={} logs={} contributions={}",fit.prior_sampler.cached_nodes(),fit.prior_sampler.panels,fit.prior_sampler.log_evaluations,fit.prior_sampler.contributions);
+    #[cfg(test)]
+    if std::env::var_os("GYROFLOW_SENSOR_TEST_DIAGNOSTICS").is_some() {println!("sensor prior cache nodes={} panels={} logs={} contributions={}",fit.prior_sampler.cached_nodes(),fit.prior_sampler.panels,fit.prior_sampler.log_evaluations,fit.prior_sampler.contributions);}
+    if cancel() { return Err("Cancelled".into()); }
+    Ok(result)
 }
 
 /// The parameters the analysis measures with: the render's, minus what's about the output picture (keyframes, a lens
@@ -1108,4 +1157,280 @@ mod tests {
         assert!(analysis.is_cancelled());
         assert_eq!(analysis.finish().err().as_deref(), Some("Cancelled"));
     }
+}
+
+
+#[cfg(test)]
+mod sensor_solve_tests {
+    use super::*;
+    use crate::gyro_source::optical_stab::{self, StabReconConfig};
+
+    fn measurements(quats: &TimeQuat, pairs: Vec<sensor::SensorPair>, fps: f64) -> OpticalMeasurements {
+        let mut bands = Vec::new();
+        for pair in &pairs {
+            for band in 0..6 {
+                let indices: Vec<_> = pair.points.iter().enumerate().filter_map(|(i, p)| (p.band == band).then_some(i)).collect();
+                if let Some(fit) = sensor::fit_band_shift(pair, &indices) { bands.push(fit); }
+            }
+        }
+        OpticalMeasurements { bands: vec![], stab_requested: true, stab_pairs: pairs, stab_bands: bands,
+            translation_requested: false, translation_samples: vec![], scaled_fps: fps,
+            quats_checksum: optical_correction::checksum(quats), context_checksum: 9, video_base: vec![],
+            frames: 300, measured_frames: 0, generation: 0 }
+    }
+
+    fn prior_scene(seconds: f64, cutoff: f64, include: impl Fn(f64) -> bool) -> (TimeQuat, OpticalMeasurements) {
+        let q = |t: f64| UnitQuaternion::from_scaled_axis(Vector3::new(0.0, 0.005 * (std::f64::consts::TAU * 3.0 * t + 0.7).sin(), 0.0));
+        let quats: TimeQuat = (0..=(seconds * 1000.0) as i64).map(|i| (i * 1000, q(i as f64 / 1000.0))).collect();
+        let times: Vec<_> = (0..=(seconds * 30.0).round() as usize).map(|i| i as f64 * 1e6 / 30.0).collect();
+        let truth = optical_stab::prior(&quats, cutoff, &times);
+        let pairs = times.windows(2).enumerate().filter(|(_, t)| include(t[0] / 1e6) && include(t[1] / 1e6)).map(|(i, t)| {
+            sensor::tests::physical_pair(i * 2 + 7, t[0], t[1], q(t[0] / 1e6), q(t[1] / 1e6), truth[i], truth[i + 1])
+        }).collect();
+        let m = measurements(&quats, pairs, 30.0);
+        (quats, m)
+    }
+
+    #[test]
+    fn solve_stab_short_measurements_use_the_default_cutoff() {
+        let (q, m) = prior_scene(1.5, optical_stab::DEFAULT_CUTOFF_HZ, |_| true);
+        assert_eq!(m.stab_bands.len(), 45 * 6);
+        let result = solve_stab(&m, &q, &StabReconConfig::DEFAULT).unwrap();
+        assert_eq!(result.cutoff_hz, optical_stab::DEFAULT_CUTOFF_HZ);
+        assert_eq!(result.measured_frames, 45);
+    }
+
+    #[test]
+    fn solve_stab_no_stab_bands_is_an_error() {
+        let q = TimeQuat::new();
+        let m = measurements(&q, vec![], 30.0);
+        assert_eq!(solve_stab(&m, &q, &StabReconConfig::DEFAULT).unwrap_err(), "Not enough of the image could be tracked");
+    }
+    #[test]
+    fn solve_stab_unmeasured_stretches_follow_the_prior() {
+        let (q,m)=prior_scene(6.0,0.5,|t| t<=2.0 || t>=4.0);
+        let result=solve_stab(&m,&q,&StabReconConfig {cutoff_hz:Some(0.5),..StabReconConfig::DEFAULT}).unwrap();
+        let times:Vec<_>=(2500..=3500).map(|i|i as f64*1000.0).collect();
+        let truth=optical_stab::prior(&q,0.5,&times);
+        let amplitude=truth.iter().map(|s|s.norm()).fold(0.0,f64::max);
+        for (&t,s) in times.iter().zip(truth) { assert!((result.at(t)-s).norm()<=0.05*amplitude); }
+        let first=optical_stab::prior(&q,0.5,&[0.0])[0];
+        assert!(first.norm()>0.001);
+        assert!((result.at(0.0)-first).norm()*500.0<0.1);
+    }
+
+    #[test]
+    fn solve_stab_nonzero_observed_correction_decays_inside_the_gap() {
+        let (q, mut m)=prior_scene(6.0,0.5,|t|t<=2.0 || t>=4.0);
+        let mut pairs=Vec::new();
+        for pair in &m.stab_pairs {
+            let times=[pair.points[0].ta_us,pair.points[0].tb_us];
+            let truth=optical_stab::prior(&q,0.5,&times);
+            let u=|t:f64|Vector3::new(0.001*(std::f64::consts::TAU*2.0*t/1e6).sin(),0.0007*(std::f64::consts::TAU*3.0*t/1e6).sin(),0.0);
+            pairs.push(sensor::tests::physical_pair(pair.seq,times[0],times[1],
+                GyroSource::clamped_quat_at_gyro_timestamp(&q,times[0]/1000.0),GyroSource::clamped_quat_at_gyro_timestamp(&q,times[1]/1000.0),truth[0]+u(times[0]),truth[1]+u(times[1])));
+        }
+        m=measurements(&q,pairs,30.0);
+        let result=solve_stab(&m,&q,&StabReconConfig {cutoff_hz:Some(0.5),..StabReconConfig::DEFAULT}).unwrap();
+        let times:Vec<_>=(2500..=3500).map(|i|i as f64*1000.0).collect();
+        let truth=optical_stab::prior(&q,0.5,&times);
+        let amplitude=truth.iter().map(|s|s.norm()).fold(0.0,f64::max);
+        let maximum=times.iter().zip(&truth).map(|(&t,s)|(result.at(t)-s).norm()).fold(0.0,f64::max);
+        println!("gap nonzero u maximum={maximum} limit={}",0.05*amplitude);
+        assert!(maximum<=0.05*amplitude);
+        assert!(result.u_at(250_000.0).norm()>0.0002);
+    }
+
+    #[test]
+    fn solve_stab_cutoff_fit_lands_next_to_the_truth() {
+        let body=|t:f64|UnitQuaternion::from_scaled_axis(Vector3::new(0.0,[0.07,0.2,0.5,1.3,3.0].iter().map(|f|0.2f64.to_radians()*(std::f64::consts::TAU*f*t).sin()).sum(),0.0));
+        let q:TimeQuat=(0..=12000).map(|i|(i*1000,body(i as f64/1000.0))).collect();
+        let times:Vec<_>=(30..=330).map(|i|i as f64*1e6/30.0).collect();
+        let truth=optical_stab::prior(&q,optical_stab::CUTOFF_GRID_HZ[8],&times);
+        let pairs=times.windows(2).enumerate().map(|(i,t)|sensor::tests::physical_pair(i*2+7,t[0],t[1],body(t[0]/1e6),body(t[1]/1e6),truth[i],truth[i+1])).collect();
+        let m=measurements(&q,pairs,30.0);
+        let result=solve_stab(&m,&q,&StabReconConfig::DEFAULT).unwrap();
+        let index=optical_stab::CUTOFF_GRID_HZ.iter().position(|f|*f==result.cutoff_hz).unwrap();
+        println!("cutoff truth_index=8 fitted_index={index}");
+        assert!(index.abs_diff(8)<=1);
+    }
+
+    #[test]
+    fn solve_stab_bands_without_raw_points_cannot_fall_back() {
+        let (q,mut m)=prior_scene(0.1,0.3,|_|true); m.stab_pairs.clear();
+        assert_eq!(solve_stab(&m,&q,&StabReconConfig::DEFAULT).unwrap_err(),"Not enough of the image could be tracked");
+    }
+
+    #[test]
+    fn solve_stab_rejects_changed_quaternions_and_cancellation() {
+        let (mut q,m)=prior_scene(0.1,0.3,|_|true);
+        let count=std::cell::Cell::new(0);
+        assert_eq!(solve_stab_with_cancel(&m,&q,&StabReconConfig::DEFAULT,|| { count.set(count.get()+1);count.get()>22 }).unwrap_err(),"Cancelled");
+        q.insert(0,UnitQuaternion::from_euler_angles(0.1,0.0,0.0));
+        assert_eq!(solve_stab(&m,&q,&StabReconConfig::DEFAULT).unwrap_err(),"Motion data changed after analysis; analyze again");
+    }
+
+    #[derive(Clone, Copy)]
+    struct PhysicalEndpoint {
+        sensor: crate::stabilization::SensorEndpoint,
+        raw: (f32, f32),
+        time: f64,
+        body: nalgebra::Vector2<f64>,
+        known: Vector3<f64>,
+    }
+
+    // The truth is declared before fitting: either exactly the prior, or zero sensor motion for OIS.
+    fn physical_scene(focal: f64, axis: Option<usize>, seed: u64, ois: bool) -> (TimeQuat, OpticalMeasurements, Vec<Vec<PhysicalEndpoint>>) {
+        use nalgebra::{Vector2, Rotation2};
+        let fps=60.0;
+        let frames=if ois {721} else {61};
+        let (columns,rows)=if ois {(40,24)} else {(20,12)};
+        let duration=(frames-1) as f64/fps;
+        let body=|t:f64| if ois { UnitQuaternion::from_scaled_axis(Vector3::new(0.0,0.0,0.005*(std::f64::consts::TAU*3.0*t).sin())) }
+            else { UnitQuaternion::from_scaled_axis(Vector3::new(0.003*(std::f64::consts::TAU*2.3*t+0.2).sin(),0.005*(std::f64::consts::TAU*3.0*t+0.7).sin(),0.002*(std::f64::consts::TAU*2.0*t+0.3).sin())) };
+        let q:TimeQuat=(-1000..=((duration+1.0)*1000.0) as i64).map(|i|(i*1000,body(i as f64/1000.0))).collect();
+        let body_at=|time:f64|GyroSource::clamped_quat_at_gyro_timestamp(&q,time/1000.0);
+        let mut prior_sampler=optical_stab::PriorSampler::new(&q,0.5).unwrap();
+        let mut state=seed;
+        let mut uniform=||{state=state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);((state>>11) as f64+0.5)/((1u64<<53) as f64)};
+        let worlds:Vec<_>=(0..columns*rows).map(|i| {
+            let jitter=if ois {Vector2::zeros()} else {Vector2::new(uniform()-0.5,uniform()-0.5)*8.0};
+            let px=Vector2::new((i%columns) as f64*960.0/columns as f64+480.0/columns as f64,(i/columns) as f64*540.0/rows as f64+270.0/rows as f64)+jitter;
+            Vector3::new((px.x-480.0)*5.0/focal,(270.0-px.y)*5.0/focal,-5.0)
+        }).collect();
+        let mut all=Vec::new();
+        let mut max_row_error:f64=0.0;
+        let mut max_clock_error:f64=0.0;
+        for frame in 0..frames {
+            let middle=frame as f64*1e6/fps;
+            let mut times=vec![middle;worlds.len()];
+            let mut endpoints:Vec<PhysicalEndpoint>=Vec::new();
+            // Solve the exposure time from the final recorded pixel, not from the uncorrected row.
+            for _ in 0..12 {
+                let truth=if ois {vec![Vector3::zeros();times.len()]} else {prior_sampler.sample(&times,&||false).unwrap()};
+                endpoints=worlds.iter().zip(&times).zip(&truth).enumerate().map(|(index,((world,&time),s))|{
+                    // Preserve all twelve passes, reusing only an identical deterministic OIS input.
+                    if ois && endpoints.get(index).is_some_and(|p|p.time==time) {return endpoints[index];}
+                    let ray=body_at(time).inverse()*world;
+                    let body_pixel=Vector2::new(480.0+focal*ray.x/-ray.z,270.0-focal*ray.y/-ray.z);
+                    let known=if ois {Vector3::zeros()} else {Vector3::new(2.0*(time/1e6).sin(),-1.0,0.007*(time/1e6).cos())};
+                    let center=Vector2::new(480.0,270.0); let pivot=center+known.xy();
+                    let z=Rotation2::new(-s.z)*(body_pixel-pivot-focal*s.xy())+pivot;
+                    let raw=Rotation2::new(-known.z)*(z-pivot)+center;
+                    PhysicalEndpoint {sensor:crate::stabilization::SensorEndpoint {sensor_full:[z.x as f32,z.y as f32],known_translation_full:[known.x as f32,known.y as f32]},raw:(raw.x as f32,raw.y as f32),time,body:body_pixel,known}
+                }).collect();
+                if axis.is_none() {break;}
+                if let Some(axis)=axis {
+                    let dimension=if axis==0 {960.0} else {540.0};
+                    times=endpoints.iter().map(|p|middle+10000.0*((if axis==0 {p.raw.0} else {p.raw.1}) as f64/dimension-0.5)).collect();
+                }
+            }
+            if let Some(axis)=axis {
+                let dimension=if axis==0 {960.0} else {540.0};
+                for p in &mut endpoints {
+                    let coordinate=if axis==0 {p.raw.0} else {p.raw.1};
+                    let magnitude=coordinate.abs();
+                    let ulp=(f32::from_bits(magnitude.to_bits()+1)-magnitude) as f64;
+                    let row_time=middle+10000.0*(coordinate as f64/dimension-0.5);
+                    let error=(row_time-p.time).abs();
+                    let clock_error=(row_time.round()-p.time.round()).abs();
+                    assert!(error<=1.0+10000.0/dimension*ulp,"row time exceeds input precision: {error}");
+                    assert!(clock_error<=1.0,"row time crosses more than one gyro clock cell: {clock_error}");
+                    max_row_error=max_row_error.max(error);max_clock_error=max_clock_error.max(clock_error);
+                    // All consumers use the time reconstructed from the final recorded f32 pixel.
+                    p.time=row_time;
+                }
+            }
+            all.push(endpoints);
+        }
+        let projection=std::sync::Arc::new(crate::stabilization::SensorProjection::test_pinhole(focal,focal,Vector2::repeat(1.0)));
+        let pairs=all.windows(2).enumerate().map(|(i,frame)|{
+            let points=frame[0].iter().zip(&frame[1]).enumerate().map(|(j,(a,b))|sensor::SensorPoint {
+                a:a.sensor,b:b.sensor,ta_us:a.time,tb_us:b.time,gyro_ab:body_at(b.time).inverse()*body_at(a.time),
+                band:if axis==Some(0) {((j%columns)*6/columns) as u8} else {((j/columns)*6/rows) as u8},
+            }).collect();
+            sensor::SensorPair {seq:3*i+11,frame_a:projection.clone(),frame_b:projection.clone(),duration_us:1e6/fps,points}
+        }).collect();
+        let m=measurements(&q,pairs,fps);
+        println!("physical exposure f={focal} axis={axis:?} ois={ois} seed={seed:#018x} max_row_time_error_us={max_row_error} max_rounded_clock_error_us={max_clock_error}");
+        drop(prior_sampler);
+        (q,m,all)
+    }
+
+    fn rendered_error(result:&crate::gyro_source::optical_stab::OpticalStabReconstruction, focal:f64, frames:&[Vec<PhysicalEndpoint>], interior:bool) -> (f64,f64) {
+        use nalgebra::Vector2;
+        let manager=StabilizationManager::default();
+        manager.init_from_video_data(12000.0,60.0,721,(960,540));
+        manager.lens.write().load_from_json_value(&serde_json::json!({"calib_dimension":{"w":960,"h":540},"distortion_model":"opencv_standard","fisheye_params":{"camera_matrix":[[focal,0.0,480.0],[0.0,focal,270.0],[0.0,0.0,1.0]],"distortion_coeffs":[0.0,0.0,0.0,0.0]}}));
+        let params=measurement_params(&manager);
+        let k=Matrix3::new(focal,0.0,480.0,0.0,focal,270.0,0.0,0.0,1.0);
+        let mut sum=0.0; let mut maximum:f64=0.0; let mut count=0;
+        for frame in frames {
+            if interior && !(2e6..=10e6).contains(&frame[0].time) {continue;}
+            let raw:Vec<_>=frame.iter().map(|p|p.raw).collect();
+            let shifts=frame.iter().map(|p|{let s=result.at(p.time);((p.known.x+focal*s.x) as f32,(p.known.y+focal*s.y) as f32,(p.known.z+s.z) as f32,0.0,0.0)}).collect();
+            let output=crate::stabilization::undistort_points(&raw,k,&[0.0;24],Matrix3::identity(),None,None,&params,1.0,1.0,0.0,Some(shifts),None,0.0);
+            for (p,out) in frame.iter().zip(output) {
+                let actual=Vector2::new(480.0+focal*out.0 as f64,270.0+focal*out.1 as f64);
+                let error=(actual-p.body).norm(); sum+=error*error; maximum=maximum.max(error);count+=1;
+            }
+        }
+        ((sum/count as f64).sqrt(),maximum)
+    }
+
+    #[test]
+    fn solve_stab_physical_six_fixed_seeds_focal_readout_and_recorded() {
+        for i in 0u64..6 {
+            let seed=0x7452_414e_534c_4154u64.wrapping_add(i.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+            for focal in [500.0,15000.0] {for axis in [0,1] {
+                let (q,m,truth)=physical_scene(focal,Some(axis),seed,false);
+                let start=std::time::Instant::now();
+                let result=solve_stab(&m,&q,&StabReconConfig {cutoff_hz:Some(0.5),..StabReconConfig::DEFAULT}).unwrap();
+                let (rms,max)=rendered_error(&result,focal,&truth,false);
+                println!("physical seed={seed:#018x} f={focal} readout_axis={axis} rms_px={rms} max_px={max} elapsed={:?} points={}",start.elapsed(),m.stab_pairs.iter().map(|p|p.points.len()).sum::<usize>());
+                assert!(max<0.1,"seed={seed:#018x} f={focal} axis={axis} rms={rms} max={max}");
+            }}
+        }
+    }
+
+    fn check_ois_without_roll(focal:f64,axis:Option<usize>) {
+            let (q,m,truth)=physical_scene(focal,axis,0x7452_414e_534c_4154,true);
+            let result=solve_stab(&m,&q,&StabReconConfig {cutoff_hz:Some(0.5),..StabReconConfig::DEFAULT}).unwrap();
+            let (rms,max)=rendered_error(&result,focal,&truth,true);
+            let mut dense_sum=0.0; let mut dense_max:f64=0.0;
+            for ms in 2000..=10000 {
+                let s=result.at(ms as f64*1000.0);
+                let shift=s.xy()*focal;
+                let roll=nalgebra::Rotation2::new(s.z);
+                dense_sum+=shift.norm_squared()+4.0*(s.z/2.0).sin().powi(2)*317.820409f64.powi(2);
+                let body=GyroSource::clamped_quat_at_gyro_timestamp(&q,ms as f64);
+                for x in [-468.0,468.0] {for y in [-258.75,258.75] {
+                    let ray=body.inverse()*Vector3::new(x*5.0/focal,-y*5.0/focal,-5.0);
+                    let pixel=nalgebra::Vector2::new(focal*ray.x/-ray.z,-focal*ray.y/-ray.z);
+                    dense_max=dense_max.max((roll*pixel+shift-pixel).norm());
+                }}
+            }
+            println!("OIS f={focal} axis={axis:?} observed_rms_px={rms} observed_max_px={max} unobserved_ms_rms_px={} unobserved_ms_max_px={dense_max}",(dense_sum/8001.0).sqrt());
+            assert!(max<0.1,"OIS f={focal} axis={axis:?} rms={rms} max={max}");
+    }
+
+    #[test]
+    fn solve_stab_ois_500_gs() {check_ois_without_roll(500.0,None);}
+
+    #[test]
+    fn solve_stab_ois_500_horizontal() {check_ois_without_roll(500.0,Some(0));}
+
+    #[test]
+    fn solve_stab_ois_500_vertical() {check_ois_without_roll(500.0,Some(1));}
+
+    #[test]
+    fn solve_stab_ois_15000_gs() {check_ois_without_roll(15000.0,None);}
+
+    #[test]
+    fn solve_stab_ois_15000_horizontal() {check_ois_without_roll(15000.0,Some(0));}
+
+    #[test]
+    fn solve_stab_ois_15000_vertical() {check_ois_without_roll(15000.0,Some(1));}
+
+
 }

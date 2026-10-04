@@ -63,6 +63,7 @@ pub(crate) fn residual_and_jacobians(pair: &SensorPair, point: &SensorPoint, sa:
     (ja.iter().chain(jb.iter()).all(|v| v.is_finite())).then_some((error, ja, jb))
 }
 
+#[cfg(test)]
 pub(crate) fn fit_band_shift(pair: &SensorPair, indices: &[usize]) -> Option<SensorBand> {
     fit_band_shift_with_weights(pair, indices).map(|v| v.0)
 }
@@ -173,4 +174,29 @@ pub(crate) mod tests {
             }
         }
     }
+    #[test]
+    fn sensor_double_ended_jacobian_matches_independent_pinhole_homography() {
+        let sa=Vector3::new(0.01,-0.006,3.0f64.to_radians());
+        let sb=sa+Vector3::new(2.0/500.0,-1.0/500.0,0.005);
+        let qa=UnitQuaternion::from_euler_angles(0.04,-0.02,0.03);
+        let qb=UnitQuaternion::from_euler_angles(0.05,-0.025,0.04);
+        let pair=physical_pair(0,0.0,33333.0,qa,qb,sa,sb);
+        let k=Matrix3::new(500.0,0.0,480.0,0.0,500.0,270.0,0.0,0.0,1.0);
+        let flip=Matrix3::from_diagonal(&Vector3::new(1.0,-1.0,-1.0));
+        let h=k*flip*(qb.inverse()*qa).to_rotation_matrix().matrix()*flip*k.try_inverse().unwrap();
+        for point in pair.points.iter().step_by(17) {
+            let (e,ja,jb)=residual_and_jacobians(&pair,point,sa,sb).unwrap(); assert!(e.norm()<0.1);
+            let independent=|z:[f32;2],s:Vector3<f64>| {
+                let v=nalgebra::Rotation2::new(s.z)*Vector2::new(z[0] as f64-480.0,z[1] as f64-270.0);
+                (v+Vector2::new(480.0+500.0*s.x,270.0+500.0*s.y),Matrix2x3::new(500.0,0.0,-v.y,0.0,500.0,v.x))
+            };
+            let (source,jfa)=independent(point.a.sensor_full,sa); let (_,jfb)=independent(point.b.sensor_full,sb);
+            let projected=h*Vector3::new(source.x,source.y,1.0);
+            let t=projected.xy()/projected.z;
+            let derivative=Matrix2::from_fn(|r,c|(h[(r,c)]-t[r]*h[(2,c)])/projected.z);
+            assert!((ja+derivative*jfa).norm()<0.05);
+            assert!((jb-jfb).norm()<1e-10);
+        }
+    }
+
 }
