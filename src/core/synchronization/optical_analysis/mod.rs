@@ -29,6 +29,10 @@ use crate::StabilizationManager;
 use crate::gyro_source::{ GyroSource, OpticalCorrection, OpticalCorrectionSettings, TimeQuat, optical_correction::{ self, Fnv } };
 use crate::stabilization::{ ComputeParams, FrameTransform, undistort_points_to_plane };
 use solver::{ BandMeasurement, SolverParams };
+use translation::{ PairPoint, TranslationSolver };
+#[cfg(feature = "use-opencv")]
+use translation::TranslationSolverConfig;
+use crate::gyro_source::optical_translation::TranslationSample;
 use super::optical_motion::tracks::Observation;
 #[cfg(feature = "use-opencv")]
 use super::optical_motion::{FrameTracker, tracker::KltTracker};
@@ -85,6 +89,8 @@ struct Derived {
 /// second instead of another pass over the video
 pub struct OpticalMeasurements {
     pub bands: Vec<BandMeasurement>,
+    pub translation_requested: bool,
+    pub translation_samples: Vec<TranslationSample>,
     pub scaled_fps: f64,
     /// Of the quaternions they were measured against, see `OpticalCorrection::quats_checksum`
     pub quats_checksum: u64,
@@ -205,6 +211,15 @@ fn to_quat_frame(b: (f32, f32)) -> Vector3<f64> {
     Vector3::new(b.0 as f64, -b.1 as f64, -1.0).normalize()
 }
 
+struct TranslationState {
+    solver: TranslationSolver,
+    next_seq: usize,
+    pairs: HashMap<usize, (Vector3<f64>, HashMap<u32, f64>)>,
+    position: Vector3<f64>,
+    segment: u32,
+    samples: Vec<TranslationSample>,
+}
+
 pub struct OpticalMotionAnalysis {
     /// Its `gyro` is a copy of the motion data without any optical correction: that's what the new one is measured against
     params: ComputeParams,
@@ -230,6 +245,7 @@ pub struct OpticalMotionAnalysis {
     /// A file without motion data: the rotation between each two frames, measured from their tracks and chained, at the
     /// frames' own times. What the rest of the analysis compares the image against instead of the quaternions
     vision: Option<TimeQuat>,
+    translation: Option<TranslationState>,
     /// What measures those rotations: the translation and the tracks' depths it keeps from one frame pair to the next
     odometry: odometry::VisualOdometry,
     sg_cache: HashMap<usize, DMatrix<f64>>,
@@ -276,6 +292,10 @@ impl OpticalMotionAnalysis {
                 let total_frames = ranges.iter().map(|(a, b)| ((b - a) * p.frame_count as f64).round() as usize).sum();
                 (p.fps_scale, p.get_scaled_fps(), p.frame_readout_direction.is_horizontal(), ranges_ms, total_frames)
             };
+            let translation = (vision.is_none() && stab.optical_ui.read().translation_enabled).then(|| TranslationState {
+                solver: TranslationSolver::new(TranslationSolverConfig::resolved()),
+                next_seq: 0, pairs: HashMap::new(), position: Vector3::zeros(), segment: 0, samples: Vec::new(),
+            });
             Ok(Self {
                 params, fps_scale, scaled_fps, quats_checksum, context_checksum, horizontal_readout,
                 track_size: (0, 0),
@@ -291,6 +311,7 @@ impl OpticalMotionAnalysis {
                 total_frames,
                 ranges_ms,
                 vision,
+                translation,
                 odometry: Default::default(),
                 sg_cache: HashMap::new(),
                 cancel_flag,
@@ -407,6 +428,8 @@ impl OpticalMotionAnalysis {
         };
         Ok(OpticalMeasurements {
             bands: self.measurements,
+            translation_requested: self.translation.is_some(),
+            translation_samples: self.translation.map(|state| state.samples).unwrap_or_default(),
             scaled_fps: self.scaled_fps,
             quats_checksum,
             context_checksum: self.context_checksum,
@@ -477,7 +500,8 @@ impl OpticalMotionAnalysis {
         if end <= self.measured_upto || (!last_call && end < self.measured_upto + CHUNK) { return; }
         if self.is_cancelled() { return; }
 
-        let derived = self.derive();
+        let mut derived = self.derive();
+        self.measure_translation(&mut derived);
         let rhp = self.high_pass(&derived);
 
         // (seq, band) -> the points
@@ -504,7 +528,47 @@ impl OpticalMotionAnalysis {
         self.measured_upto = end;
         let keep_from = end.saturating_sub(HP_MAX);
         while self.pairs.front().map(|p| p.seq < keep_from).unwrap_or(false) {
-            self.pairs.pop_front();
+            if let Some(pair) = self.pairs.pop_front() {
+                if let Some(state) = &mut self.translation { state.pairs.remove(&pair.seq); }
+            }
+        }
+    }
+
+    /// Solve each pair once, then reuse its parallax while the high-pass still needs it.
+    fn measure_translation(&mut self, derived: &mut [Derived]) {
+        let Some(state) = &mut self.translation else { return };
+        let gyro = self.params.gyro.read();
+        for pair in self.pairs.iter().filter(|pair| pair.seq >= state.next_seq) {
+            let points: Vec<PairPoint> = derived.iter().filter(|d| d.seq == pair.seq)
+                .map(|d| PairPoint { id: d.id, band: d.band, p: d.p, r: d.r }).collect();
+            let result = state.solver.step(&points, 1.0 / self.focal_px, pair.b.mid_ms / 1000.0);
+            if state.samples.is_empty() || result.new_segment {
+                if !state.samples.is_empty() { state.segment += 1; }
+                state.position = Vector3::zeros();
+                state.samples.push(TranslationSample {
+                    timestamp_us: (pair.a.mid_ms * 1000.0).round() as i64,
+                    segment: state.segment,
+                    ..Default::default()
+                });
+            }
+            if result.confidence > 0.0 {
+                state.position += gyro.org_quat_at_timestamp(pair.b.mid_ms) * result.c_segment;
+                state.pairs.insert(pair.seq, (result.c, result.inv_depth));
+            }
+            state.samples.push(TranslationSample {
+                timestamp_us: (pair.b.mid_ms * 1000.0).round() as i64,
+                position: [state.position.x as f32, state.position.y as f32, state.position.z as f32],
+                ref_inv_depth: result.ref_inv_depth as f32,
+                confidence: result.confidence as f32,
+                track_age_s: result.track_age_s as f32,
+                segment: state.segment,
+            });
+        }
+        state.next_seq = self.next_seq;
+        for d in derived {
+            if let Some((c, depth)) = state.pairs.get(&d.seq) {
+                if let Some(rho) = depth.get(&d.id) { d.r += *rho * (c - c.dot(&d.p) * d.p); }
+            }
         }
     }
 
@@ -718,11 +782,11 @@ mod tests {
 
     #[cfg(feature = "use-opencv")]
     fn golden_scene(translation: bool) -> OpticalMeasurements {
-        assert!(!translation, "translation is not implemented in the baseline");
         let body = |t: f64| crate::Quat64::from_euler_angles(
             0.3f64.to_radians() * (std::f64::consts::TAU * 3.3 * t).sin(),
             0.3f64.to_radians() * (std::f64::consts::TAU * 2.0 * t).sin(), 0.0);
         let stab = analysis_fixture(90, body);
+        stab.optical_ui.write().translation_enabled = translation;
         analyze_pairs(&stab, 90, |frame| {
             let t = frame as f64 / 30.0;
             let observed = body(t) * crate::Quat64::from_euler_angles(
@@ -767,6 +831,86 @@ mod tests {
         let h = bands_hash(&m.bands);
         assert!(!m.bands.is_empty());
         assert_eq!(h, BANDS_GOLDEN, "got {h}");
+    }
+
+    #[cfg(feature = "use-opencv")]
+    fn camera_x(frame: usize) -> f64 {
+        let amplitude = 1.5 * 4.0 / 500.0;
+        amplitude * (std::f64::consts::TAU * frame as f64 / 10.0).sin()
+    }
+
+    #[cfg(feature = "use-opencv")]
+    fn parallax_observations(frame: usize) -> Vec<(u32, [f32; 2])> {
+        (0..1200).map(|id| {
+            let depth = [2.0, 4.0, 8.0][id as usize / 400];
+            let grid = id % 400;
+            let u = (grid % 20) as f64 * 48.0 + 24.0;
+            let v = (grid / 20) as f64 * 27.0 + 13.5;
+            let world = Vector3::new((u - 480.0) * depth / 500.0, (270.0 - v) * depth / 500.0, -depth);
+            (id, project(world - Vector3::new(camera_x(frame), 0.0, 0.0)))
+        }).collect()
+    }
+
+    #[cfg(feature = "use-opencv")]
+    fn parallax_scene(translation: bool) -> OpticalMeasurements {
+        let stab = analysis_fixture(90, |_| crate::Quat64::identity());
+        stab.optical_ui.write().translation_enabled = translation;
+        analyze_pairs(&stab, 90, parallax_observations)
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn parallax_is_taken_out_before_the_rotation_fit() {
+        let settings = OpticalCorrectionSettings { strength: 0.5 };
+        let without = solve(&parallax_scene(false), &settings).unwrap().rms_deg;
+        let with = solve(&parallax_scene(true), &settings).unwrap().rms_deg;
+        eprintln!("parallax rotation rms_deg: without={without} with={with} ratio={}", with / without);
+        assert!(with <= 0.3 * without, "without={without}, with={with}");
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn translation_samples_follow_the_camera() {
+        let m = parallax_scene(true);
+        assert!(m.translation_requested);
+        assert_eq!(m.translation_samples.len(), 90);
+        assert!(m.translation_samples.iter().all(|s| s.segment == 0));
+        let points: Vec<(f64, f64)> = (30..60).map(|frame| {
+            let sample = &m.translation_samples[frame];
+            assert_eq!(sample.timestamp_us, (frame as f64 * 1_000_000.0 / 30.0).round() as i64);
+            (camera_x(frame), sample.position[0] as f64)
+        }).collect();
+        let mx = points.iter().map(|p| p.0).sum::<f64>() / points.len() as f64;
+        let my = points.iter().map(|p| p.1).sum::<f64>() / points.len() as f64;
+        let cov = points.iter().map(|p| (p.0 - mx) * (p.1 - my)).sum::<f64>();
+        let sx = points.iter().map(|p| (p.0 - mx).powi(2)).sum::<f64>();
+        let sy = points.iter().map(|p| (p.1 - my).powi(2)).sum::<f64>();
+        let correlation = cov / (sx * sy).sqrt();
+        eprintln!("translation position Pearson correlation={correlation}");
+        assert!(correlation >= 0.95, "correlation={correlation}");
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn files_without_motion_never_request_translation() {
+        let stab = analysis_fixture(90, |_| crate::Quat64::identity());
+        {
+            let mut gyro = stab.gyro.write();
+            gyro.quaternions.clear();
+            gyro.file_metadata.write().quaternions.clear();
+        }
+        stab.optical_ui.write().translation_enabled = true;
+        let m = analyze_pairs(&stab, 90, parallax_observations);
+        assert!(!m.translation_requested);
+        assert!(m.translation_samples.is_empty());
+        assert!(!m.video_base.is_empty());
+    }
+
+    #[test]
+    fn cloned_manager_keeps_the_optical_ui() {
+        let stab = manager();
+        stab.optical_ui.write().translation_enabled = true;
+        assert!(stab.get_cloned().optical_ui.read().translation_enabled);
     }
 
     #[test]

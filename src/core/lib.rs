@@ -307,6 +307,12 @@ impl Default for SyncData {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct OpticalUi {
+    pub translation_enabled: bool,
+    pub translation_settings: gyro_source::OpticalTranslationSettings,
+}
+
 #[derive(Clone)]
 pub struct StabilizationManager {
     pub gyro: Arc<RwLock<GyroSource>>,
@@ -322,6 +328,7 @@ pub struct StabilizationManager {
     /// What may replace the correction: a finished analysis or refit, and `invalidate_optical_measurements`.
     pub optical_measurements: Arc<RwLock<Option<Arc<synchronization::optical_analysis::OpticalMeasurements>>>>,
     pub optical_settings: Arc<RwLock<gyro_source::OpticalCorrectionSettings>>,
+    pub optical_ui: Arc<RwLock<OpticalUi>>,
     /// Another file, project or Clear moves this on: running analyses stop and their measurements are dropped.
     pub optical_generation: Arc<AtomicU64>,
     pub current_compute_id: Arc<AtomicU64>,
@@ -413,6 +420,7 @@ impl Default for StabilizationManager {
 
             optical_measurements: Arc::new(RwLock::new(None)),
             optical_settings: Arc::new(RwLock::new(Default::default())),
+            optical_ui: Arc::new(RwLock::new(Default::default())),
             optical_generation: Arc::new(AtomicU64::new(0)),
             current_compute_id: Arc::new(AtomicU64::new(0)),
             smoothing_checksum: Arc::new(AtomicU64::new(0)),
@@ -3524,6 +3532,7 @@ impl StabilizationManager {
             lens_group_manual_edit: self.lens_group_manual_edit.clone(),
             lens_profile_db: self.lens_profile_db.clone(),
             optical_settings: Arc::new(RwLock::new(*self.optical_settings.read())),
+            optical_ui: Arc::new(RwLock::new(*self.optical_ui.read())),
 
             // NOT cloned:
             // optical_measurements: they take a lot of memory, and a clone has nothing to refit
@@ -5587,7 +5596,7 @@ mod tests {
                     info: nalgebra::Matrix3::identity(), m: nalgebra::Matrix3::identity() });
             }
         }
-        OpticalMeasurements { bands, scaled_fps: 30.0,
+        OpticalMeasurements { bands, translation_requested: false, translation_samples: Vec::new(), scaled_fps: 30.0,
             quats_checksum: gyro_source::optical_correction::checksum(&manager.gyro.read().quaternions),
             context_checksum: context_checksum(&measurement_params(manager)),
             video_base: Vec::new(), frames: 31, measured_frames: 30, generation }
