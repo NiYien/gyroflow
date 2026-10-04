@@ -1211,9 +1211,11 @@ pub(crate) struct PreparedSensorFrame {
 impl SensorProjection {
     pub(crate) fn sensor_to_ray(&self, sensor: Vector2<f64>) -> Option<Vector3<f64>> {
         if !sensor.iter().all(|v| v.is_finite()) || !self.focal_full.iter().all(|v| v.is_finite() && *v > 0.0) { return None; }
-        let p = (sensor - self.principal_full).component_div(&self.focal_full);
-        let p = self.model.undistort_point((p.x as f32, p.y as f32), &self.kernel)?;
-        let mut p = Vector2::new(p.0 as f64, p.1 as f64);
+        let distorted = (sensor - self.principal_full).component_div(&self.focal_full);
+        let inverse = self.model.undistort_point((distorted.x as f32, distorted.y as f32), &self.kernel)?;
+        let forward = self.model.distort_point(inverse.0, inverse.1, 1.0, &self.kernel);
+        if !self.optical_roundtrip_matches(Vector2::new(forward.0 as f64, forward.1 as f64), distorted) { return None; }
+        let mut p = Vector2::new(inverse.0 as f64, inverse.1 as f64);
         let coefficient = self.kernel.light_refraction_coefficient as f64;
         if !coefficient.is_finite() { return None; }
         if coefficient != 1.0 && coefficient > 0.0 {
@@ -1242,11 +1244,17 @@ impl SensorProjection {
             }
         }
         let distorted = self.model.distort_point(p.x as f32, p.y as f32, 1.0, &self.kernel);
-        // A finite forward polynomial can still be outside the invertible optical domain.
+        // Finiteness alone cannot detect a folded polynomial or a different inverse root.
         let inverse = self.model.undistort_point(distorted, &self.kernel)?;
-        if !inverse.0.is_finite() || !inverse.1.is_finite() { return None; }
+        if !self.optical_roundtrip_matches(Vector2::new(inverse.0 as f64, inverse.1 as f64), p) { return None; }
         let sensor = Vector2::new(distorted.0 as f64, distorted.1 as f64).component_mul(&self.focal_full) + self.principal_full;
         sensor.iter().all(|v| v.is_finite()).then_some(sensor)
+    }
+
+    /// Both directions must close in source pixels, without accepting an inverse clamp or fold.
+    fn optical_roundtrip_matches(&self, restored: Vector2<f64>, original: Vector2<f64>) -> bool {
+        let error_px = (restored - original).component_mul(&self.focal_full);
+        error_px.iter().all(|v| v.is_finite()) && error_px.norm() <= 0.05
     }
 
     pub(crate) fn add_correction(&self, point: &SensorEndpoint, s: Vector3<f64>) -> Vector2<f64> {
@@ -1277,8 +1285,8 @@ pub(crate) fn prepare_sensor_frame(params: &ComputeParams, timestamp_ms: f64, fr
     let full: Vec<_> = tracked_points.iter().map(|p| (p.0 * sx, p.1 * sy)).collect();
     let (k, dist, _, _, shifts, mesh, _, _) = FrameTransform::at_timestamp_for_points(params, &full, timestamp_ms, Some(frame_index), false);
     let shifts = shifts.map(|s| if s.len() == 1 { vec![s[0]; full.len()] } else { s });
+    let stretch = params.lens.input_stretch_applied.map(|_| FrameTransform::input_stretch_at_timestamp(params, timestamp_ms));
     let projection = cached_projection.cloned().unwrap_or_else(|| {
-        let stretch = params.lens.input_stretch_applied.map(|_| FrameTransform::input_stretch_at_timestamp(params, timestamp_ms));
         std::sync::Arc::new(SensorProjection {
             model: params.distortion_model.clone(),
             kernel: point_kernel(params, k, &dist, timestamp_ms, 1.0, 1.0, 0.0, stretch),
@@ -1286,13 +1294,13 @@ pub(crate) fn prepare_sensor_frame(params: &ComputeParams, timestamp_ms: f64, fr
             full_to_track: Vector2::new(track_size.0 as f64 / params.width.max(1) as f64, track_size.1 as f64 / params.height.max(1) as f64),
         })
     });
-    let plane = undistort_points(&full, k, &dist, Matrix3::identity(), None, None, params, 1.0, 1.0, timestamp_ms, shifts.clone(), mesh, 0.0);
-    let points = plane.into_iter().enumerate().map(|(i, p)| {
-        if !is_valid_point(p) { return None; }
-        let z = projection.ray_to_sensor(Vector3::new(p.0 as f64, -p.1 as f64, -1.0))?;
+    let c = (k[(0, 2)] as f32, k[(1, 2)] as f32);
+    let points = full.iter().enumerate().map(|(i, p)| {
+        let z = point_to_sensor(p, i, c, params, &projection.kernel, stretch, &shifts, &mesh);
+        projection.sensor_to_ray(Vector2::new(z.0 as f64, z.1 as f64))?;
         let t = shifts.as_ref().and_then(|s| s.get(i)).map(|s| [s.0 - s.3, s.1 - s.4]).unwrap_or([0.0; 2]);
         if !t.iter().all(|x| x.is_finite()) { return None; }
-        Some(SensorEndpoint { sensor_full: [z.x as f32, z.y as f32], known_translation_full: t })
+        Some(SensorEndpoint { sensor_full: [z.0, z.1], known_translation_full: t })
     }).collect();
     PreparedSensorFrame { projection, points }
 }
@@ -1330,6 +1338,79 @@ fn point_kernel(params: &ComputeParams, camera_matrix: Matrix3<f64>, distortion_
 
         ..Default::default()
     }
+}
+
+/// The unchanged stretch, digital, mesh and recorded-sensor prefix of the CPU point path.
+fn point_to_sensor(pi: &(f32, f32), index: usize, c: (f32, f32), params: &ComputeParams, kernel_params: &KernelParams, host_stretch: Option<(f64, f64)>, shift_per_point: &Option<Vec<(f32, f32, f32, f32, f32)>>, mesh: &Option<Vec<f64>>) -> (f32, f32) {
+    let mut x = pi.0;
+    let mut y = pi.1;
+    if let Some((stretch_h, stretch_v)) = host_stretch {
+        x *= stretch_h as f32;
+        y *= stretch_v as f32;
+    } else {
+        // Preserve the desktop point path when no host conversion is active.
+        if params.lens.input_horizontal_stretch > 0.001 { x *= params.lens.input_horizontal_stretch as f32; }
+        if params.lens.input_vertical_stretch > 0.001 { y *= params.lens.input_vertical_stretch as f32; }
+    }
+
+    if let Some(digital) = &params.digital_lens {
+        if let Some(pt2) = digital.undistort_point((x, y), &kernel_params) {
+            x = pt2.0;
+            y = pt2.1;
+        }
+    }
+
+    if let Some(mesh_data) = mesh.as_ref().filter(|m| m.len() > 9) {
+        // FocalPlaneDistortion
+        let o = mesh_data[0] as usize; // offset to focal plane distortion data
+        if o > 0 && mesh_data.get(o).map_or(false, |x| *x > 0.0) {
+
+            let mesh_size = (mesh_data[3], mesh_data[4]);
+            let origin    = (mesh_data[5] as f32, mesh_data[6] as f32);
+            let crop_size = (mesh_data[7] as f32, mesh_data[8] as f32);
+            let stblz_grid = if mesh_data[o + 2] > 0.0 { mesh_data[o + 2] } else { mesh_size.1 / 8.0 }; // band height comes with the table
+
+            x = map_coord(x, 0.0, params.width  as f32, origin.0, origin.0 + crop_size.0);
+            y = map_coord(y, 0.0, params.height as f32, origin.1, origin.1 + crop_size.1);
+
+            let idx = (y as f64 / stblz_grid).floor().max(0.0).min(7.0) as usize;
+            let delta = y as f64 - stblz_grid * idx as f64;
+            x += (mesh_data[o + 4 + idx * 2 + 0] * delta) as f32;
+            y += (mesh_data[o + 4 + idx * 2 + 1] * delta) as f32;
+            for j in 0..idx {
+                x += (mesh_data[o + 4 + j * 2 + 0] * stblz_grid) as f32;
+                y += (mesh_data[o + 4 + j * 2 + 1] * stblz_grid) as f32;
+            }
+
+            x = map_coord(x, origin.0, origin.0 + crop_size.0, 0.0, params.width  as f32);
+            y = map_coord(y, origin.1, origin.1 + crop_size.1, 0.0, params.height as f32);
+        }
+
+        if mesh_data[0] > 10.0 {
+            let mesh_size = (mesh_data[3], mesh_data[4]);
+            let origin    = (mesh_data[5] as f32, mesh_data[6] as f32);
+            let crop_size = (mesh_data[7] as f32, mesh_data[8] as f32);
+
+            x = map_coord(x, 0.0, params.width  as f32, origin.0, origin.0 + crop_size.0);
+            y = map_coord(y, 0.0, params.height as f32, origin.1, origin.1 + crop_size.1);
+
+            let new_pos = crate::gyro_source::interpolate_mesh(x as f64, y as f64, (mesh_size.0, mesh_size.1), &mesh_data);
+
+            x = map_coord(new_pos.x as f32, origin.0, origin.0 + crop_size.0, 0.0, params.width  as f32);
+            y = map_coord(new_pos.y as f32, origin.1, origin.1 + crop_size.1, 0.0, params.height as f32);
+        }
+    }
+    if let Some(shift) = shift_per_point.as_ref().and_then(|v| v.get(index)) {
+        // Sensor roll around the principal point first, then the sensor/lens shift (the inverse of `rotate_and_distort`)
+        let ang_rad = shift.2;
+        let cos_a = ang_rad.cos();
+        let sin_a = ang_rad.sin();
+        let (xr, yr) = (x - c.0, y - c.1);
+        x = cos_a * xr - sin_a * yr - shift.3 + shift.0 + c.0;
+        y = sin_a * xr + cos_a * yr - shift.4 + shift.1 + c.1;
+    }
+
+    (x, y)
 }
 
 // Ported from OpenCV: https://github.com/opencv/opencv/blob/4.x/modules/calib3d/src/fisheye.cpp#L321
@@ -1377,73 +1458,7 @@ pub fn undistort_points(distorted: &[(f32, f32)], camera_matrix: Matrix3<f64>, d
     // (zooming::fov_iterative) already runs this across frames via into_par_iter, and the
     // stmap caller passes one point at a time — so a nested par_iter would only oversubscribe.
     distorted.iter().enumerate().map(|(index, pi)| {
-        let mut x = pi.0;
-        let mut y = pi.1;
-        if let Some((stretch_h, stretch_v)) = host_stretch {
-            x *= stretch_h as f32;
-            y *= stretch_v as f32;
-        } else {
-            // Preserve the desktop point path when no host conversion is active.
-            if params.lens.input_horizontal_stretch > 0.001 { x *= params.lens.input_horizontal_stretch as f32; }
-            if params.lens.input_vertical_stretch > 0.001 { y *= params.lens.input_vertical_stretch as f32; }
-        }
-
-        if let Some(digital) = &params.digital_lens {
-            if let Some(pt2) = digital.undistort_point((x, y), &kernel_params) {
-                x = pt2.0;
-                y = pt2.1;
-            }
-        }
-
-        if let Some(mesh_data) = mesh.as_ref().filter(|m| m.len() > 9) {
-            // FocalPlaneDistortion
-            let o = mesh_data[0] as usize; // offset to focal plane distortion data
-            if o > 0 && mesh_data.get(o).map_or(false, |x| *x > 0.0) {
-
-                let mesh_size = (mesh_data[3], mesh_data[4]);
-                let origin    = (mesh_data[5] as f32, mesh_data[6] as f32);
-                let crop_size = (mesh_data[7] as f32, mesh_data[8] as f32);
-                let stblz_grid = if mesh_data[o + 2] > 0.0 { mesh_data[o + 2] } else { mesh_size.1 / 8.0 }; // band height comes with the table
-
-                x = map_coord(x, 0.0, params.width  as f32, origin.0, origin.0 + crop_size.0);
-                y = map_coord(y, 0.0, params.height as f32, origin.1, origin.1 + crop_size.1);
-
-                let idx = (y as f64 / stblz_grid).floor().max(0.0).min(7.0) as usize;
-                let delta = y as f64 - stblz_grid * idx as f64;
-                x += (mesh_data[o + 4 + idx * 2 + 0] * delta) as f32;
-                y += (mesh_data[o + 4 + idx * 2 + 1] * delta) as f32;
-                for j in 0..idx {
-                    x += (mesh_data[o + 4 + j * 2 + 0] * stblz_grid) as f32;
-                    y += (mesh_data[o + 4 + j * 2 + 1] * stblz_grid) as f32;
-                }
-
-                x = map_coord(x, origin.0, origin.0 + crop_size.0, 0.0, params.width  as f32);
-                y = map_coord(y, origin.1, origin.1 + crop_size.1, 0.0, params.height as f32);
-            }
-
-            if mesh_data[0] > 10.0 {
-                let mesh_size = (mesh_data[3], mesh_data[4]);
-                let origin    = (mesh_data[5] as f32, mesh_data[6] as f32);
-                let crop_size = (mesh_data[7] as f32, mesh_data[8] as f32);
-
-                x = map_coord(x, 0.0, params.width  as f32, origin.0, origin.0 + crop_size.0);
-                y = map_coord(y, 0.0, params.height as f32, origin.1, origin.1 + crop_size.1);
-
-                let new_pos = crate::gyro_source::interpolate_mesh(x as f64, y as f64, (mesh_size.0, mesh_size.1), &mesh_data);
-
-                x = map_coord(new_pos.x as f32, origin.0, origin.0 + crop_size.0, 0.0, params.width  as f32);
-                y = map_coord(new_pos.y as f32, origin.1, origin.1 + crop_size.1, 0.0, params.height as f32);
-            }
-        }
-        if let Some(shift) = shift_per_point.as_ref().and_then(|v| v.get(index)) {
-            // Sensor roll around the principal point first, then the sensor/lens shift (the inverse of `rotate_and_distort`)
-            let ang_rad = shift.2;
-            let cos_a = ang_rad.cos();
-            let sin_a = ang_rad.sin();
-            let (xr, yr) = (x - c.0, y - c.1);
-            x = cos_a * xr - sin_a * yr - shift.3 + shift.0 + c.0;
-            y = sin_a * xr + cos_a * yr - shift.4 + shift.1 + c.1;
-        }
+        let (x, y) = point_to_sensor(pi, index, c, params, &kernel_params, host_stretch, &shift_per_point, &mesh);
 
         let pw = ((x - c.0) / f.0, (y - c.1) / f.1); // world point
 
@@ -1538,6 +1553,41 @@ pub fn undistort_points(distorted: &[(f32, f32)], camera_matrix: Matrix3<f64>, d
 #[cfg(test)]
 mod niyien_tests {
     use super::*;
+
+    #[test]
+    fn sensor_domain_rejects_standard_wrong_inverse_root() {
+        let mut projection = SensorProjection::test_pinhole(500.0, 500.0, Vector2::repeat(1.0));
+        projection.kernel.k[0] = -0.08;
+        // This forward map is finite, but its inverse selects a different ray.
+        assert!(projection.ray_to_sensor(Vector3::new(3.0, 0.0, -1.0)).is_none());
+        let valid = Vector2::new(480.0 + 0.84 * 500.0, 270.0);
+        let ray = projection.sensor_to_ray(valid).unwrap();
+        assert!((projection.ray_to_sensor(ray).unwrap() - valid).norm() <= 0.05);
+    }
+
+    #[test]
+    fn sensor_domain_rejects_fisheye_fold_and_radial_clamp() {
+        let mut projection = SensorProjection::test_pinhole(500.0, 500.0, Vector2::repeat(1.0));
+        projection.model = DistortionModel::from_name("opencv_fisheye");
+        projection.kernel.k[0] = 0.01;
+        for radius in [2.0, 4.0] {
+            let point = Vector2::new(480.0 + 500.0 * radius, 270.0);
+            assert!(projection.sensor_to_ray(point).is_none(), "radius={radius}");
+        }
+    }
+
+    #[test]
+    fn sensor_domain_preparation_preserves_the_actual_optical_input() {
+        let mut params = sensor_params();
+        params.distortion_model = DistortionModel::from_name("opencv_fisheye");
+        params.lens.fisheye_params.distortion_coeffs = vec![0.01, 0.0, 0.0, 0.0];
+        let points = [(1200.0, 540.0), (2960.0, 540.0), (4960.0, 540.0)];
+        let prepared = prepare_sensor_frame(&params, 0.0, 0, (1920, 1080), &points, None);
+        let first = prepared.points[0].unwrap();
+        assert!((Vector2::new(first.sensor_full[0] as f64, first.sensor_full[1] as f64) - Vector2::new(1200.0, 540.0)).norm() <= 0.05);
+        assert!(prepared.points[1].is_none(), "the old inverse must not fold a point into the forward domain");
+        assert!(prepared.points[2].is_none(), "the old inverse must not clamp the input into a different point");
+    }
 
     #[test]
     fn sensor_projection_roundtrips_optical_models_and_refraction() {
