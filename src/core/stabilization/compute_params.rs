@@ -87,6 +87,8 @@ pub struct ComputeParams {
     pub lens_metadata_delay_frames: i32, // every per-frame lens lookup is shifted by this many frames, see synchronization::lens_delay
 
     pub lens_breathing_enabled: bool,
+    pub apply_optical_translation: bool,
+    pub optical_translation_checksum: u64,
 }
 impl ComputeParams {
     /// Time (µs) the lens metadata of the picture at `timestamp_ms` is looked up at: the frame time shifted by
@@ -184,6 +186,8 @@ impl ComputeParams {
             lens_metadata_delay_frames: params.lens_metadata_delay_frames,
 
             lens_breathing_enabled: params.lens_breathing_enabled,
+            apply_optical_translation: true,
+            optical_translation_checksum: 0,
         }
     }
 
@@ -334,6 +338,14 @@ impl std::fmt::Debug for ComputeParams {
 #[cfg(test)]
 mod tests {
     use super::anamorphic_lens_correction_decay;
+
+    #[test]
+    fn only_render_parameters_apply_the_optical_translation() {
+        assert!(!ComputeParams::default().apply_optical_translation);
+        let from_manager = ComputeParams::from_manager(&crate::StabilizationManager::default());
+        assert!(from_manager.apply_optical_translation);
+        assert_eq!(from_manager.optical_translation_checksum, 0);
+    }
     use crate::gyro_source::FileMetadata;
     use crate::lens_profile::{Dimensions, LensProfile, with_parsed_interpolations_for_test};
     use std::collections::BTreeMap;

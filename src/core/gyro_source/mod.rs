@@ -597,6 +597,8 @@ pub struct GyroSource {
     /// `set_ignore_file_motion`
     #[serde(skip)]
     ignored_motion: Option<Arc<(FileMotion, BTreeMap<i64, f64>)>>,
+    #[serde(skip)]
+    pub optical_translation: Option<OpticalTranslation>,
 }
 
 impl GyroSource {
@@ -1824,6 +1826,7 @@ impl GyroSource {
         self.optical_correction = None;
         self.ignored_motion = None;
         self.clear_offsets();
+        self.optical_translation = None;
     }
 
     pub fn load_from_telemetry(&mut self, mut telemetry: FileMetadata) {
@@ -2803,6 +2806,15 @@ impl GyroSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clear_drops_the_optical_translation() {
+        let mut gyro = GyroSource::new();
+        gyro.optical_translation = Some(OpticalTranslation::new(Vec::new(), Default::default()));
+        assert!(gyro.clone().optical_translation.is_some(), "clones carry it");
+        gyro.clear();
+        assert!(gyro.optical_translation.is_none());
+    }
 
     fn init_quat_json(quat: UnitQuaternion<f64>) -> serde_json::Value {
         let q = quat.quaternion();
