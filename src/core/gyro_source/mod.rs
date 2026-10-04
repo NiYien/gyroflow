@@ -2129,13 +2129,22 @@ impl GyroSource {
     /// against these very ones, in this context, see `OpticalCorrection`
     fn apply_optical_correction(&mut self) {
         self.optical_correction_applied = false;
-        if let Some(c) = &self.optical_correction {
-            let from_video = !self.file_metadata.read().has_motion() && !c.video_base.is_empty();
-            if from_video {
-                // A file without motion data: what the analysis measured between the frames is all there is
-                self.quaternions = c.base_quats();
-            }
+        let from_video = self.optical_correction.as_ref().is_some_and(|c| !c.video_base.is_empty()) && !self.has_motion();
+        if from_video {
+            // A file without motion data: what the analysis measured between the frames is all there is.
+            self.quaternions = self.optical_correction.as_ref().unwrap().base_quats();
+        }
+        if self.optical_correction.is_some() || self.optical_translation.is_some() {
             self.optical_uncorrected_checksum = optical_correction::checksum(&self.quaternions);
+        }
+        let translation_applies = self.optical_translation_applies();
+        if let Some(t) = &mut self.optical_translation {
+            t.applies = translation_applies;
+            if t.enabled && !t.applies {
+                log::warn!("The optical translation was measured on other motion data, sync, lens or frame timing, or file motion is unavailable, not applying it");
+            }
+        }
+        if let Some(c) = &self.optical_correction {
             if self.optical_correction_applies() {
                 c.apply(&mut self.quaternions);
                 self.optical_correction_applied = true;
@@ -2146,6 +2155,11 @@ impl GyroSource {
                 optical_correction::hold_over_clip(&mut self.quaternions, self.duration_ms);
             }
         }
+    }
+    /// Whether the translation matches the uncorrected motion and current context.
+    pub fn optical_translation_applies(&self) -> bool {
+        self.optical_translation.as_ref().is_some_and(|t| t.quats_checksum == self.optical_uncorrected_checksum
+            && t.context_checksum == self.optical_context && !self.ignores_file_motion() && self.has_motion())
     }
     /// Whether `integrate` composes the correction onto the quaternions, as things stand
     pub fn optical_correction_applies(&self) -> bool {
