@@ -19,6 +19,7 @@
 pub mod solver;
 pub mod odometry;
 pub mod translation;
+pub(crate) mod sensor;
 
 use std::collections::{ HashMap, VecDeque };
 use std::sync::{ Arc, atomic::{ AtomicBool, AtomicU64, Ordering::{ Relaxed, SeqCst } } };
@@ -89,6 +90,9 @@ struct Derived {
 /// second instead of another pass over the video
 pub struct OpticalMeasurements {
     pub bands: Vec<BandMeasurement>,
+    pub stab_requested: bool,
+    pub(crate) stab_pairs: Vec<sensor::SensorPair>,
+    pub(crate) stab_bands: Vec<sensor::SensorBand>,
     pub translation_requested: bool,
     pub translation_samples: Vec<TranslationSample>,
     pub scaled_fps: f64,
@@ -247,6 +251,11 @@ pub struct OpticalMotionAnalysis {
     /// frames' own times. What the rest of the analysis compares the image against instead of the quaternions
     vision: Option<TimeQuat>,
     translation: Option<TranslationState>,
+    stab_requested: bool,
+    stab_next_seq: usize,
+    stab_pairs: Vec<sensor::SensorPair>,
+    stab_bands: Vec<sensor::SensorBand>,
+    sensor_projections: HashMap<(usize, u64, (u32, u32)), Arc<crate::stabilization::SensorProjection>>,
     /// What measures those rotations: the translation and the tracks' depths it keeps from one frame pair to the next
     odometry: odometry::VisualOdometry,
     sg_cache: HashMap<usize, DMatrix<f64>>,
@@ -260,6 +269,8 @@ pub struct OpticalMotionAnalysis {
 
 impl OpticalMotionAnalysis {
     pub fn from_manager(stab: &StabilizationManager, cancel_flag: Arc<AtomicBool>) -> Result<Self, String> {
+        let ui = *stab.optical_ui.read();
+        ui.validate_analysis_request()?;
         #[cfg(not(feature = "use-opencv"))]
         { let _ = (stab, cancel_flag); return Err("Optical analysis is not available in this build".into()); }
 
@@ -293,7 +304,7 @@ impl OpticalMotionAnalysis {
                 let total_frames = ranges.iter().map(|(a, b)| ((b - a) * p.frame_count as f64).round() as usize).sum();
                 (p.fps_scale, p.get_scaled_fps(), p.frame_readout_direction.is_horizontal(), ranges_ms, total_frames)
             };
-            let translation = (vision.is_none() && stab.optical_ui.read().translation_enabled).then(|| TranslationState {
+            let translation = (vision.is_none() && ui.translation_enabled).then(|| TranslationState {
                 solver: TranslationSolver::new(TranslationSolverConfig::resolved()),
                 next_seq: 0, pairs: HashMap::new(), position: Vector3::zeros(), segment: 0, samples: Vec::new(),
             });
@@ -311,6 +322,8 @@ impl OpticalMotionAnalysis {
                 frames: 0,
                 total_frames,
                 ranges_ms,
+                stab_requested: vision.is_none() && ui.stab_enabled,
+                stab_next_seq: 0, stab_pairs: Vec::new(), stab_bands: Vec::new(), sensor_projections: HashMap::new(),
                 vision,
                 translation,
                 odometry: Default::default(),
@@ -417,7 +430,7 @@ impl OpticalMotionAnalysis {
     pub fn finish(mut self) -> Result<OpticalMeasurements, String> {
         self.process(true);
         if self.is_cancelled() { return Err("Cancelled".into()); }
-        if self.measurements.is_empty() { return Err("Not enough of the image could be tracked".into()); }
+        if self.measurements.is_empty() && !(self.stab_requested && !self.stab_pairs.is_empty() && !self.stab_bands.is_empty()) { return Err("Not enough of the image could be tracked".into()); }
         ::log::info!("Optical analysis: {} frames, {} measured pairs, {} band measurements{}", self.frames, self.measured_pairs, self.measurements.len(), if self.vision.is_some() { ", motion from the video" } else { "" });
         let (quats_checksum, video_base) = match &self.vision {
             // Measured against what `integrate` makes of it
@@ -429,6 +442,9 @@ impl OpticalMotionAnalysis {
         };
         Ok(OpticalMeasurements {
             bands: self.measurements,
+            stab_requested: self.stab_requested,
+            stab_pairs: self.stab_pairs,
+            stab_bands: self.stab_bands,
             translation_requested: self.translation.is_some(),
             translation_samples: self.translation.map(|state| state.samples).unwrap_or_default(),
             scaled_fps: self.scaled_fps,
@@ -497,6 +513,7 @@ impl OpticalMotionAnalysis {
 
     /// Measures the frame pairs whose tracks are complete enough for the high-pass
     fn process(&mut self, last_call: bool) {
+        self.collect_stab_pairs();
         let end = if last_call { self.next_seq } else { self.next_seq.saturating_sub(HP_MAX) };
         if end <= self.measured_upto || (!last_call && end < self.measured_upto + CHUNK) { return; }
         if self.is_cancelled() { return; }
@@ -533,6 +550,52 @@ impl OpticalMotionAnalysis {
                 if let Some(state) = &mut self.translation { state.pairs.remove(&pair.seq); }
             }
         }
+    }
+
+    /// Archive raw geometry before the legacy high-pass can return or release its rolling buffer.
+    fn collect_stab_pairs(&mut self) {
+        if !self.stab_requested || self.is_cancelled() { return; }
+        let rows = if self.horizontal_readout { self.track_size.0 } else { self.track_size.1 }.max(1) as f32;
+        for pair in self.pairs.iter().filter(|p| p.seq >= self.stab_next_seq) {
+            if self.is_cancelled() { return; }
+            let mut prepare = |frame: Frame, pts: Vec<(f32, f32)>| {
+                let key = (frame.index, frame.timestamp_ms.to_bits(), self.track_size);
+                let prepared = crate::stabilization::prepare_sensor_frame(&self.params, frame.timestamp_ms, frame.index, self.track_size, &pts, self.sensor_projections.get(&key));
+                self.sensor_projections.entry(key).or_insert_with(|| prepared.projection.clone());
+                prepared
+            };
+            let a = prepare(pair.a, pair.obs.iter().map(|o| (o.a[0], o.a[1])).collect());
+            let b = prepare(pair.b, pair.obs.iter().map(|o| (o.b[0], o.b[1])).collect());
+            let mut raw = sensor::SensorPair { seq: pair.seq, frame_a: a.projection, frame_b: b.projection, duration_us: (pair.b.timestamp_ms - pair.a.timestamp_ms) * 1000.0, points: Vec::new() };
+            let gyro = self.params.gyro.read();
+            let to_gyro_us = |t: f64| (t - gyro.offset_at_video_timestamp(t)) * 1000.0;
+            let mut video_times = Vec::new();
+            for (i, o) in pair.obs.iter().enumerate() {
+                let (Some(a), Some(b)) = (a.points[i], b.points[i]) else { continue; };
+                let pa = if self.horizontal_readout { o.a[0] } else { o.a[1] };
+                let pb = if self.horizontal_readout { o.b[0] } else { o.b[1] };
+                let ta = pair.a.start_ms + pair.a.per_px_ms * pa as f64;
+                let tb = pair.b.start_ms + pair.b.per_px_ms * pb as f64;
+                let point = sensor::SensorPoint { a, b, ta_us: to_gyro_us(ta), tb_us: to_gyro_us(tb), gyro_ab: gyro.org_quat_at_timestamp(tb).inverse() * gyro.org_quat_at_timestamp(ta), band: ((pa / rows) * BANDS as f32).floor().clamp(0.0, (BANDS - 1) as f32) as u8 };
+                if sensor::residual(&raw, &point, Vector3::zeros(), Vector3::zeros()).is_none() { continue; }
+                raw.points.push(point);
+                video_times.push((ta, tb));
+            }
+            let bands_start = self.stab_bands.len();
+            for band in 0..BANDS as u8 {
+                let indices: Vec<_> = raw.points.iter().enumerate().filter_map(|(i, p)| (p.band == band).then_some(i)).collect();
+                if let Some((mut measured, weights)) = sensor::fit_band_shift_with_weights(&raw, &indices) {
+                    let sw: f64 = weights.iter().sum();
+                    let ta = indices.iter().zip(&weights).map(|(&i, w)| video_times[i].0 * w).sum::<f64>() / sw;
+                    let tb = indices.iter().zip(&weights).map(|(&i, w)| video_times[i].1 * w).sum::<f64>() / sw;
+                    measured.ta_us = to_gyro_us(ta); measured.tb_us = to_gyro_us(tb);
+                    self.stab_bands.push(measured);
+                }
+            }
+            self.stab_bands[bands_start..].sort_by(|a, b| a.ta_us.total_cmp(&b.ta_us).then(a.band.cmp(&b.band)));
+            if !raw.points.is_empty() { self.stab_pairs.push(raw); }
+        }
+        self.stab_next_seq = self.next_seq;
     }
 
     /// Solve each pair once, then reuse its parallax while the high-pass still needs it.
@@ -713,6 +776,96 @@ fn fit_band(derived: &[Derived], rhp: &[Option<Vector3<f64>>], idx: &[usize], si
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn raw_sensor_short_tracks_finish_and_duplicate_flush() {
+        let stab = analysis_fixture(8, |_| crate::Quat64::identity());
+        stab.optical_ui.write().stab_enabled = true;
+        let mut analysis = OpticalMotionAnalysis::from_manager(&stab, Arc::new(AtomicBool::new(false))).unwrap();
+        for frame in 1..8 {
+            let obs = (0..400).map(|id| {
+                let a = [(id % 20) as f32 * 40.0 + 50.0, (id / 20) as f32 * 25.0 + 20.0];
+                Observation { id, a, b: [a[0] - 1.0, a[1] + 0.5] }
+            }).collect();
+            analysis.push_test_pair(frame - 1, frame, obs);
+        }
+        analysis.flush();
+        analysis.flush();
+        assert!(analysis.measurements().is_empty());
+        let m = analysis.finish().unwrap();
+        assert!(m.stab_requested);
+        assert_eq!(m.stab_pairs.len(), 7);
+        assert_eq!(m.stab_bands.len(), 42);
+        assert_eq!(m.measured_frames, 0);
+        eprintln!("raw archive: pairs={} points={} bands={} point_bytes={} pair_bytes={} band_bytes={} projection_bytes={}",
+            m.stab_pairs.len(), m.stab_pairs.iter().map(|p| p.points.len()).sum::<usize>(), m.stab_bands.len(),
+            std::mem::size_of::<sensor::SensorPoint>(), std::mem::size_of::<sensor::SensorPair>(), std::mem::size_of::<sensor::SensorBand>(), std::mem::size_of::<crate::stabilization::SensorProjection>());
+        for adjacent in m.stab_pairs.windows(2) { assert!(Arc::ptr_eq(&adjacent[0].frame_b, &adjacent[1].frame_a)); }
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn raw_sensor_rejects_translation_and_stab_request() {
+        let stab = analysis_fixture(8, |_| crate::Quat64::identity());
+        { let mut ui = stab.optical_ui.write(); ui.stab_enabled = true; ui.translation_enabled = true; }
+        let result = OpticalMotionAnalysis::from_manager(&stab, Arc::new(AtomicBool::new(false)));
+        assert_eq!(result.err().as_deref(), Some("Translation stabilization and in-camera stabilization reconstruction cannot be analyzed together"));
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn raw_sensor_endpoint_and_band_times_follow_video_offsets() {
+        for direction in [crate::stabilization_params::ReadoutDirection::TopToBottom, crate::stabilization_params::ReadoutDirection::LeftToRight] {
+            let stab = analysis_fixture(8, |_| crate::Quat64::identity());
+            { let mut p = stab.params.write(); p.frame_readout_time = 12.0; p.frame_readout_direction = direction; }
+            stab.optical_ui.write().stab_enabled = true;
+            { let mut g = stab.gyro.write(); g.set_offset(0, 2.0); g.set_offset(20_000, 4.0); g.set_offset(40_000, 1.0); }
+            let obs: Vec<_> = (0..400).map(|id| {
+                let a = [(id % 20) as f32 * 40.0 + 50.0, (id / 20) as f32 * 25.0 + 20.0];
+                Observation { id, a, b: [a[0] - 1.0, a[1] + 0.5] }
+            }).collect();
+            let mut analysis = OpticalMotionAnalysis::from_manager(&stab, Arc::new(AtomicBool::new(false))).unwrap();
+            analysis.push_test_pair(0, 1, obs.clone());
+            let a = analysis.frame(0, 0.0); let b = analysis.frame(1, 1000.0 / 30.0);
+            let gyro = analysis.params.gyro.read();
+            let time = |o: &Observation| {
+                let axis = if direction.is_horizontal() { 0 } else { 1 };
+                (a.start_ms + a.per_px_ms * o.a[axis] as f64, b.start_ms + b.per_px_ms * o.b[axis] as f64)
+            };
+            let convert = |t: f64| (t - gyro.offset_at_video_timestamp(t)) * 1000.0;
+            let raw = &analysis.stab_pairs[0];
+            assert!((raw.duration_us - 1e6 / 30.0).abs() < 1e-6);
+            for (point, obs) in raw.points.iter().zip(&obs) {
+                let (ta, tb) = time(obs);
+                assert!((point.ta_us - convert(ta)).abs() < 1e-6);
+                assert!((point.tb_us - convert(tb)).abs() < 1e-6);
+            }
+            for band in &analysis.stab_bands {
+                let indices: Vec<_> = raw.points.iter().enumerate().filter_map(|(i,p)| (p.band == band.band).then_some(i)).collect();
+                let (_, weights) = sensor::fit_band_shift_with_weights(raw, &indices).unwrap();
+                let sw: f64 = weights.iter().sum();
+                let ta = indices.iter().zip(&weights).map(|(&i,w)| time(&obs[i]).0 * w).sum::<f64>() / sw;
+                let tb = indices.iter().zip(&weights).map(|(&i,w)| time(&obs[i]).1 * w).sum::<f64>() / sw;
+                assert!((band.ta_us - convert(ta)).abs() < 1e-6);
+                assert!((band.tb_us - convert(tb)).abs() < 1e-6);
+                assert!(band.info.iter().all(|v| v.is_finite()));
+                assert!(band.cauchy_scale_px >= 2.5 * SIGMA_FLOOR_PX);
+            }
+        }
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn raw_sensor_is_not_requested_for_vision_only() {
+        let stab = analysis_fixture(90, |_| crate::Quat64::identity());
+        { let mut gyro = stab.gyro.write(); gyro.quaternions.clear(); gyro.file_metadata.write().quaternions.clear(); }
+        stab.optical_ui.write().stab_enabled = true;
+        let m = analyze_pairs(&stab, 90, parallax_observations);
+        assert!(!m.stab_requested);
+        assert!(m.stab_pairs.is_empty());
+        assert!(m.stab_bands.is_empty());
+    }
 
     #[test]
     fn optical_analysis_measures_without_the_reconstruction() {

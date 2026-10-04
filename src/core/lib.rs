@@ -311,12 +311,22 @@ impl Default for SyncData {
 pub struct OpticalUi {
     pub correction_enabled: bool,
     pub translation_enabled: bool,
+    pub stab_enabled: bool,
     pub translation_settings: gyro_source::OpticalTranslationSettings,
+}
+
+impl OpticalUi {
+    pub(crate) fn validate_analysis_request(&self) -> Result<(), String> {
+        if self.translation_enabled && self.stab_enabled {
+            return Err("Translation stabilization and in-camera stabilization reconstruction cannot be analyzed together".into());
+        }
+        Ok(())
+    }
 }
 
 impl Default for OpticalUi {
     fn default() -> Self {
-        Self { correction_enabled: true, translation_enabled: false, translation_settings: Default::default() }
+        Self { correction_enabled: true, translation_enabled: false, stab_enabled: false, translation_settings: Default::default() }
     }
 }
 
@@ -5722,7 +5732,7 @@ mod tests {
                     info: nalgebra::Matrix3::identity(), m: nalgebra::Matrix3::identity() });
             }
         }
-        OpticalMeasurements { bands, translation_requested: false, translation_samples: Vec::new(), scaled_fps: 30.0,
+        OpticalMeasurements { bands, stab_requested: false, stab_pairs: Vec::new(), stab_bands: Vec::new(), translation_requested: false, translation_samples: Vec::new(), scaled_fps: 30.0,
             quats_checksum: gyro_source::optical_correction::checksum(&manager.gyro.read().quaternions),
             context_checksum: context_checksum(&measurement_params(manager)),
             video_base: Vec::new(), frames: 31, measured_frames: 30, generation }

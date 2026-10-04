@@ -1186,6 +1186,152 @@ pub fn undistort_points_to_plane(distorted: &[(f32, f32)], timestamp_ms: f64, fr
         .collect()
 }
 
+/// Optical projection after recorded digital, mesh and sensor corrections.
+/// Both additional translation axes use the full-resolution horizontal focal length.
+#[derive(Clone)]
+pub(crate) struct SensorProjection {
+    model: DistortionModel,
+    kernel: KernelParams,
+    pub(crate) principal_full: Vector2<f64>,
+    pub(crate) focal_full: Vector2<f64>,
+    pub(crate) full_to_track: Vector2<f64>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SensorEndpoint {
+    pub(crate) sensor_full: [f32; 2],
+    pub(crate) known_translation_full: [f32; 2],
+}
+
+pub(crate) struct PreparedSensorFrame {
+    pub(crate) projection: std::sync::Arc<SensorProjection>,
+    pub(crate) points: Vec<Option<SensorEndpoint>>,
+}
+
+impl SensorProjection {
+    pub(crate) fn sensor_to_ray(&self, sensor: Vector2<f64>) -> Option<Vector3<f64>> {
+        if !sensor.iter().all(|v| v.is_finite()) || !self.focal_full.iter().all(|v| v.is_finite() && *v > 0.0) { return None; }
+        let p = (sensor - self.principal_full).component_div(&self.focal_full);
+        let p = self.model.undistort_point((p.x as f32, p.y as f32), &self.kernel)?;
+        let mut p = Vector2::new(p.0 as f64, p.1 as f64);
+        let coefficient = self.kernel.light_refraction_coefficient as f64;
+        if !coefficient.is_finite() { return None; }
+        if coefficient != 1.0 && coefficient > 0.0 {
+            let radius = p.norm();
+            if radius > 0.0 {
+                let sine = radius / (1.0 + radius * radius).sqrt() / coefficient;
+                if sine.abs() >= 1.0 { return None; }
+                p *= sine / (1.0 - sine * sine).sqrt() / radius;
+            }
+        }
+        let ray = Vector3::new(p.x, -p.y, -1.0).normalize();
+        ray.iter().all(|v| v.is_finite()).then_some(ray)
+    }
+
+    pub(crate) fn ray_to_sensor(&self, ray: Vector3<f64>) -> Option<Vector2<f64>> {
+        if !ray.iter().all(|v| v.is_finite()) || ray.z >= 0.0 { return None; }
+        let mut p = Vector2::new(ray.x / -ray.z, ray.y / ray.z);
+        let coefficient = self.kernel.light_refraction_coefficient as f64;
+        if !coefficient.is_finite() { return None; }
+        if coefficient != 1.0 && coefficient > 0.0 {
+            let radius = p.norm();
+            if radius > 0.0 {
+                let sine = radius / (1.0 + radius * radius).sqrt() * coefficient;
+                if sine.abs() >= 1.0 { return None; }
+                p *= sine / (1.0 - sine * sine).sqrt() / radius;
+            }
+        }
+        let distorted = self.model.distort_point(p.x as f32, p.y as f32, 1.0, &self.kernel);
+        // A finite forward polynomial can still be outside the invertible optical domain.
+        let inverse = self.model.undistort_point(distorted, &self.kernel)?;
+        if !inverse.0.is_finite() || !inverse.1.is_finite() { return None; }
+        let sensor = Vector2::new(distorted.0 as f64, distorted.1 as f64).component_mul(&self.focal_full) + self.principal_full;
+        sensor.iter().all(|v| v.is_finite()).then_some(sensor)
+    }
+
+    pub(crate) fn add_correction(&self, point: &SensorEndpoint, s: Vector3<f64>) -> Vector2<f64> {
+        let pivot = self.principal_full + Vector2::new(point.known_translation_full[0] as f64, point.known_translation_full[1] as f64);
+        let relative = Vector2::new(point.sensor_full[0] as f64, point.sensor_full[1] as f64) - pivot;
+        nalgebra::Rotation2::new(s.z) * relative + pivot + self.focal_full.x * Vector2::new(s.x, s.y)
+    }
+
+    pub(crate) fn correction_jacobian(&self, point: &SensorEndpoint, s: Vector3<f64>) -> nalgebra::Matrix2x3<f64> {
+        let pivot = self.principal_full + Vector2::new(point.known_translation_full[0] as f64, point.known_translation_full[1] as f64);
+        let rotated = nalgebra::Rotation2::new(s.z) * (Vector2::new(point.sensor_full[0] as f64, point.sensor_full[1] as f64) - pivot);
+        nalgebra::Matrix2x3::new(self.focal_full.x, 0.0, -rotated.y, 0.0, self.focal_full.x, rotated.x)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_pinhole(fx: f64, fy: f64, scale: Vector2<f64>) -> Self {
+        Self {
+            model: DistortionModel::from_name("opencv_standard"),
+            kernel: KernelParams { f: [fx as f32, fy as f32], c: [480.0, 270.0], light_refraction_coefficient: 1.0, ..Default::default() },
+            focal_full: Vector2::new(fx, fy), principal_full: Vector2::new(480.0, 270.0), full_to_track: scale,
+        }
+    }
+}
+
+pub(crate) fn prepare_sensor_frame(params: &ComputeParams, timestamp_ms: f64, frame_index: usize, track_size: (u32, u32), tracked_points: &[(f32, f32)], cached_projection: Option<&std::sync::Arc<SensorProjection>>) -> PreparedSensorFrame {
+    let sx = params.width as f32 / track_size.0.max(1) as f32;
+    let sy = params.height as f32 / track_size.1.max(1) as f32;
+    let full: Vec<_> = tracked_points.iter().map(|p| (p.0 * sx, p.1 * sy)).collect();
+    let (k, dist, _, _, shifts, mesh, _, _) = FrameTransform::at_timestamp_for_points(params, &full, timestamp_ms, Some(frame_index), false);
+    let shifts = shifts.map(|s| if s.len() == 1 { vec![s[0]; full.len()] } else { s });
+    let projection = cached_projection.cloned().unwrap_or_else(|| {
+        let stretch = params.lens.input_stretch_applied.map(|_| FrameTransform::input_stretch_at_timestamp(params, timestamp_ms));
+        std::sync::Arc::new(SensorProjection {
+            model: params.distortion_model.clone(),
+            kernel: point_kernel(params, k, &dist, timestamp_ms, 1.0, 1.0, 0.0, stretch),
+            principal_full: Vector2::new(k[(0, 2)], k[(1, 2)]), focal_full: Vector2::new(k[(0, 0)], k[(1, 1)]),
+            full_to_track: Vector2::new(track_size.0 as f64 / params.width.max(1) as f64, track_size.1 as f64 / params.height.max(1) as f64),
+        })
+    });
+    let plane = undistort_points(&full, k, &dist, Matrix3::identity(), None, None, params, 1.0, 1.0, timestamp_ms, shifts.clone(), mesh, 0.0);
+    let points = plane.into_iter().enumerate().map(|(i, p)| {
+        if !is_valid_point(p) { return None; }
+        let z = projection.ray_to_sensor(Vector3::new(p.0 as f64, -p.1 as f64, -1.0))?;
+        let t = shifts.as_ref().and_then(|s| s.get(i)).map(|s| [s.0 - s.3, s.1 - s.4]).unwrap_or([0.0; 2]);
+        if !t.iter().all(|x| x.is_finite()) { return None; }
+        Some(SensorEndpoint { sensor_full: [z.x as f32, z.y as f32], known_translation_full: t })
+    }).collect();
+    PreparedSensorFrame { projection, points }
+}
+
+fn point_kernel(params: &ComputeParams, camera_matrix: Matrix3<f64>, distortion_coeffs: &[f64; 24], timestamp_ms: f64, lens_correction_amount: f64, fov: f64, r_limit: f64, host_stretch: Option<(f64, f64)>) -> KernelParams {
+    let f = (camera_matrix[(0, 0)] as f32, camera_matrix[(1, 1)] as f32);
+    let c = (camera_matrix[(0, 2)] as f32, camera_matrix[(1, 2)] as f32);
+    let light_refraction_coefficient = params.keyframes.value_at_video_timestamp(&crate::KeyframeType::LightRefractionCoeff, timestamp_ms).unwrap_or(params.light_refraction_coefficient) as f32;
+
+    let mut digital_lens_params = [0f32; 4];
+    if let Some(p) = &params.digital_lens_params {
+        for (i, v) in p.iter().take(4).enumerate() {
+            digital_lens_params[i] = *v as f32;
+        }
+    }
+
+    // TODO more params
+    KernelParams {
+        width : params.width as i32,
+        height: params.height as i32,
+        output_width: params.output_width as i32,
+        output_height: params.output_height as i32,
+        f: [f.0, f.1],
+        c: [c.0, c.1],
+        k: distortion_coeffs.iter().map(|x| *x as f32).collect::<Vec<_>>().try_into().unwrap(),
+        digital_lens_params,
+        light_refraction_coefficient,
+        fov: fov as f32,
+        lens_correction_amount: lens_correction_amount as f32,
+        input_horizontal_stretch: host_stretch.map(|s| s.0).unwrap_or_else(|| params.lens.horizontal_stretch_normalized()) as f32,
+        input_vertical_stretch: host_stretch.map(|s| s.1).unwrap_or(0.0) as f32,
+        // The model has to reach exactly as far here as it does in the render, or the lens-correction
+        // solve below measures a field the picture doesn't have
+        r_limit: r_limit as f32,
+
+        ..Default::default()
+    }
+}
+
 // Ported from OpenCV: https://github.com/opencv/opencv/blob/4.x/modules/calib3d/src/fisheye.cpp#L321
 pub fn undistort_points(distorted: &[(f32, f32)], camera_matrix: Matrix3<f64>, distortion_coeffs: &[f64; 24], rotation: Matrix3<f64>, p: Option<Matrix3<f64>>, rot_per_point: Option<Vec<Matrix3<f64>>>, params: &ComputeParams, lens_correction_amount: f64, fov: f64, timestamp_ms: f64, shift_per_point: Option<Vec<(f32, f32, f32, f32, f32)>>, mesh: Option<Vec<f64>>, r_limit: f64) -> Vec<(f32, f32)> {
     // The render samples stretch from the timestamp-selected calibration.
@@ -1203,36 +1349,7 @@ pub fn undistort_points(distorted: &[(f32, f32)], camera_matrix: Matrix3<f64>, d
         rr = p * rr;
     }
 
-    let light_refraction_coefficient = params.keyframes.value_at_video_timestamp(&crate::KeyframeType::LightRefractionCoeff, timestamp_ms).unwrap_or(params.light_refraction_coefficient) as f32;
-
-    let mut digital_lens_params = [0f32; 4];
-    if let Some(p) = &params.digital_lens_params {
-        for (i, v) in p.iter().take(4).enumerate() {
-            digital_lens_params[i] = *v as f32;
-        }
-    }
-
-    // TODO more params
-    let kernel_params = KernelParams {
-        width : params.width as i32,
-        height: params.height as i32,
-        output_width: params.output_width as i32,
-        output_height: params.output_height as i32,
-        f: [f.0, f.1],
-        c: [c.0, c.1],
-        k: distortion_coeffs.iter().map(|x| *x as f32).collect::<Vec<_>>().try_into().unwrap(),
-        digital_lens_params,
-        light_refraction_coefficient,
-        fov: fov as f32,
-        lens_correction_amount: lens_correction_amount as f32,
-        input_horizontal_stretch: host_stretch.map(|s| s.0).unwrap_or_else(|| params.lens.horizontal_stretch_normalized()) as f32,
-        input_vertical_stretch: host_stretch.map(|s| s.1).unwrap_or(0.0) as f32,
-        // The model has to reach exactly as far here as it does in the render, or the lens-correction
-        // solve below measures a field the picture doesn't have
-        r_limit,
-
-        ..Default::default()
-    };
+    let kernel_params = point_kernel(params, camera_matrix, distortion_coeffs, timestamp_ms, lens_correction_amount, fov, r_limit as f64, host_stretch);
 
     // Lens-correction blend constants — point-independent, so compute once instead of per point.
     let lens_correction = if lens_correction_amount < 1.0 {
@@ -1421,6 +1538,125 @@ pub fn undistort_points(distorted: &[(f32, f32)], camera_matrix: Matrix3<f64>, d
 #[cfg(test)]
 mod niyien_tests {
     use super::*;
+
+    #[test]
+    fn sensor_projection_roundtrips_optical_models_and_refraction() {
+        for name in ["opencv_standard", "opencv_fisheye", "poly5"] {
+            for coefficient in [1.0, 1.33, 0.85] {
+                let mut projection = SensorProjection::test_pinhole(1000.0, 730.0, Vector2::new(0.5, 0.4));
+                projection.model = DistortionModel::from_name(name);
+                projection.kernel.light_refraction_coefficient = coefficient;
+                projection.kernel.k[0] = -0.08;
+                projection.kernel.k[1] = 0.012;
+                if name == "opencv_standard" { projection.kernel.k[2] = 0.001; projection.kernel.k[3] = -0.0007; }
+                for y in [60.0, 170.0, 330.0, 480.0] {
+                    for x in [50.0, 250.0, 650.0, 880.0] {
+                        let point = Vector2::new(x, y);
+                        let restored = projection.ray_to_sensor(projection.sensor_to_ray(point).unwrap()).unwrap();
+                        assert!((restored - point).norm() <= 0.05, "model={name} refraction={coefficient}: {}", (restored - point).norm());
+                    }
+                }
+            }
+        }
+    }
+
+    fn sensor_params() -> ComputeParams {
+        let manager = crate::StabilizationManager::default();
+        manager.init_from_video_data(1000.0, 30.0, 30, (1920, 1080));
+        manager.set_size(1920, 1080); manager.set_output_size(1920, 1080);
+        manager.lens.write().load_from_json_value(&serde_json::json!({
+            "calib_dimension": {"w":1920,"h":1080}, "distortion_model":"opencv_standard",
+            "fisheye_params": {"camera_matrix":[[1000.0,0.0,960.0],[0.0,730.0,540.0],[0.0,0.0,1.0]], "distortion_coeffs":[-0.08,0.012,0.001,-0.0007]}
+        }));
+        let mut params = crate::synchronization::optical_analysis::measurement_params(&manager);
+        params.frame_readout_time = 12.0;
+        params
+    }
+
+    fn shifted_mesh() -> Vec<f64> {
+        use crate::gyro_source::splines::{BivariateSpline, MAX_GRID_SIZE};
+        let mut mesh = vec![0.0, 9.0, 9.0, 1920.0, 1080.0, 0.0, 0.0, 1920.0, 1080.0];
+        for y in 0..9 { for x in 0..9 { mesh.extend([x as f64 * 240.0 + 3.0, y as f64 * 135.0 - 2.0]); } }
+        for offset in 0..2 { for row in 0..9 {
+            let (mut a, mut b, mut c, mut d) = ([0.0; MAX_GRID_SIZE], [0.0; MAX_GRID_SIZE], [0.0; MAX_GRID_SIZE], [0.0; MAX_GRID_SIZE]);
+            let (mut alpha, mut mu, mut z) = ([0.0; MAX_GRID_SIZE - 1], [0.0; MAX_GRID_SIZE], [0.0; MAX_GRID_SIZE]);
+            BivariateSpline::cubic_spline_coefficients(&mesh[9 + offset..], 2, row * 9, 1920.0, 9, &mut a, &mut b, &mut c, &mut d, &mut alpha, &mut mu, &mut z);
+            mesh.extend(a); mesh.extend(b); mesh.extend(c); mesh.extend(d);
+        } }
+        mesh[0] = mesh.len() as f64;
+        mesh
+    }
+
+    #[test]
+    fn prepared_sensor_uses_original_digital_mesh_and_recorded_path_once() {
+        use crate::gyro_source::{CameraStabData, splines::CatmullRom};
+        let mut params = sensor_params();
+        params.digital_lens = Some(DistortionModel::from_name("digital_stretch"));
+        params.digital_lens_params = Some(vec![1.05, 0.95]);
+        params.light_refraction_coefficient = 1.33;
+        let mut ibis = CatmullRom::new(); let mut ois = CatmullRom::new();
+        for y in [0.0, 1080.0] {
+            ibis.add_point(y, Vector3::new(4.0 + y * 0.01, -3.0 + y * 0.004, 2000.0));
+            ois.add_point(y, Vector3::new(1.0, -0.5, 0.0));
+        }
+        {
+            let gyro = params.gyro.read(); let mut md = gyro.file_metadata.write();
+            md.camera_stab_data.push(CameraStabData { sensor_size: (1920, 1080), crop_area: (0.0, 0.0, 1920.0, 1080.0), pixel_pitch: (1, 1), ibis_spline: ibis, ois_spline: ois, ..Default::default() });
+            md.mesh_correction.tables.push(crate::gyro_source::MeshTable { forward: shifted_mesh(), ..Default::default() });
+            md.mesh_correction.frames.push(crate::gyro_source::MeshFrame { table: Some(0), mesh_size: (1920.0, 1080.0), crop_size: (1920.0, 1080.0), ..Default::default() });
+        }
+        let track = (960, 432);
+        let points = [(120.0, 60.0), (300.0, 180.0), (780.0, 350.0)];
+        let prepared = prepare_sensor_frame(&params, 0.0, 0, track, &points, None);
+        let old = undistort_points_to_plane(&points, 0.0, 0, &params, track);
+        for (i, point) in prepared.points.iter().enumerate() {
+            let point = point.unwrap();
+            let full = Vector2::new(points[i].0 as f64 * 2.0, points[i].1 as f64 * 2.5);
+            let known = Vector2::new(3.0 + full.y * 0.01, -2.5 + full.y * 0.004);
+            assert!((Vector2::new(point.known_translation_full[0] as f64, point.known_translation_full[1] as f64) - known).norm() < 0.001);
+            let before_sensor = Vector2::new(full.x / 1.05 + 3.0, full.y / 0.95 - 2.0);
+            let center = Vector2::new(960.0, 540.0);
+            let expected = nalgebra::Rotation2::new(2.0f64.to_radians()) * (before_sensor - center) + center + known;
+            let actual = Vector2::new(point.sensor_full[0] as f64, point.sensor_full[1] as f64);
+            assert!((actual - expected).norm() <= 0.05, "actual={actual:?} expected={expected:?}");
+            let ray = prepared.projection.sensor_to_ray(actual).unwrap();
+            let old = old[i].unwrap();
+            let old_ray = Vector3::new(old.0 as f64, -old.1 as f64, -1.0).normalize();
+            assert!((ray - old_ray).norm() * 1000.0 <= 0.05);
+            let s = Vector3::new(0.003, -0.002, 0.04);
+            let expected = nalgebra::Rotation2::new(s.z) * (actual - center - known) + center + known + 1000.0 * Vector2::new(s.x, s.y);
+            assert!((prepared.projection.add_correction(&point, s) - expected).norm() < 0.001);
+        }
+        let again = prepare_sensor_frame(&params, 0.0, 0, track, &[(350.0, 90.0)], Some(&prepared.projection));
+        assert!(std::sync::Arc::ptr_eq(&prepared.projection, &again.projection));
+        assert!((again.points[0].unwrap().known_translation_full[0] - 5.25).abs() < 0.001);
+        params.frame_readout_time = 0.0;
+        let center_shift = prepare_sensor_frame(&params, 0.0, 0, track, &points, None);
+        let known = center_shift.points[0].unwrap().known_translation_full;
+        assert!(center_shift.points.iter().all(|p| p.unwrap().known_translation_full == known));
+        params.lens.input_stretch_applied = Some([1.1, 0.9]);
+        params.lens.input_horizontal_stretch = 1.3;
+        params.lens.input_vertical_stretch = 1.1;
+        let host = prepare_sensor_frame(&params, 0.0, 0, track, &points, None);
+        let expected = undistort_points_to_plane(&points, 0.0, 0, &params, track);
+        for (point, plane) in host.points.iter().zip(expected) {
+            let point = point.unwrap(); let plane = plane.unwrap();
+            let ray = host.projection.sensor_to_ray(Vector2::new(point.sensor_full[0] as f64, point.sensor_full[1] as f64)).unwrap();
+            let expected = Vector3::new(plane.0 as f64, -plane.1 as f64, -1.0).normalize();
+            assert!((ray - expected).norm() * 1000.0 <= 0.05);
+        }
+    }
+
+    #[test]
+    fn sensor_projection_rejects_nonfinite_backward_and_refraction_domain() {
+        let mut projection = SensorProjection::test_pinhole(500.0, 700.0, Vector2::repeat(1.0));
+        assert!(projection.ray_to_sensor(Vector3::new(0.0, 0.0, 1.0)).is_none());
+        assert!(projection.sensor_to_ray(Vector2::new(f64::NAN, 0.0)).is_none());
+        projection.kernel.light_refraction_coefficient = 1.33;
+        assert!(projection.ray_to_sensor(Vector3::new(10.0, 0.0, -1.0)).is_none());
+        projection.kernel.light_refraction_coefficient = 0.5;
+        assert!(projection.sensor_to_ray(Vector2::new(1400.0, 270.0)).is_none());
+    }
 
     #[test]
     fn anamorphic_add_back_projection_scales_horizontal_focal_length() {
