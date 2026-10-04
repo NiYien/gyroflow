@@ -157,6 +157,9 @@ impl Smoothing {
             hasher.write_u64(fov.to_bits());
         }
         if compute_params.smoothing_uses_camera_view {
+            if compute_params.optical_stab_checksum != 0 {
+                hasher.write_u64(compute_params.optical_stab_checksum);
+            }
             // A constant focal length does not make the recorded view constant:
             // its principal point, distortion and IS projection can still change.
             hasher.write_u64(compute_params.lens.get_checksum());

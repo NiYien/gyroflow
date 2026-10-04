@@ -151,6 +151,7 @@ pub fn measurement_params(stab: &StabilizationManager) -> ComputeParams {
     params.lens_correction_amount = 1.0;
     params.framebuffer_inverted = false;
     params.apply_optical_translation = false;
+    params.apply_optical_stab = false;
     params
 }
 
@@ -712,6 +713,11 @@ fn fit_band(derived: &[Derived], rhp: &[Option<Vector3<f64>>], idx: &[usize], si
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn optical_analysis_measures_without_the_reconstruction() {
+        assert!(!measurement_params(&manager()).apply_optical_stab);
+    }
 
     #[test]
     fn optical_analysis_measures_without_the_translation() {
