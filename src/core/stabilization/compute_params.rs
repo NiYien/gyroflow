@@ -230,6 +230,11 @@ impl ComputeParams {
     pub fn calculate_camera_fovs(&mut self) {
         let frame_count = {
             let gyro = self.gyro.read();
+            self.optical_translation_checksum = if self.apply_optical_translation {
+                gyro.optical_translation.as_ref().map_or(0, |t| t.checksum())
+            } else {
+                0
+            };
             let file_metadata = gyro.file_metadata.read();
             self.smoothing_uses_camera_view = file_metadata.has_camera_view_compensation();
             if file_metadata.lens_params.len() > 1 || !file_metadata.lens_positions.is_empty() {

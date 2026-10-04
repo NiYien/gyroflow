@@ -184,5 +184,9 @@ pub fn get_checksum(compute_params: &ComputeParams, smoothing_checksum: u64) -> 
         VideoSpeed,
     ]));
 
+    if compute_params.optical_translation_checksum != 0 {
+        hasher.write_u64(compute_params.optical_translation_checksum);
+    }
+
     hasher.finish()
 }

@@ -1158,6 +1158,27 @@ mod tests {
     fn untranslated(p: &ComputeParams) -> ComputeParams {
         with_gyro(p, |gyro| gyro.optical_translation = None)
     }
+    #[test]
+    fn zoom_checksum_follows_the_translation_only_when_it_applies() {
+        let zoom = |p: &ComputeParams| {
+            let mut q = p.clone();
+            q.calculate_camera_fovs();
+            (q.optical_translation_checksum, crate::zooming::get_checksum(&q, 0))
+        };
+        let on = translated(0.0, Quat64::identity(), [0.01, 0.0, 0.0], false);
+        let base = untranslated(&on);
+        assert_eq!(zoom(&base).0, 0);
+        assert_ne!(zoom(&on).0, 0);
+        assert_ne!(zoom(&on).1, zoom(&base).1);
+
+        let other = with_gyro(&on, |gyro| gyro.optical_translation.as_mut().unwrap().settings.reference = 0.5);
+        assert_ne!(zoom(&other).1, zoom(&on).1, "a setting that moves the picture");
+
+        let mut not_applied = on.clone();
+        not_applied.apply_optical_translation = false;
+        assert_eq!(zoom(&not_applied), zoom(&base));
+    }
+
     fn output_focal(p: &ComputeParams) -> (f64, f64, f64) {
         let k = FrameTransform::at_timestamp_for_points(p, &POINTS, 0.0, Some(0), true).2;
         (k[(0, 0)], k[(0, 2)], k[(1, 2)])
