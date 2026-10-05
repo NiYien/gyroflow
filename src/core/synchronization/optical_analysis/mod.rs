@@ -18,6 +18,9 @@
 
 pub mod solver;
 pub mod odometry;
+mod base;
+pub use base::{OpticalBaseMode, BlendConfig};
+#[cfg(test)] pub(crate) mod synthetic;
 pub mod translation;
 pub(crate) mod sensor;
 mod sensor_solver;
@@ -305,8 +308,8 @@ pub struct OpticalMotionAnalysis {
     stab_pairs: Vec<sensor::SensorPair>,
     stab_bands: Vec<sensor::SensorBand>,
     sensor_projections: HashMap<(usize, u64, (u32, u32)), Arc<crate::stabilization::SensorProjection>>,
-    /// What measures those rotations: the translation and the tracks' depths it keeps from one frame pair to the next
-    odometry: odometry::VisualOdometry,
+    /// The robust rotation blended towards the odometry as its structure and leverage warrant.
+    base: base::VisionBase,
     sg_cache: HashMap<usize, DMatrix<f64>>,
     cancel_flag: Arc<AtomicBool>,
     /// `StabilizationManager::optical_generation`, and its value when this started: another file, a project or Clear
@@ -375,7 +378,7 @@ impl OpticalMotionAnalysis {
                 stab_next_seq: 0, stab_pairs: Vec::new(), stab_bands: Vec::new(), sensor_projections: HashMap::new(),
                 vision,
                 translation,
-                odometry: Default::default(),
+                base: base::VisionBase::new(OpticalBaseMode::resolved(), BlendConfig::resolved()),
                 sg_cache: HashMap::new(),
                 cancel_flag,
                 generation: (stab.optical_generation.clone(), generation),
@@ -481,6 +484,7 @@ impl OpticalMotionAnalysis {
         if self.is_cancelled() { return Err("Cancelled".into()); }
         if self.measurements.is_empty() && !(self.stab_requested && !self.stab_pairs.is_empty() && !self.stab_bands.is_empty()) { return Err("Not enough of the image could be tracked".into()); }
         ::log::info!("Optical analysis: {} frames, {} measured pairs, {} band measurements{}", self.frames, self.measured_pairs, self.measurements.len(), if self.vision.is_some() { ", motion from the video" } else { "" });
+        if self.vision.is_some() { ::log::info!("Optical analysis base: {}", self.base.summary()); }
         let (quats_checksum, video_base) = match &self.vision {
             // Measured against what `integrate` makes of it
             Some(keys) => {
@@ -519,10 +523,11 @@ impl OpticalMotionAnalysis {
             .collect()
     }
 
-    /// Extends the orientation of a file without motion data by the newest frame pair, by the rotation between its
-    /// frames `odometry` finds - the translation's parallax told apart from it. Only the slow part of this has to be
-    /// right, and only roughly - what's left of a drift ends up in what the stabilization smooths away - since the
-    /// correction measured against it takes care of everything faster, per row
+    /// Extends a file without motion data by moving from robust rotation `m0` towards the odometry's rotation
+    /// by a continuous weight (the default `auto` mode). The odometry estimates motion at infinity by extrapolating
+    /// from visible depths; the visible layer's motion is directly constrained by the image and equals `m0`.
+    /// Historical depth structure that predicts a new pair, and a small extrapolation leverage, each supply a
+    /// factor of the weight. `GYROFLOW_OPTICAL_BASE=odometry` restores the upstream output.
     #[cfg_attr(not(feature = "use-opencv"), allow(dead_code))]
     fn chain_vision(&mut self) {
         let Some(pair) = self.pairs.back() else { return };
@@ -538,9 +543,9 @@ impl OpticalMotionAnalysis {
         }
         let m = if va.len() >= MIN_BAND_POINTS {
             let m0 = robust_rotation(&va, &vb);
-            self.odometry.step(&va, &vb, &ids, m0, 1.0 / self.focal_px.max(1.0))
+            self.base.rotation(pair.b.index, &va, &vb, &ids, m0, 1.0 / self.focal_px.max(1.0))
         } else {
-            self.odometry.reset();
+            self.base.reset();
             Matrix3::identity()
         };
 
@@ -1152,6 +1157,31 @@ mod tests {
         let correlation = cov / (sx * sy).sqrt();
         eprintln!("translation position Pearson correlation={correlation}");
         assert!(correlation >= 0.95, "correlation={correlation}");
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn a_file_without_motion_gets_its_base_through_vision_base() {
+        let stab = analysis_fixture(60, |_| crate::Quat64::identity());
+        assert!(stab.set_ignore_file_motion(true));
+        let measurements = analyze_pairs(&stab, 60, |frame| {
+            let rotation = Rotation3::from_axis_angle(&Vector3::y_axis(), (frame as f64 * 0.1).to_radians());
+            (0..400).map(|id| {
+                let depth = [2.0, 4.0, 8.0][id as usize % 3];
+                let u = 192.0 + ((id % 20) as f64 + 0.5) * 576.0 / 20.0;
+                let v = 108.0 + ((id / 20) as f64 + 0.5) * 324.0 / 20.0;
+                let world = Vector3::new((u - 480.0) * depth / 500.0, (270.0 - v) * depth / 500.0, -depth);
+                (id, project(rotation * world))
+            }).collect()
+        });
+        assert_eq!(measurements.video_base.len(), 60);
+        let quats: Vec<_> = measurements.video_base.iter().map(|(_, q)| {
+            UnitQuaternion::new_normalize(nalgebra::Quaternion::new(q[0] as f64,q[1] as f64,q[2] as f64,q[3] as f64))
+        }).collect();
+        for pair in quats.windows(2) {
+            let degrees = (pair[0].inverse() * pair[1]).angle().to_degrees();
+            assert!((degrees - 0.1).abs() <= 0.005, "rotation={degrees} degrees");
+        }
     }
 
     #[cfg(feature = "use-opencv")]
