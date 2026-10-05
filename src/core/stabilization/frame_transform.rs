@@ -2,11 +2,54 @@
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
 
 use super::{ComputeParams, KernelParams};
-use crate::gyro_source::FileMetadata;
+use crate::gyro_source::{FileMetadata, GyroSource, Quat64, TranslationConfig};
 use crate::keyframes::KeyframeType;
 use crate::util::{MapClosest, map_coord};
-use nalgebra::Matrix3;
+use nalgebra::{Matrix3, Vector3};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
+
+/// The reconstructed in-camera stabilization at a row's or point's video time, in source pixels and radians, upright.
+fn optical_stab_shift(gyro: &GyroSource, params: &ComputeParams, video_time_ms: f64, focal_px: f64) -> Option<(f64, f64, f64)> {
+    if !params.apply_optical_stab || params.suppress_rotation { return None; }
+    let reconstruction = gyro.optical_stab.as_ref().filter(|s| s.is_active())?;
+    let t_us = (video_time_ms - gyro.offset_at_video_timestamp(video_time_ms)) * 1000.0;
+    let s = reconstruction.at(t_us);
+    Some((s.x * focal_px, s.y * focal_px, s.z))
+}
+
+/// The translation one matrix row (or one point) gets, in the frame its matrix is in. `source` is the camera's
+/// orientation at `quat_time_ms`, `frame_time_ms` the frame's own time, `focal_px` the source focal length in pixels.
+fn optical_translation_for(
+    gyro: &GyroSource, params: &ComputeParams, source: &Quat64, quat_time_ms: f64, frame_time_ms: f64,
+    focal_px: f64, inverted: bool, config: &TranslationConfig,
+) -> Option<Vector3<f64>> {
+    if !params.apply_optical_translation || params.suppress_rotation {
+        return None;
+    }
+    let translation = gyro.optical_translation.as_ref()?;
+    if !translation.is_active() {
+        return None;
+    }
+    let shift = translation.shift_at(if config.per_row { quat_time_ms } else { frame_time_ms });
+    let t_quat = -(source.inverse() * shift);
+    let mut t = Vector3::new(t_quat.x, if inverted { t_quat.y } else { -t_quat.y }, -t_quat.z);
+    let soft = |x: f64, limit: f64| {
+        let half = limit / 2.0;
+        if x <= half { x } else { half + half * ((x - half) / half).tanh() }
+    };
+    let limit = config.max_shift * params.width.min(params.height) as f64 / focal_px;
+    let n = t.xy().norm();
+    if n > 0.0 {
+        let scale = soft(n, limit) / n;
+        t.x *= scale;
+        t.y *= scale;
+    }
+    t.z = t.z.signum() * soft(t.z.abs(), config.max_shift);
+    if !translation.settings.along_axis {
+        t.z = 0.0;
+    }
+    if t.norm() == 0.0 { None } else { Some(t) }
+}
 
 #[derive(Default, Clone)]
 pub struct FrameTransform {
@@ -565,6 +608,8 @@ impl FrameTransform {
             )
         };
 
+        let translation_config = TranslationConfig::resolved();
+
         let matrices = (0..rows)
             .into_par_iter()
             .map(|y| {
@@ -573,7 +618,8 @@ impl FrameTransform {
                 } else {
                     start_ts
                 };
-                let quat = smoothed_quat1 * quat1 * gyro.org_quat_at_timestamp(quat_time);
+                let source = gyro.org_quat_at_timestamp(quat_time);
+                let quat = smoothed_quat1 * quat1 * source;
 
                 let mut r = image_rotation * *quat.to_rotation_matrix().matrix();
                 if params.framebuffer_inverted {
@@ -624,6 +670,12 @@ impl FrameTransform {
                         (0.0, 0.0, 0.0, 0.0, 0.0)
                     };
 
+                if let Some((dx, dy, da)) = optical_stab_shift(&gyro, params, quat_time, scaled_k[(0, 0)]) {
+                    let inv = if params.framebuffer_inverted { -1.0 } else { 1.0 };
+                    sx += dx as f32;
+                    sy += (dy * inv) as f32;
+                    ra += (da * inv) as f32;
+                }
                 if params.suppress_rotation {
                     r = Matrix3::identity();
                     if params.frame_readout_time == 0.0 {
@@ -654,6 +706,21 @@ impl FrameTransform {
                     ) {
                         i_r *= m;
                     }
+                }
+                if let Some(mut t) = optical_translation_for(
+                    &gyro, params, &source, quat_time, timestamp_ms, scaled_k[(0, 0)],
+                    params.framebuffer_inverted, &translation_config,
+                ) {
+                    if !gyro.optical_translation.as_ref().unwrap().settings.along_axis {
+                        // With B=P^-1 and s=P*t, adding t to B's last column gives u'=(1+s.z)*u-s.xy.
+                        // Remove only its output scale around C: s'=s-C*s.z, t'=B*s'=t-B*C*s.z.
+                        // Breathing fixes C and leaves P's last row unchanged, so the pre-breathing P gives s.z.
+                        let centre = Vector3::new(new_k[(0, 2)], new_k[(1, 2)], 1.0);
+                        t -= i_r * centre * (new_k * r * t).z;
+                    }
+                    i_r[(0, 2)] += t.x;
+                    i_r[(1, 2)] += t.y;
+                    i_r[(2, 2)] += t.z;
                 }
                 let i_r: Matrix3<f32> = nalgebra::convert(i_r);
                 [
@@ -820,6 +887,8 @@ impl FrameTransform {
             None
         };
 
+        let translation_config = TranslationConfig::resolved();
+
         let rotations: Vec<Matrix3<f64>> = points_iter
             .iter()
             .map(|&(x, y)| {
@@ -834,7 +903,8 @@ impl FrameTransform {
                 } else {
                     start_ts
                 };
-                let quat = smoothed_quat1 * quat1 * gyro.org_quat_at_timestamp(quat_time);
+                let source = gyro.org_quat_at_timestamp(quat_time);
+                let quat = smoothed_quat1 * quat1 * source;
 
                 let mut r = image_rotation * *quat.to_rotation_matrix().matrix();
                 r[(0, 1)] *= -1.0;
@@ -869,6 +939,21 @@ impl FrameTransform {
                         true,
                     ) {
                         p = m * p;
+                    }
+                }
+                if let Some(t) = optical_translation_for(
+                    &gyro, params, &source, quat_time, timestamp_ms, scaled_k[(0, 0)],
+                    false, &translation_config,
+                ) {
+                    let mut s = p * t;
+                    if !gyro.optical_translation.as_ref().unwrap().settings.along_axis {
+                        // The same output-plane transform as the inverse path: preserve the displacement at C,
+                        // with unit scale everywhere. Dropping s.z alone would also move C by the principal point.
+                        s -= Vector3::new(new_k[(0, 2)], new_k[(1, 2)], 1.0) * s.z;
+                    }
+                    let d = 1.0 + s.z;
+                    if d > 0.5 {
+                        p -= s * p.row(2) / d;
                     }
                 }
                 p
@@ -920,6 +1005,21 @@ impl FrameTransform {
             } else {
                 None
             };
+        if params.apply_optical_stab && !params.suppress_rotation && gyro.optical_stab.as_ref().is_some_and(|s| s.is_active()) {
+            let shifts = shifts.get_or_insert_with(|| vec![(0.0, 0.0, 0.0, 0.0, 0.0); points_iter.len()]);
+            for (&(x, y), shift) in points_iter.iter().zip(shifts) {
+                let quat_time = if frame_readout_time.abs() > 0.0 {
+                    start_ts + row_readout_time * if params.frame_readout_direction.is_horizontal() { x } else { y } as f64
+                } else {
+                    start_ts
+                };
+                if let Some((dx, dy, da)) = optical_stab_shift(&gyro, params, quat_time, scaled_k[(0, 0)]) {
+                    shift.0 += dx as f32;
+                    shift.1 += dy as f32;
+                    shift.2 += da as f32;
+                }
+            }
+        }
         if params.suppress_rotation && params.frame_readout_time == 0.0 {
             shifts = None;
         }
@@ -1071,6 +1171,405 @@ mod tests {
         (1600.0, 1079.0),
     ];
 
+    use crate::gyro_source::{OpticalTranslation, Quat64, TranslationConfig};
+
+    /// `stabilized_params` without the smoothing correction, at a fixed orientation, with a constant world shift
+    fn translated(readout_time: f64, orientation: Quat64, shift: [f64; 3], along_axis: bool) -> ComputeParams {
+        let mut p = params(vec![1.0], readout_time);
+        p.suppress_rotation = false;
+        p.apply_optical_translation = true;
+        {
+            let mut gyro = p.gyro.write();
+            gyro.duration_ms = 1000.0;
+            gyro.quaternions.insert(0, orientation);
+            gyro.quaternions.insert(1_000_000, orientation);
+            let mut t = OpticalTranslation::with_curve(vec![(0, shift), (1_000_000, shift)]);
+            t.settings.along_axis = along_axis;
+            gyro.optical_translation = Some(t);
+        }
+        p
+    }
+    /// The same parameters with a gyro source of their own, changed by `change`
+    fn with_gyro(p: &ComputeParams, change: impl FnOnce(&mut crate::gyro_source::GyroSource)) -> ComputeParams {
+        let mut gyro = p.gyro.read().clone();
+        change(&mut gyro);
+        let mut q = p.clone();
+        q.gyro = std::sync::Arc::new(parking_lot::RwLock::new(gyro));
+        q
+    }
+    fn untranslated(p: &ComputeParams) -> ComputeParams {
+        with_gyro(p, |gyro| gyro.optical_translation = None)
+    }
+    #[test]
+    fn zoom_checksum_follows_the_translation_only_when_it_applies() {
+        let zoom = |p: &ComputeParams| {
+            let mut q = p.clone();
+            q.calculate_camera_fovs();
+            (q.optical_translation_checksum, crate::zooming::get_checksum(&q, 0))
+        };
+        let on = translated(0.0, Quat64::identity(), [0.01, 0.0, 0.0], false);
+        let base = untranslated(&on);
+        assert_eq!(zoom(&base).0, 0);
+        assert_ne!(zoom(&on).0, 0);
+        assert_ne!(zoom(&on).1, zoom(&base).1);
+
+        let other = with_gyro(&on, |gyro| gyro.optical_translation.as_mut().unwrap().settings.reference = 0.5);
+        assert_ne!(zoom(&other).1, zoom(&on).1, "a setting that moves the picture");
+
+        let mut not_applied = on.clone();
+        not_applied.apply_optical_translation = false;
+        assert_eq!(zoom(&not_applied), zoom(&base));
+    }
+
+    fn reconstructed(readout: f64, orientation: Quat64, value: [f64; 3]) -> ComputeParams {
+        let mut p = untranslated(&translated(readout, orientation, [0.0; 3], false));
+        p.apply_optical_stab = true;
+        p.gyro.write().optical_stab = Some(crate::gyro_source::OpticalStabReconstruction::from_samples(vec![
+            (-1_000_000, value), (1_000_000, value),
+        ]));
+        p
+    }
+
+    #[test]
+    fn stab_reconstruction_adds_to_the_recorded_shift() {
+        let p = reconstructed(0.0, Quat64::identity(), [2.0 / 1400.0, 0.0, 0.0]);
+        let mut ibis = crate::gyro_source::splines::CatmullRom::new();
+        for row in [0.0, H as f64] { ibis.add_point(row, nalgebra::Vector3::new(3.0, 0.0, 0.0)); }
+        p.gyro.write().file_metadata.write().camera_stab_data.push(crate::gyro_source::CameraStabData {
+            sensor_size: (W as u32, H as u32), crop_area: (0.0, 0.0, W as f32, H as f32),
+            pixel_pitch: (1, 1), ibis_spline: ibis, ..Default::default()
+        });
+        assert!((FrameTransform::at_timestamp(&p, 0.0, 0).matrices[0][9] - 5.0).abs() < 1e-3);
+        let shifts = FrameTransform::at_timestamp_for_points(&p, &POINTS, 0.0, Some(0), false).4.unwrap();
+        assert!((shifts[0].0 - 5.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn stab_reconstruction_alone_fills_the_shift_channel() {
+        let p = reconstructed(0.0, Quat64::identity(), [2.0 / 1400.0, 0.0, 0.0]);
+        assert!((FrameTransform::at_timestamp(&p, 0.0, 0).matrices[0][9] - 2.0).abs() < 1e-3);
+        let shifts = FrameTransform::at_timestamp_for_points(&p, &POINTS, 0.0, Some(0), false).4.unwrap();
+        assert_eq!(shifts.len(), 1);
+        assert!((shifts[0].0 - 2.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn stab_reconstruction_left_out_when_not_applied() {
+        let on = reconstructed(12.0, Quat64::from_euler_angles(0.05, -0.08, 0.3), [0.001, -0.002, 0.003]);
+        let base = with_gyro(&on, |gyro| gyro.optical_stab = None);
+        let hashes = |p: &ComputeParams| {
+            let forward = FrameTransform::at_timestamp_for_points(p, &POINTS, 0.0, Some(0), false);
+            (bits_hash(FrameTransform::at_timestamp(p, 0.0, 0).matrices.iter().flatten().map(|v| *v as f64)),
+             bits_hash(forward.3.iter().flat_map(|m| m.iter().copied())),
+             forward.4.map(|shifts| bits_hash(shifts.iter().flat_map(|s| [s.0 as f64, s.1 as f64, s.2 as f64, s.3 as f64, s.4 as f64]))))
+        };
+        assert_ne!(hashes(&on), hashes(&base));
+        let mut not_applied = on.clone();
+        not_applied.apply_optical_stab = false;
+        let disabled = with_gyro(&on, |gyro| gyro.optical_stab.as_mut().unwrap().enabled = false);
+        let stale = with_gyro(&on, |gyro| gyro.optical_stab.as_mut().unwrap().applies = false);
+        for off in [&not_applied, &disabled, &stale] { assert_eq!(hashes(off), hashes(&base)); }
+        for readout in [0.0, 12.0] {
+            let (mut suppressed, mut suppressed_base) = (on.clone(), base.clone());
+            suppressed.suppress_rotation = true;
+            suppressed_base.suppress_rotation = true;
+            suppressed.frame_readout_time = readout;
+            suppressed_base.frame_readout_time = readout;
+            assert_eq!(hashes(&suppressed), hashes(&suppressed_base));
+        }
+    }
+
+    #[test]
+    fn reconstructed_shifts_follow_each_readout_time_and_sync_offset() {
+        for direction in [crate::stabilization_params::ReadoutDirection::TopToBottom, crate::stabilization_params::ReadoutDirection::LeftToRight] {
+            let mut p = reconstructed(12.0, Quat64::identity(), [0.0; 3]);
+            p.frame_readout_direction = direction;
+            {
+                let mut gyro = p.gyro.write();
+                gyro.set_offset(0, 10.0);
+                gyro.file_metadata.write().per_frame_time_offsets = vec![25.0];
+                gyro.optical_stab = Some(crate::gyro_source::OpticalStabReconstruction::from_samples(vec![
+                    (0, [0.0; 3]), (1_000_000, [0.002, -0.001, 0.004]),
+                ]));
+            }
+            let rows = if direction.is_horizontal() { W } else { H };
+            let expected = |position: f64| (500.0 + 25.0 - 6.0 - 10.0 + 12.0 * position / rows as f64) / 1000.0;
+            let backward = FrameTransform::at_timestamp(&p, 500.0, 0);
+            for row in [0, rows / 2, rows - 1] {
+                let t = expected(row as f64);
+                assert!((backward.matrices[row][9] as f64 - 1400.0 * 0.002 * t).abs() < 1e-6);
+                assert!((backward.matrices[row][10] as f64 + 1400.0 * 0.001 * t).abs() < 1e-6);
+                assert!((backward.matrices[row][11] as f64 - 0.004 * t).abs() < 1e-8);
+            }
+            let forward = FrameTransform::at_timestamp_for_points(&p, &POINTS, 500.0, Some(0), false).4.unwrap();
+            for (&(x, y), shift) in POINTS.iter().zip(forward) {
+                let t = expected(if direction.is_horizontal() { x } else { y } as f64);
+                assert!((shift.0 as f64 - 1400.0 * 0.002 * t).abs() < 1e-6);
+                assert!((shift.1 as f64 + 1400.0 * 0.001 * t).abs() < 1e-6);
+                assert!((shift.2 as f64 - 0.004 * t).abs() < 1e-8);
+            }
+        }
+    }
+
+    #[test]
+    fn stab_reconstruction_round_trips() {
+        let mut p = reconstructed(12.0, Quat64::from_euler_angles(0.05, -0.08, 0.3), [1.5 / 1400.0, -1.0 / 1400.0, 0.002]);
+        assert_round_trip(&p);
+        p.frame_readout_direction = crate::stabilization_params::ReadoutDirection::LeftToRight;
+        for &pt in &POINTS {
+            let out = to_output(&p, pt);
+            let back = to_source(&p, out, pt.0 as usize).unwrap();
+            assert!((back.0 - pt.0).abs() < 0.05 && (back.1 - pt.1).abs() < 0.05, "{pt:?} -> {out:?} -> {back:?}");
+        }
+    }
+
+    #[test]
+    fn inverted_framebuffer_flips_reconstructed_vertical_shift_and_roll() {
+        let mut p = reconstructed(12.0, Quat64::identity(), [1.5 / 1400.0, -1.0 / 1400.0, 0.002]);
+        let upright = FrameTransform::at_timestamp(&p, 0.0, 0).matrices;
+        p.framebuffer_inverted = true;
+        let inverted = FrameTransform::at_timestamp(&p, 0.0, 0).matrices;
+        for (a, b) in upright.iter().zip(inverted) {
+            assert_eq!(a[9], b[9]);
+            assert_eq!(a[10], -b[10]);
+            assert_eq!(a[11], -b[11]);
+        }
+    }
+
+    #[test]
+    fn zoom_checksum_follows_the_reconstruction_only_when_it_applies() {
+        let zoom = |p: &ComputeParams| {
+            let mut q = p.clone();
+            q.calculate_camera_fovs();
+            (q.optical_stab_checksum, crate::zooming::get_checksum(&q, 0))
+        };
+        let on = reconstructed(0.0, Quat64::identity(), [0.001, 0.0, 0.0]);
+        let base = with_gyro(&on, |gyro| gyro.optical_stab = None);
+        assert_eq!(zoom(&base).0, 0);
+        assert_ne!(zoom(&on).0, 0);
+        assert_ne!(zoom(&on).1, zoom(&base).1);
+        let other = reconstructed(0.0, Quat64::identity(), [0.002, 0.0, 0.0]);
+        assert_ne!(zoom(&other), zoom(&on));
+        let mut off = on.clone();
+        off.apply_optical_stab = false;
+        let disabled = with_gyro(&on, |gyro| gyro.optical_stab.as_mut().unwrap().enabled = false);
+        let stale = with_gyro(&on, |gyro| gyro.optical_stab.as_mut().unwrap().applies = false);
+        for off in [&off, &disabled, &stale] { assert_eq!(zoom(off), zoom(&base)); }
+    }
+
+    fn output_focal(p: &ComputeParams) -> (f64, f64, f64) {
+        let k = FrameTransform::at_timestamp_for_points(p, &POINTS, 0.0, Some(0), true).2;
+        (k[(0, 0)], k[(0, 2)], k[(1, 2)])
+    }
+    fn assert_shift(p: &ComputeParams, want: (f64, f64)) {
+        let base = untranslated(p);
+        for &pt in &POINTS {
+            let (a, b) = (to_output(&base, pt), to_output(p, pt));
+            assert!(((b.0 - a.0) as f64 - want.0).abs() < 0.02 && ((b.1 - a.1) as f64 - want.1).abs() < 0.02,
+                "{pt:?}: moved by {:?}, expected {want:?}", (b.0 - a.0, b.1 - a.1));
+        }
+    }
+
+    #[test]
+    fn camera_moved_right_shifts_the_picture_right() {
+        // The camera is 0.01 (in units of the reference depth) to the right of its smooth path: the output camera sits
+        // to its left and sees every point of the reference layer further right
+        let p = translated(0.0, Quat64::identity(), [0.01, 0.0, 0.0], false);
+        assert_shift(&p, (output_focal(&p).0 * 0.01, 0.0));
+    }
+
+    #[test]
+    fn camera_moved_up_shifts_the_picture_up() {
+        // The quaternions' y axis points up, the picture's down
+        let p = translated(0.0, Quat64::identity(), [0.0, 0.01, 0.0], false);
+        assert_shift(&p, (0.0, -output_focal(&p).0 * 0.01));
+    }
+
+    #[test]
+    fn world_shift_is_taken_into_the_camera_frame() {
+        // Camera rolled by 90° about its axis: the world x axis is the camera's -y
+        let roll = Quat64::from_axis_angle(&nalgebra::Vector3::z_axis(), std::f64::consts::FRAC_PI_2);
+        let p = translated(0.0, roll, [0.01, 0.0, 0.0], false);
+        assert_shift(&p, (0.0, output_focal(&p).0 * 0.01));
+    }
+
+    #[test]
+    fn movement_along_the_axis_scales_about_the_principal_point_only_when_asked() {
+        // The camera looks down -z: 0.01 forward of its smooth path, everything is 1% larger and is scaled back
+        let p = translated(0.0, Quat64::identity(), [0.0, 0.0, -0.01], true);
+        let (base, (_, cx, cy)) = (untranslated(&p), output_focal(&p));
+        for &pt in &POINTS {
+            let (a, b) = (to_output(&base, pt), to_output(&p, pt));
+            assert!(((b.0 as f64 - cx) - 0.99 * (a.0 as f64 - cx)).abs() < 0.02 && ((b.1 as f64 - cy) - 0.99 * (a.1 as f64 - cy)).abs() < 0.02, "{pt:?}: {a:?} -> {b:?}");
+        }
+        assert_shift(&translated(0.0, Quat64::identity(), [0.0, 0.0, -0.01], false), (0.0, 0.0));
+    }
+
+    #[test]
+    fn translation_without_axial_compensation_is_a_pure_output_shift_when_tilted() {
+        for (pitch, yaw, rotation, breathing) in [(0.0, 0.2, 0.0, 1.0), (0.15, -0.2, 90.0, 0.82)] {
+            let mut p = translated(0.0, Quat64::identity(), [0.01, -0.006, 0.0], false);
+            p.video_rotation = rotation;
+            {
+                let mut gyro = p.gyro.write();
+                let correction = Quat64::from_euler_angles(pitch, yaw, 0.0);
+                gyro.smoothed_quaternions.insert(0, correction);
+                gyro.smoothed_quaternions.insert(1_000_000, correction);
+                gyro.file_metadata.write().lens_breathing[0].scale = vec![breathing];
+            }
+            let base = untranslated(&p);
+            let a: Vec<_> = POINTS.iter().map(|&pt| to_output(&base, pt)).collect();
+            let b: Vec<_> = POINTS.iter().map(|&pt| to_output(&p, pt)).collect();
+            let displacement = (b[2].0 - a[2].0, b[2].1 - a[2].1);
+            assert!(displacement.0.hypot(displacement.1) > 1.0);
+            // Rotate the lateral camera displacement into the target axes analytically. The principal-point
+            // terms must cancel; retaining them would add a spurious centre shift proportional to yaw/pitch.
+            let x = 0.01 * yaw.cos() - 0.006 * pitch.sin() * yaw.sin();
+            let y = -0.006 * pitch.cos();
+            let angle = rotation.to_radians();
+            let focal = output_focal(&p).0 / breathing as f64;
+            let expected = (focal * (angle.cos() * x - angle.sin() * y), -focal * (angle.sin() * x + angle.cos() * y));
+            assert_shift(&p, expected);
+            for i in 0..POINTS.len() {
+                assert!(((b[i].0 - a[i].0) - displacement.0).abs() < 0.02
+                    && ((b[i].1 - a[i].1) - displacement.1).abs() < 0.02,
+                    "point {} moved by {:?}, centre moved by {:?}", i, (b[i].0 - a[i].0, b[i].1 - a[i].1), displacement);
+                let distance = |v: &Vec<(f32, f32)>| (v[i].0 - v[2].0).hypot(v[i].1 - v[2].1);
+                assert!((distance(&a) - distance(&b)).abs() < 0.02);
+            }
+            assert_round_trip(&p);
+            for &out in &POINTS {
+                let source = to_source(&p, out, 0).unwrap();
+                let back = to_output(&p, source);
+                assert!((back.0 - out.0).abs() < 0.05 && (back.1 - out.1).abs() < 0.05,
+                    "output {:?} -> source {:?} -> output {:?}", out, source, back);
+            }
+        }
+    }
+
+    #[test]
+    fn translation_round_trips() {
+        let tilted = Quat64::from_euler_angles(0.05, -0.08, 0.3);
+        assert_round_trip(&translated(0.0, tilted, [0.01, -0.006, 0.004], true));
+        // Rolling shutter, a rotating camera and a shift that changes during the readout
+        let mut p = stabilized_params(12.0);
+        p.apply_optical_translation = true;
+        p.gyro.write().optical_translation = Some(OpticalTranslation::with_curve(vec![(0, [0.0, 0.0, 0.0]), (1_000_000, [0.03, -0.02, 0.0])]));
+        for &pt in &POINTS {
+            let (k, coeffs, _p, rotations, is, mesh, fov, r_limit) = FrameTransform::at_timestamp_for_points(&p, &[pt], 500.0, Some(0), true);
+            let out = undistort_points(&[pt], k, &coeffs, rotations[0], None, Some(rotations), &p, 1.0, fov, 500.0, is, mesh, r_limit)[0];
+            let t = FrameTransform::at_timestamp(&p, 500.0, 0);
+            let mut kp = t.kernel_params;
+            (kp.width, kp.height, kp.output_width, kp.output_height) = (W as i32, H as i32, W as i32, H as i32);
+            let back = Stabilization::rotate_and_distort(out, (pt.1 as usize).min(t.matrices.len() - 1), &kp, &t.matrices, &p.distortion_model, None, kp.r_limit * kp.r_limit, &[]).unwrap();
+            assert!((back.0 - pt.0).abs() < 0.05 && (back.1 - pt.1).abs() < 0.05, "{pt:?} -> {out:?} -> {back:?}");
+        }
+    }
+
+    #[test]
+    fn translation_round_trips_with_video_rotation_and_horizontal_readout() {
+        let tilted = Quat64::from_euler_angles(0.05, -0.08, 0.3);
+        let mut rotated = translated(0.0, tilted, [0.01, -0.006, 0.0], false);
+        rotated.video_rotation = 90.0;
+        assert_round_trip(&rotated);
+        let mut sideways = translated(12.0, tilted, [0.01, -0.006, 0.0], false);
+        sideways.frame_readout_direction = crate::stabilization_params::ReadoutDirection::LeftToRight;
+        for &pt in &POINTS {
+            let out = to_output(&sideways, pt);
+            let back = to_source(&sideways, out, pt.0 as usize).unwrap();
+            assert!((back.0 - pt.0).abs() < 0.05 && (back.1 - pt.1).abs() < 0.05, "{pt:?} -> {out:?} -> {back:?}");
+        }
+    }
+
+    #[test]
+    fn inverted_framebuffer_flips_the_vertical_shift() {
+        let centre = (W as f32 / 2.0, H as f32 / 2.0);
+        let moved = |inverted: bool| {
+            let mut p = translated(0.0, Quat64::identity(), [0.01, 0.006, 0.0], false);
+            p.framebuffer_inverted = inverted;
+            let (a, b) = (to_source(&untranslated(&p), centre, 0).unwrap(), to_source(&p, centre, 0).unwrap());
+            (b.0 - a.0, b.1 - a.1)
+        };
+        let (upright, inverted) = (moved(false), moved(true));
+        assert!(upright.0.abs() > 1.0 && upright.1.abs() > 1.0);
+        assert!((inverted.0 - upright.0).abs() < 0.05 && (inverted.1 + upright.1).abs() < 0.05, "{upright:?} vs {inverted:?}");
+    }
+
+    #[test]
+    fn tilted_translation_preserves_the_inverted_framebuffer_convention() {
+        let moved = |inverted: bool| {
+            let mut p = translated(0.0, Quat64::identity(), [0.01, -0.006, 0.0], false);
+            p.framebuffer_inverted = inverted;
+            let correction = Quat64::from_euler_angles(0.15, -0.2, 0.0);
+            p.gyro.write().smoothed_quaternions.insert(0, correction);
+            p.gyro.write().smoothed_quaternions.insert(1_000_000, correction);
+            let centre = (W as f32 / 2.0, H as f32 / 2.0);
+            let (a, b) = (to_source(&untranslated(&p), centre, 0).unwrap(), to_source(&p, centre, 0).unwrap());
+            (b.0 - a.0, b.1 - a.1)
+        };
+        let (upright, inverted) = (moved(false), moved(true));
+        assert!(upright.0.abs() > 1.0 && upright.1.abs() > 1.0);
+        assert!((inverted.0 - upright.0).abs() < 0.05 && (inverted.1 + upright.1).abs() < 0.05);
+    }
+
+    #[test]
+    fn translation_is_limited_to_a_part_of_the_frame() {
+        let p = translated(0.0, Quat64::identity(), [10.0, 0.0, 0.0], false);
+        let limit_px = output_focal(&p).0 * 0.04 * H as f64 / 1400.0;
+        let (a, b) = (to_output(&untranslated(&p), POINTS[2]), to_output(&p, POINTS[2]));
+        let moved = (b.0 - a.0) as f64;
+        assert!(moved > 0.9 * limit_px && moved <= limit_px + 0.01, "moved {moved}, limit {limit_px}");
+    }
+
+    #[test]
+    fn rows_take_the_shift_of_their_own_time() {
+        let mut q = stabilized_params(12.0);
+        q.apply_optical_translation = true;
+        let mut gyro = q.gyro.read().clone();
+        gyro.optical_translation = Some(OpticalTranslation::with_curve(vec![(0, [0.0, 0.0, 0.0]), (1_000_000, [0.03, 0.0, 0.0])]));
+        let source = Quat64::identity();
+        let per_row = TranslationConfig::DEFAULT;
+        let per_frame = TranslationConfig { per_row: false, ..TranslationConfig::DEFAULT };
+        let at = |time: f64, config: &TranslationConfig| optical_translation_for(&gyro, &q, &source, time, 500.0, 1400.0, false, config).unwrap().x;
+        assert!((at(494.0, &per_row) - at(506.0, &per_row)).abs() > 1e-4);
+        assert_eq!(at(494.0, &per_frame), at(506.0, &per_frame));
+    }
+
+    #[test]
+    fn translation_is_left_out_when_not_applied() {
+        let on = translated(0.0, Quat64::from_euler_angles(0.05, -0.08, 0.3), [0.01, -0.006, 0.004], true);
+        let base = untranslated(&on);
+        let backward = |p: &ComputeParams| bits_hash(FrameTransform::at_timestamp(p, 0.0, 0).matrices.iter().flatten().map(|v| *v as f64));
+        let forward = |p: &ComputeParams| bits_hash(FrameTransform::at_timestamp_for_points(p, &POINTS, 0.0, Some(0), false).3.iter().flat_map(|m| m.iter().copied()));
+        assert_ne!(backward(&on), backward(&base));
+        assert_ne!(forward(&on), forward(&base));
+
+        let mut not_applied = on.clone();
+        not_applied.apply_optical_translation = false;
+        assert_eq!((backward(&not_applied), forward(&not_applied)), (backward(&base), forward(&base)));
+
+        let disabled = with_gyro(&on, |gyro| gyro.optical_translation.as_mut().unwrap().enabled = false);
+        let stale = with_gyro(&on, |gyro| gyro.optical_translation.as_mut().unwrap().applies = false);
+        for off in [&disabled, &stale] {
+            assert_eq!((backward(off), forward(off)), (backward(&base), forward(&base)));
+        }
+
+        let (mut suppressed, mut suppressed_base) = (on.clone(), base.clone());
+        suppressed.suppress_rotation = true;
+        suppressed_base.suppress_rotation = true;
+        assert_eq!((backward(&suppressed), forward(&suppressed)), (backward(&suppressed_base), forward(&suppressed_base)));
+    }
+
+    #[test]
+    fn the_zoom_polygon_moves_with_the_translation() {
+        // The adaptive zoom measures at fov = 1, without the applied zoom: `use_fovs` false
+        let p = translated(0.0, Quat64::identity(), [0.01, 0.0, 0.0], false);
+        let f = FrameTransform::at_timestamp_for_points(&p, &POINTS, 0.0, Some(0), false).2[(0, 0)];
+        let at = |p: &ComputeParams| crate::stabilization::undistort_points_with_rolling_shutter(&[POINTS[3]], 0.0, Some(0), p, 1.0, false, false)[0];
+        let (a, b) = (at(&untranslated(&p)), at(&p));
+        assert!(((b.0 - a.0) as f64 - f * 0.01).abs() < 0.02 && (b.1 - a.1).abs() < 0.02, "{a:?} -> {b:?}");
+    }
+
     /// A plain fisheye calibration on a still camera with one lens breathing table: everything the two transform
     /// paths need to describe the same frame, and nothing that could move between them
     fn params(scale: Vec<f32>, readout_time: f64) -> ComputeParams {
@@ -1103,6 +1602,45 @@ mod tests {
         }];
         p.gyro.write().file_metadata = md.into();
         p
+    }
+
+    /// A rotating camera with a stabilizing correction and nothing optical: what the translation work must leave
+    /// bit-identical
+    fn stabilized_params(readout_time: f64) -> ComputeParams {
+        let mut p = params(vec![0.82], readout_time);
+        p.suppress_rotation = false;
+        {
+            let mut gyro = p.gyro.write();
+            gyro.duration_ms = 1000.0;
+            for i in 0..=10i64 {
+                let a = i as f64 * 0.01;
+                gyro.quaternions.insert(i * 100_000, crate::gyro_source::Quat64::from_euler_angles(a, -0.5 * a, 0.3 * a));
+                gyro.smoothed_quaternions.insert(i * 100_000, crate::gyro_source::Quat64::from_euler_angles(-0.2 * a, 0.1 * a, 0.0));
+            }
+        }
+        p
+    }
+
+    fn bits_hash(values: impl Iterator<Item = f64>) -> u64 {
+        use std::hash::Hasher;
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for v in values { h.write_u64(v.to_bits()); }
+        h.finish()
+    }
+
+    // Taken on the code before the translation work, by running this test with zeros here and copying the values it
+    // prints. Depends on the toolchain's float library and DefaultHasher: take them again the same way after changing either
+    const GOLDEN: (u64, u64, u64) = (18069766615594339656, 2781745888030282519, 11631596161409366322);
+
+    #[test]
+    fn stabilized_transforms_golden() {
+        let p = stabilized_params(12.0);
+        let backward = bits_hash(FrameTransform::at_timestamp(&p, 500.0, 0).matrices.iter().flatten().map(|v| *v as f64));
+        let forward = bits_hash(FrameTransform::at_timestamp_for_points(&p, &POINTS, 500.0, Some(0), false).3.iter().flat_map(|m| m.iter().copied()));
+        let mut q = p.clone();
+        q.calculate_camera_fovs();
+        let zoom = crate::zooming::get_checksum(&q, 0);
+        assert_eq!((backward, forward, zoom), GOLDEN, "got {:?}", (backward, forward, zoom));
     }
 
     /// Output position of a source pixel: the direction the zoom, the sync and the STMap redistort map go

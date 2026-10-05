@@ -2887,6 +2887,96 @@ Do you want to submit your profile?</source>
         <translation>Πόσο μπορεί η διόρθωση να απομακρύνει τα δεδομένα κίνησης από τις αρχικές τιμές τους. Οι χαμηλότερες τιμές διορθώνουν μόνο μικρά, γρήγορα σφάλματα όπως οι δονήσεις. Οι υψηλότερες τιμές επιτρέπουν στην εικόνα να υπερισχύει των δεδομένων κίνησης και σε μεγάλες ή παρατεταμένες αποκλίσεις, όπως σφάλματα γυροσκοπίου, αλλά ακολουθούν περισσότερο και τα σφάλματα της ίδιας της εικόνας (κινούμενα αντικείμενα, νερό).</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="465"/>
+        <source>Translation stabilization</source>
+        <translation>Σταθεροποίηση μετατόπισης</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="466"/>
+        <source>Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis goes through every frame of the selected trim range. Can't be used together with in-camera stabilization reconstruction.</source>
+        <translation>Μετρά από το βίντεο την πλάγια και κατακόρυφη κίνηση της κάμερας και μετατοπίζει ολόκληρη την εικόνα ώστε μία απόσταση να παραμένει σταθερή. Απαιτεί δεδομένα κίνησης από το αρχείο· η ανάλυση επεξεργάζεται κάθε καρέ του επιλεγμένου εύρους περικοπής. Δεν μπορεί να χρησιμοποιηθεί μαζί με ανακατασκευή της σταθεροποίησης της κάμερας.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="481"/>
+        <source>Reference distance</source>
+        <translation>Απόσταση αναφοράς</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="483"/>
+        <source>Which distance to hold steady: 0% keeps the picture as the gyro stabilization has it, 100% steadies the middle of the tracked points, higher values nearer objects.</source>
+        <translation>Ποια απόσταση διατηρείται σταθερή: το 0% αφήνει την εικόνα όπως μετά τη γυροσκοπική σταθεροποίηση, το 100% σταθεροποιεί το μέσο των παρακολουθούμενων σημείων, οι υψηλότερες τιμές τα κοντινότερα αντικείμενα.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="492"/>
+        <source>Translation smoothness</source>
+        <translation>Εξομάλυνση μετατόπισης</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="494"/>
+        <source>Low values only remove fast shakes. High values also remove slow drifts and come close to locking the picture.</source>
+        <translation>Οι χαμηλές τιμές αφαιρούν μόνο γρήγορα τραντάγματα. Οι υψηλές τιμές αφαιρούν και την αργή μετακίνηση και σχεδόν κλειδώνουν την εικόνα.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="514"/>
+        <source>Compensate movement along the lens axis</source>
+        <translation>Αντιστάθμιση κίνησης κατά μήκος του άξονα του φακού</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="475"/>
+        <source>Click Analyze to measure the camera movement</source>
+        <translation>Πατήστε Ανάλυση για να μετρήσετε την κίνηση της κάμερας</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="474"/>
+        <source>Analyze again to measure the camera movement</source>
+        <translation>Επαναλάβετε την ανάλυση για να μετρήσετε την κίνηση της κάμερας</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="476"/>
+        <source>Settings changed, analyze again</source>
+        <translation>Οι ρυθμίσεις άλλαξαν, επαναλάβετε την ανάλυση</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="473"/>
+        <source>Needs motion data from the file</source>
+        <translation>Απαιτούνται δεδομένα κίνησης από το αρχείο</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="478"/>
+        <source>Measured in %1 of %2 frames, shift up to %3% of the frame, effective smoothness %4 s</source>
+        <translation>Μετρήθηκε σε %1 από %2 καρέ, μετατόπιση έως %3% της εικόνας, αποτελεσματική εξομάλυνση %4 s</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="535"/>
+        <source>Reconstruct in-camera stabilization</source>
+        <translation>Ανακατασκευή σταθεροποίησης της κάμερας</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="536"/>
+        <source>For footage shot with in-camera stabilization (IBIS or lens OIS) on but without its data in the file: measure what the camera compensated from the video, so it isn't compensated twice. Can't be used together with Translation stabilization or Optical correction.</source>
+        <translation>Για πλάνα με ενεργή σταθεροποίηση στην κάμερα (IBIS ή OIS φακού), αλλά χωρίς τα δεδομένα της στο αρχείο: μετρά από το βίντεο την αντιστάθμιση της κάμερας ώστε να μην εφαρμοστεί δύο φορές. Δεν μπορεί να χρησιμοποιηθεί μαζί με σταθεροποίηση μετατόπισης ή οπτική διόρθωση.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="545"/>
+        <source>Click Analyze to reconstruct the in-camera stabilization</source>
+        <translation>Πατήστε Ανάλυση για να ανακατασκευάσετε τη σταθεροποίηση της κάμερας</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="544"/>
+        <source>Analyze again to reconstruct the in-camera stabilization</source>
+        <translation>Επαναλάβετε την ανάλυση για να ανακατασκευάσετε τη σταθεροποίηση της κάμερας</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="548"/>
+        <source>Measured in %1 of %2 frames, compensation up to %3°, cut-off %4 Hz</source>
+        <translation>Μετρήθηκε σε %1 από %2 καρέ, αντιστάθμιση έως %3°, συχνότητα αποκοπής %4 Hz</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="508"/>
+        <source>%1 s</source>
+        <translation>%1 s</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="302"/>
         <source>samples</source>
         <translation>δείγματα</translation>

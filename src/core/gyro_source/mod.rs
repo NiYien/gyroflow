@@ -11,7 +11,11 @@ mod sony;
 mod output_dimensions_tests;
 pub mod splines;
 pub mod optical_correction;
+pub mod optical_translation;
+pub mod optical_stab;
+pub use optical_stab::{ OpticalStabReconstruction, StabReconConfig };
 pub use optical_correction::{ OpticalCorrection, OpticalCorrectionSettings };
+pub use optical_translation::{ OpticalTranslation, OpticalTranslationSettings, TranslationSample, TranslationConfig };
 pub use file_metadata::*;
 pub use imu_transforms::*;
 pub use sony::{MESH_REFINE_SKIP_PX, MESH_REFINE_THRESHOLD_PX,interpolate_mesh};
@@ -595,6 +599,10 @@ pub struct GyroSource {
     /// `set_ignore_file_motion`
     #[serde(skip)]
     ignored_motion: Option<Arc<(FileMotion, BTreeMap<i64, f64>)>>,
+    #[serde(skip)]
+    pub optical_translation: Option<OpticalTranslation>,
+    #[serde(skip)]
+    pub optical_stab: Option<OpticalStabReconstruction>,
 }
 
 impl GyroSource {
@@ -1822,6 +1830,8 @@ impl GyroSource {
         self.optical_correction = None;
         self.ignored_motion = None;
         self.clear_offsets();
+        self.optical_translation = None;
+        self.optical_stab = None;
     }
 
     pub fn load_from_telemetry(&mut self, mut telemetry: FileMetadata) {
@@ -2124,13 +2134,29 @@ impl GyroSource {
     /// against these very ones, in this context, see `OpticalCorrection`
     fn apply_optical_correction(&mut self) {
         self.optical_correction_applied = false;
-        if let Some(c) = &self.optical_correction {
-            let from_video = !self.file_metadata.read().has_motion() && !c.video_base.is_empty();
-            if from_video {
-                // A file without motion data: what the analysis measured between the frames is all there is
-                self.quaternions = c.base_quats();
-            }
+        let from_video = self.optical_correction.as_ref().is_some_and(|c| !c.video_base.is_empty()) && !self.has_motion();
+        if from_video {
+            // A file without motion data: what the analysis measured between the frames is all there is.
+            self.quaternions = self.optical_correction.as_ref().unwrap().base_quats();
+        }
+        if self.optical_correction.is_some() || self.optical_translation.is_some() || self.optical_stab.is_some() {
             self.optical_uncorrected_checksum = optical_correction::checksum(&self.quaternions);
+        }
+        if let Some(s) = &mut self.optical_stab {
+            s.rebuild(&self.quaternions, &StabReconConfig::resolved());
+        }
+        let stab_applies = self.optical_stab_applies();
+        if let Some(s) = &mut self.optical_stab {
+            s.applies = stab_applies;
+        }
+        let translation_applies = self.optical_translation_applies();
+        if let Some(t) = &mut self.optical_translation {
+            t.applies = translation_applies;
+            if t.enabled && !t.applies {
+                log::warn!("The optical translation was measured on other motion data, sync, lens or frame timing, or file motion is unavailable, not applying it");
+            }
+        }
+        if let Some(c) = &self.optical_correction {
             if self.optical_correction_applies() {
                 c.apply(&mut self.quaternions);
                 self.optical_correction_applied = true;
@@ -2141,6 +2167,16 @@ impl GyroSource {
                 optical_correction::hold_over_clip(&mut self.quaternions, self.duration_ms);
             }
         }
+    }
+    /// Whether the reconstruction matches the available file motion and current context.
+    pub fn optical_stab_applies(&self) -> bool {
+        self.optical_stab.as_ref().is_some_and(|s| s.measured_on(self.optical_uncorrected_checksum, self.optical_context)
+            && !self.ignores_file_motion() && self.has_motion())
+    }
+    /// Whether the translation matches the uncorrected motion and current context.
+    pub fn optical_translation_applies(&self) -> bool {
+        self.optical_translation.as_ref().is_some_and(|t| t.quats_checksum == self.optical_uncorrected_checksum
+            && t.context_checksum == self.optical_context && !self.ignores_file_motion() && self.has_motion())
     }
     /// Whether `integrate` composes the correction onto the quaternions, as things stand
     pub fn optical_correction_applies(&self) -> bool {
@@ -2729,6 +2765,10 @@ impl GyroSource {
             // where it isn't measured (the ends of the clip, which the rest of this looks at) the quaternions are too
             hasher.write_u8(self.optical_correction_applied as u8);
         }
+        if let Some(s) = &self.optical_stab {
+            s.hash_into(&mut hasher);
+            hasher.write_u8(s.applies as u8);
+        }
         for (ts, v) in &self.offsets {
             hasher.write_i64(*ts);
             hasher.write_u64(v.to_bits());
@@ -2801,6 +2841,74 @@ impl GyroSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clear_drops_the_optical_translation() {
+        let mut gyro = GyroSource::new();
+        gyro.optical_translation = Some(OpticalTranslation::new(Vec::new(), Default::default()));
+        assert!(gyro.clone().optical_translation.is_some(), "clones carry it");
+        gyro.clear();
+        assert!(gyro.optical_translation.is_none());
+    }
+
+    #[test]
+    fn clear_drops_the_reconstruction() {
+        let mut gyro = GyroSource::new();
+        gyro.optical_stab = Some(OpticalStabReconstruction::from_samples(vec![(0, [0.001; 3])]));
+        assert!(gyro.clone().optical_stab.is_some());
+        gyro.clear();
+        assert!(gyro.optical_stab.is_none());
+    }
+
+    #[test]
+    fn checksum_follows_the_reconstruction() {
+        let mut gyro = GyroSource::new();
+        let base = gyro.get_checksum();
+        gyro.optical_stab = Some(OpticalStabReconstruction::from_samples(vec![(0, [0.001; 3])]));
+        let active = gyro.get_checksum();
+        assert_ne!(active, base);
+        gyro.optical_stab.as_mut().unwrap().applies = false;
+        assert_ne!(gyro.get_checksum(), active);
+        gyro.optical_stab = None;
+        assert_eq!(gyro.get_checksum(), base);
+    }
+
+    #[test]
+    fn integration_rebuilds_reconstruction_before_optical_correction() {
+        let mut gyro = GyroSource::new();
+        gyro.duration_ms = 1000.0;
+        gyro.integration_method = 0;
+        gyro.file_metadata.write().quaternions = (0..=10).map(|i| (i * 100_000, Quat64::identity())).collect();
+        gyro.integrate();
+        let fingerprint = optical_correction::checksum(&gyro.quaternions);
+        let mut reconstruction = OpticalStabReconstruction::default();
+        reconstruction.enabled = true;
+        reconstruction.start_us = -100_000.0;
+        reconstruction.spacing_us = 100_000.0;
+        reconstruction.coeffs = vec![[0.001, 0.0, 0.0]; 13];
+        reconstruction.cutoff_hz = 0.3;
+        reconstruction.quats_checksum = fingerprint;
+        reconstruction.context_checksum = 42;
+        gyro.optical_context = 42;
+        gyro.optical_stab = Some(reconstruction);
+        gyro.optical_correction = Some(OpticalCorrection {
+            enabled: true, start_us: -100_000.0, spacing_us: 100_000.0,
+            coeffs: (0..13).map(|i| [0.0, if i % 2 == 0 { 0.016 } else { 0.004 }, 0.0]).collect(),
+            quats_checksum: fingerprint, context_checksum: 42, ..Default::default()
+        });
+        gyro.integrate();
+        let result = gyro.optical_stab.as_ref().unwrap();
+        assert!(result.is_active());
+        assert!((result.at(500_000.0).x - 0.001).abs() < 1e-7);
+        assert!(gyro.optical_correction_applied);
+        assert!(gyro.quaternions[&500_000].angle() > 0.005);
+        gyro.optical_context = 43;
+        gyro.integrate();
+        assert!(!gyro.optical_stab.as_ref().unwrap().is_active());
+        gyro.optical_context = 42;
+        gyro.integrate();
+        assert!(gyro.optical_stab.as_ref().unwrap().is_active());
+    }
 
     fn init_quat_json(quat: UnitQuaternion<f64>) -> serde_json::Value {
         let q = quat.quaternion();

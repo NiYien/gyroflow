@@ -2884,6 +2884,96 @@ Do you want to submit your profile?</source>
         <translation>Seberapa jauh koreksi boleh mengubah data gerakan dari nilai aslinya. Nilai rendah hanya mengoreksi kesalahan kecil dan cepat seperti getaran. Nilai tinggi memungkinkan gambar mengesampingkan data gerakan juga saat penyimpangannya besar atau berkepanjangan, seperti gangguan giroskop, tetapi juga lebih mengikuti kesalahan gambar itu sendiri (objek bergerak, air).</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="465"/>
+        <source>Translation stabilization</source>
+        <translation>Stabilisasi perpindahan</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="466"/>
+        <source>Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis goes through every frame of the selected trim range. Can't be used together with in-camera stabilization reconstruction.</source>
+        <translation>Ukur dari video bagaimana kamera bergerak ke samping dan ke atas atau bawah, lalu geser seluruh gambar agar satu jarak tetap stabil. Memerlukan data gerakan dari berkas; analisis memproses setiap bingkai dalam rentang pemangkasan yang dipilih. Tidak dapat digunakan bersama rekonstruksi stabilisasi dalam kamera.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="481"/>
+        <source>Reference distance</source>
+        <translation>Jarak acuan</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="483"/>
+        <source>Which distance to hold steady: 0% keeps the picture as the gyro stabilization has it, 100% steadies the middle of the tracked points, higher values nearer objects.</source>
+        <translation>Jarak yang dijaga stabil: 0% mempertahankan gambar hasil stabilisasi giroskop, 100% menstabilkan jarak tengah titik yang dilacak, nilai lebih tinggi menstabilkan objek yang lebih dekat.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="492"/>
+        <source>Translation smoothness</source>
+        <translation>Penghalusan perpindahan</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="494"/>
+        <source>Low values only remove fast shakes. High values also remove slow drifts and come close to locking the picture.</source>
+        <translation>Nilai rendah hanya menghilangkan guncangan cepat. Nilai tinggi juga menghilangkan pergeseran lambat dan hampir mengunci gambar.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="514"/>
+        <source>Compensate movement along the lens axis</source>
+        <translation>Kompensasi gerakan sepanjang sumbu lensa</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="475"/>
+        <source>Click Analyze to measure the camera movement</source>
+        <translation>Klik Analisis untuk mengukur gerakan kamera</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="474"/>
+        <source>Analyze again to measure the camera movement</source>
+        <translation>Analisis lagi untuk mengukur gerakan kamera</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="476"/>
+        <source>Settings changed, analyze again</source>
+        <translation>Pengaturan berubah, analisis lagi</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="473"/>
+        <source>Needs motion data from the file</source>
+        <translation>Memerlukan data gerakan dari berkas</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="478"/>
+        <source>Measured in %1 of %2 frames, shift up to %3% of the frame, effective smoothness %4 s</source>
+        <translation>Diukur pada %1 dari %2 bingkai, pergeseran hingga %3% gambar, penghalusan efektif %4 s</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="535"/>
+        <source>Reconstruct in-camera stabilization</source>
+        <translation>Rekonstruksi stabilisasi dalam kamera</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="536"/>
+        <source>For footage shot with in-camera stabilization (IBIS or lens OIS) on but without its data in the file: measure what the camera compensated from the video, so it isn't compensated twice. Can't be used together with Translation stabilization or Optical correction.</source>
+        <translation>Untuk rekaman dengan stabilisasi dalam kamera (IBIS atau OIS lensa) aktif tetapi tanpa datanya dalam berkas: ukur kompensasi kamera dari video agar tidak dikompensasi dua kali. Tidak dapat digunakan bersama stabilisasi perpindahan atau koreksi optik.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="545"/>
+        <source>Click Analyze to reconstruct the in-camera stabilization</source>
+        <translation>Klik Analisis untuk merekonstruksi stabilisasi dalam kamera</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="544"/>
+        <source>Analyze again to reconstruct the in-camera stabilization</source>
+        <translation>Analisis lagi untuk merekonstruksi stabilisasi dalam kamera</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="548"/>
+        <source>Measured in %1 of %2 frames, compensation up to %3°, cut-off %4 Hz</source>
+        <translation>Diukur pada %1 dari %2 bingkai, kompensasi hingga %3°, frekuensi potong %4 Hz</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="508"/>
+        <source>%1 s</source>
+        <translation>%1 dtk</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="302"/>
         <source>samples</source>
         <translation>sampel</translation>

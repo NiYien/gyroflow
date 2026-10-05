@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2022 Adrian <adrian.eddy at gmail>
 
+pub(crate) mod sensor_projection;
 mod insta360;
 mod opencv_fisheye;
 mod opencv_standard;

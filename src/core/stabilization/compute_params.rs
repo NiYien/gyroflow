@@ -87,6 +87,10 @@ pub struct ComputeParams {
     pub lens_metadata_delay_frames: i32, // every per-frame lens lookup is shifted by this many frames, see synchronization::lens_delay
 
     pub lens_breathing_enabled: bool,
+    pub apply_optical_translation: bool,
+    pub optical_translation_checksum: u64,
+    pub apply_optical_stab: bool,
+    pub optical_stab_checksum: u64,
 }
 impl ComputeParams {
     /// Time (µs) the lens metadata of the picture at `timestamp_ms` is looked up at: the frame time shifted by
@@ -184,6 +188,10 @@ impl ComputeParams {
             lens_metadata_delay_frames: params.lens_metadata_delay_frames,
 
             lens_breathing_enabled: params.lens_breathing_enabled,
+            apply_optical_translation: true,
+            optical_translation_checksum: 0,
+            apply_optical_stab: true,
+            optical_stab_checksum: 0,
         }
     }
 
@@ -226,8 +234,18 @@ impl ComputeParams {
     pub fn calculate_camera_fovs(&mut self) {
         let frame_count = {
             let gyro = self.gyro.read();
+            self.optical_translation_checksum = if self.apply_optical_translation {
+                gyro.optical_translation.as_ref().map_or(0, |t| t.checksum())
+            } else {
+                0
+            };
+            self.optical_stab_checksum = if self.apply_optical_stab {
+                gyro.optical_stab.as_ref().map_or(0, |s| s.checksum())
+            } else {
+                0
+            };
             let file_metadata = gyro.file_metadata.read();
-            self.smoothing_uses_camera_view = file_metadata.has_camera_view_compensation();
+            self.smoothing_uses_camera_view = file_metadata.has_camera_view_compensation() || self.optical_stab_checksum != 0;
             if file_metadata.lens_params.len() > 1 || !file_metadata.lens_positions.is_empty() {
                 self.frame_count
             } else {
@@ -334,6 +352,22 @@ impl std::fmt::Debug for ComputeParams {
 #[cfg(test)]
 mod tests {
     use super::anamorphic_lens_correction_decay;
+
+    #[test]
+    fn only_render_parameters_apply_the_reconstruction() {
+        assert!(!ComputeParams::default().apply_optical_stab);
+        let from_manager = ComputeParams::from_manager(&crate::StabilizationManager::default());
+        assert!(from_manager.apply_optical_stab);
+        assert_eq!(from_manager.optical_stab_checksum, 0);
+    }
+
+    #[test]
+    fn only_render_parameters_apply_the_optical_translation() {
+        assert!(!ComputeParams::default().apply_optical_translation);
+        let from_manager = ComputeParams::from_manager(&crate::StabilizationManager::default());
+        assert!(from_manager.apply_optical_translation);
+        assert_eq!(from_manager.optical_translation_checksum, 0);
+    }
     use crate::gyro_source::FileMetadata;
     use crate::lens_profile::{Dimensions, LensProfile, with_parsed_interpolations_for_test};
     use std::collections::BTreeMap;

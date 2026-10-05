@@ -169,21 +169,21 @@ fn jacobian_blocks(m: &BandMeasurement, start_us: f64, spacing_us: f64, knots: u
 }
 
 /// Symmetric positive definite band matrix, lower half, solved by Cholesky
-struct BandSym {
+pub(super) struct BandSym {
     n: usize,
     bw: usize,
     data: Vec<f64>, // row i, column i - d at [i * (bw + 1) + d]
 }
 impl BandSym {
-    fn new(n: usize, bw: usize) -> Self { Self { n, bw, data: vec![0.0; n * (bw + 1)] } }
+    pub(super) fn new(n: usize, bw: usize) -> Self { Self { n, bw, data: vec![0.0; n * (bw + 1)] } }
     #[inline] fn idx(&self, i: usize, j: usize) -> usize { i * (self.bw + 1) + (i - j) }
-    #[inline] fn get(&self, i: usize, j: usize) -> f64 { if i - j > self.bw { 0.0 } else { self.data[self.idx(i, j)] } }
-    #[inline] fn add(&mut self, i: usize, j: usize, v: f64) {
+    #[inline] pub(super) fn get(&self, i: usize, j: usize) -> f64 { if i - j > self.bw { 0.0 } else { self.data[self.idx(i, j)] } }
+    #[inline] pub(super) fn add(&mut self, i: usize, j: usize, v: f64) {
         debug_assert!(j <= i && i - j <= self.bw);
         let k = self.idx(i, j);
         self.data[k] += v;
     }
-    fn solve(mut self, mut b: Vec<f64>) -> Option<Vec<f64>> {
+    pub(super) fn solve(mut self, mut b: Vec<f64>) -> Option<Vec<f64>> {
         let (n, bw) = (self.n, self.bw);
         for i in 0..n {
             let j0 = i.saturating_sub(bw);

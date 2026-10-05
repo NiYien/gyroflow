@@ -2887,6 +2887,96 @@ Chceš nahrať tvoj profil?</translation>
         <translation>Ako veľmi sa môžu opravené pohybové dáta odchýliť od pôvodných hodnôt. Nižšie hodnoty opravujú iba malé, rýchle chyby, ako sú vibrácie. Vyššie hodnoty umožňujú obrazu prevážiť nad pohybovými dátami aj pri veľkých alebo dlhších odchýlkach, napríklad chybách gyroskopu, ale viac sledujú aj chyby samotného obrazu (pohybujúce sa objekty, voda).</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="465"/>
+        <source>Translation stabilization</source>
+        <translation>Stabilizácia posunu</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="466"/>
+        <source>Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis goes through every frame of the selected trim range. Can't be used together with in-camera stabilization reconstruction.</source>
+        <translation>Zmeria z videa pohyb kamery do strán a nahor a nadol a posunie celý obraz tak, aby zvolená vzdialenosť zostala stabilná. Vyžaduje pohybové údaje zo súboru; analýza prejde každý snímok vybraného rozsahu orezania. Nemožno používať spolu s rekonštrukciou stabilizácie vo fotoaparáte.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="481"/>
+        <source>Reference distance</source>
+        <translation>Referenčná vzdialenosť</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="483"/>
+        <source>Which distance to hold steady: 0% keeps the picture as the gyro stabilization has it, 100% steadies the middle of the tracked points, higher values nearer objects.</source>
+        <translation>Ktorú vzdialenosť stabilizovať: 0% zachová obraz po stabilizácii gyroskopom, 100% stabilizuje strednú vzdialenosť sledovaných bodov, vyššie hodnoty bližšie objekty.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="492"/>
+        <source>Translation smoothness</source>
+        <translation>Vyhladenie posunu</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="494"/>
+        <source>Low values only remove fast shakes. High values also remove slow drifts and come close to locking the picture.</source>
+        <translation>Nízke hodnoty odstránia len rýchle otrasy. Vysoké hodnoty odstránia aj pomalý pohyb a takmer zafixujú obraz.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="514"/>
+        <source>Compensate movement along the lens axis</source>
+        <translation>Kompenzovať pohyb pozdĺž osi objektívu</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="475"/>
+        <source>Click Analyze to measure the camera movement</source>
+        <translation>Kliknutím na Analyzovať zmeriate pohyb kamery</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="474"/>
+        <source>Analyze again to measure the camera movement</source>
+        <translation>Na zmeranie pohybu kamery spustite analýzu znova</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="476"/>
+        <source>Settings changed, analyze again</source>
+        <translation>Nastavenia sa zmenili, spustite analýzu znova</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="473"/>
+        <source>Needs motion data from the file</source>
+        <translation>Vyžaduje pohybové údaje zo súboru</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="478"/>
+        <source>Measured in %1 of %2 frames, shift up to %3% of the frame, effective smoothness %4 s</source>
+        <translation>Zmerané v %1 z %2 snímok, posun až %3% obrazu, skutočné vyhladenie %4 s</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="535"/>
+        <source>Reconstruct in-camera stabilization</source>
+        <translation>Rekonštruovať stabilizáciu vo fotoaparáte</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="536"/>
+        <source>For footage shot with in-camera stabilization (IBIS or lens OIS) on but without its data in the file: measure what the camera compensated from the video, so it isn't compensated twice. Can't be used together with Translation stabilization or Optical correction.</source>
+        <translation>Pre zábery so zapnutou stabilizáciou vo fotoaparáte (IBIS alebo OIS objektívu), ale bez jej údajov v súbore: zmeria z videa kompenzáciu fotoaparátu, aby sa nekompenzovala dvakrát. Nemožno používať spolu so stabilizáciou posunu alebo optickou korekciou.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="545"/>
+        <source>Click Analyze to reconstruct the in-camera stabilization</source>
+        <translation>Kliknutím na Analyzovať rekonštruujete stabilizáciu vo fotoaparáte</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="544"/>
+        <source>Analyze again to reconstruct the in-camera stabilization</source>
+        <translation>Na rekonštrukciu stabilizácie vo fotoaparáte spustite analýzu znova</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="548"/>
+        <source>Measured in %1 of %2 frames, compensation up to %3°, cut-off %4 Hz</source>
+        <translation>Zmerané v %1 z %2 snímok, kompenzácia až %3°, medzná frekvencia %4 Hz</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="508"/>
+        <source>%1 s</source>
+        <translation>%1 s</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="302"/>
         <source>samples</source>
         <translation>vzoriek</translation>

@@ -217,6 +217,22 @@ mod kernel_params_tests {
     use super::KernelParams;
 
     #[test]
+    fn kernel_flags_mark_the_reconstruction() {
+        use super::*;
+        let mut stab = Stabilization::default();
+        let buffers = Buffers { input: Default::default(), output: Default::default() };
+        assert!(!stab.get_kernel_flags(0, &buffers).contains(KernelParamsFlags::HAS_IBIS_DATA));
+        stab.compute_params.apply_optical_stab = true;
+        stab.compute_params.gyro.write().optical_stab = Some(crate::gyro_source::OpticalStabReconstruction::from_samples(vec![(0, [0.001; 3])]));
+        assert!(stab.get_kernel_flags(0, &buffers).contains(KernelParamsFlags::HAS_IBIS_DATA));
+        stab.compute_params.apply_optical_stab = false;
+        assert!(!stab.get_kernel_flags(0, &buffers).contains(KernelParamsFlags::HAS_IBIS_DATA));
+        stab.compute_params.apply_optical_stab = true;
+        stab.compute_params.gyro.write().optical_stab.as_mut().unwrap().applies = false;
+        assert!(!stab.get_kernel_flags(0, &buffers).contains(KernelParamsFlags::HAS_IBIS_DATA));
+    }
+
+    #[test]
     fn post_affine_extension_preserves_offsets_and_defaults_to_identity_scale() {
         // The Sony spline adds twelve coefficients (48 bytes) before these fields.
         assert_eq!(std::mem::offset_of!(KernelParams, post_rotation), 368);
@@ -522,7 +538,9 @@ impl Stabilization {
                     kernel_flags.set(KernelParamsFlags::HAS_FPD_DATA,
                 file_metadata.mesh_correction.has_focal_plane(frame),
             );
-            if file_metadata.camera_stab_data.len() > frame {
+            if file_metadata.camera_stab_data.len() > frame
+                || (self.compute_params.apply_optical_stab && gyro.optical_stab.as_ref().is_some_and(|s| s.is_active()))
+            {
                 kernel_flags.set(KernelParamsFlags::HAS_IBIS_DATA, true);
             }
         }

@@ -2887,6 +2887,96 @@ Vil du sende inn profilen din?</translation>
         <translation>Hvor langt korrigeringen kan flytte bevegelsesdataene fra de opprinnelige verdiene. Lavere verdier korrigerer bare små, raske feil som vibrasjoner. Høyere verdier lar bildet overstyre bevegelsesdataene også ved store eller langvarige avvik, som gyrofeil, men følger også bildets egne feil (objekter i bevegelse, vann) mer.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="465"/>
+        <source>Translation stabilization</source>
+        <translation>Stabilisering av forskyvning</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="466"/>
+        <source>Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis goes through every frame of the selected trim range. Can't be used together with in-camera stabilization reconstruction.</source>
+        <translation>Mål fra videoen hvordan kameraet beveget seg sidelengs og opp og ned, og forskyv hele bildet for å holde én avstand stabil. Krever bevegelsesdata fra filen; analysen går gjennom hvert bilde i det valgte klippeområdet. Kan ikke brukes sammen med rekonstruksjon av kameraets stabilisering.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="481"/>
+        <source>Reference distance</source>
+        <translation>Referanseavstand</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="483"/>
+        <source>Which distance to hold steady: 0% keeps the picture as the gyro stabilization has it, 100% steadies the middle of the tracked points, higher values nearer objects.</source>
+        <translation>Hvilken avstand som skal holdes stabil: 0% beholder bildet etter gyrostabiliseringen, 100% stabiliserer midten av de sporede punktene, høyere verdier nærmere objekter.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="492"/>
+        <source>Translation smoothness</source>
+        <translation>Utjevning av forskyvning</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="494"/>
+        <source>Low values only remove fast shakes. High values also remove slow drifts and come close to locking the picture.</source>
+        <translation>Lave verdier fjerner bare raske rystelser. Høye verdier fjerner også langsom drift og låser nesten bildet.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="514"/>
+        <source>Compensate movement along the lens axis</source>
+        <translation>Kompenser bevegelse langs objektivets akse</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="475"/>
+        <source>Click Analyze to measure the camera movement</source>
+        <translation>Klikk på Analyser for å måle kamerabevegelsen</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="474"/>
+        <source>Analyze again to measure the camera movement</source>
+        <translation>Analyser på nytt for å måle kamerabevegelsen</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="476"/>
+        <source>Settings changed, analyze again</source>
+        <translation>Innstillingene er endret, analyser på nytt</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="473"/>
+        <source>Needs motion data from the file</source>
+        <translation>Krever bevegelsesdata fra filen</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="478"/>
+        <source>Measured in %1 of %2 frames, shift up to %3% of the frame, effective smoothness %4 s</source>
+        <translation>Målt i %1 av %2 bilder, forskyvning opptil %3% av bildet, effektiv utjevning %4 s</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="535"/>
+        <source>Reconstruct in-camera stabilization</source>
+        <translation>Rekonstruer kameraets stabilisering</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="536"/>
+        <source>For footage shot with in-camera stabilization (IBIS or lens OIS) on but without its data in the file: measure what the camera compensated from the video, so it isn't compensated twice. Can't be used together with Translation stabilization or Optical correction.</source>
+        <translation>For opptak med kameraets stabilisering (IBIS eller objektivets OIS) slått på, men uten tilhørende data i filen: mål kameraets kompensasjon fra videoen slik at den ikke kompenseres to ganger. Kan ikke brukes sammen med stabilisering av forskyvning eller optisk korreksjon.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="545"/>
+        <source>Click Analyze to reconstruct the in-camera stabilization</source>
+        <translation>Klikk på Analyser for å rekonstruere kameraets stabilisering</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="544"/>
+        <source>Analyze again to reconstruct the in-camera stabilization</source>
+        <translation>Analyser på nytt for å rekonstruere kameraets stabilisering</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="548"/>
+        <source>Measured in %1 of %2 frames, compensation up to %3°, cut-off %4 Hz</source>
+        <translation>Målt i %1 av %2 bilder, kompensasjon opptil %3°, grensefrekvens %4 Hz</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="508"/>
+        <source>%1 s</source>
+        <translation>%1 s</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="302"/>
         <source>samples</source>
         <translation>prøver</translation>

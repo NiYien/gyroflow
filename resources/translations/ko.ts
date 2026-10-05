@@ -2886,6 +2886,96 @@ Do you want to submit your profile?</source>
         <translation>보정이 움직임 데이터를 원래 값에서 얼마나 벗어나게 할 수 있는지를 설정합니다. 낮은 값은 진동처럼 작고 빠른 오류만 보정합니다. 높은 값은 자이로 오류처럼 편차가 크거나 오래 지속될 때도 영상이 움직임 데이터보다 우선하도록 하지만, 영상 자체의 오류(움직이는 물체, 물)도 더 많이 따라갑니다.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="465"/>
+        <source>Translation stabilization</source>
+        <translation>이동 흔들림 보정</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="466"/>
+        <source>Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis goes through every frame of the selected trim range. Can't be used together with in-camera stabilization reconstruction.</source>
+        <translation>영상에서 카메라의 좌우 및 상하 이동을 측정하고 화면 전체를 이동시켜 특정 거리를 안정시킵니다. 파일의 모션 데이터가 필요하며 선택한 자르기 범위의 모든 프레임을 분석합니다. 카메라 내 손떨림 보정 재구성과 함께 사용할 수 없습니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="481"/>
+        <source>Reference distance</source>
+        <translation>기준 거리</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="483"/>
+        <source>Which distance to hold steady: 0% keeps the picture as the gyro stabilization has it, 100% steadies the middle of the tracked points, higher values nearer objects.</source>
+        <translation>안정시킬 거리: 0%는 자이로 보정 결과를 유지하고, 100%는 추적 지점의 중간 거리를 안정시키며, 더 높은 값은 더 가까운 물체를 안정시킵니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="492"/>
+        <source>Translation smoothness</source>
+        <translation>이동 평활화</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="494"/>
+        <source>Low values only remove fast shakes. High values also remove slow drifts and come close to locking the picture.</source>
+        <translation>낮은 값은 빠른 흔들림만 제거합니다. 높은 값은 느린 이동도 제거하여 화면을 거의 고정합니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="514"/>
+        <source>Compensate movement along the lens axis</source>
+        <translation>렌즈 축 방향의 이동 보정</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="475"/>
+        <source>Click Analyze to measure the camera movement</source>
+        <translation>분석을 클릭하여 카메라 이동 측정</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="474"/>
+        <source>Analyze again to measure the camera movement</source>
+        <translation>카메라 이동을 측정하려면 다시 분석하세요</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="476"/>
+        <source>Settings changed, analyze again</source>
+        <translation>설정이 변경되었습니다. 다시 분석하세요</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="473"/>
+        <source>Needs motion data from the file</source>
+        <translation>파일의 모션 데이터가 필요합니다</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="478"/>
+        <source>Measured in %1 of %2 frames, shift up to %3% of the frame, effective smoothness %4 s</source>
+        <translation>%2개 프레임 중 %1개에서 측정, 최대 이동은 화면의 %3%, 실제 평활화 시간 %4초</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="535"/>
+        <source>Reconstruct in-camera stabilization</source>
+        <translation>카메라 내 손떨림 보정 재구성</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="536"/>
+        <source>For footage shot with in-camera stabilization (IBIS or lens OIS) on but without its data in the file: measure what the camera compensated from the video, so it isn't compensated twice. Can't be used together with Translation stabilization or Optical correction.</source>
+        <translation>카메라 내 손떨림 보정(IBIS 또는 렌즈 OIS)을 켜고 촬영했지만 해당 데이터가 파일에 없는 영상용입니다. 영상에서 카메라가 보정한 양을 측정하여 이중 보정을 방지합니다. 이동 흔들림 보정 또는 광학 보정과 함께 사용할 수 없습니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="545"/>
+        <source>Click Analyze to reconstruct the in-camera stabilization</source>
+        <translation>분석을 클릭하여 카메라 내 손떨림 보정 재구성</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="544"/>
+        <source>Analyze again to reconstruct the in-camera stabilization</source>
+        <translation>카메라 내 손떨림 보정을 재구성하려면 다시 분석하세요</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="548"/>
+        <source>Measured in %1 of %2 frames, compensation up to %3°, cut-off %4 Hz</source>
+        <translation>%2개 프레임 중 %1개에서 측정, 최대 보정 %3°, 차단 주파수 %4 Hz</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="508"/>
+        <source>%1 s</source>
+        <translation>%1초</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="302"/>
         <source>samples</source>
         <translation>샘플</translation>

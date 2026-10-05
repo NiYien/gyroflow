@@ -16,7 +16,7 @@ pub(super) fn smoothing_quaternions(
     params: &ComputeParams,
 ) -> TimeQuat {
     let metadata = gyro.file_metadata.read();
-    if !metadata.has_camera_view_compensation()
+    if !(metadata.has_camera_view_compensation() || params.optical_stab_checksum != 0)
         || body_quaternions.is_empty()
         || params.frame_count == 0
         || !(params.scaled_fps > 0.0)
@@ -30,6 +30,8 @@ pub(super) fn smoothing_quaternions(
     // writer is queued. Empty quaternion tables leave only the image geometry.
     let mut geometry_gyro = GyroSource::new();
     geometry_gyro.file_metadata = gyro.file_metadata.clone();
+    geometry_gyro.optical_stab = gyro.optical_stab.clone();
+    geometry_gyro.set_offsets(gyro.get_offsets().clone());
     let mut geometry_params = params.clone();
     geometry_params.gyro = Arc::new(RwLock::new(geometry_gyro));
     geometry_params.framebuffer_inverted = false;
@@ -158,6 +160,60 @@ mod tests {
             .collect();
         drop(gyro);
         manager
+    }
+
+    #[test]
+    fn smoothing_follows_a_reconstructed_view() {
+        let recorded = compensated_fixture();
+        let params = ComputeParams::from_manager(&recorded);
+        let gyro = recorded.gyro.read();
+        let expected = smoothing_quaternions(&gyro, &gyro.quaternions, &params);
+        drop(gyro);
+        let reconstructed = compensated_fixture();
+        {
+            let mut gyro = reconstructed.gyro.write();
+            gyro.file_metadata.write().camera_stab_data.clear();
+            gyro.file_metadata.write().detected_source = Some("Nikon test".into());
+            gyro.optical_stab = Some(crate::gyro_source::OpticalStabReconstruction::from_samples(
+                (0..6).map(|frame| (frame * 100_000, [((frame as f64 - 2.0) * 0.01).tan(), 0.0, 0.0])).collect()
+            ));
+        }
+        let mut params = ComputeParams::from_manager(&reconstructed);
+        params.calculate_camera_fovs();
+        assert_ne!(params.optical_stab_checksum, 0);
+        assert!(params.smoothing_uses_camera_view);
+        let gyro = reconstructed.gyro.read();
+        let actual = smoothing_quaternions(&gyro, &gyro.quaternions, &params);
+        for (time, quat) in expected { assert!((quat.inverse() * actual[&time]).angle() <= 1e-6); }
+        let smoothing = reconstructed.smoothing.read();
+        let checksum = smoothing.get_state_checksum(0, &params);
+        params.optical_stab_checksum += 1;
+        assert_ne!(smoothing.get_state_checksum(0, &params), checksum);
+    }
+
+    #[test]
+    fn reconstructed_view_uses_frame_and_user_offsets() {
+        let manager = compensated_fixture();
+        {
+            let mut gyro = manager.gyro.write();
+            {
+                let mut metadata = gyro.file_metadata.write();
+                metadata.detected_source = Some("Nikon test".into());
+                metadata.camera_stab_data.clear();
+                metadata.per_frame_time_offsets = vec![25.0; 6];
+            }
+            gyro.set_offset(0, 10.0);
+            gyro.quaternions = gyro.quaternions.iter().map(|(&time, &quat)| (time + 15_000, quat)).collect();
+            gyro.optical_stab = Some(crate::gyro_source::OpticalStabReconstruction::from_samples(
+                (0..6).map(|frame| (frame * 100_000 + 15_000, [((frame as f64 - 2.0) * 0.01).tan(), 0.0, 0.0])).collect()
+            ));
+        }
+        let mut params = ComputeParams::from_manager(&manager);
+        params.calculate_camera_fovs();
+        let gyro = manager.gyro.read();
+        for quat in smoothing_quaternions(&gyro, &gyro.quaternions, &params).values() {
+            assert!(quat.angle() < 1e-6, "reconstructed view sampled at the wrong gyro time");
+        }
     }
 
     #[test]

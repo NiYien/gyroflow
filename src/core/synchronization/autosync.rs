@@ -283,6 +283,9 @@ impl AutosyncProcess {
         comp_params.keyframes.clear();
         // Make sure we apply full correction for autosync
         comp_params.lens_correction_amount = 1.0;
+        // Measure the footage without applying its optical translation compensation.
+        comp_params.apply_optical_translation = false;
+        comp_params.apply_optical_stab = false;
 
         let mut lens_delay_meta_ln = Vec::new();
         if mode == "estimate_lens_delay" {
@@ -1404,6 +1407,19 @@ pub(crate) fn pick_probe_fraction(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn autosync_measures_without_the_reconstruction() {
+        let source = include_str!("autosync.rs").split("#[cfg(test)]").next().unwrap();
+        assert!(source.contains("comp_params.apply_optical_stab = false;"));
+    }
+
+    #[test]
+    fn autosync_measures_without_the_translation() {
+        // Sync measures the footage itself, so compensation must not reach its point transforms.
+        let source = include_str!("autosync.rs").split("#[cfg(test)]").next().unwrap();
+        assert!(source.contains("comp_params.apply_optical_translation = false;"));
+    }
 
     #[test]
     fn deep_match_decode_drain_waits_for_entire_frame_task() {

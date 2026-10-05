@@ -2886,6 +2886,96 @@ Haluatko lähettää profiilisi tähän?</translation>
         <translation>Kuinka paljon korjaus saa poiketa liiketietojen alkuperäisistä arvoista. Pienemmät arvot korjaavat vain pieniä, nopeita virheitä, kuten tärinää. Suuremmat arvot antavat kuvan ohittaa liiketiedot myös suurissa tai pitkäkestoisissa poikkeamissa, kuten gyroskooppivirheissä, mutta seuraavat enemmän myös kuvan omia virheitä (liikkuvat kohteet, vesi).</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="465"/>
+        <source>Translation stabilization</source>
+        <translation>Siirtymän vakautus</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="466"/>
+        <source>Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis goes through every frame of the selected trim range. Can't be used together with in-camera stabilization reconstruction.</source>
+        <translation>Mittaa videosta kameran sivuttais- ja pystysuuntaisen liikkeen ja siirtää koko kuvaa pitääkseen yhden etäisyyden vakaana. Vaatii liiketiedot tiedostosta; analyysi käy läpi valitun leikkausalueen jokaisen ruudun. Ei voi käyttää yhdessä kameran sisäisen vakautuksen rekonstruoinnin kanssa.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="481"/>
+        <source>Reference distance</source>
+        <translation>Viite-etäisyys</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="483"/>
+        <source>Which distance to hold steady: 0% keeps the picture as the gyro stabilization has it, 100% steadies the middle of the tracked points, higher values nearer objects.</source>
+        <translation>Mikä etäisyys pidetään vakaana: 0% säilyttää gyrovakautuksen tuottaman kuvan, 100% vakauttaa seurattujen pisteiden keskietäisyyden, suuremmat arvot lähempänä olevat kohteet.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="492"/>
+        <source>Translation smoothness</source>
+        <translation>Siirtymän tasoitus</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="494"/>
+        <source>Low values only remove fast shakes. High values also remove slow drifts and come close to locking the picture.</source>
+        <translation>Pienet arvot poistavat vain nopean tärinän. Suuret arvot poistavat myös hitaan liukumisen ja lähes lukitsevat kuvan.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="514"/>
+        <source>Compensate movement along the lens axis</source>
+        <translation>Kompensoi liike objektiivin akselin suunnassa</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="475"/>
+        <source>Click Analyze to measure the camera movement</source>
+        <translation>Mittaa kameran liike napsauttamalla Analysoi</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="474"/>
+        <source>Analyze again to measure the camera movement</source>
+        <translation>Analysoi uudelleen kameran liikkeen mittaamiseksi</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="476"/>
+        <source>Settings changed, analyze again</source>
+        <translation>Asetukset muuttuivat, analysoi uudelleen</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="473"/>
+        <source>Needs motion data from the file</source>
+        <translation>Vaatii liiketiedot tiedostosta</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="478"/>
+        <source>Measured in %1 of %2 frames, shift up to %3% of the frame, effective smoothness %4 s</source>
+        <translation>Mitattu %1 ruudussa %2 ruudusta, siirtymä enintään %3% kuvasta, tehollinen tasoitus %4 s</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="535"/>
+        <source>Reconstruct in-camera stabilization</source>
+        <translation>Rekonstruoi kameran sisäinen vakautus</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="536"/>
+        <source>For footage shot with in-camera stabilization (IBIS or lens OIS) on but without its data in the file: measure what the camera compensated from the video, so it isn't compensated twice. Can't be used together with Translation stabilization or Optical correction.</source>
+        <translation>Materiaalille, jossa kameran sisäinen vakautus (IBIS tai objektiivin OIS) oli käytössä mutta sen tiedot puuttuvat tiedostosta: mittaa kameran kompensaatio videosta, jotta sitä ei kompensoida kahdesti. Ei voi käyttää yhdessä siirtymän vakautuksen tai optisen korjauksen kanssa.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="545"/>
+        <source>Click Analyze to reconstruct the in-camera stabilization</source>
+        <translation>Rekonstruoi kameran sisäinen vakautus napsauttamalla Analysoi</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="544"/>
+        <source>Analyze again to reconstruct the in-camera stabilization</source>
+        <translation>Analysoi uudelleen kameran sisäisen vakautuksen rekonstruoimiseksi</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="548"/>
+        <source>Measured in %1 of %2 frames, compensation up to %3°, cut-off %4 Hz</source>
+        <translation>Mitattu %1 ruudussa %2 ruudusta, kompensaatio enintään %3°, rajataajuus %4 Hz</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="508"/>
+        <source>%1 s</source>
+        <translation>%1 s</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="302"/>
         <source>samples</source>
         <translation>näytteitä</translation>
