@@ -2,7 +2,7 @@
 
 use std::fmt::Write as _;
 use std::path::Path;
-use std::sync::{Arc, atomic::AtomicBool};
+use std::sync::{Arc, OnceLock, atomic::AtomicBool};
 use std::time::Instant;
 
 use gyroflow_core::StabilizationManager;
@@ -10,6 +10,31 @@ use gyroflow_core::stabilization::FrameTransform;
 use gyroflow_core::synchronization::optical_analysis::{BlendConfig, OpticalBaseMode, measurement_params};
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 use serde_json::Value;
+
+fn parse_smoke_truth(raw: &str) -> Option<bool> {
+    match raw.trim() {
+        "1" => Some(true),
+        "0" => Some(false),
+        _ => None,
+    }
+}
+
+fn smoke_truth_resolved() -> bool {
+    static RESOLVED: OnceLock<bool> = OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        let raw = std::env::var("GYROFLOW_OPTICAL_CORRECTION_SMOKE_TRUTH").ok();
+        let mut enabled = false;
+        if let Some(raw) = raw.as_deref() {
+            match parse_smoke_truth(raw) {
+                Some(value) => enabled = value,
+                None => log::warn!(target: "lifecycle", "GYROFLOW_OPTICAL_CORRECTION_SMOKE_TRUTH={} invalid, falling back to false", raw),
+            }
+        }
+        log::info!(target: "lifecycle", "optical_correction_smoke_truth_config resolved={} source={}",
+            enabled, if raw.is_some() { "env" } else { "default" });
+        enabled
+    })
+}
 
 struct TruthMetrics {
     pairs: usize,
@@ -102,7 +127,7 @@ pub fn run(paths: &str) -> i32 {
         return 1;
     }
     let ignore = std::env::var("GYROFLOW_OPTICAL_CORRECTION_SMOKE_IGNORE").as_deref() == Ok("1");
-    let score_truth = ignore && std::env::var("GYROFLOW_OPTICAL_CORRECTION_SMOKE_TRUTH").as_deref() == Ok("1");
+    let score_truth = ignore && smoke_truth_resolved();
     let mut summary = String::from("# Optical correction smoke\n\n| Project | frames | measured_frames | rms_deg | from_video | applied | elapsed_ms | Result |\n|---|---:|---:|---:|---|---|---:|---|\n");
     let mut truth_summary = String::from("\n## Pure-optical vs gyro\n\n| Project | trajectory | mode | correction_forced | stabilization_verdict | sync_points | pairs | gaps | held | hp_xy_px | hp_xy_max_px | hp_roll_deg | drift_deg_s | path_deg | truth_path_deg |\n|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
     let mut exit_code = 0;
@@ -245,6 +270,17 @@ fn table_text(s: &str) -> String {
 mod tests {
     use super::*;
     use nalgebra::{Quaternion, UnitQuaternion};
+
+    #[test]
+    fn smoke_truth_accepts_trimmed_one_and_zero_only() {
+        assert_eq!(parse_smoke_truth("1"), Some(true));
+        assert_eq!(parse_smoke_truth("0"), Some(false));
+        assert_eq!(parse_smoke_truth(" \t1\n"), Some(true));
+        assert_eq!(parse_smoke_truth(" 0 "), Some(false));
+        for raw in ["", " \t\n", "true", "false", "yes", "2", "-1", "1.0"] {
+            assert_eq!(parse_smoke_truth(raw), None, "{raw:?}");
+        }
+    }
 
     const FPS: f64 = 60.0;
 
