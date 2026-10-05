@@ -54,6 +54,7 @@ MenuItem {
 
     // Qt signals can call back synchronously while a batch of user choices is being applied.
     property bool updatingOpticalControls: false;
+    property bool hasExplicitOpticalRequest: false;
     function cancelOpticalEdits(): void {
         opticalStrengthTimer.stop();
         translationReferenceTimer.stop();
@@ -62,7 +63,11 @@ MenuItem {
     }
     function refreshOpticalInfo(restoreParameters: bool, restoreOpticalRequest: bool): void {
         if (root.updatingOpticalControls) return;
-        if (restoreParameters) root.cancelOpticalEdits();
+        if (restoreParameters) {
+            root.cancelOpticalEdits();
+            // Keep the payload's explicit optical choice through later statistics refreshes.
+            root.hasExplicitOpticalRequest = restoreOpticalRequest;
+        }
         root.updatingOpticalControls = true;
         try {
             opticalcb.info = JSON.parse(controller.optical_correction_info());
@@ -71,9 +76,9 @@ MenuItem {
             translationcb.checked = !!translationcb.info.requested;
             stabcb.checked = !!stabcb.info.requested;
             // Without a result, keep the visible optical choice until Analyze explicitly submits it.
-            opticalcb.checked = !stabcb.checked && (!!opticalcb.info.ignore_file_motion ||
-                (restoreOpticalRequest ? !!opticalcb.info.requested :
-                 opticalcb.info.available ? !!opticalcb.info.enabled : opticalcb.checked));
+            opticalcb.checked = !stabcb.checked && (restoreOpticalRequest ? !!opticalcb.info.requested :
+                (!root.hasExplicitOpticalRequest && !!opticalcb.info.ignore_file_motion) ||
+                (opticalcb.info.available ? !!opticalcb.info.enabled : opticalcb.checked));
             ignoreFileMotion.checked = !!opticalcb.info.ignore_file_motion;
             // Statistics refreshes must not replace edits still waiting for their debounce timers.
             if (restoreParameters || !translationReferenceTimer.running)
