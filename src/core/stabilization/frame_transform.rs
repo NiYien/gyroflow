@@ -30,24 +30,8 @@ fn optical_translation_for(
     if !translation.is_active() {
         return None;
     }
-    let shift = translation.shift_at(if config.per_row { quat_time_ms } else { frame_time_ms });
-    let t_quat = -(source.inverse() * shift);
-    let mut t = Vector3::new(t_quat.x, if inverted { t_quat.y } else { -t_quat.y }, -t_quat.z);
-    let soft = |x: f64, limit: f64| {
-        let half = limit / 2.0;
-        if x <= half { x } else { half + half * ((x - half) / half).tanh() }
-    };
-    let limit = config.max_shift * params.width.min(params.height) as f64 / focal_px;
-    let n = t.xy().norm();
-    if n > 0.0 {
-        let scale = soft(n, limit) / n;
-        t.x *= scale;
-        t.y *= scale;
-    }
-    t.z = t.z.signum() * soft(t.z.abs(), config.max_shift);
-    if !translation.settings.along_axis {
-        t.z = 0.0;
-    }
+    let t = translation.camera_shift_at(source, if config.per_row { quat_time_ms } else { frame_time_ms },
+        params.width.min(params.height) as f64, focal_px, inverted, config);
     if t.norm() == 0.0 { None } else { Some(t) }
 }
 

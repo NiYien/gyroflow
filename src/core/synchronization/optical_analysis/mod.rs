@@ -656,7 +656,22 @@ impl OpticalMotionAnalysis {
     /// Solve each pair once, then reuse its parallax while the high-pass still needs it.
     fn measure_translation(&mut self, derived: &mut [Derived]) {
         let Some(state) = &mut self.translation else { return };
+        // Lens queries take the gyro lock themselves. Complete them before reading poses.
+        let mut focal_ratios = HashMap::new();
+        for pair in self.pairs.iter().filter(|pair| pair.seq >= state.next_seq) {
+            for frame in [pair.a, pair.b] {
+                focal_ratios.entry(frame.index).or_insert_with(|| {
+                    let (mut k, ..) = FrameTransform::get_lens_data_at_timestamp(&self.params, frame.timestamp_ms, false);
+                    FrameTransform::dequantize_camera_matrix(&self.params, frame.index, &mut k);
+                    (k[(0, 0)] / self.params.width.min(self.params.height).max(1) as f64) as f32
+                });
+            }
+        }
         let gyro = self.params.gyro.read();
+        let camera_to_world = |timestamp| {
+            let q = gyro.org_quat_at_timestamp(timestamp);
+            [q.w as f32, q.i as f32, q.j as f32, q.k as f32]
+        };
         for pair in self.pairs.iter().filter(|pair| pair.seq >= state.next_seq) {
             let points: Vec<PairPoint> = derived.iter().filter(|d| d.seq == pair.seq)
                 .map(|d| PairPoint { id: d.id, band: d.band, p: d.p, r: d.r }).collect();
@@ -667,6 +682,8 @@ impl OpticalMotionAnalysis {
                 state.samples.push(TranslationSample {
                     timestamp_us: (pair.a.mid_ms * 1000.0).round() as i64,
                     segment: state.segment,
+                    camera_to_world: camera_to_world(pair.a.mid_ms),
+                    focal_length_over_short_side: focal_ratios[&pair.a.index],
                     ..Default::default()
                 });
             }
@@ -681,6 +698,8 @@ impl OpticalMotionAnalysis {
                 confidence: result.confidence as f32,
                 track_age_s: result.track_age_s as f32,
                 segment: state.segment,
+                camera_to_world: camera_to_world(pair.b.mid_ms),
+                focal_length_over_short_side: focal_ratios[&pair.b.index],
             });
         }
         state.next_seq = self.next_seq;
@@ -1158,6 +1177,38 @@ mod tests {
         let correlation = cov / (sx * sy).sqrt();
         eprintln!("translation position Pearson correlation={correlation}");
         assert!(correlation >= 0.95, "correlation={correlation}");
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn translation_measurements_store_the_pose_and_each_frames_focal_ratio() {
+        let pose = crate::Quat64::from_euler_angles(0.1, -0.2, 0.3);
+        let stab = analysis_fixture(90, |_| pose);
+        stab.lens.write().fisheye_params.distortion_coeffs.clear();
+        {
+            let gyro = stab.gyro.read();
+            let mut metadata = gyro.file_metadata.write();
+            for frame in 0..90 {
+                let focal = 1000.0 + frame as f32 * 2.0;
+                metadata.lens_params.insert((frame as f64 * 1e6 / 30.0).round() as i64, crate::gyro_source::LensParams {
+                    pixel_focal_length: Some((focal, focal)), sensor_size_px: Some((1920, 1080)),
+                    capture_area_size: Some((1920.0, 1080.0)), ..Default::default()
+                });
+            }
+        }
+        stab.optical_ui.write().translation_enabled = true;
+        let measurements = analyze_pairs(&stab, 90, |frame| {
+            let scale = (1000.0 + frame as f32 * 2.0) / 1000.0;
+            parallax_observations(frame).into_iter().map(|(id, p)| (id, [480.0+(p[0]-480.0)*scale,270.0+(p[1]-270.0)*scale])).collect()
+        });
+        assert!(measurements.translation_samples.len() >= 90);
+        for sample in &measurements.translation_samples {
+            let frame = (sample.timestamp_us as f64 * 30.0 / 1e6).round();
+            assert!((sample.focal_length_over_short_side as f64 - (1000.0+2.0*frame)/1080.0).abs() < 2e-6);
+            for (actual, expected) in sample.camera_to_world.into_iter().zip([pose.w,pose.i,pose.j,pose.k]) {
+                assert!((actual as f64-expected).abs() < 1e-7);
+            }
+        }
     }
 
     #[cfg(feature = "use-opencv")]

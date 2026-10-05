@@ -2175,7 +2175,7 @@ impl GyroSource {
     }
     /// Whether the translation matches the uncorrected motion and current context.
     pub fn optical_translation_applies(&self) -> bool {
-        self.optical_translation.as_ref().is_some_and(|t| t.quats_checksum == self.optical_uncorrected_checksum
+        self.optical_translation.as_ref().is_some_and(|t| t.has_valid_geometry() && t.quats_checksum == self.optical_uncorrected_checksum
             && t.context_checksum == self.optical_context && !self.ignores_file_motion() && self.has_motion())
     }
     /// Whether `integrate` composes the correction onto the quaternions, as things stand

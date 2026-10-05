@@ -472,7 +472,7 @@ MenuItem {
     CheckBoxWithContent {
         id: translationcb;
         text: qsTr("Translation stabilization");
-        cb.tooltip: qsTr("Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis goes through every frame of the selected trim range. Can't be used together with in-camera stabilization reconstruction.");
+        cb.tooltip: qsTr("Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis goes through every frame of the selected trim range. Can't be used together with in-camera stabilization reconstruction. The reported shift is sampled at frame centers; output cropping changes its apparent size.");
         property var info: ({ available: false });
         onCheckedChanged: root.changeOpticalMode("translation", checked);
         BasicText {
@@ -484,7 +484,7 @@ MenuItem {
                   !translationcb.info.available && translationcb.info.requested ? qsTr("Click Analyze to measure the camera movement") :
                   translationcb.info.stale ? qsTr("Settings changed, analyze again") :
                   !translationcb.info.available ? "" :
-                  qsTr("Measured in %1 of %2 frames, shift up to %3% of the frame, effective smoothness %4 s").arg(translationcb.info.measured_frames).arg(translationcb.info.frames).arg((+translationcb.info.max_shift_pct).toFixed(1)).arg((+translationcb.info.effective_smoothness_s).toFixed(1));
+                  qsTr("Measured in %1 of %2 frames, applied shift up to %3% of the source frame's short side").arg(translationcb.info.measured_frames).arg(translationcb.info.frames).arg((+translationcb.info.max_shift_pct).toFixed(1));
         }
         Label {
             text: qsTr("Reference distance");

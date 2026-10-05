@@ -121,7 +121,8 @@ pub fn run(paths: &str) -> i32 {
         eprintln!("No .gyroflow project paths supplied");
         return 2;
     }
-    let out_dir = Path::new("target/optical_correction_smoke");
+    let export_translation = std::env::var("GYROFLOW_OPTICAL_CORRECTION_SMOKE_TRANSLATION").as_deref() == Ok("1");
+    let out_dir = Path::new(if export_translation { "target/translation-optimization/smoke" } else { "target/optical_correction_smoke" });
     if let Err(e) = std::fs::create_dir_all(out_dir) {
         eprintln!("Cannot create {}: {e}", out_dir.display());
         return 1;
@@ -131,7 +132,7 @@ pub fn run(paths: &str) -> i32 {
     let mut summary = String::from("# Optical correction smoke\n\n| Project | frames | measured_frames | rms_deg | from_video | applied | elapsed_ms | Result |\n|---|---:|---:|---:|---|---|---:|---|\n");
     let mut truth_summary = String::from("\n## Pure-optical vs gyro\n\n| Project | trajectory | mode | correction_forced | stabilization_verdict | sync_points | pairs | gaps | held | hp_xy_px | hp_xy_max_px | hp_roll_deg | drift_deg_s | path_deg | truth_path_deg |\n|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
     let mut exit_code = 0;
-    for path in paths {
+    for (project_index, path) in paths.into_iter().enumerate() {
         let stab = StabilizationManager::default();
         let cancel = Arc::new(AtomicBool::new(false));
         let mut elapsed_ms = None;
@@ -148,6 +149,10 @@ pub fn run(paths: &str) -> i32 {
             stab.lens_profile_db.write().load_all();
             let url = gyroflow_core::filesystem::path_to_url(&path);
             stab.import_gyroflow_file(&url, true, |_| (), cancel.clone(), false).map_err(|e| format!("import: {e:?}"))?;
+            if export_translation {
+                stab.set_translation_stabilization_enabled(true);
+                stab.set_optical_correction_enabled(false);
+            }
             let reconstruction_enabled = stab.optical_ui.read().stab_enabled;
             if reconstruction_enabled {
                 stab.set_optical_correction_enabled(true);
@@ -183,6 +188,17 @@ pub fn run(paths: &str) -> i32 {
             let analyzed = super::analyze_optically(&stab, cancel, None, |_, _, _| ());
             if analyzed.is_ok() {
                 stab.recompute_blocking();
+                if export_translation {
+                    let info = stab.translation_stabilization_info();
+                    log::info!(target: "stab.translation", "[optical-smoke] translation={info}");
+                    if !stab.gyro.read().optical_translation.as_ref().is_some_and(|t| t.is_active()) {
+                        return Err("Optical translation was not applied".into());
+                    }
+                    let project = stab.export_gyroflow_data(gyroflow_core::GyroflowProjectType::WithGyroData, "{}", None)
+                        .map_err(|e| format!("export: {e:?}"))?;
+                    let output = out_dir.join(format!("translation-{project_index}.gyroflow"));
+                    std::fs::write(&output, project).map_err(|e| format!("write {}: {e}", output.display()))?;
+                }
             }
             elapsed_ms = Some(started.elapsed().as_millis());
             if analyzed.is_ok() && score_truth {
@@ -206,7 +222,9 @@ pub fn run(paths: &str) -> i32 {
             analyzed
         })();
         let info = stab.optical_correction_info();
-        let applied = stab.gyro.read().optical_correction_applied;
+        let applied = if export_translation {
+            stab.gyro.read().optical_translation.as_ref().is_some_and(|t| t.is_active())
+        } else { stab.gyro.read().optical_correction_applied };
         let complete_info = info["frames"].as_u64().is_some()
             && info["measured_frames"].as_u64().is_some()
             && info["rms_deg"].as_f64().is_some_and(f64::is_finite)

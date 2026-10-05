@@ -4,6 +4,13 @@ use std::collections::{hash_map::DefaultHasher, HashMap};
 use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
 
+#[path = "optical_translation/smoothing.rs"]
+mod smoothing;
+#[cfg(all(test, feature = "use-opencv"))]
+#[path = "optical_translation/acceptance.rs"]
+mod acceptance;
+pub const GEOMETRY_VERSION: u32 = 1;
+
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct OpticalTranslationSettings {
@@ -26,6 +33,23 @@ pub struct TranslationSample {
     pub confidence: f32,
     pub track_age_s: f32,
     pub segment: u32,
+    /// Camera-to-world quaternion at this sample's video time, in w, x, y, z order.
+    #[serde(default)]
+    pub camera_to_world: [f32; 4],
+    #[serde(default)]
+    pub focal_length_over_short_side: f32,
+}
+
+impl TranslationSample {
+    fn geometry(&self) -> Option<smoothing::Geometry> {
+        let [w, x, y, z] = self.camera_to_world.map(f64::from);
+        let q = nalgebra::Quaternion::new(w, x, y, z);
+        let norm = q.norm_squared();
+        let focal_ratio = self.focal_length_over_short_side as f64;
+        if !norm.is_finite() || (norm - 1.0).abs() > 1e-3 || !focal_ratio.is_finite() || focal_ratio <= 0.0 { return None; }
+        let rotation = nalgebra::UnitQuaternion::new_normalize(q);
+        Some(smoothing::Geometry { world_to_camera: rotation.inverse().to_rotation_matrix().into_inner(), focal_ratio })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -91,12 +115,15 @@ pub struct OpticalTranslation {
     pub context_checksum: u64,
     pub frames: usize,
     pub measured_frames: usize,
+    pub geometry_version: u32,
     #[serde(skip)]
     pub applies: bool,
     #[serde(skip)]
     curve: Vec<TranslationCurvePoint>,
     #[serde(skip)]
     effective_smoothness_s: f64,
+    #[serde(skip)]
+    geometry_valid: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -181,12 +208,40 @@ fn time_difference_s(a: i64, b: i64) -> f64 {
     (a as i128 - b as i128) as f64 / 1e6
 }
 
+fn filtered_inverse_depth(segment: &[TranslationSample]) -> Vec<f64> {
+    let n = segment.len();
+    let times: Vec<_> = segment.iter().map(|s| time_difference_s(s.timestamp_us, segment[0].timestamp_us)).collect();
+    let mut output = vec![0.0; n];
+    for i in 0..n {
+        // Invalid depth remains unavailable; nearby valid samples must not invent it.
+        if !segment[i].ref_inv_depth.is_finite() || segment[i].ref_inv_depth <= 0.0 { continue; }
+        let left = times.partition_point(|t| *t < times[i] - 0.75);
+        let right = times.partition_point(|t| *t <= times[i] + 0.75);
+        let (mut sum, mut weights) = (0.0, 0.0);
+        for j in left..right {
+            let s = &segment[j];
+            if !s.ref_inv_depth.is_finite() || s.ref_inv_depth <= 0.0 || !s.confidence.is_finite() || s.confidence <= 0.0 { continue; }
+            let duration = if n == 1 { 1.0 } else {
+                (times[(j + 1).min(n - 1)] - times[j.saturating_sub(1)]) * 0.5
+            };
+            let weight = (-0.5 * ((times[j] - times[i]) / 0.25).powi(2)).exp() * s.confidence.clamp(0.0, 1.0) as f64 * duration;
+            sum += weight * s.ref_inv_depth as f64;
+            weights += weight;
+        }
+        if weights > 0.0 { output[i] = sum / weights; }
+    }
+    output
+}
+
 impl OpticalTranslation {
     /// Builds the curve without deciding whether its analysis context is current.
     pub fn new(samples: Vec<TranslationSample>, settings: OpticalTranslationSettings) -> Self {
-        let mut result = Self { enabled: true, samples, settings, ..Default::default() };
-        result.rebuild();
-        result
+        Self::new_with_cancel(samples, settings, &|| false).expect("a non-cancelled translation rebuild completes")
+    }
+
+    pub(crate) fn new_with_cancel(samples: Vec<TranslationSample>, settings: OpticalTranslationSettings, cancelled: &dyn Fn() -> bool) -> Option<Self> {
+        let mut result = Self { enabled: true, samples, settings, geometry_version: GEOMETRY_VERSION, ..Default::default() };
+        result.rebuild_with_cancel(TranslationConfig::resolved().track_age_k, cancelled).then_some(result)
     }
 
     /// Rebuilds the cached curve after loading or changing the stored data.
@@ -200,11 +255,25 @@ impl OpticalTranslation {
     }
 
     pub fn rebuild_with(&mut self, track_age_k: f64) {
-        self.curve.clear();
-        self.effective_smoothness_s = 0.0;
+        self.rebuild_with_cancel(track_age_k, &|| false);
+    }
+
+    /// Build privately and publish only a complete curve. Cancellation leaves the previous one intact.
+    pub fn rebuild_with_cancel(&mut self, track_age_k: f64, cancelled: &dyn Fn() -> bool) -> bool {
+        let began = std::time::Instant::now();
+        if cancelled() { return false; }
+        let mut curve = Vec::new();
         let mut samples = self.samples.clone();
         samples.sort_by_key(|sample| sample.timestamp_us);
         samples.dedup_by_key(|sample| sample.timestamp_us);
+        let geometry: Option<Vec<_>> = samples.iter().map(TranslationSample::geometry).collect();
+        if cancelled() { return false; }
+        let Some(geometry) = geometry.filter(|_| self.geometry_version == GEOMETRY_VERSION) else {
+            self.curve.clear();
+            self.effective_smoothness_s = 0.0;
+            self.geometry_valid = false;
+            return true;
+        };
         let mut previous_position = [0.0; 3];
         for sample in &mut samples {
             if sample.position.iter().all(|value| value.is_finite()) && sample.ref_inv_depth.is_finite() && sample.confidence.is_finite() {
@@ -220,13 +289,15 @@ impl OpticalTranslation {
         let reference = if self.settings.reference.is_finite() { self.settings.reference } else { 0.0 };
         let mut smoothness = Vec::new();
         let mut zero_confidence = ZeroConfidenceCache::default();
+        let (mut solved_segments, mut fallback_segments, mut iterations) = (0, 0, 0);
         let mut start = 0;
         while start < samples.len() {
+            if cancelled() { return false; }
             let mut end = start + 1;
             while end < samples.len() && samples[end].segment == samples[start].segment { end += 1; }
             let segment = &samples[start..end];
             if segment.len() == 1 {
-                self.curve.push(TranslationCurvePoint { timestamp_us: segment[0].timestamp_us, segment: segment[0].segment, shift: nalgebra::Vector3::zeros() });
+                curve.push(TranslationCurvePoint { timestamp_us: segment[0].timestamp_us, segment: segment[0].segment, shift: nalgebra::Vector3::zeros() });
                 start = end;
                 continue;
             }
@@ -238,12 +309,17 @@ impl OpticalTranslation {
             smoothness.push(sigma);
             let times: Vec<_> = segment.iter().map(|sample| time_difference_s(sample.timestamp_us, segment[0].timestamp_us)).collect();
             let positions: Vec<_> = segment.iter().map(|sample| nalgebra::Vector3::new(sample.position[0] as f64, sample.position[1] as f64, sample.position[2] as f64)).collect();
+            let depths = filtered_inverse_depth(segment);
+            let mut fixed = vec![false; segment.len()];
+            let curve_start = curve.len();
             let last = segment.len() - 1;
             let left_interval_us = segment[1].timestamp_us as i128 - segment[0].timestamp_us as i128;
             let right_interval_us = segment[last].timestamp_us as i128 - segment[last - 1].timestamp_us as i128;
             for i in 0..segment.len() {
+                if cancelled() { return false; }
                 if i == 0 || i == last {
-                    self.curve.push(TranslationCurvePoint { timestamp_us: segment[i].timestamp_us, segment: segment[i].segment, shift: nalgebra::Vector3::zeros() });
+                    fixed[i] = true;
+                    curve.push(TranslationCurvePoint { timestamp_us: segment[i].timestamp_us, segment: segment[i].segment, shift: nalgebra::Vector3::zeros() });
                     continue;
                 }
                 let mut sum = nalgebra::Vector3::zeros();
@@ -288,12 +364,38 @@ impl OpticalTranslation {
                 confidence_weight_sum += zero_confidence.sum(right_distance_us, right_interval_us);
                 let ramp = 1.0_f64.min(times[i] / confidence_sigma).min((times[last] - times[i]) / confidence_sigma).max(0.0);
                 let confidence = confidence_sum / confidence_weight_sum * ramp;
-                let shift = (positions[i] - sum / weight_sum) * (reference * confidence * segment[i].ref_inv_depth as f64);
-                self.curve.push(TranslationCurvePoint { timestamp_us: segment[i].timestamp_us, segment: segment[i].segment, shift });
+                let gain = reference * confidence * depths[i];
+                fixed[i] = gain == 0.0;
+                let shift = (positions[i] - sum / weight_sum) * gain;
+                curve.push(TranslationCurvePoint { timestamp_us: segment[i].timestamp_us, segment: segment[i].segment, shift });
+            }
+            let request: Vec<_> = curve[curve_start..].iter().map(|p| p.shift).collect();
+            match smoothing::constrain(&times, &request, &geometry[start..end], &fixed, sigma,
+                TranslationConfig::resolved().max_shift * 0.5, self.settings.along_axis, cancelled) {
+                Ok((shifts, stats)) => {
+                    log::debug!(target: "stab.translation", "translation budget segment={} samples={} sigma_s={} request_ratio={} applied_ratio={} correction_ratio={} iterations={} stages={} line_searches={}",
+                        segment[0].segment, segment.len(), sigma, stats.requested_fraction, stats.maximum_fraction,
+                        stats.correction_fraction, stats.iterations, stats.stages, stats.line_searches);
+                    solved_segments += usize::from(stats.iterations > 0);
+                    iterations += stats.iterations;
+                    for (point, shift) in curve[curve_start..].iter_mut().zip(shifts) { point.shift = shift; }
+                }
+                Err(error) if error.reason == smoothing::SolveError::Cancelled => return false,
+                Err(error) => {
+                    fallback_segments += 1;
+                    log::warn!(target: "stab.translation", "translation budget fallback segment={} samples={} reason={:?} iterations={} stages={} line_searches={}",
+                        segment[0].segment, segment.len(), error.reason, error.stats.iterations, error.stats.stages, error.stats.line_searches);
+                }
             }
             start = end;
         }
+        if cancelled() { return false; }
+        self.curve = curve;
+        self.geometry_valid = !samples.is_empty();
         self.effective_smoothness_s = median(&mut smoothness);
+        log::debug!(target: "stab.translation", "translation rebuild samples={} corrected_segments={} fallback_segments={} iterations={} elapsed_ms={:.3}",
+            samples.len(), solved_segments, fallback_segments, iterations, began.elapsed().as_secs_f64() * 1000.0);
+        true
     }
 
     /// Returns world-frame displacement over depth, including reference and confidence.
@@ -316,17 +418,41 @@ impl OpticalTranslation {
         self.effective_smoothness_s
     }
 
+    /// Source-camera compensation, shared by rendering and the frame-centre status.
+    pub(crate) fn camera_shift_at(&self, source: &nalgebra::UnitQuaternion<f64>, timestamp_ms: f64,
+        short_side: f64, focal_px: f64, inverted: bool, config: &TranslationConfig) -> nalgebra::Vector3<f64> {
+        let shift = self.shift_at(timestamp_ms);
+        let t_quat = -(source.inverse() * shift);
+        let mut t = nalgebra::Vector3::new(t_quat.x, if inverted { t_quat.y } else { -t_quat.y }, -t_quat.z);
+        let soft = |x: f64, limit: f64| {
+            let half = limit / 2.0;
+            if x <= half { x } else { half + half * ((x - half) / half).tanh() }
+        };
+        let limit = config.max_shift * short_side / focal_px;
+        let n = t.xy().norm();
+        if n > 0.0 {
+            let scale = soft(n, limit) / n;
+            t.x *= scale;
+            t.y *= scale;
+        }
+        t.z = t.z.signum() * soft(t.z.abs(), config.max_shift);
+        if !self.settings.along_axis { t.z = 0.0; }
+        t
+    }
+
     #[cfg(test)]
     pub(crate) fn with_curve(mut points: Vec<(i64, [f64; 3])>) -> Self {
         points.sort_by_key(|point| point.0);
         points.dedup_by_key(|point| point.0);
         let samples = points.iter().map(|point| TranslationSample { timestamp_us: point.0, ..Default::default() }).collect();
         let curve = points.into_iter().map(|(timestamp_us, shift)| TranslationCurvePoint { timestamp_us, segment: 0, shift: nalgebra::Vector3::from(shift) }).collect();
-        Self { enabled: true, applies: true, samples, curve, ..Default::default() }
+        Self { enabled: true, applies: true, samples, curve, geometry_valid: true, geometry_version: GEOMETRY_VERSION, ..Default::default() }
     }
 
+    pub fn has_valid_geometry(&self) -> bool { self.geometry_valid }
+
     pub fn is_active(&self) -> bool {
-        self.enabled && self.applies && !self.samples.is_empty()
+        self.enabled && self.applies && self.geometry_valid && !self.samples.is_empty()
     }
 
     pub fn hash_into(&self, hasher: &mut impl Hasher) {
@@ -336,6 +462,7 @@ impl OpticalTranslation {
         self.settings.along_axis.hash(hasher);
         self.quats_checksum.hash(hasher);
         self.context_checksum.hash(hasher);
+        self.geometry_version.hash(hasher);
         self.samples.len().hash(hasher);
         for sample in &self.samples {
             sample.timestamp_us.hash(hasher);
@@ -346,11 +473,17 @@ impl OpticalTranslation {
             sample.confidence.to_bits().hash(hasher);
             sample.track_age_s.to_bits().hash(hasher);
             sample.segment.hash(hasher);
+            for value in sample.camera_to_world { value.to_bits().hash(hasher); }
+            sample.focal_length_over_short_side.to_bits().hash(hasher);
         }
     }
 
     pub fn checksum(&self) -> u64 {
         if !self.is_active() { return 0; }
+        self.content_checksum()
+    }
+
+    pub(crate) fn content_checksum(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
         self.hash_into(&mut hasher);
         hasher.finish().max(1)
@@ -361,8 +494,12 @@ impl OpticalTranslation {
 mod tests {
     use super::*;
 
+    fn geometry_sample() -> TranslationSample {
+        TranslationSample { camera_to_world: [1.0, 0.0, 0.0, 0.0], focal_length_over_short_side: 0.1, ..Default::default() }
+    }
+
     fn sample(i: i64) -> TranslationSample {
-        TranslationSample { timestamp_us: i * 33_333, position: [i as f32 * 0.01, 0.0, 0.0], ref_inv_depth: 2.0, confidence: 1.0, track_age_s: 5.0, segment: 0 }
+        TranslationSample { timestamp_us: i * 33_333, position: [i as f32 * 0.01, 0.0, 0.0], ref_inv_depth: 2.0, confidence: 1.0, track_age_s: 5.0, segment: 0, ..geometry_sample() }
     }
 
     #[test]
@@ -383,7 +520,8 @@ mod tests {
 
     #[test]
     fn checksum_is_zero_unless_active_and_follows_the_content() {
-        let mut t = OpticalTranslation { enabled: true, applies: true, samples: (0..90).map(sample).collect(), ..Default::default() };
+        let mut t = OpticalTranslation::new((0..90).map(sample).collect(), Default::default());
+        t.applies = true;
         let c = t.checksum();
         assert_ne!(c, 0);
         t.settings.reference = 0.5;
@@ -403,11 +541,11 @@ mod tests {
         (0..300).map(|i| {
             let t = i as f64 / 30.0;
             TranslationSample { timestamp_us: (t * 1e6) as i64, position: [(0.02 * (std::f64::consts::TAU * 3.0 * t).sin() + 0.5 * t) as f32, 0.0, 0.0],
-                ref_inv_depth: 2.0, confidence, track_age_s, segment: 0 }
+                ref_inv_depth: 2.0, confidence, track_age_s, segment: 0, ..geometry_sample() }
         }).collect()
     }
     fn built(samples: Vec<TranslationSample>, settings: OpticalTranslationSettings, k: f64) -> OpticalTranslation {
-        let mut t = OpticalTranslation { enabled: true, applies: true, samples, settings, ..Default::default() };
+        let mut t = OpticalTranslation { enabled: true, applies: true, samples, settings, geometry_version: GEOMETRY_VERSION, ..Default::default() };
         t.rebuild_with(k);
         t
     }
@@ -450,7 +588,7 @@ mod tests {
         let mut samples = walk(1.0, 100.0);
         samples.truncate(90);
         let alone = built(samples.clone(), Default::default(), 2.0);
-        samples.extend((120..210).map(|i| TranslationSample { timestamp_us: (i as f64 / 30.0 * 1e6) as i64, position: [i as f32 * 3.0, 50.0, 0.0], ref_inv_depth: 0.01, confidence: 1.0, track_age_s: 100.0, segment: 1 }));
+        samples.extend((120..210).map(|i| TranslationSample { timestamp_us: (i as f64 / 30.0 * 1e6) as i64, position: [i as f32 * 3.0, 50.0, 0.0], ref_inv_depth: 0.01, confidence: 1.0, track_age_s: 100.0, segment: 1, ..geometry_sample() }));
         let both = built(samples, Default::default(), 2.0);
         for i in 0..90 {
             let ts = i as f64 / 30.0 * 1000.0;
@@ -515,7 +653,7 @@ mod tests {
         let samples = (0..3).map(|i| TranslationSample {
             timestamp_us: i * 100_000,
             position: [if i == 1 { 1.0 } else { 0.0 }, 0.0, 0.0],
-            ref_inv_depth: 1.0, confidence: 1.0, track_age_s: 100.0, segment: 0,
+            ref_inv_depth: 1.0, confidence: 1.0, track_age_s: 100.0, segment: 0, ..geometry_sample()
         }).collect();
         let t = built(samples, OpticalTranslationSettings { smoothness_s: 0.1, ..Default::default() }, 0.0);
         // Three real position samples plus their point reflections give this residual.
@@ -568,9 +706,9 @@ mod tests {
     #[test]
     fn dense_endpoint_compensation_matches_the_unoptimized_discrete_formula() {
         let samples = vec![
-            TranslationSample { timestamp_us: 0, position: [0.0; 3], ref_inv_depth: 1.0, confidence: 1.0, track_age_s: 100.0, segment: 0 },
-            TranslationSample { timestamp_us: 1, position: [1.0, 0.0, 0.0], ref_inv_depth: 1.0, confidence: 1.0, track_age_s: 100.0, segment: 0 },
-            TranslationSample { timestamp_us: 1_000_000, position: [0.0; 3], ref_inv_depth: 1.0, confidence: 1.0, track_age_s: 100.0, segment: 0 },
+            TranslationSample { timestamp_us: 0, position: [0.0; 3], ref_inv_depth: 1.0, confidence: 1.0, track_age_s: 100.0, segment: 0, ..geometry_sample() },
+            TranslationSample { timestamp_us: 1, position: [1.0, 0.0, 0.0], ref_inv_depth: 1.0, confidence: 1.0, track_age_s: 100.0, segment: 0, ..geometry_sample() },
+            TranslationSample { timestamp_us: 1_000_000, position: [0.0; 3], ref_inv_depth: 1.0, confidence: 1.0, track_age_s: 100.0, segment: 0, ..geometry_sample() },
         ];
         let t = built(samples, OpticalTranslationSettings { smoothness_s: 0.001, ..Default::default() }, 0.0);
         let g1 = (-0.5 * (1.0_f64 / 1000.0).powi(2)).exp();
@@ -626,5 +764,96 @@ mod tests {
         assert_eq!(none.sum(100_000, 100_000), naive_zero_confidence_weight_sum(100_000, 100_000));
         assert!(none.suffixes.is_empty());
         assert_eq!(none.payload_bytes, 0);
+    }
+
+    #[test]
+    fn depth_filter_preserves_constant_gain_and_rejects_invalid_support() {
+        let mut samples: Vec<_> = (0..61).map(sample).collect();
+        samples[20].ref_inv_depth = 0.0;
+        samples[21].ref_inv_depth = f32::NAN;
+        samples[22].ref_inv_depth = -1.0;
+        samples[23].ref_inv_depth = 1000.0;
+        samples[23].confidence = 0.0;
+        let depths = filtered_inverse_depth(&samples);
+        for (i, depth) in depths.iter().enumerate() {
+            if (20..=22).contains(&i) { assert_eq!(*depth, 0.0); }
+            else { assert!((*depth - 2.0).abs() < 1e-12, "sample {i}: {depth}"); }
+        }
+        for sample in &mut samples { sample.confidence = 0.0; }
+        assert!(filtered_inverse_depth(&samples).iter().all(|rho| *rho == 0.0));
+    }
+
+    #[test]
+    fn depth_filter_respects_time_density_and_arbitrary_depth_scale() {
+        let make = |times: Vec<f64>| times.into_iter().map(|t| TranslationSample {
+            timestamp_us: (t*1e6).round() as i64, ref_inv_depth: (2.0 + 0.2*t) as f32,
+            ..sample(0)
+        }).collect::<Vec<_>>();
+        let regular = make((0..101).map(|i| i as f64 * 0.02).collect());
+        let mut times: Vec<_> = (0..101).map(|i| i as f64 * 0.02).collect();
+        times.extend((0..100).map(|i| i as f64 * 0.02 + 0.01).filter(|t| *t > 1.0));
+        times.sort_by(f64::total_cmp);
+        let irregular = make(times);
+        let regular_depth = filtered_inverse_depth(&regular)[50];
+        let index = irregular.iter().position(|s| s.timestamp_us == 1_000_000).unwrap();
+        let irregular_depth = filtered_inverse_depth(&irregular)[index];
+        assert!((regular_depth-irregular_depth).abs() < 0.0001);
+        let scaled: Vec<_> = irregular.iter().map(|s| TranslationSample { ref_inv_depth: s.ref_inv_depth * 8.0, ..*s }).collect();
+        assert!((filtered_inverse_depth(&scaled)[index] - 8.0*irregular_depth).abs() < 1e-12);
+    }
+
+    #[test]
+    fn missing_or_unknown_geometry_stays_unavailable_without_dropping_samples() {
+        let mut t = OpticalTranslation::new(walk(1.0, 100.0), Default::default());
+        t.applies = true;
+        assert!(t.is_active());
+        let samples = t.samples.clone();
+        t.geometry_version = 0;
+        t.rebuild();
+        assert!(!t.is_active());
+        assert_eq!(t.samples, samples);
+        t.geometry_version = GEOMETRY_VERSION + 1;
+        t.rebuild();
+        assert!(!t.has_valid_geometry());
+        t.geometry_version = GEOMETRY_VERSION;
+        t.samples[30].camera_to_world = [0.0;4];
+        t.rebuild();
+        assert!(!t.has_valid_geometry());
+        assert_eq!(t.shift_at(1000.0), nalgebra::Vector3::zeros());
+    }
+
+    #[test]
+    fn cancelled_curve_build_keeps_the_previous_complete_curve() {
+        let mut t = built(walk(1.0, 100.0), Default::default(), 2.0);
+        let before = t.shift_at(5010.0);
+        let calls = std::cell::Cell::new(0);
+        assert!(!t.rebuild_with_cancel(2.0, &|| { calls.set(calls.get()+1); calls.get() > 20 }));
+        assert_eq!(before, t.shift_at(5010.0));
+    }
+
+    #[test]
+    fn live_pose_difference_keeps_the_final_guard_even_with_large_forward_motion() {
+        let t = OpticalTranslation::with_curve(vec![(0,[0.0,0.0,2.0]),(1_000_000,[0.0,0.0,2.0])]);
+        let measured = nalgebra::UnitQuaternion::identity();
+        let corrected = nalgebra::UnitQuaternion::from_euler_angles(0.0,0.02,0.0);
+        let config = TranslationConfig::DEFAULT;
+        assert_eq!(t.camera_shift_at(&measured,500.0,1080.0,2160.0,false,&config).norm(),0.0);
+        let applied = t.camera_shift_at(&corrected,500.0,1080.0,2160.0,false,&config);
+        let actual_fraction = applied.xy().norm()*2.0;
+        assert!(actual_fraction>0.039 && actual_fraction<=config.max_shift);
+        assert_eq!(applied.z,0.0);
+    }
+
+    #[test]
+    fn changing_the_arbitrary_position_scale_does_not_change_compensation() {
+        let original = walk(1.0,100.0);
+        let scaled:Vec<_> = original.iter().map(|s|TranslationSample {
+            position:s.position.map(|v|v*8.0),ref_inv_depth:s.ref_inv_depth/8.0,..*s
+        }).collect();
+        let a=built(original,Default::default(),2.0);
+        let b=built(scaled,Default::default(),2.0);
+        for time in [0.0,50.0,300.0,1200.0,5010.0,9200.0] {
+            assert_eq!(a.shift_at(time),b.shift_at(time));
+        }
     }
 }

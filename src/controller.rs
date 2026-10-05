@@ -3187,6 +3187,9 @@ impl Controller {
                     let finished = this.ongoing_computations.is_empty();
 
                     this.compute_progress(id, if finished { 1.0 } else { 0.0 });
+                    if !_discarded && this.stabilizer.optical_ui.read().translation_enabled {
+                        this.optical_correction_changed();
+                    }
                 },
             ));
         self.ongoing_computations.insert(id);

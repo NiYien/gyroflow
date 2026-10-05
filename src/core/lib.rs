@@ -2044,7 +2044,10 @@ impl StabilizationManager {
     }
 
     pub fn recompute_blocking(&self) {
+        let optical_generation = self.optical_generation.load(SeqCst);
         self.refresh_optical_correction();
+        if !Self::refresh_translation_settings(&self.gyro, &self.optical_ui,
+            &|| self.optical_generation.load(SeqCst) != optical_generation) { return; }
         crate::smooth_diag::init_session();
         if !smooth_blocking_gate_enabled() {
             self.recompute_smoothness();
@@ -2142,6 +2145,9 @@ impl StabilizationManager {
         let zooming_checksum = self.zooming_checksum.clone();
 
         let stabilization = self.stabilization.clone();
+        let optical_ui = self.optical_ui.clone();
+        let optical_generation = self.optical_generation.clone();
+        let requested_generation = optical_generation.load(SeqCst);
         let in_flight_count = self.in_flight_count.clone();
         THREAD_POOL.spawn(move || {
             // §4.4 OpGuard: recompute mutates smoothing/zooming/stabilization
@@ -2154,6 +2160,14 @@ impl StabilizationManager {
             // std::thread::sleep(std::time::Duration::from_millis(20));
             if prevent_recompute.load(SeqCst) { return cb((compute_id, true)); } // we're still loading, don't recompute
             if current_compute_id.load(SeqCst) != compute_id { return cb((compute_id, true)); }
+
+            if !Self::refresh_translation_settings(&gyro, &optical_ui, &|| current_compute_id.load(SeqCst) != compute_id
+                || optical_generation.load(SeqCst) != requested_generation) {
+                return cb((compute_id, true));
+            }
+            params.optical_translation_checksum = if params.apply_optical_translation {
+                gyro.read().optical_translation.as_ref().map_or(0, |t| t.checksum())
+            } else { 0 };
 
             let commit = |checksum: &AtomicU64, value: u64| -> bool {
                 checksum.store(value, SeqCst);
@@ -2990,7 +3004,9 @@ impl StabilizationManager {
                 }
             } else { None };
             let mut translation = if m.translation_requested && m.translation_samples.iter().any(|s| s.confidence > 0.0) {
-                let mut t = gyro_source::OpticalTranslation::new(m.translation_samples.clone(), self.optical_ui.read().translation_settings);
+                let settings = self.optical_ui.read().translation_settings;
+                let mut t = gyro_source::OpticalTranslation::new_with_cancel(m.translation_samples.clone(), settings, &cancelled)
+                    .ok_or_else(|| "Cancelled".to_string())?;
                 t.quats_checksum = m.quats_checksum; t.context_checksum = m.context_checksum;
                 t.frames = m.frames; t.measured_frames = m.translation_samples.iter().filter(|s| s.confidence > 0.0).count();
                 Some(t)
@@ -3014,7 +3030,6 @@ impl StabilizationManager {
             if let Some(c) = &mut correction { c.enabled = ui.correction_enabled; }
             if let Some(t) = &mut translation {
                 t.enabled = ui.translation_enabled;
-                if t.settings != ui.translation_settings { t.set_settings(ui.translation_settings); }
             }
             gyro.optical_stab = reconstruction.clone();
             if let Some(s) = &mut gyro.optical_stab { s.enabled = ui.stab_enabled; }
@@ -3130,9 +3145,31 @@ impl StabilizationManager {
         if let Some(s) = gyro.optical_stab.as_mut() { changed |= std::mem::replace(&mut s.enabled, ui.stab_enabled) != ui.stab_enabled; }
         if let Some(t) = gyro.optical_translation.as_mut() {
             t.enabled = ui.translation_enabled;
-            if t.settings != ui.translation_settings { t.set_settings(ui.translation_settings); }
         }
         changed
+    }
+
+    fn refresh_translation_settings(gyro: &RwLock<GyroSource>, ui: &RwLock<OpticalUi>, cancelled: &dyn Fn() -> bool) -> bool {
+        if cancelled() { return false; }
+        let (mut result, old_key, settings) = {
+            let gyro = gyro.read();
+            let ui = ui.read();
+            let Some(result) = &gyro.optical_translation else { return true; };
+            if result.settings == ui.translation_settings { return true; }
+            (result.clone(), result.content_checksum(), ui.translation_settings)
+        };
+        result.settings = settings;
+        if !result.rebuild_with_cancel(gyro_source::TranslationConfig::resolved().track_age_k, cancelled) { return false; }
+        if cancelled() { return false; }
+        let mut gyro = gyro.write();
+        let ui = ui.read();
+        if cancelled() || ui.translation_settings != settings { return false; }
+        let Some(current) = gyro.optical_translation.as_mut() else { return false; };
+        if current.content_checksum() != old_key { return false; }
+        result.enabled = current.enabled;
+        result.applies = current.applies;
+        *current = result;
+        true
     }
     pub fn translation_stabilization_info(&self) -> serde_json::Value {
         let (translation, ui, analyzed_without, has_motion, ignore_file_motion) = {
@@ -3147,16 +3184,34 @@ impl StabilizationManager {
             "frames": translation.as_ref().map_or(0, |t| t.frames),
             "measured_frames": translation.as_ref().map_or(0, |t| t.measured_frames),
             "max_shift_pct": 0.0,
-            "effective_smoothness_s": translation.as_ref().map_or(0.0, |t| t.effective_smoothness_s()),
             "analyzed_without": analyzed_without, "has_motion": has_motion, "ignore_file_motion": ignore_file_motion,
         });
-        if let Some(t) = translation {
+        if let Some(t) = translation.filter(|t| t.is_active()) {
             // ComputeParams reads gyro itself, so the snapshot above must release its guard first.
             let params = ComputeParams::from_manager(self);
-            let focal = stabilization::FrameTransform::get_lens_data_at_timestamp(&params, 0.0, false).0[(0, 0)];
             let short_side = params.width.min(params.height) as f64;
-            let max_shift = t.samples.iter().map(|s| t.shift_at(s.timestamp_us as f64 / 1000.0).xy().norm()).fold(0.0f64, f64::max);
-            if short_side > 0.0 { info["max_shift_pct"] = (max_shift * focal / short_side * 100.0).into(); }
+            if short_side > 0.0 && params.scaled_fps > 0.0 {
+                let times: Vec<_> = {
+                    let gyro = params.gyro.read();
+                    let md = gyro.file_metadata.read();
+                    (0..params.frame_count).map(|frame| {
+                        let frame_time = frame as f64 * 1000.0 / params.scaled_fps;
+                        let time = frame_time + md.per_frame_time_offsets.get(frame).unwrap_or(&0.0);
+                        (frame_time, time, gyro.org_quat_at_timestamp(time))
+                    }).collect()
+                };
+                let config = gyro_source::TranslationConfig::resolved();
+                let mut maximum = 0.0f64;
+                for (frame, (frame_time, time, source)) in times.iter().enumerate() {
+                    let (mut k, ..) = stabilization::FrameTransform::get_lens_data_at_timestamp(&params, *frame_time, false);
+                    stabilization::FrameTransform::dequantize_camera_matrix(&params, frame, &mut k);
+                    let focal = k[(0, 0)];
+                    if focal.is_finite() && focal > 0.0 {
+                        maximum = maximum.max(t.camera_shift_at(source, *time, short_side, focal, false, &config).xy().norm() * focal / short_side * 100.0);
+                    }
+                }
+                info["max_shift_pct"] = maximum.into();
+            }
         }
         info
     }
@@ -5857,6 +5912,7 @@ mod tests {
             timestamp_us: (i as f64 * 1_000_000.0 / 30.0).round() as i64,
             position: [0.01 * (i as f32 * std::f32::consts::TAU * 3.0 / 30.0).sin(), 0.0, 0.0],
             ref_inv_depth: 1.0, confidence: 1.0, track_age_s: 2.0, segment: 0,
+            camera_to_world: [1.0, 0.0, 0.0, 0.0], focal_length_over_short_side: 1.0,
         }).collect()
     }
 
@@ -6049,6 +6105,7 @@ mod tests {
     #[test]
     fn translation_result_round_trips_through_the_project() {
         let manager = optical_project_manager();
+        manager.params.write().frame_count = 31;
         manager.set_translation_stabilization_enabled(true);
         manager.set_translation_reference(0.7);
         manager.set_translation_smoothness(2.0);
@@ -6076,6 +6133,52 @@ mod tests {
         assert_eq!(info["available"], true);
         assert_eq!(info["requested"], true);
         assert!(info["max_shift_pct"].as_f64().unwrap() > 0.0);
+        assert!(info["max_shift_pct"].as_f64().unwrap() <= 4.0);
+    }
+
+    #[test]
+    fn translation_parameter_rebuild_publishes_only_the_current_settings() {
+        let manager = optical_project_manager();
+        manager.set_translation_stabilization_enabled(true);
+        install_translation(&manager);
+        let old = manager.gyro.read().optical_translation.as_ref().unwrap().clone();
+        manager.set_translation_smoothness(2.0);
+        assert_eq!(manager.gyro.read().optical_translation.as_ref().unwrap().settings, old.settings);
+        let calls = std::cell::Cell::new(0);
+        let complete = StabilizationManager::refresh_translation_settings(&manager.gyro, &manager.optical_ui, &|| {
+            calls.set(calls.get()+1);
+            if calls.get() == 3 { manager.set_translation_reference(0.4); }
+            false
+        });
+        assert!(!complete);
+        assert_eq!(manager.gyro.read().optical_translation.as_ref().unwrap().content_checksum(), old.content_checksum());
+        manager.recompute_blocking();
+        let gyro = manager.gyro.read();
+        let result = gyro.optical_translation.as_ref().unwrap();
+        assert_eq!(result.settings, manager.optical_ui.read().translation_settings);
+        assert_eq!(result.samples, old.samples);
+    }
+
+    #[test]
+    fn translation_legacy_geometry_requires_analysis_and_keeps_the_payload() {
+        let manager = optical_project_manager();
+        manager.set_translation_stabilization_enabled(true);
+        install_translation(&manager);
+        let mut project = optical_export(&manager);
+        let mut legacy = serde_json::to_value(manager.gyro.read().optical_translation.as_ref().unwrap()).unwrap();
+        legacy.as_object_mut().unwrap().remove("geometry_version");
+        for sample in legacy["samples"].as_array_mut().unwrap() {
+            sample.as_object_mut().unwrap().remove("camera_to_world");
+            sample.as_object_mut().unwrap().remove("focal_length_over_short_side");
+        }
+        project["gyro_source"]["optical_translation"] = crate::util::compress_to_base91_cbor(&legacy).unwrap().into();
+        let restored = optical_import(&project);
+        restored.recompute_blocking();
+        let info = restored.translation_stabilization_info();
+        assert_eq!(info["available"], true);
+        assert_eq!(info["stale"], true);
+        assert_eq!(info["max_shift_pct"], 0.0);
+        assert_eq!(restored.gyro.read().optical_translation.as_ref().unwrap().samples.len(), 31);
     }
 
     #[test]
@@ -6099,12 +6202,14 @@ mod tests {
             assert_eq!(manager.zooming_checksum.load(SeqCst), 0);
             assert_eq!(manager.gyro.read().quaternions, quats);
         }
+        assert!(StabilizationManager::refresh_translation_settings(&manager.gyro, &manager.optical_ui, &|| false));
         let result = manager.gyro.read().optical_translation.clone().unwrap();
         assert_eq!(result.settings.reference, 0.5);
         assert_eq!(result.settings.smoothness_s, 2.0);
         assert!(result.settings.along_axis && result.enabled);
         manager.set_translation_reference(3.0);
         manager.set_translation_smoothness(0.0);
+        assert!(StabilizationManager::refresh_translation_settings(&manager.gyro, &manager.optical_ui, &|| false));
         assert_eq!(manager.optical_ui.read().translation_settings.reference, 2.0);
         assert_eq!(manager.gyro.read().optical_translation.as_ref().unwrap().settings.smoothness_s, 0.1);
     }
@@ -6352,6 +6457,7 @@ mod tests {
         resume_tx.send(()).unwrap();
         worker.join().unwrap();
         let ui = *manager.optical_ui.read();
+        manager.recompute_blocking();
         let result = manager.gyro.read().optical_translation.clone().unwrap();
         assert_eq!(ui.translation_settings.reference, 0.5);
         assert_eq!(ui.translation_settings.smoothness_s, 2.0);

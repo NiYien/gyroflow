@@ -2929,8 +2929,8 @@ Do you want to submit your profile?</source>
     </message>
     <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="466"/>
-        <source>Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis goes through every frame of the selected trim range. Can't be used together with in-camera stabilization reconstruction.</source>
-        <translation>从视频中测量相机左右和上下的位移，并平移整幅画面以稳住一个距离。需要文件自带的运动数据；分析会遍历所选剪辑范围的每一帧。不能与重建机内防抖同时使用。</translation>
+        <source>Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis goes through every frame of the selected trim range. Can't be used together with in-camera stabilization reconstruction. The reported shift is sampled at frame centers; output cropping changes its apparent size.</source>
+        <translation>从视频中测量相机左右和上下的位移，并平移整幅画面以稳住一个距离。需要文件自带的运动数据；分析会遍历所选剪辑范围的每一帧。不能与重建机内防抖同时使用。显示的平移量取各帧中心时刻，输出裁切会改变其在屏幕上的大小。</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="481"/>
@@ -2979,8 +2979,8 @@ Do you want to submit your profile?</source>
     </message>
     <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="478"/>
-        <source>Measured in %1 of %2 frames, shift up to %3% of the frame, effective smoothness %4 s</source>
-        <translation>在 %1 / %2 帧中测得，最大平移为画面的 %3%，实际平滑度 %4 秒</translation>
+        <source>Measured in %1 of %2 frames, applied shift up to %3% of the source frame's short side</source>
+        <translation>在 %1 / %2 帧中测得，最大平移补偿为原画面短边的 %3%</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="535"/>
