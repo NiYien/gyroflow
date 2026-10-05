@@ -707,10 +707,17 @@ impl FrameTransform {
                         i_r *= m;
                     }
                 }
-                if let Some(t) = optical_translation_for(
+                if let Some(mut t) = optical_translation_for(
                     &gyro, params, &source, quat_time, timestamp_ms, scaled_k[(0, 0)],
                     params.framebuffer_inverted, &translation_config,
                 ) {
+                    if !gyro.optical_translation.as_ref().unwrap().settings.along_axis {
+                        // With B=P^-1 and s=P*t, adding t to B's last column gives u'=(1+s.z)*u-s.xy.
+                        // Remove only its output scale around C: s'=s-C*s.z, t'=B*s'=t-B*C*s.z.
+                        // Breathing fixes C and leaves P's last row unchanged, so the pre-breathing P gives s.z.
+                        let centre = Vector3::new(new_k[(0, 2)], new_k[(1, 2)], 1.0);
+                        t -= i_r * centre * (new_k * r * t).z;
+                    }
                     i_r[(0, 2)] += t.x;
                     i_r[(1, 2)] += t.y;
                     i_r[(2, 2)] += t.z;
@@ -938,7 +945,12 @@ impl FrameTransform {
                     &gyro, params, &source, quat_time, timestamp_ms, scaled_k[(0, 0)],
                     false, &translation_config,
                 ) {
-                    let s = p * t;
+                    let mut s = p * t;
+                    if !gyro.optical_translation.as_ref().unwrap().settings.along_axis {
+                        // The same output-plane transform as the inverse path: preserve the displacement at C,
+                        // with unit scale everywhere. Dropping s.z alone would also move C by the principal point.
+                        s -= Vector3::new(new_k[(0, 2)], new_k[(1, 2)], 1.0) * s.z;
+                    }
                     let d = 1.0 + s.z;
                     if d > 0.5 {
                         p -= s * p.row(2) / d;
@@ -1394,6 +1406,48 @@ mod tests {
     }
 
     #[test]
+    fn translation_without_axial_compensation_is_a_pure_output_shift_when_tilted() {
+        for (pitch, yaw, rotation, breathing) in [(0.0, 0.2, 0.0, 1.0), (0.15, -0.2, 90.0, 0.82)] {
+            let mut p = translated(0.0, Quat64::identity(), [0.01, -0.006, 0.0], false);
+            p.video_rotation = rotation;
+            {
+                let mut gyro = p.gyro.write();
+                let correction = Quat64::from_euler_angles(pitch, yaw, 0.0);
+                gyro.smoothed_quaternions.insert(0, correction);
+                gyro.smoothed_quaternions.insert(1_000_000, correction);
+                gyro.file_metadata.write().lens_breathing[0].scale = vec![breathing];
+            }
+            let base = untranslated(&p);
+            let a: Vec<_> = POINTS.iter().map(|&pt| to_output(&base, pt)).collect();
+            let b: Vec<_> = POINTS.iter().map(|&pt| to_output(&p, pt)).collect();
+            let displacement = (b[2].0 - a[2].0, b[2].1 - a[2].1);
+            assert!(displacement.0.hypot(displacement.1) > 1.0);
+            // Rotate the lateral camera displacement into the target axes analytically. The principal-point
+            // terms must cancel; retaining them would add a spurious centre shift proportional to yaw/pitch.
+            let x = 0.01 * yaw.cos() - 0.006 * pitch.sin() * yaw.sin();
+            let y = -0.006 * pitch.cos();
+            let angle = rotation.to_radians();
+            let focal = output_focal(&p).0 / breathing as f64;
+            let expected = (focal * (angle.cos() * x - angle.sin() * y), -focal * (angle.sin() * x + angle.cos() * y));
+            assert_shift(&p, expected);
+            for i in 0..POINTS.len() {
+                assert!(((b[i].0 - a[i].0) - displacement.0).abs() < 0.02
+                    && ((b[i].1 - a[i].1) - displacement.1).abs() < 0.02,
+                    "point {} moved by {:?}, centre moved by {:?}", i, (b[i].0 - a[i].0, b[i].1 - a[i].1), displacement);
+                let distance = |v: &Vec<(f32, f32)>| (v[i].0 - v[2].0).hypot(v[i].1 - v[2].1);
+                assert!((distance(&a) - distance(&b)).abs() < 0.02);
+            }
+            assert_round_trip(&p);
+            for &out in &POINTS {
+                let source = to_source(&p, out, 0).unwrap();
+                let back = to_output(&p, source);
+                assert!((back.0 - out.0).abs() < 0.05 && (back.1 - out.1).abs() < 0.05,
+                    "output {:?} -> source {:?} -> output {:?}", out, source, back);
+            }
+        }
+    }
+
+    #[test]
     fn translation_round_trips() {
         let tilted = Quat64::from_euler_angles(0.05, -0.08, 0.3);
         assert_round_trip(&translated(0.0, tilted, [0.01, -0.006, 0.004], true));
@@ -1439,6 +1493,23 @@ mod tests {
         let (upright, inverted) = (moved(false), moved(true));
         assert!(upright.0.abs() > 1.0 && upright.1.abs() > 1.0);
         assert!((inverted.0 - upright.0).abs() < 0.05 && (inverted.1 + upright.1).abs() < 0.05, "{upright:?} vs {inverted:?}");
+    }
+
+    #[test]
+    fn tilted_translation_preserves_the_inverted_framebuffer_convention() {
+        let moved = |inverted: bool| {
+            let mut p = translated(0.0, Quat64::identity(), [0.01, -0.006, 0.0], false);
+            p.framebuffer_inverted = inverted;
+            let correction = Quat64::from_euler_angles(0.15, -0.2, 0.0);
+            p.gyro.write().smoothed_quaternions.insert(0, correction);
+            p.gyro.write().smoothed_quaternions.insert(1_000_000, correction);
+            let centre = (W as f32 / 2.0, H as f32 / 2.0);
+            let (a, b) = (to_source(&untranslated(&p), centre, 0).unwrap(), to_source(&p, centre, 0).unwrap());
+            (b.0 - a.0, b.1 - a.1)
+        };
+        let (upright, inverted) = (moved(false), moved(true));
+        assert!(upright.0.abs() > 1.0 && upright.1.abs() > 1.0);
+        assert!((inverted.0 - upright.0).abs() < 0.05 && (inverted.1 + upright.1).abs() < 0.05);
     }
 
     #[test]

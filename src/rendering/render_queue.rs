@@ -4882,6 +4882,10 @@ impl RenderQueue {
 
     fn stabilization_blocks_processing(stab: &StabilizationManager) -> bool {
         if Self::active_stab_reconstruction(stab) { return false; }
+        Self::original_stabilization_requirement(stab)
+    }
+
+    fn original_stabilization_requirement(stab: &StabilizationManager) -> bool {
         let gyro = stab.gyro.read();
         let md = gyro.file_metadata.read();
         md.additional_data
@@ -4900,8 +4904,39 @@ impl RenderQueue {
 
     fn incoming_stabilization_blocked(&self, job_id: u32, stab: &StabilizationManager) -> bool {
         if Self::active_stab_reconstruction(stab) { return false; }
-        let historical_block = self.queue.borrow().iter().any(|item| item.job_id == job_id && item.skip_reason.to_string() == "image_stabilization");
-        Self::stabilization_blocks_processing(stab) || historical_block || self.job_is_stabilization_blocked(job_id)
+        Self::original_stabilization_requirement(stab) || self.job_original_stabilization_requirement(job_id)
+    }
+
+    fn job_original_stabilization_requirement(&self, job_id: u32) -> bool {
+        if self.queue.borrow().iter().any(|item| item.job_id == job_id && item.skip_reason.to_string() == "image_stabilization") { return true; }
+        let Some(job) = self.jobs.get(&job_id) else { return false; };
+        if let Some(stab) = &job.stab { return Self::original_stabilization_requirement(stab); }
+        // A completed job may have released its manager. Its exported metadata still carries the scalar fact.
+        let Some(mut data) = job.project_data.clone() else { return false; };
+        deref_project_file_reference(&mut data);
+        let Ok(project) = serde_json::from_str::<serde_json::Value>(&data) else { return false; };
+        let metadata = &project["gyro_source"]["file_metadata"];
+        if let Some(data) = metadata.as_str() {
+            core::util::decompress_from_base91_cbor::<core::gyro_source::FileMetadata>(data).ok()
+                .is_some_and(|md| md.additional_data["stabilization_blocks_processing"].as_bool() == Some(true))
+        } else {
+            metadata["additional_data"]["stabilization_blocks_processing"].as_bool() == Some(true)
+        }
+    }
+
+    fn preserve_stabilization_requirement(&self, job_id: u32, stab: Arc<StabilizationManager>) -> Arc<StabilizationManager> {
+        if Self::original_stabilization_requirement(&stab) || !self.job_original_stabilization_requirement(job_id) { return stab; }
+        // Never mutate the incoming preview or its shared metadata. Keep the original requirement in the
+        // exported scalar even while an active reconstruction temporarily makes this job eligible.
+        let owned = Arc::try_unwrap(stab).unwrap_or_else(|shared| shared.get_cloned());
+        {
+            let mut gyro = owned.gyro.write();
+            let mut metadata = gyro.file_metadata.read().clone();
+            if !metadata.additional_data.is_object() { metadata.additional_data = serde_json::json!({}); }
+            metadata.additional_data["stabilization_blocks_processing"] = true.into();
+            gyro.file_metadata = metadata.into();
+        }
+        Arc::new(owned)
     }
 
     fn skip_stabilization_blocked_job(&mut self, job_id: u32) -> bool {
@@ -4939,13 +4974,14 @@ impl RenderQueue {
                     serde_json::from_value(out.clone()) as serde_json::Result<RenderOptions>
                 {
                     render_options.update_from_json(out);
-                    let project_url = self.stabilizer.input_file.read().project_file_url.clone();
+                    let stab = self.preserve_stabilization_requirement(job_id, Arc::new(self.stabilizer.get_cloned()));
+                    let project_url = stab.input_file.read().project_file_url.clone();
                     // An edit must not create or overwrite a project for a
                     // clip the queue has already excluded from processing.
-                    let stabilization_blocked = self.incoming_stabilization_blocked(job_id, &self.stabilizer);
+                    let stabilization_blocked = self.incoming_stabilization_blocked(job_id, &stab);
                     if let Some(project_url) = project_url.filter(|_| !stabilization_blocked) {
                         // Save project file on disk
-                        if let Err(e) = self.stabilizer.export_gyroflow_file(
+                        if let Err(e) = stab.export_gyroflow_file(
                             &project_url,
                             core::GyroflowProjectType::WithGyroData,
                             &additional_data,
@@ -4953,7 +4989,6 @@ impl RenderQueue {
                             ::log::warn!("Failed to save project file: {}: {:?}", project_url, e);
                         }
                     }
-                    let stab = self.stabilizer.get_cloned();
 
                     // If it's added from main UI, never do the additional autosync
                     if let Some(ref mut obj) = stab.lens.write().sync_settings {
@@ -4962,7 +4997,7 @@ impl RenderQueue {
 
                     self.add_internal(
                         job_id,
-                        Arc::new(stab),
+                        stab,
                         render_options,
                         additional_data,
                         thumbnail_url,
@@ -4989,6 +5024,7 @@ impl RenderQueue {
         thumbnail_url: QString,
         source_pix_fmt: Option<ffmpeg_next::format::Pixel>,
     ) {
+        let stab = self.preserve_stabilization_requirement(job_id, stab);
         let size = stab.params.read().size;
         stab.set_render_params(
             size,
@@ -25168,6 +25204,77 @@ mod tests {
         q.stabilizer.clear_optical_correction(); q.editing_job_id = 1;
         q.add(serde_json::json!({"output": RenderOptions::default()}).to_string(), QString::default());
         assert_eq!(row_status(&q, 1), (JobStatus::Skipped, "image_stabilization".into()));
+    }
+
+    #[test]
+    fn reconstructed_jobs_preserve_missing_metadata_blocker_through_saved_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing-metadata.gyroflow");
+        let mut q = recovery_queue(&[(1, JobStatus::Skipped, "image_stabilization", "", false)]);
+        q.stabilizer = reconstructed_queue_manager();
+        q.stabilizer.set_size(1920, 1080);
+        q.stabilizer.set_output_size(1920, 1080);
+        {
+            let mut gyro = q.stabilizer.gyro.write();
+            let mut metadata = gyro.file_metadata.read().clone();
+            metadata.additional_data = serde_json::json!({});
+            // Load recorded quaternions through the real telemetry API so their integration method also
+            // survives import; merely assigning metadata leaves the default IMU integrator with no IMU.
+            gyro.load_from_telemetry(metadata);
+            gyro.integrate();
+            assert!(!gyro.quaternions.is_empty());
+        }
+        install_queue_reconstruction(&q.stabilizer);
+        let shared_metadata = q.stabilizer.gyro.read().file_metadata.clone();
+        q.stabilizer.input_file.write().project_file_url = Some(filesystem::path_to_url(&path.to_string_lossy()));
+        q.editing_job_id = 1;
+        q.add(serde_json::json!({"output": RenderOptions::default()}).to_string(), QString::default());
+        assert_eq!(row_status(&q, 1), (JobStatus::Queued, String::new()));
+        assert!(!q.job_is_stabilization_blocked(1));
+        assert!(shared_metadata.read().additional_data.get("stabilization_blocks_processing").is_none());
+        let installed = q.jobs[&1].stab.as_ref().unwrap().clone();
+        installed.set_offset(500_000, 12.0);
+        assert!(q.job_is_stabilization_blocked(1), "stale reconstruction must restore the historical blocker");
+        installed.remove_offset(500_000);
+        assert!(!q.job_is_stabilization_blocked(1));
+        installed.set_stab_reconstruction_enabled(false);
+        assert!(q.job_is_stabilization_blocked(1));
+        installed.set_stab_reconstruction_enabled(true);
+        assert!(!q.job_is_stabilization_blocked(1));
+        assert!(q.incoming_stabilization_blocked(1, &edited_preview_stab()), "the old active manager cannot approve an incoming result");
+        installed.set_ignore_file_motion(true);
+        assert!(q.job_is_stabilization_blocked(1));
+        installed.set_ignore_file_motion(false);
+        assert!(!q.job_is_stabilization_blocked(1));
+        let original_motion = installed.gyro.read().file_metadata.read().quaternions.clone();
+        installed.gyro.read().file_metadata.write().quaternions.clear();
+        assert!(q.job_is_stabilization_blocked(1));
+        installed.gyro.read().file_metadata.write().quaternions = original_motion;
+        installed.recompute_gyro();
+        assert!(!q.job_is_stabilization_blocked(1));
+        installed.clear_optical_correction();
+        assert!(q.job_is_stabilization_blocked(1));
+        q.jobs.get_mut(&1).unwrap().stab = None;
+        assert!(q.incoming_stabilization_blocked(1, &edited_preview_stab()), "the released manager's snapshot still records the requirement");
+        q.reset_job(1);
+        assert!(!q.job_is_stabilization_blocked(1));
+        q.jobs[&1].stab.as_ref().unwrap().clear_optical_correction();
+        assert!(q.job_is_stabilization_blocked(1), "the recreated queue task retains the requirement");
+        q.jobs.get_mut(&1).unwrap().stab = None;
+        q.jobs.get_mut(&1).unwrap().project_data = Some(serde_json::json!({
+            "project_file": filesystem::path_to_url(&path.to_string_lossy()),
+        }).to_string());
+        assert!(q.incoming_stabilization_blocked(1, &edited_preview_stab()), "the released job's file reference also retains the requirement");
+        let saved = std::fs::read(&path).unwrap();
+        let reopened = Arc::new(StabilizationManager::default());
+        let mut preset = false;
+        reopened.import_gyroflow_data(&saved, true, None, |_| (), Arc::new(AtomicBool::new(false)), &mut preset, true).unwrap();
+        assert!(!preset);
+        let mut restored = recovery_queue(&[]);
+        restored.add_internal(2, reopened.clone(), RenderOptions::default(), "{}".into(), QString::default(), None);
+        assert!(!restored.job_is_stabilization_blocked(2));
+        reopened.clear_optical_correction();
+        assert!(restored.job_is_stabilization_blocked(2), "saved metadata must keep the original requirement after reopening");
     }
 
     #[test]

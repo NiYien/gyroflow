@@ -3695,7 +3695,11 @@ impl StabilizationManager {
         let mut changed = false;
         if let Some(c) = &mut gyro.optical_correction { changed |= std::mem::replace(&mut c.enabled, ui.correction_enabled) != ui.correction_enabled; }
         if let Some(s) = &mut gyro.optical_stab { changed |= std::mem::replace(&mut s.enabled, ui.stab_enabled) != ui.stab_enabled; }
-        if let Some(t) = &mut gyro.optical_translation { t.enabled = ui.translation_enabled; }
+        if let Some(t) = &mut gyro.optical_translation {
+            t.enabled = ui.translation_enabled;
+            // Rebuild only the snapshot, after releasing both source locks.
+            if t.settings != ui.translation_settings { t.set_settings(ui.translation_settings); }
+        }
         if changed { gyro.integrate(); }
         StabilizationManager {
             params: Arc::new(RwLock::new(self.params.read().clone())),
@@ -4644,12 +4648,6 @@ impl StabilizationManager {
                     if let Some(v) = obj.get("translation_reference").and_then(|x| x.as_f64()) { ui.translation_settings.reference = v.clamp(0.0, 2.0); }
                     if let Some(v) = obj.get("translation_smoothness").and_then(|x| x.as_f64()) { ui.translation_settings.smoothness_s = v.clamp(0.1, 10.0); }
                     if let Some(v) = obj.get("translation_along_axis").and_then(|x| x.as_bool()) { ui.translation_settings.along_axis = v; }
-                    if *is_preset {
-                        if let Some(t) = gyro.optical_translation.as_mut() {
-                            t.enabled = ui.translation_enabled;
-                            if t.settings != ui.translation_settings { t.set_settings(ui.translation_settings); }
-                        }
-                    }
                 }
                 if !*is_preset {
                     gyro.optical_stab = None;
@@ -4663,6 +4661,15 @@ impl StabilizationManager {
                     if let Some(value) = obj.get("optical_translation") {
                         match util::decompress_from_base91_cbor::<gyro_source::OpticalTranslation>(value.as_str().unwrap_or_default()) {
                             Ok(mut translation) => {
+                                {
+                                    let mut ui = self.optical_ui.write();
+                                    // Partial older projects rendered with the payload's settings. Preserve those
+                                    // for missing controls, while explicit top-level values remain authoritative.
+                                    if obj.get("translation_reference").and_then(|x| x.as_f64()).is_none() { ui.translation_settings.reference = translation.settings.reference; }
+                                    if obj.get("translation_smoothness").and_then(|x| x.as_f64()).is_none() { ui.translation_settings.smoothness_s = translation.settings.smoothness_s; }
+                                    if obj.get("translation_along_axis").and_then(|x| x.as_bool()).is_none() { ui.translation_settings.along_axis = translation.settings.along_axis; }
+                                    translation.settings = ui.translation_settings;
+                                }
                                 translation.rebuild();
                                 gyro.optical_translation = Some(translation);
                             }
@@ -4678,10 +4685,6 @@ impl StabilizationManager {
                                 correction.enabled = v;
                             }
                             gyro.set_optical_correction(Some(correction));
-                            // Integrated with the settings just read, for the checksum it's matched against. Whether it applies
-                            // also depends on what the rest of the project sets (the sync, the lens, the frame timing): the next
-                            // recompute brings that up to date, see `refresh_optical_correction`
-                            gyro.apply_transforms();
                         }
                         Err(error) => ::log::warn!("Failed to load optical correction: {:?}", error),
                     }
@@ -4690,7 +4693,10 @@ impl StabilizationManager {
                 {
                     let ui = self.optical_ui.read();
                     if let Some(c) = &mut gyro.optical_correction { c.enabled = ui.correction_enabled; }
-                    if let Some(t) = &mut gyro.optical_translation { t.enabled = ui.translation_enabled; }
+                    if let Some(t) = &mut gyro.optical_translation {
+                        t.enabled = ui.translation_enabled;
+                        if t.settings != ui.translation_settings { t.set_settings(ui.translation_settings); }
+                    }
                     if let Some(s) = &mut gyro.optical_stab { s.enabled = ui.stab_enabled; }
                 }
                 gyro.apply_transforms();
@@ -6239,6 +6245,91 @@ mod tests {
         assert!(restored.gyro.read().optical_translation.is_none());
         assert!(result["gyro_source"].get("optical_translation").is_none());
         assert!(restored.optical_ui.read().translation_enabled);
+    }
+
+    #[test]
+    fn translation_clone_during_setting_update_matches_its_ui_and_export() {
+        let manager = Arc::new(optical_project_manager());
+        manager.set_optical_correction_enabled(false);
+        manager.set_translation_stabilization_enabled(true);
+        install_translation(&manager);
+        manager.recompute_blocking();
+        let original = manager.gyro.read().optical_translation.clone().unwrap();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (resume_tx, resume_rx) = std::sync::mpsc::channel();
+        let worker_manager = manager.clone();
+        let worker = std::thread::spawn(move || {
+            TRANSLATION_SETTER_BEFORE_SYNC.with(|hook| hook.replace(Some(Box::new(move || {
+                ready_tx.send(()).unwrap();
+                resume_rx.recv().unwrap();
+            }))));
+            worker_manager.set_translation_reference(0.0);
+        });
+        ready_rx.recv_timeout(std::time::Duration::from_secs(30)).unwrap();
+        let cloned = manager.get_cloned();
+        let source_still_old = manager.gyro.read().optical_translation.as_ref().unwrap().settings == original.settings;
+        resume_tx.send(()).unwrap();
+        worker.join().unwrap();
+        assert!(source_still_old, "cloning must not synchronize the source manager");
+        let result = cloned.gyro.read().optical_translation.clone().unwrap();
+        assert_eq!(result.settings, cloned.optical_ui.read().translation_settings);
+        assert_eq!(result.shift_at(100.0), nalgebra::Vector3::zeros());
+        assert_eq!(result.quats_checksum, original.quats_checksum);
+        assert_eq!(result.context_checksum, original.context_checksum);
+        cloned.recompute_blocking();
+        let without = cloned.get_cloned();
+        without.gyro.write().optical_translation = None;
+        assert_eq!(stabilization::FrameTransform::at_timestamp(&ComputeParams::from_manager(&cloned), 100.0, 0).matrices,
+            stabilization::FrameTransform::at_timestamp(&ComputeParams::from_manager(&without), 100.0, 0).matrices);
+        let project = optical_export(&cloned);
+        let payload: gyro_source::OpticalTranslation = util::decompress_from_base91_cbor(project["gyro_source"]["optical_translation"].as_str().unwrap()).unwrap();
+        assert_eq!(payload.settings.reference, project["gyro_source"]["translation_reference"].as_f64().unwrap());
+        let reopened = optical_import(&project);
+        assert_eq!(reopened.gyro.read().optical_translation.as_ref().unwrap().settings, result.settings);
+        assert_eq!(reopened.gyro.read().optical_translation.as_ref().unwrap().shift_at(100.0), nalgebra::Vector3::zeros());
+    }
+
+    #[test]
+    fn translation_project_import_uses_final_ui_settings_over_payload() {
+        let manager = optical_project_manager();
+        manager.set_translation_stabilization_enabled(true);
+        install_translation(&manager);
+        let original = manager.gyro.read().optical_translation.clone().unwrap();
+        assert!(original.shift_at(100.0).norm() > 0.0);
+        let mut project = optical_export(&manager);
+        project["gyro_source"]["translation_reference"] = 0.0.into();
+        project["gyro_source"]["translation_smoothness"] = 2.5.into();
+        project["gyro_source"]["translation_along_axis"] = true.into();
+        let restored = optical_import(&project);
+        let result = restored.gyro.read().optical_translation.clone().unwrap();
+        assert_eq!(result.settings, restored.optical_ui.read().translation_settings);
+        assert_eq!(result.shift_at(100.0), nalgebra::Vector3::zeros());
+        assert_eq!(result.samples, original.samples);
+        assert_eq!(result.quats_checksum, original.quats_checksum);
+        assert_eq!(result.context_checksum, original.context_checksum);
+    }
+
+    #[test]
+    fn translation_project_import_preserves_missing_controls_from_payload() {
+        let manager = optical_project_manager();
+        manager.set_translation_stabilization_enabled(true);
+        manager.set_translation_reference(0.7);
+        manager.set_translation_smoothness(2.5);
+        manager.set_translation_along_axis(true);
+        install_translation(&manager);
+        let original = manager.gyro.read().optical_translation.clone().unwrap();
+        let mut project = optical_export(&manager);
+        project["gyro_source"]["translation_reference"] = serde_json::Value::Null;
+        project["gyro_source"].as_object_mut().unwrap().remove("translation_smoothness");
+        project["gyro_source"]["translation_along_axis"] = false.into();
+        let restored = optical_import(&project);
+        let settings = gyro_source::OpticalTranslationSettings { along_axis: false, ..original.settings };
+        let result = restored.gyro.read().optical_translation.clone().unwrap();
+        assert_eq!(result.settings, settings);
+        assert_eq!(restored.optical_ui.read().translation_settings, settings);
+        assert_eq!(result.shift_at(100.0), original.shift_at(100.0));
+        assert_eq!(result.quats_checksum, original.quats_checksum);
+        assert_eq!(result.context_checksum, original.context_checksum);
     }
 
     #[test]
