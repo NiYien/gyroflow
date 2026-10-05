@@ -1346,6 +1346,14 @@ fn update_project_data_batch_params(data: &mut serde_json::Value, params: &serde
     }
 }
 
+fn retain_stabilization_requirement(source: &core::gyro_source::FileMetadata, replacement: &mut core::gyro_source::FileMetadata) {
+    if source.additional_data["stabilization_blocks_processing"].as_bool() == Some(true) {
+        // The replacement is job-owned; never write this video fact into shared external-gyro metadata.
+        if !replacement.additional_data.is_object() { replacement.additional_data = serde_json::json!({}); }
+        replacement.additional_data["stabilization_blocks_processing"] = true.into();
+    }
+}
+
 // Dereference the file-reference form of `project_data` ({"project_file": url},
 // produced on the finished tick when export_project != 2 with stab released)
 // into the full project JSON read from disk. That reference form made batch
@@ -4094,7 +4102,7 @@ impl RenderQueue {
         // cache-range-relative, so truncated metadata is never re-cropped),
         // else a fresh ranged parse of the ORIGINAL file.
         let mut slice_source = "cached";
-        let md = if let Some(entry) = select_best_cached_metadata(&input.cached_ranges, requested)
+        let mut md = if let Some(entry) = select_best_cached_metadata(&input.cached_ranges, requested)
         {
             let adjusted = get_adjusted_match_range_ms(
                 entry.range_ms,
@@ -4165,6 +4173,7 @@ impl RenderQueue {
             }
             let preserved_imu_rotation = gyro.imu_transforms.imu_rotation_angles;
             let preserved_acc_rotation = gyro.imu_transforms.acc_rotation_angles;
+            retain_stabilization_requirement(&gyro.file_metadata.read(), &mut md);
             gyro.init_from_params(&params);
             gyro.clear();
             gyro.file_url = String::new();
@@ -4880,6 +4889,7 @@ impl RenderQueue {
         stab.gyro.read().optical_stab.as_ref().is_some_and(|s| s.is_active())
     }
 
+    #[cfg(test)]
     fn stabilization_blocks_processing(stab: &StabilizationManager) -> bool {
         if Self::active_stab_reconstruction(stab) { return false; }
         Self::original_stabilization_requirement(stab)
@@ -4896,10 +4906,13 @@ impl RenderQueue {
 
     fn job_is_stabilization_blocked(&self, job_id: u32) -> bool {
         let stab = self.jobs.get(&job_id).and_then(|job| job.stab.as_ref());
-        if stab.is_some_and(|stab| Self::active_stab_reconstruction(stab)) { return false; }
+        if let Some(stab) = stab {
+            return !Self::active_stab_reconstruction(stab) && self.job_original_stabilization_requirement(job_id);
+        }
+        // A released result must be restored before its current applicability can be judged.
         self.queue.borrow().iter().any(|item| {
             item.job_id == job_id && item.skip_reason.to_string() == "image_stabilization"
-        }) || stab.is_some_and(|stab| Self::stabilization_blocks_processing(stab))
+        })
     }
 
     fn incoming_stabilization_blocked(&self, job_id: u32, stab: &StabilizationManager) -> bool {
@@ -4910,8 +4923,8 @@ impl RenderQueue {
     fn job_original_stabilization_requirement(&self, job_id: u32) -> bool {
         if self.queue.borrow().iter().any(|item| item.job_id == job_id && item.skip_reason.to_string() == "image_stabilization") { return true; }
         let Some(job) = self.jobs.get(&job_id) else { return false; };
-        if let Some(stab) = &job.stab { return Self::original_stabilization_requirement(stab); }
-        // A completed job may have released its manager. Its exported metadata still carries the scalar fact.
+        if job.stab.as_ref().is_some_and(|stab| Self::original_stabilization_requirement(stab)) { return true; }
+        // Reloaded motion may have replaced the live metadata; released managers need the same fallback.
         let Some(mut data) = job.project_data.clone() else { return false; };
         deref_project_file_reference(&mut data);
         let Ok(project) = serde_json::from_str::<serde_json::Value>(&data) else { return false; };
@@ -5924,6 +5937,7 @@ impl RenderQueue {
     }
 
     fn finish_reset_job(&mut self, job_id: u32) {
+        if self.skip_stabilization_blocked_job(job_id) { return; }
         update_model!(self, job_id, itm {
             itm.error_string = QString::default();
             itm.skip_reason = QString::default();
@@ -5940,9 +5954,10 @@ impl RenderQueue {
     }
 
     pub fn reset_job(&mut self, job_id: u32) {
+        let recreating_released_stab = self.jobs.get(&job_id).is_some_and(|job| job.stab.is_none() && job.project_data.is_some());
         // Resetting progress does not make an excluded clip eligible to
         // generate a project on the next batch or direct render.
-        if self.skip_stabilization_blocked_job(job_id) {
+        if !recreating_released_stab && self.skip_stabilization_blocked_job(job_id) {
             return;
         }
         if self
@@ -5961,7 +5976,6 @@ impl RenderQueue {
         }
 
         // Recreate StabilizationManager from project_data if it was released after rendering
-        let recreating_released_stab = self.jobs.get(&job_id).is_some_and(|job| job.stab.is_none());
         let released_snapshot_is_stale = self.jobs.get(&job_id).is_some_and(|job| {
             recreating_released_stab
                 && job.manual_camera_project_generation
@@ -7332,6 +7346,11 @@ impl RenderQueue {
     }
 
     pub fn render_job(&mut self, job_id: u32) {
+        if self.jobs.get(&job_id).is_some_and(|job| job.stab.is_none() && job.project_data.is_some())
+            && self.job_original_stabilization_requirement(job_id)
+        {
+            self.reset_job(job_id);
+        }
         if self.skip_stabilization_blocked_job(job_id) {
             return;
         }
@@ -11859,15 +11878,19 @@ impl RenderQueue {
 
     fn clear_gyro_files(&mut self) {
         // Clear external gyro data from all jobs
-        for (_, job) in &self.jobs {
+        for (job_id, job) in &self.jobs {
             if let Some(stab) = &job.stab {
                 let is_external = {
                     let gyro = stab.gyro.read();
                     !gyro.file_url.is_empty() && gyro.file_url != stab.input_file.read().url
                 };
                 if is_external {
+                    let required = self.job_original_stabilization_requirement(*job_id);
                     let mut gyro = stab.gyro.write();
+                    let mut metadata = core::gyro_source::FileMetadata::default();
+                    if required { metadata.additional_data = serde_json::json!({"stabilization_blocks_processing": true}); }
                     gyro.clear();
+                    gyro.file_metadata = metadata.into();
                     gyro.file_url.clear();
                 }
             }
@@ -12001,6 +12024,8 @@ impl RenderQueue {
     }
 
     fn prepare_batch_match_job_ids(&mut self) -> Vec<u32> {
+        let candidates: Vec<_> = self.queue.borrow().iter().map(|item| item.job_id).collect();
+        for job_id in candidates { self.skip_stabilization_blocked_job(job_id); }
         // [queue-render-skip] Re-match recoverable skips, but keep fixed
         // in-camera-stabilization skips out of both the reset and this match run.
         // External motion data cannot compensate a stabilized image when the
@@ -13787,6 +13812,8 @@ impl RenderQueue {
                                     gyro.imu_transforms.imu_rotation_angles;
                                 let preserved_acc_rotation =
                                     gyro.imu_transforms.acc_rotation_angles;
+                                let mut assigned_metadata = md.clone();
+                                retain_stabilization_requirement(&gyro.file_metadata.read(), &mut assigned_metadata);
                                 gyro.init_from_params(&params);
                                 gyro.clear();
                                 gyro.file_url = String::new();
@@ -13796,7 +13823,7 @@ impl RenderQueue {
                                 );
                                 gyro.file_metadata = Default::default();
                                 drop(params);
-                                gyro.load_from_telemetry(md.clone());
+                                gyro.load_from_telemetry(assigned_metadata);
                                 gyro.file_load_options = Default::default();
                                 if let Some(v) = preserved_imu_rotation {
                                     gyro.imu_transforms.set_imu_rotation(v[0], v[1], v[2]);
@@ -25275,6 +25302,69 @@ mod tests {
         assert!(!restored.job_is_stabilization_blocked(2));
         reopened.clear_optical_correction();
         assert!(restored.job_is_stabilization_blocked(2), "saved metadata must keep the original requirement after reopening");
+    }
+
+    #[test]
+    fn reconstructed_jobs_remain_blocked_after_telemetry_replacement_and_restore() {
+        let mut q = recovery_queue(&[(1, JobStatus::Skipped, "image_stabilization", "", false)]);
+        let incoming = reconstructed_queue_manager();
+        incoming.set_size(1920, 1080);
+        incoming.set_output_size(1920, 1080);
+        {
+            let mut gyro = incoming.gyro.write();
+            let metadata = gyro.file_metadata.read().clone();
+            gyro.load_from_telemetry(metadata);
+            gyro.integrate();
+        }
+        install_queue_reconstruction(&incoming);
+        q.add_internal(1, incoming, RenderOptions::default(), "{}".into(), QString::default(), None);
+        assert_eq!(row_status(&q, 1), (JobStatus::Queued, String::new()));
+        let live = q.jobs[&1].stab.as_ref().unwrap().clone();
+        {
+            let params = live.params.read();
+            let mut gyro = live.gyro.write();
+            let mut replacement = gyro.file_metadata.read().clone();
+            replacement.additional_data = serde_json::json!({});
+            gyro.init_from_params(&params);
+            gyro.clear();
+            gyro.file_metadata = Default::default();
+            gyro.load_from_telemetry(replacement);
+            assert!(gyro.optical_stab.is_none());
+        }
+        assert!(q.job_is_stabilization_blocked(1), "the original snapshot must block replacement motion without reconstruction");
+        assert!(q.prepare_batch_match_job_ids().is_empty());
+        q.reset_job(1);
+        q.render_job(1);
+        assert_eq!(row_status(&q, 1), (JobStatus::Skipped, "image_stabilization".into()));
+        assert_eq!(q.jobs[&1].render_epoch.load(SeqCst), 0);
+        q.add_internal(1, live, RenderOptions::default(), "{}".into(), QString::default(), None);
+        let blocked_snapshot = q.jobs[&1].project_data.clone().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("replaced-motion.gyroflow");
+        std::fs::write(&path, &blocked_snapshot).unwrap();
+        for (index, snapshot) in [blocked_snapshot, serde_json::json!({"project_file": filesystem::path_to_url(&path.to_string_lossy())}).to_string()].into_iter().enumerate() {
+            let mut restored = recovery_queue(&[(2, JobStatus::Queued, "", "", false)]);
+            let job = restored.jobs.get_mut(&2).unwrap();
+            job.stab = None;
+            job.project_data = Some(snapshot);
+            if index == 0 { restored.reset_job(2); } else { restored.render_job(2); }
+            assert!(restored.jobs[&2].stab.is_some(), "restore must evaluate the saved result before deciding eligibility");
+            assert_eq!(row_status(&restored, 2), (JobStatus::Skipped, "image_stabilization".into()));
+            restored.render_job(2);
+            assert_eq!(restored.jobs[&2].render_epoch.load(SeqCst), 0);
+            let fresh = restored.jobs[&2].stab.as_ref().unwrap().clone();
+            install_queue_reconstruction(&fresh);
+            restored.reset_job(2);
+            assert_eq!(row_status(&restored, 2), (JobStatus::Queued, String::new()));
+            assert!(!restored.job_is_stabilization_blocked(2));
+            fresh.gyro.write().file_url = "file:///replacement-gyro.bin".into();
+            restored.clear_gyro_files();
+            assert!(restored.job_is_stabilization_blocked(2));
+            let job = restored.jobs.get_mut(&2).unwrap();
+            job.stab = None;
+            restored.reset_job(2);
+            assert_eq!(row_status(&restored, 2), (JobStatus::Skipped, "image_stabilization".into()));
+        }
     }
 
     #[test]
