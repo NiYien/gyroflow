@@ -2888,6 +2888,96 @@ Do you want to submit your profile?</source>
         <translation>補正によってモーションデータを元の値からどの程度変更できるかを指定します。低い値では、振動などの小さく速い誤差のみを補正します。高い値では、ジャイロの異常など、大きな誤差や長く続く誤差でも映像がモーションデータより優先されますが、映像自体の誤差（動く物体、水面）にも追従しやすくなります。</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="465"/>
+        <source>Translation stabilization</source>
+        <translation>並進ブレ補正</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="466"/>
+        <source>Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis goes through every frame of the selected trim range. Can't be used together with in-camera stabilization reconstruction.</source>
+        <translation>映像からカメラの左右・上下方向の移動を測定し、画面全体を移動して特定の距離を安定させます。ファイル内のモーションデータが必要です。解析は選択したトリミング範囲の全フレームを処理します。カメラ内手ブレ補正の再構築とは併用できません。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="481"/>
+        <source>Reference distance</source>
+        <translation>基準距離</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="483"/>
+        <source>Which distance to hold steady: 0% keeps the picture as the gyro stabilization has it, 100% steadies the middle of the tracked points, higher values nearer objects.</source>
+        <translation>安定させる距離：0%ではジャイロ補正後の映像を維持し、100%では追跡点の中央の距離を安定させ、より高い値では近くの被写体を安定させます。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="492"/>
+        <source>Translation smoothness</source>
+        <translation>並進の平滑化</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="494"/>
+        <source>Low values only remove fast shakes. High values also remove slow drifts and come close to locking the picture.</source>
+        <translation>低い値では速い揺れだけを除去します。高い値ではゆっくりした移動も除去し、画面をほぼ固定します。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="514"/>
+        <source>Compensate movement along the lens axis</source>
+        <translation>レンズの光軸方向の移動を補正</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="475"/>
+        <source>Click Analyze to measure the camera movement</source>
+        <translation>「解析」をクリックしてカメラの移動を測定</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="474"/>
+        <source>Analyze again to measure the camera movement</source>
+        <translation>カメラの移動を測定するには再解析が必要です</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="476"/>
+        <source>Settings changed, analyze again</source>
+        <translation>設定が変更されました。再解析してください</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="473"/>
+        <source>Needs motion data from the file</source>
+        <translation>ファイル内のモーションデータが必要です</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="478"/>
+        <source>Measured in %1 of %2 frames, shift up to %3% of the frame, effective smoothness %4 s</source>
+        <translation>%2 フレーム中 %1 フレームで測定、最大移動量は画面の %3%、実効平滑化時間は %4 秒</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="535"/>
+        <source>Reconstruct in-camera stabilization</source>
+        <translation>カメラ内手ブレ補正を再構築</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="536"/>
+        <source>For footage shot with in-camera stabilization (IBIS or lens OIS) on but without its data in the file: measure what the camera compensated from the video, so it isn't compensated twice. Can't be used together with Translation stabilization or Optical correction.</source>
+        <translation>カメラ内手ブレ補正（IBIS またはレンズ OIS）を有効にして撮影したものの、そのデータがファイルにない映像向けです。映像からカメラの補正量を測定し、二重補正を防ぎます。並進ブレ補正や光学補正とは併用できません。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="545"/>
+        <source>Click Analyze to reconstruct the in-camera stabilization</source>
+        <translation>「解析」をクリックしてカメラ内手ブレ補正を再構築</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="544"/>
+        <source>Analyze again to reconstruct the in-camera stabilization</source>
+        <translation>カメラ内手ブレ補正を再構築するには再解析が必要です</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="548"/>
+        <source>Measured in %1 of %2 frames, compensation up to %3°, cut-off %4 Hz</source>
+        <translation>%2 フレーム中 %1 フレームで測定、最大補正量 %3°、カットオフ周波数 %4 Hz</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="508"/>
+        <source>%1 s</source>
+        <translation>%1 秒</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="302"/>
         <source>samples</source>
         <translation>サンプル</translation>

@@ -2923,6 +2923,96 @@ Do you want to submit your profile?</source>
         <translation>校正可讓運動資料偏離其原值的程度。較低的值只校正振動這類小而快的誤差。較高的值允許畫面在偏差較大或持續較久時（如陀螺故障）覆蓋運動資料，但也更容易跟隨畫面自身的錯誤（移動物體、水面）。</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="465"/>
+        <source>Translation stabilization</source>
+        <translation>位移防抖</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="466"/>
+        <source>Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis goes through every frame of the selected trim range. Can't be used together with in-camera stabilization reconstruction.</source>
+        <translation>從影片中測量相機左右和上下的位移，並平移整幅畫面以穩住一個距離。需要檔案自帶的運動資料；分析會遍歷所選剪輯範圍的每一影格。不能與重建機內防抖同時使用。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="481"/>
+        <source>Reference distance</source>
+        <translation>參考距離</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="483"/>
+        <source>Which distance to hold steady: 0% keeps the picture as the gyro stabilization has it, 100% steadies the middle of the tracked points, higher values nearer objects.</source>
+        <translation>選擇要穩住的距離：0% 保持陀螺儀防抖後的畫面，100% 穩住追蹤點深度的中間層，更高的值穩住更近的物體。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="492"/>
+        <source>Translation smoothness</source>
+        <translation>位移平滑度</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="494"/>
+        <source>Low values only remove fast shakes. High values also remove slow drifts and come close to locking the picture.</source>
+        <translation>較低的值只去掉快速晃動。較高的值也去掉緩慢飄移，使畫面接近鎖定。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="514"/>
+        <source>Compensate movement along the lens axis</source>
+        <translation>補償前後方向的位移</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="475"/>
+        <source>Click Analyze to measure the camera movement</source>
+        <translation>點擊「分析」測量相機位移</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="474"/>
+        <source>Analyze again to measure the camera movement</source>
+        <translation>需要重新分析以測量相機位移</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="476"/>
+        <source>Settings changed, analyze again</source>
+        <translation>設定已變更，需要重新分析</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="473"/>
+        <source>Needs motion data from the file</source>
+        <translation>需要檔案自帶的運動資料</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="478"/>
+        <source>Measured in %1 of %2 frames, shift up to %3% of the frame, effective smoothness %4 s</source>
+        <translation>在 %1 / %2 影格中測得，最大平移為畫面的 %3%，實際平滑度 %4 秒</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="535"/>
+        <source>Reconstruct in-camera stabilization</source>
+        <translation>重建機內防抖</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="536"/>
+        <source>For footage shot with in-camera stabilization (IBIS or lens OIS) on but without its data in the file: measure what the camera compensated from the video, so it isn't compensated twice. Can't be used together with Translation stabilization or Optical correction.</source>
+        <translation>用於拍攝時開啟了機內防抖（IBIS 或鏡頭 OIS），但檔案未記錄其資料的素材：從影片測量相機已補償的運動，避免重複補償。不能與位移防抖或光學校正同時使用。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="545"/>
+        <source>Click Analyze to reconstruct the in-camera stabilization</source>
+        <translation>點擊「分析」重建機內防抖</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="544"/>
+        <source>Analyze again to reconstruct the in-camera stabilization</source>
+        <translation>需要重新分析以重建機內防抖</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="548"/>
+        <source>Measured in %1 of %2 frames, compensation up to %3°, cut-off %4 Hz</source>
+        <translation>在 %1 / %2 影格中測得，補償最大 %3°，截止頻率 %4 Hz</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="508"/>
+        <source>%1 s</source>
+        <translation>%1 秒</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="302"/>
         <source>samples</source>
         <translation>取樣</translation>

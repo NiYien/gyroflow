@@ -2885,6 +2885,96 @@ Do you want to submit your profile?</source>
         <translation>Cuánto puede alejar la corrección los datos de movimiento de sus valores originales. Los valores bajos solo corrigen errores pequeños y rápidos, como las vibraciones. Los valores altos permiten que la imagen prevalezca sobre los datos de movimiento también ante desviaciones grandes o prolongadas, como fallos del giroscopio, pero siguen más los errores de la propia imagen (objetos en movimiento, agua).</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="465"/>
+        <source>Translation stabilization</source>
+        <translation>Estabilización de desplazamiento</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="466"/>
+        <source>Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis goes through every frame of the selected trim range. Can't be used together with in-camera stabilization reconstruction.</source>
+        <translation>Mide en el vídeo cómo se movió la cámara lateral y verticalmente, y desplaza toda la imagen para mantener estable una distancia. Necesita datos de movimiento del archivo; el análisis recorre cada fotograma del intervalo de recorte seleccionado. No se puede usar junto con la reconstrucción de la estabilización interna de la cámara.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="481"/>
+        <source>Reference distance</source>
+        <translation>Distancia de referencia</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="483"/>
+        <source>Which distance to hold steady: 0% keeps the picture as the gyro stabilization has it, 100% steadies the middle of the tracked points, higher values nearer objects.</source>
+        <translation>Qué distancia mantener estable: 0% conserva la imagen como la deja la estabilización giroscópica, 100% estabiliza la distancia media de los puntos seguidos y los valores mayores estabilizan objetos más cercanos.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="492"/>
+        <source>Translation smoothness</source>
+        <translation>Suavizado del desplazamiento</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="494"/>
+        <source>Low values only remove fast shakes. High values also remove slow drifts and come close to locking the picture.</source>
+        <translation>Los valores bajos solo eliminan sacudidas rápidas. Los altos también eliminan desplazamientos lentos y casi fijan la imagen.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="514"/>
+        <source>Compensate movement along the lens axis</source>
+        <translation>Compensar el movimiento a lo largo del eje del objetivo</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="475"/>
+        <source>Click Analyze to measure the camera movement</source>
+        <translation>Haz clic en Analizar para medir el movimiento de la cámara</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="474"/>
+        <source>Analyze again to measure the camera movement</source>
+        <translation>Analiza de nuevo para medir el movimiento de la cámara</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="476"/>
+        <source>Settings changed, analyze again</source>
+        <translation>La configuración ha cambiado, analiza de nuevo</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="473"/>
+        <source>Needs motion data from the file</source>
+        <translation>Necesita datos de movimiento del archivo</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="478"/>
+        <source>Measured in %1 of %2 frames, shift up to %3% of the frame, effective smoothness %4 s</source>
+        <translation>Medido en %1 de %2 fotogramas, desplazamiento de hasta el %3% de la imagen, suavizado efectivo de %4 s</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="535"/>
+        <source>Reconstruct in-camera stabilization</source>
+        <translation>Reconstruir la estabilización interna de la cámara</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="536"/>
+        <source>For footage shot with in-camera stabilization (IBIS or lens OIS) on but without its data in the file: measure what the camera compensated from the video, so it isn't compensated twice. Can't be used together with Translation stabilization or Optical correction.</source>
+        <translation>Para grabaciones con estabilización interna (IBIS u OIS del objetivo) activada, pero sin sus datos en el archivo: mide en el vídeo lo que compensó la cámara para evitar compensarlo dos veces. No se puede usar junto con la estabilización de desplazamiento o la corrección óptica.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="545"/>
+        <source>Click Analyze to reconstruct the in-camera stabilization</source>
+        <translation>Haz clic en Analizar para reconstruir la estabilización interna de la cámara</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="544"/>
+        <source>Analyze again to reconstruct the in-camera stabilization</source>
+        <translation>Analiza de nuevo para reconstruir la estabilización interna de la cámara</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="548"/>
+        <source>Measured in %1 of %2 frames, compensation up to %3°, cut-off %4 Hz</source>
+        <translation>Medido en %1 de %2 fotogramas, compensación de hasta %3°, frecuencia de corte de %4 Hz</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="508"/>
+        <source>%1 s</source>
+        <translation>%1 s</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="302"/>
         <source>samples</source>
         <translation>muestras</translation>

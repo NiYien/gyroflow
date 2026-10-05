@@ -47,11 +47,92 @@ MenuItem {
             messageBox(Modal.Error, qsTr("Video file is not loaded."), [ { text: qsTr("Ok"), accent: true } ]);
             return;
         }
+        root.cancelOpticalEdits();
         lastSelectedFile = url;
         controller.load_telemetry(url, root.allMetadata, window.videoArea.vid, currentLog.visible && currentLog.currentIndex > 0? currentLog.currentIndex - 1 : -1, 0);
     }
 
+    // Qt signals can call back synchronously while a batch of user choices is being applied.
+    property bool updatingOpticalControls: false;
+    function cancelOpticalEdits(): void {
+        opticalStrengthTimer.stop();
+        translationReferenceTimer.stop();
+        translationSmoothnessTimer.stop();
+        translationAlongAxisTimer.stop();
+    }
+    function refreshOpticalInfo(restoreParameters: bool, restoreOpticalRequest: bool): void {
+        if (root.updatingOpticalControls) return;
+        if (restoreParameters) root.cancelOpticalEdits();
+        root.updatingOpticalControls = true;
+        try {
+            opticalcb.info = JSON.parse(controller.optical_correction_info());
+            translationcb.info = JSON.parse(controller.translation_stabilization_info());
+            stabcb.info = JSON.parse(controller.stab_reconstruction_info());
+            translationcb.checked = !!translationcb.info.requested;
+            stabcb.checked = !!stabcb.info.requested;
+            // Without a result, keep the visible optical choice until Analyze explicitly submits it.
+            opticalcb.checked = !stabcb.checked && (!!opticalcb.info.ignore_file_motion ||
+                (restoreOpticalRequest ? !!opticalcb.info.requested :
+                 opticalcb.info.available ? !!opticalcb.info.enabled : opticalcb.checked));
+            ignoreFileMotion.checked = !!opticalcb.info.ignore_file_motion;
+            // Statistics refreshes must not replace edits still waiting for their debounce timers.
+            if (restoreParameters || !translationReferenceTimer.running)
+                translationReference.value = translationcb.info.reference * 100;
+            if (restoreParameters || !translationSmoothnessTimer.running)
+                translationSmoothness.value = Math.log(translationcb.info.smoothness_s) / Math.LN10;
+            if (restoreParameters || !translationAlongAxisTimer.running)
+                translationAlongAxis.checked = !!translationcb.info.along_axis;
+            if (restoreParameters) opticalStrength.value = opticalcb.info.strength * 100;
+        } finally {
+            root.updatingOpticalControls = false;
+        }
+    }
+    function restoreOpticalControls(restoreOpticalRequest: bool): void { root.refreshOpticalInfo(true, restoreOpticalRequest); }
+    function changeOpticalMode(mode: string, enabled: bool): void {
+        if (!root.initialized || root.updatingOpticalControls) return;
+        root.updatingOpticalControls = true;
+        try {
+            if (mode === "stab") {
+                if (enabled) {
+                    opticalcb.checked = false;
+                    translationcb.checked = false;
+                    // An explicit optical-off action restores the file motion, unlike project readback.
+                    controller.set_optical_correction_enabled(false);
+                    controller.set_ignore_file_motion(false);
+                }
+                controller.set_stab_reconstruction_enabled(enabled);
+            } else if (mode === "translation") {
+                if (enabled) stabcb.checked = false;
+                controller.set_translation_stabilization_enabled(enabled);
+            } else {
+                if (enabled) stabcb.checked = false;
+                controller.set_optical_correction_enabled(enabled);
+                if (!enabled) controller.set_ignore_file_motion(false);
+            }
+        } finally {
+            root.updatingOpticalControls = false;
+        }
+        root.refreshOpticalInfo(false, false);
+    }
+    function analyzeOpticalModes(): void {
+        const optical = opticalcb.checked;
+        const translation = translationcb.checked;
+        const reconstruction = stabcb.checked;
+        root.updatingOpticalControls = true;
+        try {
+            // Submit the visible choices even when a checkbox has never changed from its initial false value.
+            controller.set_optical_correction_enabled(optical);
+            if (!optical) controller.set_ignore_file_motion(false);
+            controller.set_translation_stabilization_enabled(translation);
+            controller.set_stab_reconstruction_enabled(reconstruction);
+        } finally {
+            root.updatingOpticalControls = false;
+        }
+        root.refreshOpticalInfo(false, false);
+        controller.analyze_optically();
+    }
     function loadGyroflow(obj: var): void {
+        root.cancelOpticalEdits();
         const gyro = obj.gyro_source || { };
         // Rebuilding the model resets the selection to its first entry (Complementary without quaternions),
         // so keep the current method unless the payload explicitly sets one.
@@ -83,11 +164,17 @@ MenuItem {
                 lpf.value = +gyro.lpf;
                 lpfcb.checked = lpf.value > 0;
             }
-            if (typeof gyro.optical_correction_strength === "number") {
-                opticalStrength.value = Math.round(gyro.optical_correction_strength * 100);
+            root.updatingOpticalControls = true;
+            try {
+                if (typeof gyro.optical_correction_strength === "number") opticalStrength.value = gyro.optical_correction_strength * 100;
+                if (typeof gyro.translation_stabilization_enabled === "boolean") translationcb.checked = gyro.translation_stabilization_enabled;
+                if (typeof gyro.translation_reference === "number") translationReference.value = gyro.translation_reference * 100;
+                if (typeof gyro.translation_smoothness === "number") translationSmoothness.value = Math.log(gyro.translation_smoothness) / Math.LN10;
+                if (typeof gyro.translation_along_axis === "boolean") translationAlongAxis.checked = gyro.translation_along_axis;
+                if (typeof gyro.stab_reconstruction_enabled === "boolean") stabcb.checked = gyro.stab_reconstruction_enabled;
+            } finally {
+                root.updatingOpticalControls = false;
             }
-            // The checkbox from the core, which has the project's correction and whether it's on (`optical_correction_enabled`)
-            Qt.callLater(opticalcb.updateInfo);
             if (typeof gyro.sample_index === "number") {
                 currentLog.currentIndex = gyro.sample_index + 1;
             }
@@ -103,6 +190,7 @@ MenuItem {
                 info.updateEntry("File name", fn_);
             }
         }
+        Qt.callLater(root.restoreOpticalControls, typeof gyro.optical_correction_enabled === "boolean");
         const stab = obj.stabilization || { };
         if (stab && Object.keys(stab).length > 0) {
             focb.checked = +stab.frame_offset > 0;
@@ -124,6 +212,7 @@ MenuItem {
     Connections {
         target: controller;
         function onTelemetry_loaded(is_main_video: bool, filename: string, camera: string, additional_data: var): void {
+            root.cancelOpticalEdits();
             root.filename = filename || "";
             root.detectedFormat = camera || "";
             info.updateEntry("File name", filename || "---");
@@ -149,8 +238,7 @@ MenuItem {
 
             controller.set_imu_lpf(lpfcb.checked? lpf.value : 0);
             controller.set_imu_median_filter(mfcb.checked? mf.value : 0);
-            controller.set_optical_correction_strength(opticalStrength.value / 100);
-            Qt.callLater(opticalcb.updateInfo);
+            Qt.callLater(root.restoreOpticalControls, false);
             controller.set_imu_rotation(rot.checked? p.value : 0, rot.checked? r.value : 0, rot.checked? y.value : 0);
             controller.set_acc_rotation(arot.checked? ap.value : 0, arot.checked? ar.value : 0, arot.checked? ay.value : 0);
             Qt.callLater(controller.recompute_gyro);
@@ -182,6 +270,14 @@ MenuItem {
         }
         function onChart_data_changed(): void {
             Qt.callLater(orientationIndicator.requestPaint);
+            Qt.callLater(() => root.refreshOpticalInfo(false, false));
+        }
+        function onOptical_correction_changed(): void { root.refreshOpticalInfo(false, false); }
+        function onVideo_loading_in_progressChanged(): void {
+            if (controller.video_loading_in_progress) root.cancelOpticalEdits();
+        }
+        function onLoading_gyro_in_progressChanged(): void {
+            if (controller.loading_gyro_in_progress) root.cancelOpticalEdits();
         }
     }
 
@@ -321,43 +417,9 @@ MenuItem {
         text: qsTr("Optical correction");
         cb.tooltip: qsTr("Measure the camera rotation from the video itself and correct the motion data where they disagree. Useful when vibrations corrupt the gyro data, e.g. on a hard-mounted FPV camera. The analysis goes through every frame of the selected trim range.");
         property var info: ({ available: false });
-        // Always opticalcb.info: this file has an element with the id `info` too, and ids come before properties
-        function updateInfo(): void {
-            try { opticalcb.info = JSON.parse(controller.optical_correction_info()); } catch (e) { opticalcb.info = { available: false }; }
-            const info = opticalcb.info;
-            // The core has the say: with a correction (an analysis, also the one Auto sync runs on a file without motion
-            // data, a project) the checkbox shows whether it's on, without one it stays as it was left, and ignoring
-            // the file's motion data keeps this section open. Set once: its handler, for a `false` on the way, would
-            // bring the ignored motion data back
-            const checked = !!info.ignore_file_motion || (info.available? !!info.enabled : opticalcb.checked);
-            if (opticalcb.checked !== checked) opticalcb.checked = checked;
-            if (ignoreFileMotion.checked !== !!info.ignore_file_motion) ignoreFileMotion.checked = !!info.ignore_file_motion;
-        }
-        onCheckedChanged: {
-            controller.set_optical_correction_enabled(checked);
-            // Off means the motion data as it is
-            if (!checked) controller.set_ignore_file_motion(false);
-        }
+        cb.enabled: !stabcb.checked;
+        onCheckedChanged: root.changeOpticalMode("optical", checked);
 
-        Row {
-            anchors.horizontalCenter: parent.horizontalCenter;
-            spacing: 5 * dpiScale;
-            Button {
-                text: qsTr("Analyze");
-                iconName: "spinner";
-                enabled: !controller.sync_in_progress && window.videoArea.vid.loaded;
-                onClicked: controller.analyze_optically();
-            }
-            LinkButton {
-                anchors.verticalCenter: parent.verticalCenter;
-                text: qsTr("Clear");
-                leftPadding: 6 * dpiScale;
-                rightPadding: 6 * dpiScale;
-                visible: !!opticalcb.info.available;
-                enabled: !controller.sync_in_progress;
-                onClicked: controller.clear_optical_correction();
-            }
-        }
         BasicText {
             width: parent.width;
             wrapMode: Text.WordWrap;
@@ -374,7 +436,7 @@ MenuItem {
             id: ignoreFileMotion;
             text: qsTr("Ignore motion data from the file");
             tooltip: qsTr("Measure all of the camera motion from the video, like for a file without motion data, instead of correcting the motion data. For motion data too broken to correct, e.g. a gyro that glitches or saturates for seconds at a time.");
-            onCheckedChanged: controller.set_ignore_file_motion(checked);
+            onCheckedChanged: if (root.initialized && !root.updatingOpticalControls) controller.set_ignore_file_motion(checked);
         }
 
         Label {
@@ -393,18 +455,121 @@ MenuItem {
                 precision: 0;
                 width: parent.width;
                 // Each change refits the correction (up to half a second on a long clip): not on every step of a drag
-                onValueChanged: opticalStrengthTimer.restart();
+                onValueChanged: if (root.initialized && !root.updatingOpticalControls) opticalStrengthTimer.restart();
                 Timer {
                     id: opticalStrengthTimer;
                     interval: 150;
-                    onTriggered: controller.set_optical_correction_strength(opticalStrength.value / 100);
+                    onTriggered: if (!controller.video_loading_in_progress && !controller.loading_gyro_in_progress) controller.set_optical_correction_strength(opticalStrength.value / 100);
                 }
             }
         }
-        Connections {
-            target: controller;
-            function onOptical_correction_changed(): void { opticalcb.updateInfo(); }
-            function onChart_data_changed(): void { Qt.callLater(opticalcb.updateInfo); }
+    }
+    CheckBoxWithContent {
+        id: translationcb;
+        text: qsTr("Translation stabilization");
+        cb.tooltip: qsTr("Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis goes through every frame of the selected trim range. Can't be used together with in-camera stabilization reconstruction.");
+        property var info: ({ available: false });
+        onCheckedChanged: root.changeOpticalMode("translation", checked);
+        BasicText {
+            width: parent.width;
+            wrapMode: Text.WordWrap;
+            horizontalAlignment: Text.AlignHCenter;
+            text: !translationcb.info.has_motion || translationcb.info.ignore_file_motion ? qsTr("Needs motion data from the file") :
+                  !translationcb.info.available && translationcb.info.requested && translationcb.info.analyzed_without ? qsTr("Analyze again to measure the camera movement") :
+                  !translationcb.info.available && translationcb.info.requested ? qsTr("Click Analyze to measure the camera movement") :
+                  translationcb.info.stale ? qsTr("Settings changed, analyze again") :
+                  !translationcb.info.available ? "" :
+                  qsTr("Measured in %1 of %2 frames, shift up to %3% of the frame, effective smoothness %4 s").arg(translationcb.info.measured_frames).arg(translationcb.info.frames).arg((+translationcb.info.max_shift_pct).toFixed(1)).arg((+translationcb.info.effective_smoothness_s).toFixed(1));
+        }
+        Label {
+            text: qsTr("Reference distance");
+            width: parent.width;
+            tooltip: qsTr("Which distance to hold steady: 0% keeps the picture as the gyro stabilization has it, 100% steadies the middle of the tracked points, higher values nearer objects.");
+            SliderWithField {
+                id: translationReference;
+                width: parent.width;
+                from: 0; to: 200; defaultValue: 100; value: 100; precision: 0; unit: "%";
+                onValueChanged: if (root.initialized && !root.updatingOpticalControls) translationReferenceTimer.restart();
+            }
+        }
+        Label {
+            text: qsTr("Translation smoothness");
+            width: parent.width;
+            tooltip: qsTr("Low values only remove fast shakes. High values also remove slow drifts and come close to locking the picture.");
+            Row {
+                width: parent.width;
+                spacing: 5 * dpiScale;
+                Slider {
+                    id: translationSmoothness;
+                    width: parent.width - translationSmoothnessValue.width - parent.spacing;
+                    from: -1; to: 1; value: 0;
+                    onValueChanged: if (root.initialized && !root.updatingOpticalControls) translationSmoothnessTimer.restart();
+                }
+                BasicText {
+                    id: translationSmoothnessValue;
+                    width: 55 * dpiScale;
+                    anchors.verticalCenter: parent.verticalCenter;
+                    text: qsTr("%1 s").arg(Math.pow(10, translationSmoothness.value).toFixed(1));
+                }
+            }
+        }
+        CheckBox {
+            id: translationAlongAxis;
+            text: qsTr("Compensate movement along the lens axis");
+            onCheckedChanged: if (root.initialized && !root.updatingOpticalControls) translationAlongAxisTimer.restart();
+        }
+    }
+    Timer {
+        id: translationReferenceTimer;
+        interval: 150;
+        onTriggered: if (!controller.video_loading_in_progress && !controller.loading_gyro_in_progress) controller.set_translation_reference(translationReference.value / 100);
+    }
+    Timer {
+        id: translationSmoothnessTimer;
+        interval: 150;
+        onTriggered: if (!controller.video_loading_in_progress && !controller.loading_gyro_in_progress) controller.set_translation_smoothness(Math.pow(10, translationSmoothness.value));
+    }
+    Timer {
+        id: translationAlongAxisTimer;
+        interval: 150;
+        onTriggered: if (!controller.video_loading_in_progress && !controller.loading_gyro_in_progress) controller.set_translation_along_axis(translationAlongAxis.checked);
+    }
+    CheckBoxWithContent {
+        id: stabcb;
+        text: qsTr("Reconstruct in-camera stabilization");
+        cb.tooltip: qsTr("For footage shot with in-camera stabilization (IBIS or lens OIS) on but without its data in the file: measure what the camera compensated from the video, so it isn't compensated twice. Can't be used together with Translation stabilization or Optical correction.");
+        property var info: ({ available: false });
+        onCheckedChanged: root.changeOpticalMode("stab", checked);
+        BasicText {
+            width: parent.width;
+            wrapMode: Text.WordWrap;
+            horizontalAlignment: Text.AlignHCenter;
+            text: !stabcb.info.has_motion || stabcb.info.ignore_file_motion ? qsTr("Needs motion data from the file") :
+                  !stabcb.info.available && stabcb.info.requested && stabcb.info.analyzed_without ? qsTr("Analyze again to reconstruct the in-camera stabilization") :
+                  !stabcb.info.available && stabcb.info.requested ? qsTr("Click Analyze to reconstruct the in-camera stabilization") :
+                  stabcb.info.stale ? qsTr("Settings changed, analyze again") :
+                  !stabcb.info.available ? "" :
+                  qsTr("Measured in %1 of %2 frames, compensation up to %3°, cut-off %4 Hz").arg(stabcb.info.measured_frames).arg(stabcb.info.frames).arg((+stabcb.info.max_deg).toFixed(2)).arg((+stabcb.info.cutoff_hz).toFixed(2));
+        }
+    }
+    Row {
+        anchors.horizontalCenter: parent.horizontalCenter;
+        spacing: 5 * dpiScale;
+        visible: opticalcb.checked || translationcb.checked || stabcb.checked;
+        Button {
+            text: qsTr("Analyze");
+            iconName: "spinner";
+            enabled: !controller.sync_in_progress && window.videoArea.vid.loaded;
+            onClicked: root.analyzeOpticalModes();
+        }
+        LinkButton {
+            anchors.verticalCenter: parent.verticalCenter;
+            text: qsTr("Clear");
+            leftPadding: 6 * dpiScale;
+            rightPadding: 6 * dpiScale;
+            visible: !!opticalcb.info.available || !!translationcb.info.available || !!stabcb.info.available;
+            enabled: !controller.sync_in_progress;
+            onClicked: controller.clear_optical_correction();
         }
     }
     Item {

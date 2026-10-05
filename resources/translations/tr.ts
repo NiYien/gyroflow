@@ -2883,6 +2883,96 @@ Profilinizi yüklemek istiyor musunuz?</translation>
         <translation>Düzeltmenin hareket verilerini özgün değerlerinden ne kadar uzaklaştırabileceği. Düşük değerler yalnızca titreşim gibi küçük ve hızlı hataları düzeltir. Yüksek değerler, jiroskop arızaları gibi büyük veya uzun süren sapmalarda da görüntünün hareket verilerinin yerine geçmesine izin verir, ancak görüntünün kendi hatalarını (hareketli nesneler, su) da daha fazla izler.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="465"/>
+        <source>Translation stabilization</source>
+        <translation>Öteleme sabitleme</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="466"/>
+        <source>Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis goes through every frame of the selected trim range. Can't be used together with in-camera stabilization reconstruction.</source>
+        <translation>Videodan kameranın yanlara ve yukarı aşağı hareketini ölçer ve bir mesafeyi sabit tutmak için tüm görüntüyü kaydırır. Dosyadaki hareket verileri gerekir; analiz seçilen kırpma aralığının her karesini işler. Kamera içi sabitlemenin yeniden oluşturulmasıyla birlikte kullanılamaz.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="481"/>
+        <source>Reference distance</source>
+        <translation>Referans mesafesi</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="483"/>
+        <source>Which distance to hold steady: 0% keeps the picture as the gyro stabilization has it, 100% steadies the middle of the tracked points, higher values nearer objects.</source>
+        <translation>Sabit tutulacak mesafe: 0% jiroskop sabitlemesinin görüntüsünü korur, 100% izlenen noktaların orta mesafesini sabitler, daha yüksek değerler daha yakın nesneleri sabitler.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="492"/>
+        <source>Translation smoothness</source>
+        <translation>Öteleme yumuşatma</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="494"/>
+        <source>Low values only remove fast shakes. High values also remove slow drifts and come close to locking the picture.</source>
+        <translation>Düşük değerler yalnızca hızlı sarsıntıları giderir. Yüksek değerler yavaş kaymaları da giderir ve görüntüyü neredeyse kilitler.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="514"/>
+        <source>Compensate movement along the lens axis</source>
+        <translation>Lens ekseni boyunca hareketi telafi et</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="475"/>
+        <source>Click Analyze to measure the camera movement</source>
+        <translation>Kamera hareketini ölçmek için Analiz et'e tıklayın</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="474"/>
+        <source>Analyze again to measure the camera movement</source>
+        <translation>Kamera hareketini ölçmek için yeniden analiz edin</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="476"/>
+        <source>Settings changed, analyze again</source>
+        <translation>Ayarlar değişti, yeniden analiz edin</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="473"/>
+        <source>Needs motion data from the file</source>
+        <translation>Dosyadaki hareket verileri gerekir</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="478"/>
+        <source>Measured in %1 of %2 frames, shift up to %3% of the frame, effective smoothness %4 s</source>
+        <translation>%2 karenin %1 tanesinde ölçüldü, görüntünün %3% kadar kayması, etkin yumuşatma %4 s</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="535"/>
+        <source>Reconstruct in-camera stabilization</source>
+        <translation>Kamera içi sabitlemeyi yeniden oluştur</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="536"/>
+        <source>For footage shot with in-camera stabilization (IBIS or lens OIS) on but without its data in the file: measure what the camera compensated from the video, so it isn't compensated twice. Can't be used together with Translation stabilization or Optical correction.</source>
+        <translation>Kamera içi sabitleme (IBIS veya lens OIS) açıkken çekilen ancak dosyada bu verileri bulunmayan görüntüler için: iki kez telafi edilmemesi amacıyla kameranın telafisini videodan ölçer. Öteleme sabitleme veya optik düzeltmeyle birlikte kullanılamaz.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="545"/>
+        <source>Click Analyze to reconstruct the in-camera stabilization</source>
+        <translation>Kamera içi sabitlemeyi yeniden oluşturmak için Analiz et'e tıklayın</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="544"/>
+        <source>Analyze again to reconstruct the in-camera stabilization</source>
+        <translation>Kamera içi sabitlemeyi yeniden oluşturmak için yeniden analiz edin</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="548"/>
+        <source>Measured in %1 of %2 frames, compensation up to %3°, cut-off %4 Hz</source>
+        <translation>%2 karenin %1 tanesinde ölçüldü, %3° kadar telafi, kesim frekansı %4 Hz</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="508"/>
+        <source>%1 s</source>
+        <translation>%1 sn</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="302"/>
         <source>samples</source>
         <translation>örnek</translation>

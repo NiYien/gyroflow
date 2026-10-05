@@ -219,6 +219,13 @@ pub struct Controller {
     set_optical_correction_strength: qt_method!(fn(&mut self, strength: f64)),
     optical_correction_info: qt_method!(fn(&self) -> QString),
     optical_correction_changed: qt_signal!(),
+    set_translation_stabilization_enabled: qt_method!(fn(&mut self, enabled: bool)),
+    set_translation_reference: qt_method!(fn(&mut self, reference: f64)),
+    set_translation_smoothness: qt_method!(fn(&mut self, seconds: f64)),
+    set_translation_along_axis: qt_method!(fn(&mut self, along_axis: bool)),
+    translation_stabilization_info: qt_method!(fn(&self) -> QString),
+    set_stab_reconstruction_enabled: qt_method!(fn(&mut self, enabled: bool)),
+    stab_reconstruction_info: qt_method!(fn(&self) -> QString),
 
     override_video_fps: qt_method!(fn(&self, fps: f64, recompute: bool)),
     get_org_duration_ms: qt_method!(fn(&self) -> f64),
@@ -3158,9 +3165,13 @@ impl Controller {
         if self.stabilizer.params.read().duration_ms <= 0.0 {
             return;
         }
-        // The recompute brings the optical correction up to date with the sync, the lens and the frame timing, which
-        // may switch it on or off
-        let optical_applied = self.stabilizer.gyro.read().optical_correction_applied;
+        // Refreshing the context can switch any of the three optical results on or off.
+        let optical_applied = {
+            let gyro = self.stabilizer.gyro.read();
+            (gyro.optical_correction_applied,
+             gyro.optical_translation.as_ref().is_some_and(|t| t.applies),
+             gyro.optical_stab.as_ref().is_some_and(|s| s.applies))
+        };
         let id = self
             .stabilizer
             .recompute_threaded(util::qt_queued_callback_mut(
@@ -3179,7 +3190,13 @@ impl Controller {
 
         self.compute_progress(id, 0.0);
 
-        if self.stabilizer.gyro.read().optical_correction_applied != optical_applied {
+        let refreshed_applied = {
+            let gyro = self.stabilizer.gyro.read();
+            (gyro.optical_correction_applied,
+             gyro.optical_translation.as_ref().is_some_and(|t| t.applies),
+             gyro.optical_stab.as_ref().is_some_and(|s| s.applies))
+        };
+        if refreshed_applied != optical_applied {
             self.chart_data_changed();
             self.optical_correction_changed();
         }
@@ -3769,7 +3786,31 @@ impl Controller {
         });
     }
     fn optical_correction_info(&self) -> QString {
-        QString::from(self.stabilizer.optical_correction_info().to_string())
+        let mut info = self.stabilizer.optical_correction_info();
+        info["requested"] = self.stabilizer.optical_ui.read().correction_enabled.into();
+        QString::from(info.to_string())
+    }
+    wrap_simple_method!(set_translation_stabilization_enabled, enabled: bool; recompute; optical_correction_changed);
+    wrap_simple_method!(set_translation_reference, reference: f64; recompute; optical_correction_changed);
+    wrap_simple_method!(set_translation_smoothness, seconds: f64; recompute; optical_correction_changed);
+    wrap_simple_method!(set_translation_along_axis, along_axis: bool; recompute; optical_correction_changed);
+    fn translation_stabilization_info(&self) -> QString {
+        let mut info = self.stabilizer.translation_stabilization_info();
+        let settings = self.stabilizer.optical_ui.read().translation_settings;
+        info["reference"] = settings.reference.into();
+        info["smoothness_s"] = settings.smoothness_s.into();
+        info["along_axis"] = settings.along_axis.into();
+        QString::from(info.to_string())
+    }
+    fn set_stab_reconstruction_enabled(&mut self, enabled: bool) {
+        self.stabilizer.set_stab_reconstruction_enabled(enabled);
+        self.stabilizer.invalidate_zooming();
+        self.request_recompute();
+        self.chart_data_changed();
+        self.optical_correction_changed();
+    }
+    fn stab_reconstruction_info(&self) -> QString {
+        QString::from(self.stabilizer.stab_reconstruction_info().to_string())
     }
     wrap_simple_method!(set_device, v: i32);
 
