@@ -22,6 +22,7 @@ mod base;
 pub use base::{OpticalBaseMode, BlendConfig};
 #[cfg(test)] pub(crate) mod synthetic;
 pub mod translation;
+#[cfg(test)] mod translation_stress;
 pub(crate) mod sensor;
 mod sensor_solver;
 

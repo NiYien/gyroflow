@@ -53,6 +53,10 @@ pub(crate) struct Config {
     /// A scene that changes: before this frame the tracks move on their own and the camera doesn't translate, from
     /// it on the tracks hold still and the camera translates (0 = both all along)
     pub switch: usize,
+    pub gyro_err_px: f64,
+    pub is_px: f64,
+    pub is_hz: f64,
+    pub fps: f64,
 }
 
 impl Default for Config {
@@ -63,6 +67,7 @@ impl Default for Config {
             rot_sd: 3.5e-4, rot_corr: 0.9, trans: [0.0; 3], trans_sd: 0.0,
             nonrigid_px: 0.0, nonrigid_corr: 0.9, nonrigid_frac: 1.0, drift: [0.0; 3], seed: 1,
             bob_m: 0.0, bob_hz: 0.0, switch: 0,
+            gyro_err_px: 0.0, is_px: 0.0, is_hz: 0.0, fps: 59.94,
         }
     }
 }
@@ -77,6 +82,7 @@ pub(crate) struct Pair {
     pub rows: Vec<f32>,
     pub inv_depth: Vec<f64>,
     pub m_true: Matrix3<f64>,
+    pub m_gyro: Matrix3<f64>,
     pub c_true: Vector3<f64>,
 }
 
@@ -125,24 +131,38 @@ pub(crate) fn generate(c: &Config) -> Vec<Pair> {
         }
         // Observe
         let mut obs = Vec::with_capacity(pts.len());
+        let is_rotation = if c.is_px != 0.0 {
+            let phase = 2.0 * std::f64::consts::PI * c.is_hz * k as f64 / c.fps;
+            Some(Rotation3::from_scaled_axis(Vector3::new(
+                c.is_px * phase.sin(), 0.6 * c.is_px * (phase + 1.0).sin(), 0.0,
+            ) / c.f))
+        } else { None };
         for p in &pts {
             if let Some((u, v, q)) = project(&rot, &pos, &p.world) {
                 let (un, vn) = (u + c.noise_px * rng.n(), v + c.noise_px * rng.n());
                 let b = Vector3::new(un / c.f, vn / c.f, -1.0).normalize();
+                let b = is_rotation.as_ref().map_or(b, |r| r * b);
                 obs.push((p.id, b, [un, vn], 1.0 / q.norm()));
             }
         }
         if let Some((prot, ppos, pobs)) = prev.take() {
             let m = (rot * prot.inverse()).into_inner();
             let map: std::collections::HashMap<u32, Vector3<f64>> = obs.iter().map(|o| (o.0, o.1)).collect();
-            let mut pr = Pair { index: k, ids: vec![], a: vec![], b: vec![], rows: vec![], inv_depth: vec![], m_true: m, c_true: prot * (pos - ppos) };
+            let mut pr = Pair { index: k, ids: vec![], a: vec![], b: vec![], rows: vec![], inv_depth: vec![], m_true: m, m_gyro: m, c_true: prot * (pos - ppos) };
             for (id, a, pa, rho) in &pobs {
                 if let Some(b) = map.get(id) {
                     pr.ids.push(*id); pr.a.push(*a); pr.b.push(*b);
                     pr.rows.push((c.h / 2.0 - pa[1]) as f32); pr.inv_depth.push(*rho);
                 }
             }
-            if pr.a.len() >= 25 { pairs.push(pr); }
+            if pr.a.len() >= 25 {
+                if c.gyro_err_px > 0.0 {
+                    pr.m_gyro = Rotation3::from_scaled_axis(
+                        Vector3::new(rng.n(), rng.n(), rng.n()) * (c.gyro_err_px / c.f),
+                    ).into_inner() * m;
+                }
+                pairs.push(pr);
+            }
         }
         prev = Some((rot, pos, obs));
 
@@ -275,6 +295,32 @@ fn optical_base_bench() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn gyro_error_has_the_requested_size() {
+        let c = Config { gyro_err_px: 0.5, frames: 1000, ..Default::default() };
+        let pairs = generate(&c);
+        assert!(!pairs.is_empty());
+        let mean = pairs.iter().map(|p| {
+            UnitQuaternion::from_rotation_matrix(&Rotation3::from_matrix_unchecked(p.m_gyro * p.m_true.transpose()))
+                .scaled_axis().norm_squared() / 3.0
+        }).sum::<f64>() / pairs.len() as f64;
+        let size = c.f * mean.sqrt();
+        assert!((size - 0.5).abs() <= 0.05, "size={size}");
+    }
+    #[test]
+    fn is_shift_is_invisible_to_the_gyro() {
+        let c = Config { is_px: 5.0, is_hz: 1.5, gyro_err_px: 0.0, noise_px: 0.0, frames: 120, ..Default::default() };
+        let mut shifts = Vec::new();
+        for p in generate(&c) {
+            assert_eq!(p.m_gyro, p.m_true);
+            let mut residuals: Vec<_> = p.a.iter().zip(&p.b).map(|(a, b)| (b - p.m_gyro * a).norm()).collect();
+            residuals.sort_by(f64::total_cmp);
+            shifts.push(c.f * residuals[((residuals.len() - 1) as f64 * 0.5).floor() as usize]);
+        }
+        shifts.sort_by(f64::total_cmp);
+        let median = shifts[((shifts.len() - 1) as f64 * 0.5).floor() as usize];
+        assert!(median > 0.3, "median={median}");
+    }
     #[test]
     fn noise_free_rigid_pairs_are_exact_rotations() {
         let c = Config { noise_px: 0.0, frames: 50, ..Default::default() };
