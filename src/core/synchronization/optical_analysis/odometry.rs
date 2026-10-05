@@ -32,6 +32,17 @@ pub(super) const VELOCITY_NOISE_REL: f64 = 0.03;
 /// How much an inverse depth may change from one frame pair to the next, relative to it
 pub(super) const DEPTH_NOISE_REL: f64 = 0.05;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StepDiagnostics {
+    /// A new run of tracks, or a failed solve that reset the state.
+    pub restarted: bool,
+    /// Cost with historical depths held and rotation/translation refit, over a rotation-only cost.
+    pub structure: Option<f64>,
+    /// The 10% and 90% quantiles of this pair's solved inverse depths.
+    pub far: f64,
+    pub near: f64,
+}
+
 pub struct VisualOdometry {
     /// Per track: inverse depth at the last frame and its variance
     depth: HashMap<u32, (f64, f64)>,
@@ -53,6 +64,12 @@ impl VisualOdometry {
     /// The rotation `m` of a frame pair (`b ≈ m·a` for points at infinity), from the bearings `a`, `b` of its tracks
     /// `ids` in the two frames, starting from `m0`. `px` is the size of a pixel of the tracked frame, in radians
     pub fn step(&mut self, a: &[Vector3<f64>], b: &[Vector3<f64>], ids: &[u32], m0: Matrix3<f64>, px: f64) -> Matrix3<f64> {
+        self.step_with_diagnostics(a, b, ids, m0, px).0
+    }
+
+    /// The upstream solve, with read-only diagnostics for the output blend.
+    pub fn step_with_diagnostics(&mut self, a: &[Vector3<f64>], b: &[Vector3<f64>], ids: &[u32], m0: Matrix3<f64>, px: f64) -> (Matrix3<f64>, StepDiagnostics) {
+        let mut diagnostics = StepDiagnostics { restarted: false, structure: None, far: 0.0, near: 0.0 };
         let n = a.len();
         let weight = 1.0 / (NOISE_PX * px).powi(2);
         let robust = ROBUST_PX * px;
@@ -60,6 +77,7 @@ impl VisualOdometry {
         let (rho0, var, v0, v_var) = if known < MIN_BAND_POINTS {
             // A new run of tracks (the start, after a gap) has nothing to go on from
             self.reset();
+            diagnostics.restarted = true;
             Self::start(a, b, m0, robust)
         } else {
             // New tracks start at the median depth, loosely
@@ -68,6 +86,15 @@ impl VisualOdometry {
             let q = VELOCITY_NOISE + VELOCITY_NOISE_REL * self.velocity.norm();
             (rho0, var, m0 * self.velocity, self.velocity_var.add_scalar(q * q))
         };
+        if !diagnostics.restarted {
+            let idx: Vec<usize> = (0..n).filter(|i| self.depth.contains_key(&ids[*i])).collect();
+            let ka: Vec<Vector3<f64>> = idx.iter().map(|i| a[*i]).collect();
+            let kb: Vec<Vector3<f64>> = idx.iter().map(|i| b[*i]).collect();
+            let kr: Vec<f64> = idx.iter().map(|i| rho0[*i]).collect();
+            let c_struct = fit_rotation_translation(&ka, &kb, &kr, v0, m0, robust);
+            let (_, c_rot) = fit_rotation(&ka, &kb, &vec![0.0; ka.len()], Vector3::zeros(), m0, robust);
+            diagnostics.structure = Some(c_struct / c_rot.max(1e-12));
+        }
         let mut rho = rho0.clone();
 
         let (mut m, mut v) = (m0, v0);
@@ -106,13 +133,20 @@ impl VisualOdometry {
                 h -= hxr[i] * hxr[i].transpose() / hrr[i];
                 g -= hxr[i] * (gr[i] / hrr[i]);
             }
-            let Some(chol) = h.cholesky() else { self.reset(); return m0; };
+            let Some(chol) = h.cholesky() else { self.reset(); diagnostics.restarted = true; return (m0, diagnostics); };
             let dx = -chol.solve(&g);
             m = Rotation3::from_scaled_axis(dx.fixed_rows::<3>(0).into_owned()).into_inner() * m;
             v += dx.fixed_rows::<3>(3);
             for i in 0..n { rho[i] = (rho[i] - (gr[i] + hxr[i].dot(&dx)) / hrr[i]).max(0.0); }
         }
-        let Some(cov) = h.try_inverse() else { self.reset(); return m; };
+        let Some(cov) = h.try_inverse() else { self.reset(); diagnostics.restarted = true; return (m, diagnostics); };
+
+        let mut sorted_rho = rho.clone();
+        sorted_rho.sort_by(f64::total_cmp);
+        if !sorted_rho.is_empty() {
+            diagnostics.far = sorted_rho[((n - 1) as f64 * 0.1) as usize];
+            diagnostics.near = sorted_rho[((n - 1) as f64 * 0.9) as usize];
+        }
 
         // On to the second frame: the depths from there, and the scale back to a median inverse depth of 1
         let c = m.transpose() * v;
@@ -128,7 +162,7 @@ impl VisualOdometry {
         self.depth = ids.iter().copied().zip(depth).collect();
         self.velocity = v * s;
         self.velocity_var = Vector3::new(cov[(3, 3)], cov[(4, 4)], cov[(5, 5)]) * (s * s);
-        m
+        (m, diagnostics)
     }
 
     /// Where a first frame pair starts from: the direction of the translation is the one in all the planes that each
@@ -162,4 +196,60 @@ impl VisualOdometry {
         let rho: Vec<f64> = rho.into_iter().map(|r| (r / s).max(0.0)).collect();
         (rho, vec![4.0; n], dir * s, Vector3::repeat(VELOCITY_VAR_START + (0.3 * s).powi(2)))
     }
+}
+
+fn robust_cost(a: &[Vector3<f64>], b: &[Vector3<f64>], rho: &[f64], m: Matrix3<f64>, v: Vector3<f64>, robust: f64) -> f64 {
+    let mut c = 0.0;
+    for i in 0..a.len() {
+        let r = b[i].cross(&(m * a[i] - v * rho[i])).norm() / robust;
+        c += (1.0 + r * r).ln();
+    }
+    c / a.len().max(1) as f64
+}
+
+/// Rotation and translation refit freely (Cauchy-weighted Gauss-Newton, no prior) with the depths held: the robust cost
+fn fit_rotation_translation(a: &[Vector3<f64>], b: &[Vector3<f64>], rho: &[f64], v0: Vector3<f64>, m0: Matrix3<f64>, robust: f64) -> f64 {
+    let (mut m, mut v) = (m0, v0);
+    for _ in 0..4 {
+        let mut h = Matrix6::zeros();
+        let mut g = Vector6::zeros();
+        for i in 0..a.len() {
+            let ma = m * a[i];
+            let bx = b[i].cross_matrix();
+            let r = b[i].cross(&(ma - v * rho[i]));
+            let w = 1.0 / (1.0 + (r.norm() / robust).powi(2));
+            let mut jx = Matrix3x6::zeros();
+            jx.fixed_view_mut::<3, 3>(0, 0).copy_from(&(-bx * ma.cross_matrix()));
+            jx.fixed_view_mut::<3, 3>(0, 3).copy_from(&(-bx * rho[i]));
+            let jxt = jx.transpose();
+            h += jxt * jx * w;
+            g += jxt * r * w;
+        }
+        let Some(c) = h.cholesky() else { break };
+        let dx = -c.solve(&g);
+        m = Rotation3::from_scaled_axis(dx.fixed_rows::<3>(0).into_owned()).into_inner() * m;
+        v += dx.fixed_rows::<3>(3);
+    }
+    robust_cost(a, b, rho, m, v, robust)
+}
+
+/// The rotation alone refit (Cauchy-weighted Gauss-Newton) with the translation and depths held; and its robust cost
+fn fit_rotation(a: &[Vector3<f64>], b: &[Vector3<f64>], rho: &[f64], v: Vector3<f64>, m0: Matrix3<f64>, robust: f64) -> (Matrix3<f64>, f64) {
+    let mut m = m0;
+    for _ in 0..4 {
+        let mut h = Matrix3::zeros();
+        let mut g = Vector3::zeros();
+        for i in 0..a.len() {
+            let ma = m * a[i];
+            let r = b[i].cross(&(ma - v * rho[i]));
+            let w = 1.0 / (1.0 + (r.norm() / robust).powi(2));
+            let j = -b[i].cross_matrix() * ma.cross_matrix();
+            h += j.transpose() * j * w;
+            g += j.transpose() * r * w;
+        }
+        let Some(c) = h.cholesky() else { break };
+        let dx = -c.solve(&g);
+        m = Rotation3::from_scaled_axis(dx).into_inner() * m;
+    }
+    (m, robust_cost(a, b, rho, m, v, robust))
 }
