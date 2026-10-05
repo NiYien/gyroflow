@@ -521,7 +521,21 @@ impl AutosyncProcess {
 
         let img = {
             let _g = StageGuard::new(Stage::YuvToGray);
-            PoseEstimator::yuv_to_gray(width, height, stride as u32, pixels).map(Arc::new)
+            let unscaled = || PoseEstimator::yuv_to_gray(width, height, stride as u32, pixels).map(Arc::new);
+            #[cfg(feature = "use-opencv")]
+            let prepared = if self.optical.is_some() {
+                match super::optical_motion::tracker::prepare_frame(width, height, stride, pixels,
+                    super::optical_motion::config::config().track_width) {
+                    Ok(image) => Some(Arc::new(image)),
+                    Err(e) => {
+                        log::debug!(target: "sync", "[optical] frame preparation failed, using tracker resize: {e}");
+                        unscaled()
+                    }
+                }
+            } else { unscaled() };
+            #[cfg(not(feature = "use-opencv"))]
+            let prepared = unscaled();
+            prepared
         };
         if width > stride as u32 {
             width = stride as u32;

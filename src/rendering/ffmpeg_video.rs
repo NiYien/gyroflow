@@ -19,6 +19,30 @@ pub struct FrameBuffers {
     pub output_frame_post: Option<frame::Video>,
     pub output_frame_hw: Option<frame::Video>,
 }
+
+/// The same sequence as callback-side `frame_no % every_nth == 0`, across all ranges in one attempt.
+pub struct DecodeFrameStep {
+    every_nth: usize,
+    phase: usize,
+    pub decoded: usize,
+    pub retained: usize,
+}
+
+impl DecodeFrameStep {
+    pub fn new(every_nth: usize) -> Self {
+        Self { every_nth: every_nth.max(1), phase: 0, decoded: 0, retained: 0 }
+    }
+
+    fn keep_next(&mut self) -> bool {
+        let keep = self.phase == 0;
+        self.phase += 1;
+        if self.phase == self.every_nth { self.phase = 0; }
+        self.decoded += 1;
+        self.retained += usize::from(keep);
+        keep
+    }
+}
+
 impl Default for FrameBuffers {
     fn default() -> Self {
         Self {
@@ -156,6 +180,7 @@ pub struct VideoTranscoder<'a> {
     pub encoder_converter: Option<software::scaling::Context>,
 
     pub decode_only: bool,
+    pub decode_frame_step: Option<DecodeFrameStep>,
     // Opt-in for analysis attempts that must not accept a partial decode.
     pub strict_decode_errors: bool,
     pub gpu_decoding: bool,
@@ -398,6 +423,20 @@ impl<'a> VideoTranscoder<'a> {
                         out_timestamp_us: ts,
                         ..Default::default()
                     };
+
+                    if self.decode_only && self.decode_frame_step.as_mut().is_some_and(|step| !step.keep_next()) {
+                        // Keep timing and range termination identical to a skipped on_frame callback.
+                        // Reference frames still reach the decoder, but need no GPU download or conversion.
+                        if let Some(last_ts) = frame_ts.last_video {
+                            frame_ts.last_duration_video = ts - last_ts;
+                        }
+                        frame_ts.last_video = Some(ts);
+                        if end_ms.is_some_and(|end| timestamp_ms > end) {
+                            status = Status::Finish;
+                            break;
+                        }
+                        continue;
+                    }
 
                     let mut hw_formats = None;
                     let input_frame = if unsafe { !(*frame.as_mut_ptr()).hw_frames_ctx.is_null() } {
@@ -968,6 +1007,61 @@ impl<'a> VideoTranscoder<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decode_frame_step_preserves_frames_and_range_boundaries() {
+        use std::{cell::RefCell, rc::Rc};
+
+        fn run(every_nth: usize, early: bool) -> (Vec<(i64, u8)>, Option<i64>, i64) {
+            ffmpeg_next::init().unwrap();
+            let codec = decoder::find(codec::Id::RAWVIDEO).unwrap();
+            let mut context = codec::context::Context::new_with_codec(codec);
+            unsafe {
+                let ptr = context.as_mut_ptr();
+                (*ptr).width = 32;
+                (*ptr).height = 24;
+                (*ptr).pix_fmt = format::Pixel::GRAY8.into();
+            }
+            let mut video = VideoTranscoder {
+                decoder: Some(context.decoder().open_as(codec).unwrap().video().unwrap()),
+                decode_only: true,
+                decode_frame_step: early.then(|| DecodeFrameStep::new(every_nth)),
+                encoder_params: EncoderParams { time_base: Some(Rational::new(1, 1_000_000)), ..Default::default() },
+                ..Default::default()
+            };
+            let samples = Rc::new(RefCell::new(Vec::new()));
+            let output = samples.clone();
+            let mut callback_index = 0usize;
+            video.on_frame_callback = Some(Box::new(move |ts, frame, _, _, _| {
+                if early || callback_index % every_nth.max(1) == 0 {
+                    output.borrow_mut().push((ts, frame.data(0)[0]));
+                }
+                callback_index += 1;
+                Ok(())
+            }));
+            let mut times = FrameTimestamps::default();
+            // Seek pre-roll, an overlapping range, and a backwards seek. End frames may be skipped.
+            for (start, end, decoded) in [(20, 50, 0..90), (40, 80, 20..110), (0, 20, 0..50)] {
+                for ms in decoded.step_by(10) {
+                    let mut packet = Packet::copy(&vec![ms as u8; 32 * 24]);
+                    packet.set_pts(Some(ms * 1000));
+                    packet.set_dts(Some(ms * 1000));
+                    video.decoder.as_mut().unwrap().send_packet(&packet).unwrap();
+                    let status = video.receive_and_process_video_frames((0, 0), None, None, &mut Vec::new(),
+                        Some(start as f64), Some(end as f64), &mut times).unwrap();
+                    if status == Status::Finish { break; }
+                }
+            }
+            let result = samples.borrow().clone();
+            (result, times.last_video, times.last_duration_video)
+        }
+
+        for stride in [0, 1, 2, 3, 5] {
+            let expected = run(stride, false);
+            assert!(!expected.0.is_empty(), "the reference decoder must deliver frames");
+            assert_eq!(run(stride, true), expected, "stride {stride}");
+        }
+    }
 
     // Pins the per-platform constant to the C runtime's own notion of ENOSYS, so a wrong value
     // cannot silently disable the fallback. ffmpeg renders the errno through strerror.

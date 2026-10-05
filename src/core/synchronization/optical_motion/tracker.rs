@@ -34,8 +34,44 @@ const LK_EPS: f64 = 0.001;
 /// Largest distance between a point and its forward-backward tracked self, px at tracking resolution
 const FB_MAX_PX: f32 = 0.1;
 
+/// Resize borrowed decoder pixels once before sharing a frame between tracking windows.
+/// Keep the original INTER_AREA operation so moving it does not change the tracked pixels.
+pub fn prepare_frame(width: u32, height: u32, stride: usize, pixels: &[u8], track_width: u32) -> Result<GrayImage, opencv::Error> {
+    let len = stride.checked_mul(height as usize).unwrap_or(usize::MAX);
+    if width == 0 || height == 0 || stride < width as usize || pixels.len() < len {
+        return Err(opencv::Error::new(core::StsBadArg, "Invalid grayscale frame size"));
+    }
+    let (tw, th) = tracking_size((width, height), track_width);
+    let packed = if (tw, th) == (width, height) {
+        pixels[..len].chunks_exact(stride).flat_map(|row| row[..width as usize].iter().copied()).collect()
+    } else {
+        let src = Mat::new_rows_cols_with_data::<u8>(height as i32, stride as i32, &pixels[..len])?;
+        let cropped = Mat::roi(&src, Rect::new(0, 0, width as i32, height as i32))?;
+        let mut dst = Mat::default();
+        imgproc::resize(&cropped, &mut dst, Size::new(tw as i32, th as i32), 0.0, 0.0, imgproc::INTER_AREA)?;
+        dst.data_bytes()?.to_vec()
+    };
+    GrayImage::from_raw(tw, th, packed).ok_or_else(|| opencv::Error::new(core::StsBadArg, "Invalid tracking frame size"))
+}
+
+struct TrackingPyramid {
+    layers: Vector<Mat>,
+    levels: i32,
+}
+
+impl TrackingPyramid {
+    fn new(img: &impl core::ToInputArray) -> Result<Self, opencv::Error> {
+        let mut layers = Vector::<Mat>::new();
+        // Own the pixels: the caller's grayscale buffer is released after this frame.
+        // Derivatives and padding match the pyramids that LK builds internally.
+        let levels = video::build_optical_flow_pyramid(img, &mut layers, Size::new(LK_WIN, LK_WIN), LK_LEVELS,
+            true, core::BORDER_REFLECT_101, core::BORDER_CONSTANT, false)?;
+        Ok(Self { layers, levels })
+    }
+}
+
 pub struct KltTracker {
-    prev: Option<Mat>,
+    prev: Option<TrackingPyramid>,
     size: (i32, i32),
     points: Vec<Point2f>,
     ids: Vec<u32>,
@@ -55,13 +91,13 @@ impl KltTracker {
         let (tw, th) = tracking_size((iw, ih), self.track_width);
         // Borrows the pixels, no copy
         let src = Mat::new_rows_cols_with_data::<u8>(ih as i32, iw as i32, &img.as_raw()[..iw as usize * ih as usize])?;
-        // The frame is kept as the next one's previous frame, which takes one copy: the downscaled frame, or a clone
+        // Build each frame's pyramid once for both directions and the following frame pair.
         let cur = if (tw, th) == (iw, ih) {
-            src.try_clone()?
+            TrackingPyramid::new(&src)?
         } else {
             let mut dst = Mat::default();
             imgproc::resize(&src, &mut dst, Size::new(tw as i32, th as i32), 0.0, 0.0, imgproc::INTER_AREA)?;
-            dst
+            TrackingPyramid::new(&dst)?
         };
         let (w, h) = (tw as i32, th as i32);
         if self.size != (w, h) { self.reset(); }
@@ -69,7 +105,7 @@ impl KltTracker {
 
         let mut out = Vec::new();
         if let Some(prev) = self.prev.take() {
-            self.replenish(&prev)?;
+            self.replenish(&prev.layers.get(0)?)?;
             if !self.points.is_empty() {
                 let pa: Vector<Point2f> = Vector::from_slice(&self.points);
                 let mut pb = Vector::<Point2f>::new();
@@ -79,8 +115,9 @@ impl KltTracker {
                 let mut err = Vector::<f32>::new();
                 let criteria = TermCriteria::new(3 /* COUNT | EPS */, LK_MAX_ITERS, LK_EPS)?;
                 let win = Size::new(LK_WIN, LK_WIN);
-                video::calc_optical_flow_pyr_lk(&prev, &cur, &pa, &mut pb, &mut st, &mut err, win, LK_LEVELS, criteria, 0, 1e-4)?;
-                video::calc_optical_flow_pyr_lk(&cur, &prev, &pb, &mut pa2, &mut st2, &mut err, win, LK_LEVELS, criteria, 0, 1e-4)?;
+                let levels = prev.levels.min(cur.levels);
+                video::calc_optical_flow_pyr_lk(&prev.layers, &cur.layers, &pa, &mut pb, &mut st, &mut err, win, levels, criteria, 0, 1e-4)?;
+                video::calc_optical_flow_pyr_lk(&cur.layers, &prev.layers, &pb, &mut pa2, &mut st2, &mut err, win, levels, criteria, 0, 1e-4)?;
 
                 let mut points = Vec::with_capacity(self.points.len());
                 let mut ids = Vec::with_capacity(self.points.len());
@@ -239,6 +276,71 @@ mod tests {
     fn median(mut v: Vec<f32>) -> f32 {
         v.sort_unstable_by(|a, b| a.total_cmp(b));
         v[v.len() / 2]
+    }
+
+    #[test] fn preparing_padded_frames_preserves_the_original_resize_pixels() {
+        for (w, h, stride) in [(1920, 1080, 1936), (1440, 1080, 1456), (960, 540, 968), (853, 480, 864)] {
+            let image = blobs(w, h, 400, (0, 0));
+            let mut padded = vec![255; stride * h as usize];
+            for (src, dst) in image.as_raw().chunks_exact(w as usize).zip(padded.chunks_exact_mut(stride)) {
+                dst[..w as usize].copy_from_slice(src);
+            }
+            let prepared = prepare_frame(w, h, stride, &padded, 960).unwrap();
+            let (tw, th) = tracking_size((w, h), 960);
+            assert_eq!(prepared.dimensions(), (tw, th));
+            if (w, h) == (tw, th) {
+                assert_eq!(prepared, image);
+            } else {
+                // Reference: crop to a packed GrayImage, then resize inside KltTracker.
+                let src = Mat::new_rows_cols_with_data::<u8>(h as i32, w as i32, image.as_raw()).unwrap();
+                let mut expected = Mat::default();
+                imgproc::resize(&src, &mut expected, Size::new(tw as i32, th as i32), 0.0, 0.0, imgproc::INTER_AREA).unwrap();
+                assert_eq!(prepared.as_raw().as_slice(), expected.data_bytes().unwrap());
+            }
+        }
+        assert!(prepare_frame(32, 24, 31, &[0; 32 * 24], 960).is_err());
+        assert!(prepare_frame(32, 24, 32, &[0; 16], 960).is_err());
+    }
+
+    #[test] fn cached_pyramids_match_image_tracking_in_both_directions() {
+        fn flow(a: &impl core::ToInputArray, b: &impl core::ToInputArray, points: &Vector<Point2f>, levels: i32) -> (Vector<Point2f>, Vector<u8>) {
+            let (mut out, mut status, mut err) = (Vector::<Point2f>::new(), Vector::<u8>::new(), Vector::<f32>::new());
+            let criteria = TermCriteria::new(3, LK_MAX_ITERS, LK_EPS).unwrap();
+            video::calc_optical_flow_pyr_lk(a, b, points, &mut out, &mut status, &mut err,
+                Size::new(LK_WIN, LK_WIN), levels, criteria, 0, 1e-4).unwrap();
+            (out, status)
+        }
+        fn same(a: &(Vector<Point2f>, Vector<u8>), b: &(Vector<Point2f>, Vector<u8>)) {
+            assert_eq!(a.1.to_vec(), b.1.to_vec());
+            for (x, y) in a.0.iter().zip(b.0.iter()) {
+                assert_eq!((x.x.to_bits(), x.y.to_bits()), (y.x.to_bits(), y.y.to_bits()));
+            }
+        }
+        // Include small images where OpenCV cannot build every requested level.
+        for (w, h) in [(640, 360), (64, 48), (32, 24)] {
+            let a = blobs(w, h, 400, (0, 0));
+            let b = blobs(w, h, 400, (3, 2));
+            let ma = Mat::new_rows_cols_with_data::<u8>(h as i32, w as i32, a.as_raw()).unwrap();
+            let mb = Mat::new_rows_cols_with_data::<u8>(h as i32, w as i32, b.as_raw()).unwrap();
+            let (pa, pb) = (TrackingPyramid::new(&ma).unwrap(), TrackingPyramid::new(&mb).unwrap());
+            let points: Vector<Point2f> = (4..h - 4).step_by(7)
+                .flat_map(|y| (4..w - 4).step_by(7).map(move |x| Point2f::new(x as f32, y as f32))).collect();
+            let expected = flow(&ma, &mb, &points, LK_LEVELS);
+            let actual = flow(&pa.layers, &pb.layers, &points, pa.levels.min(pb.levels));
+            same(&expected, &actual);
+            same(&flow(&mb, &ma, &expected.0, LK_LEVELS),
+                 &flow(&pb.layers, &pa.layers, &actual.0, pa.levels.min(pb.levels)));
+        }
+    }
+
+    #[test] fn cached_pyramids_are_discarded_on_size_change_and_error() {
+        let mut tracker = KltTracker::new(1500, 1.0, 960);
+        tracker.track(&blobs(640, 360, 400, (0, 0))).unwrap();
+        assert!(tracker.track(&blobs(320, 180, 400, (0, 0))).unwrap().0.is_empty());
+        assert!(!tracker.track(&blobs(320, 180, 400, (3, 2))).unwrap().0.is_empty());
+        assert!(tracker.track(&GrayImage::new(0, 0)).is_err());
+        assert!(tracker.prev.is_none());
+        assert!(tracker.track(&blobs(320, 180, 400, (6, 4))).unwrap().0.is_empty());
     }
 
     #[test] fn tracks_a_translated_texture() {

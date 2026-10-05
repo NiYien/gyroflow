@@ -652,6 +652,7 @@ fn decode_and_feed(
     let every_nth_frame = sync.sync_params.every_nth_frame.max(1);
     let mut frame_no = 0usize;
     let mut abs_frame_no = 0usize;
+    let optical_sync = sync.sync_params.offset_method == OPTICAL;
 
     let mut decoder_options = ffmpeg_next::Dictionary::new();
     if let Some(scale) = super::sync_decoder_scale_string(PROC_HEIGHT, video_url) {
@@ -675,6 +676,7 @@ fn decode_and_feed(
         "sw".to_string()
     };
 
+    let every_nth_frame = if optical_sync { proc.set_decode_frame_step(every_nth_frame) } else { every_nth_frame };
     let convert_error: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
     let (sync2, timing2, dng_curve2, convert_error2) = (sync.clone(), timing.clone(), dng_curve.clone(), convert_error.clone());
     proc.on_frame(move |timestamp_us, input_frame, _output_frame, converter, _rate_control| {
@@ -696,9 +698,11 @@ fn decode_and_feed(
                         let mut buf = Vec::with_capacity(y_len + uv_len);
                         buf.extend_from_slice(&small_frame.data(0)[..y_len]);
                         buf.extend_from_slice(&small_frame.data(1)[..uv_len]);
-                        (small_frame.plane_width(0), small_frame.plane_height(0), small_frame.stride(0), buf)
+                        (small_frame.plane_width(0), small_frame.plane_height(0), small_frame.stride(0), std::borrow::Cow::Owned(buf))
                     } else {
-                        (small_frame.plane_width(0), small_frame.plane_height(0), small_frame.stride(0), small_frame.data(0).to_vec())
+                        let pixels = if optical_sync { std::borrow::Cow::Borrowed(small_frame.data(0)) }
+                            else { std::borrow::Cow::Owned(small_frame.data(0).to_vec()) };
+                        (small_frame.plane_width(0), small_frame.plane_height(0), small_frame.stride(0), pixels)
                     };
                     let fed = Instant::now();
                     sync2.feed_frame(timestamp_us, frame_no, width, height, stride, &pixels);

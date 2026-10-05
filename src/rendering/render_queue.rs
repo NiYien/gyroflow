@@ -10121,6 +10121,7 @@ impl RenderQueue {
                         let try_run = |use_gpu: bool, ranges: Vec<(f64, f64)>| -> Result<(), rendering::FFmpegError> {
                             let mut frame_no = 0;
                             let mut abs_frame_no = 0;
+                            let optical_sync = sync.sync_params.offset_method == 3;
 
                             let mut decoder_options = ffmpeg_next::Dictionary::new();
                             // Decoder scale is decoupled from proc_height: on macOS R3D/NEV
@@ -10159,6 +10160,7 @@ impl RenderQueue {
                                 Some(decoder_options),
                             )?;
                             proc.set_strict_decode_errors(android_deep_match);
+                            let every_nth_frame = if optical_sync { proc.set_decode_frame_step(every_nth_frame) } else { every_nth_frame };
 
                             let err2 = err.clone();
                             let sync2 = sync.clone();
@@ -10218,14 +10220,15 @@ impl RenderQueue {
                                                             small_frame.plane_width(0),
                                                             small_frame.plane_height(0),
                                                             small_frame.stride(0),
-                                                            all_data,
+                                                            std::borrow::Cow::Owned(all_data),
                                                         )
                                                     } else {
                                                         (
                                                             small_frame.plane_width(0),
                                                             small_frame.plane_height(0),
                                                             small_frame.stride(0),
-                                                            small_frame.data(0).to_vec(),
+                                                            if optical_sync { std::borrow::Cow::Borrowed(small_frame.data(0)) }
+                                                            else { std::borrow::Cow::Owned(small_frame.data(0).to_vec()) },
                                                         )
                                                     };
 

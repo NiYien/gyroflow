@@ -913,6 +913,10 @@ impl<'a> FfmpegProcessor<'a> {
             &mut self.frame_ts,
         )?;
 
+        if let Some(step) = &self.video.decode_frame_step {
+            ::log::debug!(target: "sync", "[optical] decode sampling: decoded={} retained={} skipped_before_transfer={}",
+                step.decoded, step.retained, step.decoded - step.retained);
+        }
         Ok(())
     }
 

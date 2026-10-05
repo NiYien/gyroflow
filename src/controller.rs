@@ -1417,6 +1417,7 @@ impl Controller {
                 ::log::info!(target: "sync", "[dng] tone curve active for sync input");
             }
 
+            let optical_sync = sync.sync_params.offset_method == 3 && mode == "synchronize";
             let try_run = |use_gpu: bool,
                            ranges: Vec<(f64, f64)>|
              -> Result<(), rendering::FFmpegError> {
@@ -1449,6 +1450,7 @@ impl Controller {
 
                 let mut proc =
                     VideoProcessor::from_file(&input_file.url, use_gpu, 0, Some(decoder_options))?;
+                let every_nth_frame = if optical_sync { proc.set_decode_frame_step(every_nth_frame) } else { every_nth_frame };
 
                 let err2 = err.clone();
                 let sync2 = sync.clone();
@@ -1512,14 +1514,15 @@ impl Controller {
                                                 small_frame.plane_width(0),
                                                 small_frame.plane_height(0),
                                                 small_frame.stride(0),
-                                                all_data,
+                                                std::borrow::Cow::Owned(all_data),
                                             )
                                         } else {
                                             (
                                                 small_frame.plane_width(0),
                                                 small_frame.plane_height(0),
                                                 small_frame.stride(0),
-                                                small_frame.data(0).to_vec(),
+                                                if optical_sync { std::borrow::Cow::Borrowed(small_frame.data(0)) }
+                                                else { std::borrow::Cow::Owned(small_frame.data(0).to_vec()) },
                                             )
                                         };
 
