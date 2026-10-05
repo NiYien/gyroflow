@@ -38,6 +38,7 @@ pub mod sync_diag;
 pub mod sync_metric;
 pub mod sync_perf;
 pub mod sync_repair;
+pub mod optical_sampling;
 use crate::util::MapClosest;
 pub use autosync::{describe_autosync_init_failure, AutosyncError,AutosyncProcess, AutosyncResult};
 

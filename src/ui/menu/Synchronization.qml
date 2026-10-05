@@ -340,6 +340,7 @@ MenuItem {
         Label {
             position: Label.LeftPosition;
             text: qsTr("Analyze every n-th frame");
+            visible: offsetMethod.currentIndex !== 3;
 
             NumberField {
                 id: everyNthFrame;

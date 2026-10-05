@@ -10220,7 +10220,7 @@ impl RenderQueue {
                                 Some(decoder_options),
                             )?;
                             proc.set_strict_decode_errors(android_deep_match);
-                            let every_nth_frame = if optical_sync { proc.set_decode_frame_step(every_nth_frame) } else { every_nth_frame };
+                            if optical_sync { proc.set_decode_frame_step(sync.sync_params.every_nth_frame, sync.source_fps()); }
 
                             let err2 = err.clone();
                             let sync2 = sync.clone();
@@ -10235,7 +10235,7 @@ impl RenderQueue {
                                       _output_frame,
                                       converter,
                                       _rate_control| {
-                                    if abs_frame_no % every_nth_frame == 0 {
+                                    if if optical_sync { sync2.wants_optical_frame(timestamp_us) } else { abs_frame_no % every_nth_frame == 0 } {
                                         // NeuFlow (of_method=3 or 4) needs NV12 for color data;
                                         // other methods use GRAY8.
                                         let pix_fmt = if of_method == 3 || of_method == 4 {

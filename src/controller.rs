@@ -1457,7 +1457,7 @@ impl Controller {
 
                 let mut proc =
                     VideoProcessor::from_file(&input_file.url, use_gpu, 0, Some(decoder_options))?;
-                let every_nth_frame = if optical_sync { proc.set_decode_frame_step(every_nth_frame) } else { every_nth_frame };
+                if optical_sync { proc.set_decode_frame_step(sync.sync_params.every_nth_frame, sync.source_fps()); }
 
                 let err2 = err.clone();
                 let sync2 = sync.clone();
@@ -1470,7 +1470,7 @@ impl Controller {
                               _rate_control| {
                             assert!(_output_frame.is_none());
 
-                            if abs_frame_no % every_nth_frame == 0 {
+                            if if optical_sync { sync2.wants_optical_frame(timestamp_us) } else { abs_frame_no % every_nth_frame == 0 } {
                                 let h = if proc_height > 0 {
                                     proc_height as u32
                                 } else {

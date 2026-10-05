@@ -5,7 +5,7 @@
 //! "Analyze image optically": measures, from the video itself, the rotation the motion data got wrong, and fits the
 //! correction the quaternions get (`gyro_source::OpticalCorrection`).
 //!
-//! Every frame of the clip is tracked (KLT, persistent tracks). For each tracked point the quaternions predict where
+//! Source frames are tracked at an integer interval near 25 fps (KLT, persistent tracks). For each tracked point the quaternions predict where
 //! it should be in the next frame - rolling shutter included, each point at its own row's time - and the residual is
 //! what they got wrong, plus the parallax of the camera's translation. Parallax changes slowly along a track while
 //! the errors this is about don't, so a temporal high-pass of each track's residuals leaves the rotation error alone,
@@ -50,10 +50,6 @@ use super::GrayImage;
 const MAX_POINTS: usize = 1500;
 /// Bands of rows (along the readout) each frame pair is measured in
 const BANDS: usize = 6;
-/// Temporal high-pass of the track residuals: window of the local quadratic fit taken out, in frame pairs.
-/// Tracks shorter than the minimum don't contribute
-const HP_MAX: usize = 61;
-const HP_MIN: usize = 15;
 /// Frame pairs measured at once
 const CHUNK: usize = 240;
 const MIN_BAND_POINTS: usize = 25;
@@ -100,6 +96,7 @@ pub struct OpticalMeasurements {
     pub(crate) stab_bands: Vec<sensor::SensorBand>,
     pub translation_requested: bool,
     pub translation_samples: Vec<TranslationSample>,
+    /// Actual analysis cadence in motion-data time, after integer frame sampling.
     pub scaled_fps: f64,
     /// Of the quaternions they were measured against, see `OpticalCorrection::quats_checksum`
     pub quats_checksum: u64,
@@ -283,6 +280,9 @@ pub struct OpticalMotionAnalysis {
     params: ComputeParams,
     fps_scale: Option<f64>,
     scaled_fps: f64,
+    every_nth_frame: usize,
+    hp_min: usize,
+    hp_max: usize,
     quats_checksum: u64,
     context_checksum: u64,
     horizontal_readout: bool,
@@ -354,15 +354,22 @@ impl OpticalMotionAnalysis {
                 // Only what's going to be exported: the trim ranges, or the whole clip without any
                 let ranges: Vec<(f64, f64)> = if p.trim_ranges.is_empty() { vec![(0.0, 1.0)] } else { p.trim_ranges.clone() };
                 let ranges_ms = ranges.iter().map(|(a, b)| (a * p.duration_ms, b * p.duration_ms)).collect::<Vec<_>>();
-                let total_frames = ranges.iter().map(|(a, b)| ((b - a) * p.frame_count as f64).round() as usize).sum();
+                let total_frames: usize = ranges.iter().map(|(a, b)| ((b - a) * p.frame_count as f64).round() as usize).sum();
                 (p.fps_scale, p.get_scaled_fps(), p.frame_readout_direction.is_horizontal(), ranges_ms, total_frames)
             };
+            // Sensor reconstruction needs its original per-frame observations.
+            let every_nth_frame = if vision.is_none() && ui.stab_enabled { 1 } else { super::optical_sampling::frame_step(scaled_fps) };
+            let (hp_min, hp_max) = super::optical_sampling::high_pass_lengths(every_nth_frame);
+            let total_frames = total_frames.div_ceil(every_nth_frame);
+            log::info!("Optical analysis sampling: source_fps={scaled_fps:.6} every_nth={every_nth_frame} analysis_fps={:.6}",
+                scaled_fps / every_nth_frame as f64);
             let translation = (vision.is_none() && ui.translation_enabled).then(|| TranslationState {
                 solver: TranslationSolver::new(TranslationSolverConfig::resolved()),
                 next_seq: 0, pairs: HashMap::new(), position: Vector3::zeros(), segment: 0, samples: Vec::new(),
             });
             Ok(Self {
                 params, fps_scale, scaled_fps, quats_checksum, context_checksum, horizontal_readout,
+                every_nth_frame, hp_min, hp_max,
                 track_size: (0, 0),
                 focal_px: 0.0,
                 tracker: KltTracker::new(MAX_POINTS, 1.0, 960),
@@ -403,18 +410,37 @@ impl OpticalMotionAnalysis {
     /// What to decode: the trim ranges, in the file's own milliseconds
     pub fn ranges_ms(&self) -> Vec<(f64, f64)> { self.ranges_ms.clone() }
 
+    pub fn frame_step(&self) -> usize { self.every_nth_frame }
+
+    pub fn source_fps(&self) -> f64 { self.scaled_fps / self.fps_scale.unwrap_or(1.0) }
+
+    /// Check before grayscale conversion, and again in core for callers without early sampling.
+    pub fn wants_frame(&self, timestamp_us: i64) -> bool {
+        let file_ms = timestamp_us as f64 / 1000.0;
+        self.ranges_ms.iter().any(|(a, b)| file_ms >= *a - 0.5 && file_ms <= *b + 0.5)
+            && super::optical_sampling::keep_frame(timestamp_us, self.source_fps(), self.every_nth_frame)
+    }
+
+    fn continuous(&self, index: usize, timestamp_ms: f64) -> bool {
+        self.last.is_some_and(|last| {
+            let scale = self.fps_scale.unwrap_or(1.0);
+            index == last.index + self.every_nth_frame && self.ranges_ms.iter().any(|(a, b)| {
+                last.timestamp_ms * scale >= *a - 0.5 && timestamp_ms * scale <= *b + 0.5
+            })
+        })
+    }
+
     /// Feeds the next decoded frame, in decoding order: 8-bit luma, ideally about 1000 px wide. Frames outside of
     /// `ranges_ms` are ignored
     pub fn feed_frame(&mut self, timestamp_us: i64, width: u32, height: u32, stride: usize, pixels: &[u8]) -> Result<(), String> {
-        if self.is_cancelled() { return Ok(()); }
+        if self.is_cancelled() || !self.wants_frame(timestamp_us) { return Ok(()); }
         let file_ms = timestamp_us as f64 / 1000.0;
-        if !self.ranges_ms.iter().any(|(a, b)| file_ms >= *a - 0.5 && file_ms <= *b + 0.5) { return Ok(()); }
         let mut ts_ms = file_ms;
         if let Some(scale) = self.fps_scale { ts_ms /= scale; }
         let index = crate::frame_at_timestamp(ts_ms, self.scaled_fps).max(0) as usize;
         if self.last.map(|l| index <= l.index).unwrap_or(false) { return Ok(()); } // a repeated frame
 
-        let continuous = self.last.map(|l| index == l.index + 1).unwrap_or(false);
+        let continuous = self.continuous(index, ts_ms);
 
         #[cfg(feature = "use-opencv")]
         let obs = {
@@ -450,7 +476,7 @@ impl OpticalMotionAnalysis {
             self.focal_px = k[(0, 0)] * size.0 as f64 / self.params.width.max(1) as f64;
         }
         let frame = self.frame(index, ts_ms);
-        let continuous = self.last.map(|l| index == l.index + 1).unwrap_or(false);
+        let continuous = self.continuous(index, ts_ms);
         if continuous && !obs.is_empty() {
             if let Some(a) = self.last {
                 self.pairs.push_back(Pair { seq: self.next_seq, a, b: frame, obs });
@@ -501,7 +527,7 @@ impl OpticalMotionAnalysis {
             stab_bands: self.stab_bands,
             translation_requested: self.translation.is_some(),
             translation_samples: self.translation.map(|state| state.samples).unwrap_or_default(),
-            scaled_fps: self.scaled_fps,
+            scaled_fps: self.scaled_fps / self.every_nth_frame as f64,
             quats_checksum,
             context_checksum: self.context_checksum,
             video_base,
@@ -569,7 +595,7 @@ impl OpticalMotionAnalysis {
     /// Measures the frame pairs whose tracks are complete enough for the high-pass
     fn process(&mut self, last_call: bool) {
         self.collect_stab_pairs();
-        let end = if last_call { self.next_seq } else { self.next_seq.saturating_sub(HP_MAX) };
+        let end = if last_call { self.next_seq } else { self.next_seq.saturating_sub(self.hp_max) };
         if end <= self.measured_upto || (!last_call && end < self.measured_upto + CHUNK) { return; }
         if self.is_cancelled() { return; }
 
@@ -599,7 +625,7 @@ impl OpticalMotionAnalysis {
         self.measurements.extend(ms.into_iter().map(|(_, m)| m));
 
         self.measured_upto = end;
-        let keep_from = end.saturating_sub(HP_MAX);
+        let keep_from = end.saturating_sub(self.hp_max);
         while self.pairs.front().map(|p| p.seq < keep_from).unwrap_or(false) {
             if let Some(pair) = self.pairs.pop_front() {
                 if let Some(state) = &mut self.translation { state.pairs.remove(&pair.seq); }
@@ -752,8 +778,8 @@ impl OpticalMotionAnalysis {
             let mut e = s + 1;
             while e < order.len() && derived[order[e]].id == derived[order[s]].id && derived[order[e]].seq == derived[order[e - 1]].seq + 1 { e += 1; }
             let len = e - s;
-            if len >= HP_MIN {
-                let l = { let l = len.min(HP_MAX); if l % 2 == 0 { l - 1 } else { l } };
+            if len >= self.hp_min {
+                let l = { let l = len.min(self.hp_max); if l % 2 == 0 { l - 1 } else { l } };
                 let proj = self.sg_cache.entry(l).or_insert_with(|| sg_projection(l));
                 for k in 0..len {
                     let w0 = (k as isize - (l / 2) as isize).clamp(0, (len - l) as isize) as usize;
@@ -1177,6 +1203,111 @@ mod tests {
         let correlation = cov / (sx * sy).sqrt();
         eprintln!("translation position Pearson correlation={correlation}");
         assert!(correlation >= 0.95, "correlation={correlation}");
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn sampled_analysis_tracks_integer_steps_and_preserves_original_frame_times() {
+        let stab = analysis_fixture(90, |_| crate::Quat64::identity());
+        {
+            let mut p = stab.params.write();
+            p.fps = 24.0;
+            p.fps_scale = Some(5.0);
+            p.frame_count = 360;
+            p.duration_ms = 15_000.0;
+        }
+        let mut analysis = OpticalMotionAnalysis::from_manager(&stab, Arc::new(AtomicBool::new(false))).unwrap();
+        assert_eq!(analysis.frame_step(), 5);
+        assert_eq!(analysis.source_fps(), 24.0);
+        let mut seed = 7u32;
+        let pixels: Vec<u8> = (0..640 * 360).map(|_| {
+            seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5; seed as u8
+        }).collect();
+        for frame in 0..120 {
+            let ts = (frame as f64 * 1e6 / 24.0).round() as i64;
+            analysis.feed_frame(ts, 640, 360, 640, &pixels).unwrap();
+        }
+        assert_eq!(analysis.frames, 24);
+        assert_eq!(analysis.next_seq, 23);
+        for pair in &analysis.pairs {
+            assert_eq!(pair.b.index - pair.a.index, 5);
+            assert!((pair.b.timestamp_ms - pair.a.timestamp_ms - 1000.0 / 24.0).abs() < 0.001);
+        }
+        assert!(!analysis.continuous(125, 125_000.0 / 120.0));
+        // A trim gap can be shorter than one sampling step and must still break the pair.
+        analysis.ranges_ms = vec![(0.0, 4_800.0), (4_900.0, 15_000.0)];
+        assert!(!analysis.continuous(120, 1000.0));
+        let m = analysis.finish().unwrap();
+        assert_eq!(m.scaled_fps, 24.0);
+        assert_eq!(m.frames, 24);
+        assert!(m.measured_frames > 0);
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn sampled_translation_and_rotation_interpolate_between_source_frames() {
+        use crate::gyro_source::optical_translation::{OpticalTranslation, OpticalTranslationSettings};
+        let stab = analysis_fixture(90, |_| crate::Quat64::identity());
+        { let mut p = stab.params.write(); p.fps = 120.0; p.frame_count = 360; }
+        stab.optical_ui.write().translation_enabled = true;
+        let mut analysis = OpticalMotionAnalysis::from_manager(&stab, Arc::new(AtomicBool::new(false))).unwrap();
+        let mut previous: HashMap<_, _> = parallax_observations(0).into_iter().collect();
+        for sample in 1..72 {
+            let current = parallax_observations(sample);
+            let obs = current.iter().map(|(id, b)| Observation { id: *id, a: previous[id], b: *b }).collect();
+            analysis.push_test_pair((sample - 1) * 5, sample * 5, obs);
+            previous = current.into_iter().collect();
+        }
+        let m = analysis.finish().unwrap();
+        assert_eq!(m.scaled_fps, 24.0);
+        assert_eq!(m.translation_samples.len(), 72);
+        assert!(m.translation_samples.iter().filter(|s| s.confidence > 0.0).count() > 30);
+        let correction = solve(&m, &OpticalCorrectionSettings::default()).unwrap();
+        assert!((correction.spacing_us - 1e6 / 24.0 / 6.0).abs() < 1e-9);
+        let translation = OpticalTranslation::new(m.translation_samples.clone(), OpticalTranslationSettings::default());
+        let mut maximum = 0.0f64;
+        for samples in m.translation_samples.windows(2).skip(10).take(40) {
+            let (a, b) = (samples[0].timestamp_us as f64 / 1000.0, samples[1].timestamp_us as f64 / 1000.0);
+            let (left, right) = (translation.shift_at(a), translation.shift_at(b));
+            maximum = maximum.max(left.norm());
+            for k in 1..5 {
+                let fraction = k as f64 / 5.0;
+                let time = a + (b - a) * fraction;
+                assert!((translation.shift_at(time) - (left * (1.0 - fraction) + right * fraction)).norm() < 1e-10);
+                assert!(correction.at(time * 1000.0).iter().all(|v| v.is_finite()));
+            }
+        }
+        assert!(maximum > 1e-6);
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn sampled_pure_optical_base_interpolates_rotations() {
+        let stab = analysis_fixture(90, |_| crate::Quat64::identity());
+        { let mut p = stab.params.write(); p.fps = 240.0; p.frame_count = 720; }
+        assert!(stab.set_ignore_file_motion(true));
+        let mut analysis = OpticalMotionAnalysis::from_manager(&stab, Arc::new(AtomicBool::new(false))).unwrap();
+        assert_eq!(analysis.frame_step(), 10);
+        let observe = |sample: usize| {
+            let rotation = Rotation3::from_axis_angle(&Vector3::y_axis(), (sample as f64 * 0.1).to_radians());
+            (0..400u32).map(|id| {
+                let world = Vector3::new(((id % 20) as f64 - 9.5) / 10.0, ((id / 20) as f64 - 9.5) / 10.0, -5.0);
+                (id, project(rotation * world))
+            }).collect::<HashMap<_, _>>()
+        };
+        let mut previous = observe(0);
+        for sample in 1..40 {
+            let current = observe(sample);
+            let obs = (0..400u32).map(|id| Observation { id, a: previous[&id], b: current[&id] }).collect();
+            analysis.push_test_pair((sample - 1) * 10, sample * 10, obs);
+            previous = current;
+        }
+        let m = analysis.finish().unwrap();
+        assert_eq!(m.video_base.len(), 40);
+        let quats = optical_correction::base_quats(&m.video_base);
+        let first = GyroSource::clamped_quat_at_gyro_timestamp(&quats, 10.0 * 1000.0 / 24.0);
+        let midpoint = GyroSource::clamped_quat_at_gyro_timestamp(&quats, 10.5 * 1000.0 / 24.0);
+        assert!((first.angle_to(&midpoint).to_degrees() - 0.05).abs() < 0.003);
     }
 
     #[cfg(feature = "use-opencv")]

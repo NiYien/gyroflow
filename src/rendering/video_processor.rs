@@ -164,15 +164,12 @@ impl<'a> VideoProcessor<'a> {
             Processor::Mdk(x) => x.on_frame(cb),
         }
     }
-    /// Move sampling before FFmpeg's hardware download. Returns the stride still needed by the callback;
-    /// MDK keeps callback-side sampling because its native processing API already supplies CPU frames.
-    pub fn set_decode_frame_step(&mut self, every_nth: usize) -> usize {
+    /// Select source-frame indices before FFmpeg's hardware download. Callbacks repeat the same
+    /// timestamp check for MDK, whose native processing API already supplies CPU frames.
+    pub fn set_decode_frame_step(&mut self, every_nth: usize, source_fps: f64) {
         let every_nth = every_nth.max(1);
         if let Processor::Ffmpeg(proc) = &mut self.inner {
-            proc.video.decode_frame_step = Some(ffmpeg_video::DecodeFrameStep::new(every_nth));
-            1
-        } else {
-            every_nth
+            proc.video.decode_frame_step = Some(ffmpeg_video::DecodeFrameStep::at_source_fps(every_nth, source_fps));
         }
     }
 

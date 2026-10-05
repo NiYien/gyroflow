@@ -676,11 +676,11 @@ fn decode_and_feed(
         "sw".to_string()
     };
 
-    let every_nth_frame = if optical_sync { proc.set_decode_frame_step(every_nth_frame) } else { every_nth_frame };
+    if optical_sync { proc.set_decode_frame_step(every_nth_frame, sync.source_fps()); }
     let convert_error: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
     let (sync2, timing2, dng_curve2, convert_error2) = (sync.clone(), timing.clone(), dng_curve.clone(), convert_error.clone());
     proc.on_frame(move |timestamp_us, input_frame, _output_frame, converter, _rate_control| {
-        if abs_frame_no % every_nth_frame == 0 {
+        if if optical_sync { sync2.wants_optical_frame(timestamp_us) } else { abs_frame_no % every_nth_frame == 0 } {
             let h = PROC_HEIGHT as u32;
             let ratio = input_frame.height() as f64 / h as f64;
             let sw = (input_frame.width() as f64 / ratio).round() as u32;

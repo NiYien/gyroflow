@@ -420,7 +420,7 @@ MenuItem {
     CheckBoxWithContent {
         id: opticalcb;
         text: qsTr("Optical correction");
-        cb.tooltip: qsTr("Measure the camera rotation from the video itself and correct the motion data where they disagree. Useful when vibrations corrupt the gyro data, e.g. on a hard-mounted FPV camera. The analysis goes through every frame of the selected trim range.");
+        cb.tooltip: qsTr("Measure the camera rotation from the video itself and correct the motion data where they disagree. Useful when vibrations corrupt the gyro data, e.g. on a hard-mounted FPV camera. The analysis samples frames at an integer interval near 25 fps within the selected trim range.");
         property var info: ({ available: false });
         cb.enabled: !stabcb.checked;
         onCheckedChanged: root.changeOpticalMode("optical", checked);
@@ -472,7 +472,7 @@ MenuItem {
     CheckBoxWithContent {
         id: translationcb;
         text: qsTr("Translation stabilization");
-        cb.tooltip: qsTr("Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis goes through every frame of the selected trim range. Can't be used together with in-camera stabilization reconstruction. The reported shift is sampled at frame centers; output cropping changes its apparent size.");
+        cb.tooltip: qsTr("Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis samples frames at an integer interval near 25 fps within the selected trim range. Can't be used together with in-camera stabilization reconstruction. The reported shift is sampled at frame centers; output cropping changes its apparent size.");
         property var info: ({ available: false });
         onCheckedChanged: root.changeOpticalMode("translation", checked);
         BasicText {

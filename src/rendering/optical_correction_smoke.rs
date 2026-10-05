@@ -207,7 +207,8 @@ pub fn run(paths: &str) -> i32 {
                     let base = &correction.video_base;
                     let keys_us: Vec<_> = base.iter().map(|(us, _)| *us).collect();
                     let held: Vec<_> = base.windows(2).map(|q| q[0].1.map(f32::to_bits) == q[1].1.map(f32::to_bits)).collect();
-                    let fps = stab.params.read().get_scaled_fps();
+                    let source_fps = stab.params.read().get_scaled_fps();
+                    let fps = source_fps / gyroflow_core::synchronization::optical_sampling::frame_step(source_fps) as f64;
                     let params = measurement_params(&stab);
                     let k = FrameTransform::get_lens_data_at_timestamp(&params, 0.0, false).0;
                     let focal_px = k[(0, 0)] * 960.0 / params.width as f64;

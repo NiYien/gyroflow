@@ -31,20 +31,27 @@ pub const MIN_BAND_POINTS: usize = 25;
 pub const MIN_RATE_POINTS: usize = 25;
 /// Reweighting rounds of the band fit
 const IRLS_ROUNDS: usize = 5;
-/// The smallest odd SG window length
-const SG_FIRST: usize = HP_MIN | 1;
-
-/// Savitzky-Golay projection matrices for every odd window length in HP_MIN..=HP_MAX
-pub struct SgCache(Vec<DMatrix<f64>>);
+/// Savitzky-Golay projections with a time window adjusted for integer frame sampling.
+pub struct SgCache { minimum: usize, maximum: usize, projections: Vec<DMatrix<f64>> }
 
 impl SgCache {
     pub fn new() -> Self {
-        Self((SG_FIRST..=HP_MAX).step_by(2).map(sg_projection).collect())
+        Self::with_frame_step(1)
     }
-    /// The projection of an odd window length `l` in HP_MIN..=HP_MAX
+
+    pub fn with_frame_step(every_nth: usize) -> Self {
+        let (minimum, maximum) = crate::synchronization::optical_sampling::high_pass_lengths(every_nth);
+        Self { minimum, maximum, projections: (minimum..=maximum).step_by(2).map(sg_projection).collect() }
+    }
+
+    pub fn select_tracks(&self, window: &WindowTracks, coarse_points: usize) -> TrackSubset {
+        select_tracks_with_minimum(window, coarse_points, self.minimum)
+    }
+
+    /// The projection of an odd window length within this cache's sampled range.
     fn get(&self, l: usize) -> &DMatrix<f64> {
-        debug_assert!(l % 2 == 1 && (SG_FIRST..=HP_MAX).contains(&l));
-        &self.0[(l - SG_FIRST) / 2]
+        debug_assert!(l % 2 == 1 && (self.minimum..=self.maximum).contains(&l));
+        &self.projections[(l - self.minimum) / 2]
     }
 }
 
@@ -176,8 +183,8 @@ fn high_pass_runs(derived: &[Derived], order: &[usize], runs: &[Range<usize>], s
     let mut out = vec![None; derived.len()];
     for run in runs {
         let (s, len) = (run.start, run.len());
-        if len < HP_MIN { continue; }
-        let l = { let l = len.min(HP_MAX); if l % 2 == 0 { l - 1 } else { l } };
+        if len < sg.minimum { continue; }
+        let l = { let l = len.min(sg.maximum); if l % 2 == 0 { l - 1 } else { l } };
         let proj = sg.get(l);
         for k in 0..len {
             let w0 = (k as isize - (l / 2) as isize).clamp(0, (len - l) as isize) as usize;
@@ -310,13 +317,17 @@ fn coarse_fit_band(pos: f32) -> u8 {
 /// by id), a segment is taken whole when any (pair, fit band) it passes through has fewer than
 /// `coarse_points / COARSE_FIT_BANDS` points so far.
 pub fn select_tracks(window: &WindowTracks, coarse_points: usize) -> TrackSubset {
+    select_tracks_with_minimum(window, coarse_points, HP_MIN)
+}
+
+fn select_tracks_with_minimum(window: &WindowTracks, coarse_points: usize, minimum: usize) -> TrackSubset {
     // Every observation as (id, seq, pair, index in pair); sorted, a track's observations follow each other
     let mut obs: Vec<(u32, usize, usize, u32)> = window.pairs.iter().enumerate()
         .flat_map(|(p, pd)| pd.ids.iter().enumerate().map(move |(i, &id)| (id, pd.seq, p, i as u32)))
         .collect();
     obs.sort_unstable();
     let mut segments = split_runs(obs.len(), |k| (obs[k].0, obs[k].1));
-    segments.retain(|s| s.len() >= HP_MIN);
+    segments.retain(|s| s.len() >= minimum);
     // A track split by a gap has several segments: the start seq orders those of equal length
     segments.sort_unstable_by_key(|s| (std::cmp::Reverse(s.len()), obs[s.start].0, obs[s.start].1));
 

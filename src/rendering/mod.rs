@@ -1075,6 +1075,8 @@ pub fn analyze_optically(stab: &StabilizationManager, cancel_flag: Arc<AtomicBoo
         if operation_cancelled() { return Ok(Err("Cancelled".into())); }
         // Only the trim ranges
         let ranges = analysis.ranges_ms();
+        let frame_step = analysis.frame_step();
+        let source_fps = analysis.source_fps();
         let mut decoder_options = ffmpeg_next::Dictionary::new();
         if input_file.image_sequence_fps > 0.0 {
             let fps = fps_to_rational(input_file.image_sequence_fps);
@@ -1093,6 +1095,7 @@ pub fn analyze_optically(stab: &StabilizationManager, cancel_flag: Arc<AtomicBoo
         // Every frame after that would be decoded for nothing
         let stop = Arc::new(AtomicBool::new(false));
         let mut proc = VideoProcessor::from_file(&input_file.url, use_gpu, 0, Some(decoder_options))?;
+        proc.set_decode_frame_step(frame_step, source_fps);
         let (analysis2, error2, stop2) = (analysis.clone(), error.clone(), stop.clone());
         let (cancel_flag, pause_flag, progress, dng_curve) = (cancel_flag.clone(), pause_flag.clone(), progress.clone(), dng_curve.clone());
         let mut last_progress = std::time::Instant::now();
@@ -1107,6 +1110,7 @@ pub fn analyze_optically(stab: &StabilizationManager, cancel_flag: Arc<AtomicBoo
                 stop2.store(true, Relaxed);
                 return Ok(());
             }
+            if !a.wants_frame(timestamp_us) { return Ok(()); }
             // Restore the DNG levels before converting them to 8-bit grayscale.
             if let Some(curve) = &dng_curve {
                 apply_dng_tone_curve(input_frame, curve);

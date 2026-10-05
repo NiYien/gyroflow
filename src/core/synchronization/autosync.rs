@@ -163,7 +163,7 @@ impl AutosyncProcess {
     pub fn from_manager(
         stab: &StabilizationManager,
         timestamps_fract: &[f64],
-        sync_params: SyncParams,
+        mut sync_params: SyncParams,
         mode: String,
         cancel_flag: Arc<AtomicBool>,
     ) -> Result<Self, AutosyncError> {
@@ -174,6 +174,12 @@ impl AutosyncProcess {
         let fps_scale = params.fps_scale;
         let duration_ms = params.get_scaled_duration_ms();
         let has_motion = stab.gyro.read().has_motion();
+
+        if sync_params.offset_method == 3 && mode == "synchronize" {
+            sync_params.every_nth_frame = super::optical_sampling::frame_step(scaled_fps);
+            log::info!(target: "sync", "[optical] sampling: source_fps={scaled_fps:.6} every_nth={} analysis_fps={:.6}",
+                sync_params.every_nth_frame, scaled_fps / sync_params.every_nth_frame as f64);
+        }
 
         if !autosync_can_run(&mode, has_motion) {
             log::warn!(
@@ -509,6 +515,13 @@ impl AutosyncProcess {
             .collect()
     }
 
+    /// Select before image conversion; the decoder and core use the same source-frame phase.
+    pub fn wants_optical_frame(&self, timestamp_us: i64) -> bool {
+        super::optical_sampling::keep_frame(timestamp_us, self.org_fps, self.sync_params.every_nth_frame)
+    }
+
+    pub fn source_fps(&self) -> f64 { self.org_fps }
+
     /// Return whether a valid image was accepted inside an analysis window.
     pub fn feed_frame(
         &self,
@@ -521,6 +534,8 @@ impl AutosyncProcess {
     ) -> bool {
         use crate::synchronization::sync_perf::{Stage, StageGuard};
         let _feed_guard = StageGuard::new(Stage::FeedFrame);
+
+        if self.optical.is_some() && !self.wants_optical_frame(timestamp_us) { return false; }
 
         let img = {
             let _g = StageGuard::new(Stage::YuvToGray);
@@ -806,7 +821,7 @@ impl AutosyncProcess {
                 return;
             };
             let search_ms = t_search.elapsed().as_secs_f64() * 1000.0;
-            let samples = self.thread_pool.install(|| optical::rates::rate_samples(&windows));
+            let samples = self.thread_pool.install(|| optical::rates::interpolated_rate_samples(&windows, self.sync_params.every_nth_frame));
             for (i, &row) in rows.iter().enumerate() {
                 optical::log_rate_fit(i, &windows[i], &quats, row);
             }
@@ -1672,6 +1687,31 @@ mod tests {
         assert!(make(2, "synchronize").optical.is_none());
         assert!(make(3, "estimate_rolling_shutter").optical.is_none());
         assert!(make(3, "guess_imu_orientation").optical.is_none());
+    }
+
+    #[test]
+    fn optical_sampling_is_shared_by_all_callers_and_uses_capture_time() {
+        for (file_fps, scale) in [(120.0, None), (24.0, Some(5.0))] {
+            let stab = manager_with_motion();
+            {
+                let mut p = stab.params.write();
+                p.fps = file_fps;
+                p.fps_scale = scale;
+                p.frame_count = 360;
+                p.duration_ms = 360_000.0 / file_fps;
+            }
+            let make = |method, mode: &str| AutosyncProcess::from_manager(&stab, &[0.5],
+                SyncParams { offset_method: method, every_nth_frame: 3, ..optical_params() }, mode.into(), Arc::new(AtomicBool::new(false))).unwrap();
+            let sync = make(3, "synchronize");
+            assert_eq!(sync.sync_params.every_nth_frame, 5);
+            assert_eq!(sync.estimator.every_nth_frame.load(SeqCst), 5);
+            for frame in 0..360 {
+                let ts = (frame as f64 * 1e6 / file_fps).round() as i64;
+                assert_eq!(sync.wants_optical_frame(ts), frame % 5 == 0);
+            }
+            assert_eq!(make(2, "synchronize").sync_params.every_nth_frame, 3);
+            assert_eq!(make(3, "estimate_rolling_shutter").sync_params.every_nth_frame, 3);
+        }
     }
 
     #[test]

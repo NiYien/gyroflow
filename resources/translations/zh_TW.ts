@@ -2869,8 +2869,8 @@ Do you want to submit your profile?</source>
     </message>
     <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="322"/>
-        <source>Measure the camera rotation from the video itself and correct the motion data where they disagree. Useful when vibrations corrupt the gyro data, e.g. on a hard-mounted FPV camera. The analysis goes through every frame of the selected trim range.</source>
-        <translation>從影片畫面測量相機旋轉，並在與運動資料不一致處校正運動資料。適用於振動破壞陀螺資料的情況，例如硬裝的 FPV 相機。分析會處理所選剪輯範圍內的每一影格。</translation>
+        <source>Measure the camera rotation from the video itself and correct the motion data where they disagree. Useful when vibrations corrupt the gyro data, e.g. on a hard-mounted FPV camera. The analysis samples frames at an integer interval near 25 fps within the selected trim range.</source>
+        <translation>從影片畫面測量相機旋轉，並在與運動資料不一致處校正運動資料。適用於振動破壞陀螺資料的情況，例如硬裝的 FPV 相機。分析會在所選剪輯範圍內按整數影格間隔抽樣，分析影格率約為 25 fps。</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="346"/>
@@ -2929,8 +2929,8 @@ Do you want to submit your profile?</source>
     </message>
     <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="466"/>
-        <source>Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis goes through every frame of the selected trim range. Can't be used together with in-camera stabilization reconstruction. The reported shift is sampled at frame centers; output cropping changes its apparent size.</source>
-        <translation>從影片中測量相機左右和上下的位移，並平移整幅畫面以穩住一個距離。需要檔案自帶的運動資料；分析會遍歷所選剪輯範圍的每一影格。不能與重建機內防抖同時使用。顯示的平移量取各影格中心時刻，輸出裁切會改變其在畫面上的大小。</translation>
+        <source>Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis samples frames at an integer interval near 25 fps within the selected trim range. Can't be used together with in-camera stabilization reconstruction. The reported shift is sampled at frame centers; output cropping changes its apparent size.</source>
+        <translation>從影片中測量相機左右和上下的位移，並平移整幅畫面以穩住一個距離。需要檔案自帶的運動資料；分析會在所選剪輯範圍內按整數影格間隔抽樣，分析影格率約為 25 fps。不能與重建機內防抖同時使用。顯示的平移量取各影格中心時刻，輸出裁切會改變其在畫面上的大小。</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="481"/>

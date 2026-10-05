@@ -29,14 +29,38 @@ pub fn pair_gyro_rate(pd: &PairData, quats: &TimeQuat, offset_ms: f64) -> Option
 
 /// Collects fitted rates at each frame pair's midpoint in microseconds.
 pub fn rate_samples(windows: &[WindowTracks]) -> BTreeMap<i64, [f64; 3]> {
-    let pairs: Vec<_> = windows.iter().flat_map(|window| window.pairs.iter()).collect();
-    // Indexed parallel collection preserves pair order, so later pairs still replace duplicate keys.
-    let samples: Vec<_> = pairs.par_iter().map(|pd| {
-        let rate = pair_rotation_rate(pd)?;
-        let key = ((pd.a.mid_ms + pd.b.mid_ms) / 2.0 * 1000.0).round() as i64;
-        Some((key, quat_rate_to_chart_dps(rate)))
-    }).collect();
-    samples.into_iter().flatten().collect()
+    interpolated_rate_samples(windows, 1)
+}
+
+/// Fill the chart's skipped frame intervals without creating measurements for the sync search.
+/// Never interpolate across windows, tracking gaps, or a failed rotation fit.
+pub fn interpolated_rate_samples(windows: &[WindowTracks], every_nth: usize) -> BTreeMap<i64, [f64; 3]> {
+    let mut out = BTreeMap::new();
+    for window in windows {
+        // Indexed collection keeps later overlapping windows authoritative at duplicate keys.
+        let samples: Vec<_> = window.pairs.par_iter().map(|pd| {
+            let rate = pair_rotation_rate(pd)?;
+            let key = ((pd.a.mid_ms + pd.b.mid_ms) / 2.0 * 1000.0).round() as i64;
+            Some((key, quat_rate_to_chart_dps(rate)))
+        }).collect();
+        for (i, sample) in samples.iter().enumerate() {
+            let Some((key, rate)) = sample else { continue; };
+            if i > 0 && every_nth > 1 {
+                let (previous, current) = (&window.pairs[i - 1], &window.pairs[i]);
+                if previous.b.index == current.a.index && previous.b.ts_ms == current.a.ts_ms {
+                    if let Some((left_key, left_rate)) = samples[i - 1].filter(|(left, _)| left < key) {
+                        for k in 1..every_nth {
+                            let fraction = k as f64 / every_nth as f64;
+                            let t = left_key + ((*key - left_key) as f64 * fraction).round() as i64;
+                            out.insert(t, std::array::from_fn(|axis| left_rate[axis] * (1.0 - fraction) + rate[axis] * fraction));
+                        }
+                    }
+                }
+            }
+            out.insert(*key, *rate);
+        }
+    }
+    out
 }
 
 /// Correlates paired samples per axis, omitting quiet gyro axes and undefined correlations.
@@ -92,6 +116,34 @@ mod tests {
         let key = ((pd.a.mid_ms + pd.b.mid_ms) / 2.0 * 1000.0).round() as i64;
         assert_eq!(s.get(&key).copied(), Some(quat_rate_to_chart_dps(pair_rotation_rate(pd).unwrap())));
         assert_eq!(s.len(), window.pairs.iter().filter(|p| pair_rotation_rate(p).is_some()).count());
+    }
+
+    #[test]
+    fn sampled_rates_interpolate_only_between_adjacent_successful_pairs() {
+        let (mut window, _) = synth_window(&SynthSpec { fps: 24.0, duration_ms: 500.0, ..Default::default() });
+        for pair in &mut window.pairs { pair.a.index *= 5; pair.b.index *= 5; }
+        let measured = rate_samples(std::slice::from_ref(&window));
+        let dense = interpolated_rate_samples(std::slice::from_ref(&window), 5);
+        assert_eq!(dense.len(), (measured.len() - 1) * 5 + 1);
+        for (&key, &rate) in &measured { assert_eq!(dense[&key], rate); }
+        let (left, right) = (measured.first_key_value().unwrap(), measured.iter().nth(1).unwrap());
+        let key = *left.0 + ((*right.0 - *left.0) as f64 / 5.0).round() as i64;
+        for axis in 0..3 { assert!((dense[&key][axis] - (left.1[axis] * 0.8 + right.1[axis] * 0.2)).abs() < 1e-12); }
+
+        let gap_start = ((window.pairs[2].a.mid_ms + window.pairs[2].b.mid_ms) * 500.0).round() as i64;
+        let gap_end = ((window.pairs[4].a.mid_ms + window.pairs[4].b.mid_ms) * 500.0).round() as i64;
+        window.pairs[3].va.clear();
+        window.pairs[3].vb.clear();
+        window.pairs[3].ids.clear();
+        let failed = interpolated_rate_samples(std::slice::from_ref(&window), 5);
+        assert_eq!(failed.range((std::ops::Bound::Excluded(gap_start), std::ops::Bound::Excluded(gap_end))).count(), 0);
+        window.pairs.remove(3);
+        let gap = interpolated_rate_samples(std::slice::from_ref(&window), 5);
+        assert_eq!(gap, failed);
+
+        let right = window.pairs.split_off(3);
+        let second = WindowTracks { pairs: right, focal_px: window.focal_px };
+        assert_eq!(interpolated_rate_samples(&[window, second], 5), gap);
     }
 
     #[test]

@@ -31,7 +31,7 @@ use parking_lot::Mutex;
 use crate::gyro_source::TimeQuat;
 use crate::synchronization::{ sync_diag, GrayImage, SyncParams };
 use self::config::OpticalConfig;
-use self::cost::{ eval_coarse, eval_full, select_tracks, CostContext, SgCache };
+use self::cost::{ eval_coarse, eval_full, CostContext, SgCache };
 use self::quat_table::QuatTable;
 use self::search::{ failed, grid, run_search, search_intervals, FailReason, FullEval, SearchOutcome, SearchParams };
 use self::tracks::{ frame_index, row_time_ms, FrameStep, Observation, RawFrame, RawWindow, WindowBuilder, WindowTracks };
@@ -282,7 +282,7 @@ pub fn solve_windows(windows: &[WindowTracks], input: &SolveInput, pool: &rayon:
         log::info!(target: "sync", "[optical] calc_initial_fast ignored (not applicable to the optical method)");
     }
     let n = input.ranges_us.len();
-    let sg = SgCache::new();
+    let sg = SgCache::with_frame_step(input.sync_params.every_nth_frame);
     let no_tracks = WindowTracks { pairs: Vec::new(), focal_px: 0.0 };
     let mut rows = Vec::with_capacity(n);
     progress(0.0);
@@ -354,7 +354,7 @@ fn solve_window(i: usize, w: &WindowTracks, input: &SolveInput, sg: &SgCache, po
             let tables = interval_tables(input.quats, (lo, hi), &intervals);
             let ctxs: Vec<CostContext> = tables.iter().map(|table| CostContext { window: w, quats: table, sg }).collect();
             let ctx = |d: f64| &ctxs[table_for(&intervals, d)];
-            let subset = select_tracks(w, cfg.coarse_points);
+            let subset = sg.select_tracks(w, cfg.coarse_points);
             let coarse = |d: f64| eval_coarse(ctx(d), &subset, d, COARSE_IRLS_ROUNDS);
             let full = |d: f64| {
                 let t = Instant::now();

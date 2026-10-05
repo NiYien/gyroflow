@@ -24,17 +24,23 @@ pub struct FrameBuffers {
 pub struct DecodeFrameStep {
     every_nth: usize,
     phase: usize,
+    source_fps: Option<f64>,
     pub decoded: usize,
     pub retained: usize,
 }
 
 impl DecodeFrameStep {
     pub fn new(every_nth: usize) -> Self {
-        Self { every_nth: every_nth.max(1), phase: 0, decoded: 0, retained: 0 }
+        Self { every_nth: every_nth.max(1), phase: 0, source_fps: None, decoded: 0, retained: 0 }
     }
 
-    fn keep_next(&mut self) -> bool {
-        let keep = self.phase == 0;
+    pub fn at_source_fps(every_nth: usize, source_fps: f64) -> Self {
+        Self { source_fps: Some(source_fps), ..Self::new(every_nth) }
+    }
+
+    fn keep_next(&mut self, timestamp_us: i64) -> bool {
+        let keep = self.source_fps.map_or(self.phase == 0, |fps|
+            gyroflow_core::synchronization::optical_sampling::keep_frame(timestamp_us, fps, self.every_nth));
         self.phase += 1;
         if self.phase == self.every_nth { self.phase = 0; }
         self.decoded += 1;
@@ -424,7 +430,7 @@ impl<'a> VideoTranscoder<'a> {
                         ..Default::default()
                     };
 
-                    if self.decode_only && self.decode_frame_step.as_mut().is_some_and(|step| !step.keep_next()) {
+                    if self.decode_only && self.decode_frame_step.as_mut().is_some_and(|step| !step.keep_next(timestamp_us)) {
                         // Keep timing and range termination identical to a skipped on_frame callback.
                         // Reference frames still reach the decoder, but need no GPU download or conversion.
                         if let Some(last_ts) = frame_ts.last_video {
@@ -1012,7 +1018,7 @@ mod tests {
     fn decode_frame_step_preserves_frames_and_range_boundaries() {
         use std::{cell::RefCell, rc::Rc};
 
-        fn run(every_nth: usize, early: bool) -> (Vec<(i64, u8)>, Option<i64>, i64) {
+        fn run(every_nth: usize, early: bool, source_indices: bool, source_fps: f64) -> (Vec<(i64, u8)>, Option<i64>, i64) {
             ffmpeg_next::init().unwrap();
             let codec = decoder::find(codec::Id::RAWVIDEO).unwrap();
             let mut context = codec::context::Context::new_with_codec(codec);
@@ -1025,7 +1031,7 @@ mod tests {
             let mut video = VideoTranscoder {
                 decoder: Some(context.decoder().open_as(codec).unwrap().video().unwrap()),
                 decode_only: true,
-                decode_frame_step: early.then(|| DecodeFrameStep::new(every_nth)),
+                decode_frame_step: early.then(|| if source_indices { DecodeFrameStep::at_source_fps(every_nth, source_fps) } else { DecodeFrameStep::new(every_nth) }),
                 encoder_params: EncoderParams { time_base: Some(Rational::new(1, 1_000_000)), ..Default::default() },
                 ..Default::default()
             };
@@ -1033,22 +1039,28 @@ mod tests {
             let output = samples.clone();
             let mut callback_index = 0usize;
             video.on_frame_callback = Some(Box::new(move |ts, frame, _, _, _| {
-                if early || callback_index % every_nth.max(1) == 0 {
+                let keep = if source_indices {
+                    gyroflow_core::synchronization::optical_sampling::keep_frame(ts, source_fps, every_nth)
+                } else { callback_index % every_nth.max(1) == 0 };
+                if early || keep {
                     output.borrow_mut().push((ts, frame.data(0)[0]));
                 }
                 callback_index += 1;
                 Ok(())
             }));
             let mut times = FrameTimestamps::default();
-            // Seek pre-roll, an overlapping range, and a backwards seek. End frames may be skipped.
-            for (start, end, decoded) in [(20, 50, 0..90), (40, 80, 20..110), (0, 20, 0..50)] {
-                for ms in decoded.step_by(10) {
-                    let mut packet = Packet::copy(&vec![ms as u8; 32 * 24]);
-                    packet.set_pts(Some(ms * 1000));
-                    packet.set_dts(Some(ms * 1000));
+            let timestamp_us = |index: i64| (index as f64 * 1e6 / source_fps).round() as i64;
+            let late = (21600.0 * source_fps).round() as i64;
+            // Seek pre-roll, overlap, backwards seek, and timestamps six hours into the source.
+            // Rounded microsecond timestamps retain the source's fractional frame rate.
+            for (start, end, decoded) in [(2, 5, 0..9), (4, 8, 2..11), (0, 2, 0..5), (late + 2, late + 12, late..late + 20)] {
+                for index in decoded {
+                    let mut packet = Packet::copy(&vec![index as u8; 32 * 24]);
+                    packet.set_pts(Some(timestamp_us(index)));
+                    packet.set_dts(Some(timestamp_us(index)));
                     video.decoder.as_mut().unwrap().send_packet(&packet).unwrap();
                     let status = video.receive_and_process_video_frames((0, 0), None, None, &mut Vec::new(),
-                        Some(start as f64), Some(end as f64), &mut times).unwrap();
+                        Some(timestamp_us(start) as f64 / 1000.0), Some(timestamp_us(end) as f64 / 1000.0), &mut times).unwrap();
                     if status == Status::Finish { break; }
                 }
             }
@@ -1057,9 +1069,18 @@ mod tests {
         }
 
         for stride in [0, 1, 2, 3, 5] {
-            let expected = run(stride, false);
-            assert!(!expected.0.is_empty(), "the reference decoder must deliver frames");
-            assert_eq!(run(stride, true), expected, "stride {stride}");
+            for source_indices in [false, true] {
+                let expected = run(stride, false, source_indices, 100.0);
+                assert!(!expected.0.is_empty(), "the reference decoder must deliver frames");
+                assert_eq!(run(stride, true, source_indices, 100.0), expected, "stride {stride}, source_indices={source_indices}");
+            }
+        }
+        for fps in [59.97, 60000.0 / 1001.0, 119.88, 240000.0 / 1001.0] {
+            let stride = gyroflow_core::synchronization::optical_sampling::frame_step(fps);
+            let expected = run(stride, false, true, fps);
+            assert!(!expected.0.is_empty(), "fps {fps}");
+            assert!(expected.0.iter().any(|(ts, _)| *ts >= 21_600_000_000), "late frames must be decoded");
+            assert_eq!(run(stride, true, true, fps), expected, "fps {fps}, stride {stride}");
         }
     }
 
