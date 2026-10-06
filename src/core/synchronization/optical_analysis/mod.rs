@@ -684,16 +684,18 @@ impl OpticalMotionAnalysis {
         let floor = SIGMA_FLOOR_PX / self.focal_px.max(1.0);
         let gyro = self.params.gyro.clone();
         let vision = &self.vision;
-        let mut ms: Vec<(usize, BandMeasurement)> = groups.par_iter().filter_map(|(&(seq, _), idx)| {
+        let mut ms: Vec<(usize, u8, BandMeasurement)> = groups.par_iter().filter_map(|(&(seq, band), idx)| {
             let gyro = gyro.read();
-            fit_band(&derived, &rhp, idx, floor, &gyro, vision).map(|mut m| { m.pair = seq; (seq, m) })
+            fit_band(&derived, &rhp, idx, floor, &gyro, vision).map(|mut m| { m.pair = seq; (seq, band, m) })
         }).collect();
-        ms.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.ta_us.total_cmp(&b.1.ta_us)));
-        let mut seqs: Vec<usize> = ms.iter().map(|(s, _)| *s).collect();
+        // The hash map hands the bands over in any order. With a global shutter all bands of a pair have the same
+        // time, so the band decides: the same video always gives the same measurements, in the same order
+        ms.sort_by(|a, b| a.0.cmp(&b.0).then(a.2.ta_us.total_cmp(&b.2.ta_us)).then(a.1.cmp(&b.1)));
+        let mut seqs: Vec<usize> = ms.iter().map(|(s, ..)| *s).collect();
         seqs.sort_unstable();
         seqs.dedup();
         self.measured_pairs += seqs.len();
-        self.measurements.extend(ms.into_iter().map(|(_, m)| m));
+        self.measurements.extend(ms.into_iter().map(|(.., m)| m));
 
         self.measured_upto = end;
         let keep_from = end.saturating_sub(self.hp_max);
@@ -1565,14 +1567,11 @@ mod tests {
         stab
     }
 
-    /// Everything the measurements hold, bit for bit. The bands of a pair measured at the same time (a global
-    /// shutter) come in any order: `process` collects them from a hash map. They're compared as a set
+    /// Everything the measurements hold, bit for bit and in order
     #[cfg(feature = "use-opencv")]
     fn measurement_bits(m: &OpticalMeasurements) -> String {
         let f = |x: f64| x.to_bits();
-        let mut bands: Vec<String> = m.bands.iter().map(|b| format!("{b:?}")).collect();
-        bands.sort();
-        let mut s = format!("{:?}|{:?}|{}|{}|{}|{}|{}|{}|{}|{}\n", bands, m.translation_samples, m.stab_requested, m.translation_requested,
+        let mut s = format!("{:?}|{:?}|{}|{}|{}|{}|{}|{}|{}|{}\n", m.bands, m.translation_samples, m.stab_requested, m.translation_requested,
             f(m.scaled_fps), m.quats_checksum, m.context_checksum, m.frames, m.measured_frames, m.generation);
         for (t, q) in &m.video_base { s += &format!("{t}:{:?}", q.map(f32::to_bits)); }
         for p in &m.stab_pairs {
@@ -1660,6 +1659,25 @@ mod tests {
         let a = a.unwrap();
         assert!(a.contains(':'), "no motion from the video to compare");
         assert_eq!(a, b.unwrap(), "motion from the video");
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn global_shutter_analysis_repeats_exactly() {
+        // The fixture reads out instantly: all bands of a pair are measured at the same time
+        let rotating = |t: f64| crate::Quat64::from_euler_angles(0.02 * (t * 3.0).sin(), 0.01 * t, 0.0);
+        let stab = analysis_fixture(48, rotating);
+        stab.optical_ui.write().translation_enabled = true;
+        let frames = frames_at_30fps(moving_texture(48, (640, 360)), (640, 360));
+        let analyze = || {
+            let mut analysis = OpticalMotionAnalysis::from_manager(&stab, Arc::new(AtomicBool::new(false))).unwrap();
+            for (ts, w, h, stride, pixels) in &frames { analysis.feed_frame(*ts, *w, *h, *stride, pixels).unwrap(); }
+            analysis.finish().unwrap()
+        };
+        let first = analyze();
+        let same_time = first.bands.windows(2).filter(|b| b[0].pair == b[1].pair && b[0].ta_us == b[1].ta_us).count();
+        assert!(same_time > 0, "no two bands of a pair share their time: not a global shutter");
+        for _ in 0..3 { assert_eq!(measurement_bits(&first), measurement_bits(&analyze())); }
     }
 
     #[cfg(feature = "use-opencv")]
