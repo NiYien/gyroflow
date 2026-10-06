@@ -1499,7 +1499,7 @@ mod tests {
     #[test]
     fn translation_is_limited_to_a_part_of_the_frame() {
         let p = translated(0.0, Quat64::identity(), [10.0, 0.0, 0.0], false);
-        let limit_px = output_focal(&p).0 * 0.04 * H as f64 / 1400.0;
+        let limit_px = output_focal(&p).0 * 0.08 * H as f64 / 1400.0;
         let (a, b) = (to_output(&untranslated(&p), POINTS[2]), to_output(&p, POINTS[2]));
         let moved = (b.0 - a.0) as f64;
         assert!(moved > 0.9 * limit_px && moved <= limit_px + 0.01, "moved {moved}, limit {limit_px}");

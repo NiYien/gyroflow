@@ -166,10 +166,10 @@ fn barrier(
 /// Keep the requested world-space compensation, subtracting only a smooth budget correction.
 pub(super) fn constrain(
     times: &[f64], request: &[Vector3<f64>], geometry: &[Geometry], fixed: &[bool],
-    sigma: f64, budget: f64, along_axis: bool, cancelled: &dyn Fn() -> bool,
+    sigma: f64, budget: f64, axial_budget: f64, along_axis: bool, cancelled: &dyn Fn() -> bool,
 ) -> Result<(Vec<Vector3<f64>>, SolveStats), SolveFailure> {
     let mut stats = SolveStats::default();
-    match constrain_inner(times, request, geometry, fixed, sigma, budget, along_axis, cancelled, &mut stats) {
+    match constrain_inner(times, request, geometry, fixed, sigma, budget, axial_budget, along_axis, cancelled, &mut stats) {
         Ok(curve) => Ok((curve, stats)),
         Err(reason) => Err(SolveFailure { reason, stats }),
     }
@@ -177,11 +177,12 @@ pub(super) fn constrain(
 
 fn constrain_inner(
     times: &[f64], request: &[Vector3<f64>], geometry: &[Geometry], fixed: &[bool],
-    sigma: f64, budget: f64, along_axis: bool, cancelled: &dyn Fn() -> bool, stats: &mut SolveStats,
+    sigma: f64, budget: f64, axial_budget: f64, along_axis: bool, cancelled: &dyn Fn() -> bool, stats: &mut SolveStats,
 ) -> Result<Vec<Vector3<f64>>, SolveError> {
     let n = times.len();
     if n != request.len() || n != geometry.len() || n != fixed.len() || !sigma.is_finite() || sigma <= 0.0
-        || !budget.is_finite() || budget <= 0.0 { return Err(SolveError::InvalidInput); }
+        || !budget.is_finite() || budget <= 0.0
+        || !axial_budget.is_finite() || axial_budget <= 0.0 { return Err(SolveError::InvalidInput); }
     if cancelled() { return Err(SolveError::Cancelled); }
     if n < 3 { return Ok(request.to_vec()); }
     let focal = geometry.iter().map(|g| g.focal_ratio).fold(0.0f64, f64::max);
@@ -196,7 +197,7 @@ fn constrain_inner(
         let mut a = g.world_to_camera;
         a.row_mut(0).scale_mut(g.focal_ratio / focal);
         a.row_mut(1).scale_mut(g.focal_ratio / focal);
-        a.row_mut(2).scale_mut(1.0 / focal);
+        a.row_mut(2).scale_mut(budget / (focal * axial_budget));
         a
     }).collect();
     let maximum = |values: &[Vector3<f64>]| values.iter().zip(&maps).map(|(v, a)| {
@@ -213,7 +214,10 @@ fn constrain_inner(
         let radius = 0.9 * focal / geometry[i].focal_ratio;
         let norm = camera.xy().norm();
         if norm > radius { camera.x *= radius / norm; camera.y *= radius / norm; }
-        if along_axis { camera.z = camera.z.clamp(-0.9 * focal, 0.9 * focal); }
+        if along_axis {
+            let axial_radius = 0.9 * focal * axial_budget / budget;
+            camera.z = camera.z.clamp(-axial_radius, axial_radius);
+        }
         e[i] = target[i] - geometry[i].world_to_camera.transpose() * camera;
         if fixed[i] { e[i] = Vector3::zeros(); }
     }
@@ -301,8 +305,8 @@ mod tests {
         let request = [Vector3::zeros(), Vector3::new(0.001, -0.002, 0.003), Vector3::zeros(), Vector3::zeros()];
         let geometry = [Geometry { world_to_camera: Matrix3::identity(), focal_ratio: 2.0 }; 4];
         let fixed = [true, false, false, true];
-        assert_eq!(constrain(&times, &request, &geometry, &fixed, 0.5, 0.02, true, &|| false).unwrap().0, request);
-        assert_eq!(constrain(&times, &request, &geometry, &fixed, 0.5, 0.02, true, &|| true).unwrap_err().reason, SolveError::Cancelled);
+        assert_eq!(constrain(&times, &request, &geometry, &fixed, 0.5, 0.02, 0.02, true, &|| false).unwrap().0, request);
+        assert_eq!(constrain(&times, &request, &geometry, &fixed, 0.5, 0.02, 0.02, true, &|| true).unwrap_err().reason, SolveError::Cancelled);
     }
 
     #[test]
@@ -312,9 +316,10 @@ mod tests {
         let request: Vec<_> = times.iter().map(|t| Vector3::new(0.04 * (std::f64::consts::PI*t/6.0).sin(), 0.0, 0.03 * (std::f64::consts::PI*t/6.0).sin())).collect();
         let geometry = vec![Geometry { world_to_camera: Matrix3::identity(), focal_ratio: 2.0 }; n];
         let fixed: Vec<_> = (0..n).map(|i| i == 0 || i == n - 1).collect();
-        let (output, stats) = constrain(&times, &request, &geometry, &fixed, 0.5, 0.02, true, &|| false).unwrap();
+        let (output, stats) = constrain(&times, &request, &geometry, &fixed, 0.5, 0.04, 0.02, true, &|| false).unwrap();
         assert!(stats.iterations > 0);
-        assert!(output.iter().all(|x| x.xy().norm()*2.0 <= 0.02 && x.z.abs() <= 0.02));
+        assert!(output.iter().all(|x| x.xy().norm()*2.0 <= 0.04 && x.z.abs() <= 0.02));
+        assert!(output.iter().any(|x| x.xy().norm()*2.0 > 0.03));
         assert_eq!(output[0], request[0]);
         assert_eq!(output[n-1], request[n-1]);
         let correction: Vec<_> = request.iter().zip(&output).map(|(a,b)| a-b).collect();
@@ -331,12 +336,12 @@ mod tests {
         request[0]=Vector3::zeros();request[n-1]=Vector3::zeros();
         let geometry:Vec<_>=times.iter().map(|t|Geometry{world_to_camera:nalgebra::Rotation3::from_euler_angles(0.0,t*0.03,0.0).into_inner(),focal_ratio:1.0+t/2.0}).collect();
         let fixed:Vec<_>=(0..n).map(|i|i==0||i==n-1).collect();
-        let (a,_)=constrain(&times,&request,&geometry,&fixed,0.3,0.02,true,&||false).unwrap();
+        let (a,_)=constrain(&times,&request,&geometry,&fixed,0.3,0.02,0.02,true,&||false).unwrap();
         for (point,g) in a.iter().zip(&geometry) {let p=g.world_to_camera*point;assert!(p.xy().norm()*g.focal_ratio<=0.02+1e-12&&p.z.abs()<=0.02+1e-12);}
         let rotation=nalgebra::Rotation3::from_euler_angles(0.3,-0.4,0.5).into_inner();
         let rotated:Vec<_>=request.iter().map(|p|rotation*p).collect();
         let transformed:Vec<_>=geometry.iter().map(|g|Geometry{world_to_camera:g.world_to_camera*rotation.transpose(),..*g}).collect();
-        let (b,_)=constrain(&times,&rotated,&transformed,&fixed,0.3,0.02,true,&||false).unwrap();
+        let (b,_)=constrain(&times,&rotated,&transformed,&fixed,0.3,0.02,0.02,true,&||false).unwrap();
         for (a,b) in a.iter().zip(b) {assert!((rotation*a-b).norm()<1e-6);}
     }
 }

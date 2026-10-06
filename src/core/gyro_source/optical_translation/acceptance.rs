@@ -11,8 +11,19 @@ fn translation_video_projection_acceptance() {
     let config: serde_json::Value = serde_json::from_reader(File::open(config_path).unwrap()).unwrap();
     let manager = StabilizationManager::default();
     manager.import_gyroflow_file(&crate::filesystem::path_to_url(config["project"].as_str().unwrap()), true, |_| {}, Arc::new(AtomicBool::new(false)), false).unwrap();
+    if let Some(seconds) = config["smoothness_s"].as_f64() { manager.set_translation_smoothness(seconds); }
     manager.recompute_blocking();
-    let params = ComputeParams::from_manager(&manager);
+    let normal_params = ComputeParams::from_manager(&manager);
+    let mut params = normal_params.clone();
+    if let Some(values) = config["fixed_fovs"].as_array() {
+        params.fovs = values.iter().map(|v| v.as_f64().unwrap()).collect();
+        assert_eq!(params.fovs.len(), params.frame_count);
+    }
+    if config["metadata_only"].as_bool() == Some(true) {
+        let metadata = serde_json::json!({"fovs": normal_params.fovs, "frames": params.frame_count, "fps": params.scaled_fps});
+        std::fs::write(config["metadata"].as_str().unwrap(), serde_json::to_string_pretty(&metadata).unwrap()).unwrap();
+        return;
+    }
     let original = manager.gyro.read().clone();
     let result = original.optical_translation.as_ref().unwrap();
     assert!(result.is_active(), "the project must reopen with an applicable translation result");
@@ -43,7 +54,8 @@ fn translation_video_projection_acceptance() {
                 let fixed: Vec<_> = request.iter().enumerate().map(|(i,p)| i==0||i+1==request.len()||p.norm()==0.0).collect();
                 let mut ages:Vec<_>=samples[start..end].iter().map(|s|s.track_age_s as f64).collect();
                 let sigma=result.settings.smoothness_s.min(2.0*median(&mut ages)).max(0.001);
-                let (curve,_)=smoothing::constrain(&times,&request,&geometry,&fixed,sigma,0.02,result.settings.along_axis,&||false).unwrap();
+                let limits=TranslationConfig::resolved();
+                let (curve,_)=smoothing::constrain(&times,&request,&geometry,&fixed,sigma,limits.max_shift*0.5,limits.max_axial_shift()*0.5,result.settings.along_axis,&||false).unwrap();
                 for (p,v) in points[start..end].iter_mut().zip(curve) {p.1=[v.x,v.y,v.z];}
                 start=end;
             }
@@ -59,6 +71,10 @@ fn translation_video_projection_acceptance() {
     }
     variants.push(params.clone());
     names.push("optimized".to_owned());
+    if config["fixed_fovs"].is_array() {
+        variants.push(normal_params.clone());
+        names.push("normal_crop".to_owned());
+    }
     let mut map = BufWriter::new(File::create(config["maps"].as_str().unwrap()).unwrap());
     const GW:usize=65;
     const GH:usize=37;
@@ -107,7 +123,7 @@ fn translation_video_projection_acceptance() {
         }
     }
     assert!(applied_max<=limit_config.max_shift*100.0+1e-8);
-    let metadata=serde_json::json!({"frames":params.frame_count,"fps":params.scaled_fps,"variants":names,"grid":[GW,GH],"size":[640,360],"info":manager.translation_stabilization_info(),"crop":"same optimized-project crop for every variant",
+    let metadata=serde_json::json!({"frames":params.frame_count,"fps":params.scaled_fps,"variants":names,"grid":[GW,GH],"size":[640,360],"info":manager.translation_stabilization_info(),"crop":"fixed crop except the explicitly named normal_crop variant", "normal_fovs":normal_params.fovs, "fixed_fovs":params.fovs,
         "actual_row_budget":{"raw_peak_pct":raw_max,"applied_peak_pct":applied_max,"nonlinear_rows":limited_rows,"total_rows":total_rows}});
     std::fs::write(config["metadata"].as_str().unwrap(),serde_json::to_string_pretty(&metadata).unwrap()).unwrap();
 }

@@ -60,7 +60,10 @@ pub struct TranslationConfig {
 }
 
 impl TranslationConfig {
-    pub const DEFAULT: Self = Self { track_age_k: 2.0, max_shift: 0.04, per_row: true };
+    pub const DEFAULT: Self = Self { track_age_k: 2.0, max_shift: 0.08, per_row: true };
+
+    // More room for lateral motion must not increase forward/backward zoom compensation.
+    pub(crate) fn max_axial_shift(self) -> f64 { self.max_shift.min(0.04) }
 
     pub fn resolved() -> Self {
         static RESOLVED: OnceLock<TranslationConfig> = OnceLock::new();
@@ -70,7 +73,7 @@ impl TranslationConfig {
                 max_shift: resolve_number("GYROFLOW_TRANSLATION_MAX_SHIFT", Self::DEFAULT.max_shift, |v| v > 0.0 && v <= 0.5),
                 per_row: resolve_per_row(),
             };
-            log::info!(target: "lifecycle", "translation_config resolved track_age_k={} max_shift={} per_row={}", config.track_age_k, config.max_shift, config.per_row);
+            log::info!(target: "lifecycle", "translation_config resolved track_age_k={} max_shift={} max_axial_shift={} per_row={}", config.track_age_k, config.max_shift, config.max_axial_shift(), config.per_row);
             config
         })
     }
@@ -370,8 +373,9 @@ impl OpticalTranslation {
                 curve.push(TranslationCurvePoint { timestamp_us: segment[i].timestamp_us, segment: segment[i].segment, shift });
             }
             let request: Vec<_> = curve[curve_start..].iter().map(|p| p.shift).collect();
+            let config = TranslationConfig::resolved();
             match smoothing::constrain(&times, &request, &geometry[start..end], &fixed, sigma,
-                TranslationConfig::resolved().max_shift * 0.5, self.settings.along_axis, cancelled) {
+                config.max_shift * 0.5, config.max_axial_shift() * 0.5, self.settings.along_axis, cancelled) {
                 Ok((shifts, stats)) => {
                     log::debug!(target: "stab.translation", "translation budget segment={} samples={} sigma_s={} request_ratio={} applied_ratio={} correction_ratio={} iterations={} stages={} line_searches={}",
                         segment[0].segment, segment.len(), sigma, stats.requested_fraction, stats.maximum_fraction,
@@ -435,7 +439,7 @@ impl OpticalTranslation {
             t.x *= scale;
             t.y *= scale;
         }
-        t.z = t.z.signum() * soft(t.z.abs(), config.max_shift);
+        t.z = t.z.signum() * soft(t.z.abs(), config.max_axial_shift());
         if !self.settings.along_axis { t.z = 0.0; }
         t
     }
@@ -463,6 +467,9 @@ impl OpticalTranslation {
         self.quats_checksum.hash(hasher);
         self.context_checksum.hash(hasher);
         self.geometry_version.hash(hasher);
+        let config = TranslationConfig::resolved();
+        config.max_shift.to_bits().hash(hasher);
+        config.max_axial_shift().to_bits().hash(hasher);
         self.samples.len().hash(hasher);
         for sample in &self.samples {
             sample.timestamp_us.hash(hasher);
@@ -505,7 +512,7 @@ mod tests {
     #[test]
     fn settings_default_to_the_spec_values() {
         assert_eq!(OpticalTranslationSettings::default(), OpticalTranslationSettings { reference: 1.0, smoothness_s: 1.0, along_axis: false });
-        assert_eq!(TranslationConfig::DEFAULT, TranslationConfig { track_age_k: 2.0, max_shift: 0.04, per_row: true });
+        assert_eq!(TranslationConfig::DEFAULT, TranslationConfig { track_age_k: 2.0, max_shift: 0.08, per_row: true });
     }
 
     #[test]
@@ -842,6 +849,23 @@ mod tests {
         let actual_fraction = applied.xy().norm()*2.0;
         assert!(actual_fraction>0.039 && actual_fraction<=config.max_shift);
         assert_eq!(applied.z,0.0);
+    }
+
+    #[test]
+    fn larger_lateral_range_keeps_the_original_axial_guard() {
+        let mut t = OpticalTranslation::with_curve(vec![(0,[0.5,0.0,0.5]),(1_000_000,[0.5,0.0,0.5])]);
+        t.settings.along_axis = true;
+        let source = nalgebra::UnitQuaternion::identity();
+        let old = TranslationConfig { max_shift: 0.04, ..TranslationConfig::DEFAULT };
+        let new = TranslationConfig::DEFAULT;
+        let before = t.camera_shift_at(&source,500.0,2160.0,2160.0,false,&old);
+        let after = t.camera_shift_at(&source,500.0,2160.0,2160.0,false,&new);
+        assert!(after.xy().norm() > before.xy().norm() * 1.9);
+        assert!(after.xy().norm() <= new.max_shift);
+        assert_eq!(after.z, before.z);
+        assert!(after.z.abs() <= 0.04);
+        t.settings.along_axis = false;
+        assert_eq!(t.camera_shift_at(&source,500.0,2160.0,2160.0,false,&new).z,0.0);
     }
 
     #[test]
