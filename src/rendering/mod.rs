@@ -1041,13 +1041,16 @@ where
     Ok(())
 }
 
+/// Threads the optical analysis scales each decoded frame down with: on the decoder's thread, it's the slowest step
+pub const ANALYSIS_SCALE_THREADS: i32 = 4;
+
 /// "Analyze image optically" (Motion data -> Optical correction): decodes the trim ranges (the whole clip without any)
 /// at about 1000 px wide, tracks them and fits the correction to what they measured, see
 /// `synchronization::optical_analysis`. Blocking. `progress` gets the fraction done, and the frames done and in all.
 /// Waits while `pause_flag` is up. Cancelled - by `cancel_flag`, or by another file, a project or Clear replacing what
 /// it measures - it stops decoding and returns "Cancelled"; the first error stops it too
 pub fn analyze_optically(stab: &StabilizationManager, cancel_flag: Arc<AtomicBool>, pause_flag: Option<Arc<AtomicBool>>, progress: impl Fn(f64, usize, usize) + 'static) -> Result<(), String> {
-    use gyroflow_core::synchronization::optical_analysis::{OpticalMotionAnalysis, OpticalMeasurements};
+    use gyroflow_core::synchronization::optical_analysis::{OpticalMotionAnalysis, OpticalMeasurements, pipeline::AnalysisPipeline};
     use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 
     // Every decoder attempt belongs to the same operation, even if Clear runs between retries.
@@ -1092,14 +1095,19 @@ pub fn analyze_optically(stab: &StabilizationManager, cancel_flag: Arc<AtomicBoo
             decoder_options.set("scale", &scale);
         }
 
-        let analysis = Rc::new(RefCell::new(analysis));
+        // Conversion errors; the analysis' own come from the pipeline
         let error = Rc::new(RefCell::new(None::<String>));
         // What the decoder stops on: the analysis cancelled (it knows of more than `cancel_flag`), or the first error.
         // Every frame after that would be decoded for nothing
         let stop = Arc::new(AtomicBool::new(false));
         let mut proc = VideoProcessor::from_file(&input_file.url, use_gpu, 0, Some(decoder_options))?;
         proc.set_decode_frame_step(frame_step, source_fps);
-        let (analysis2, error2, stop2) = (analysis.clone(), error.clone(), stop.clone());
+        // Preparing, tracking and measuring run on their own threads while this one decodes, see `AnalysisPipeline`
+        let (pipeline, mut sink) = match AnalysisPipeline::start(analysis) {
+            Ok(started) => started,
+            Err(e) => return Ok(Err(e)),
+        };
+        let (error2, stop2) = (error.clone(), stop.clone());
         let (cancel_flag, pause_flag, progress, dng_curve) = (cancel_flag.clone(), pause_flag.clone(), progress.clone(), dng_curve.clone());
         let mut last_progress = std::time::Instant::now();
         proc.on_frame(move |timestamp_us, input_frame, _output_frame, converter, _rate_control| {
@@ -1108,41 +1116,54 @@ pub fn analyze_optically(stab: &StabilizationManager, cancel_flag: Arc<AtomicBoo
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
             }
-            let mut a = analysis2.borrow_mut();
-            if stop2.load(Relaxed) || a.is_cancelled() {
+            if stop2.load(Relaxed) || sink.stopped() {
                 stop2.store(true, Relaxed);
                 return Ok(());
             }
-            if !a.wants_frame(timestamp_us) { return Ok(()); }
+            if !sink.wants_frame(timestamp_us) { return Ok(()); }
             // Restore the DNG levels before converting them to 8-bit grayscale.
             if let Some(curve) = &dng_curve {
                 apply_dng_tone_curve(input_frame, curve);
             }
-            let result = converter.scale(input_frame, Pixel::GRAY8, tw, th).map_err(|e| e.to_string()).and_then(|small_frame| {
-                let (width, height, stride, pixels) = (small_frame.plane_width(0), small_frame.plane_height(0), small_frame.stride(0), small_frame.data(0));
-                a.feed_frame(timestamp_us, width, height, stride, pixels)
-            });
-            if let Err(e) = result {
-                error2.borrow_mut().get_or_insert(e);
-                stop2.store(true, Relaxed);
+            match converter.scale_threaded(input_frame, Pixel::GRAY8, tw, th, ANALYSIS_SCALE_THREADS) {
+                Ok(small_frame) => {
+                    let (width, height, stride, pixels) = (small_frame.plane_width(0), small_frame.plane_height(0), small_frame.stride(0), small_frame.data(0));
+                    // Refused once the analysis stopped; the reason comes with its outcome
+                    if sink.push(timestamp_us, width, height, stride, pixels).is_err() { stop2.store(true, Relaxed); }
+                },
+                Err(e) => {
+                    error2.borrow_mut().get_or_insert(e.to_string());
+                    stop2.store(true, Relaxed);
+                }
             }
             if last_progress.elapsed().as_millis() > 100 {
                 last_progress = std::time::Instant::now();
-                let (ready, total) = a.progress();
+                let (ready, total) = sink.progress();
                 progress(ready as f64 / total.max(1) as f64 * 0.99, ready, total);
             }
             Ok(())
         });
         let decoded = proc.start_decoder_only(ranges, stop);
+        // Also drops the sink: the stages finish what they were handed and stop
         drop(proc);
-        if analysis.borrow().is_cancelled() { return Ok(Err("Cancelled".into())); }
-        if let Some(e) = error.borrow_mut().take() { return Ok(Err(e)); }
-        decoded?;
-        let analysis = match Rc::try_unwrap(analysis) {
-            Ok(analysis) => analysis.into_inner(),
-            Err(_) => return Ok(Err("The decoder is still holding the analysis".into())),
+        let outcome = match pipeline.join() {
+            Ok(outcome) => outcome,
+            Err(e) => return Ok(Err(e)),
         };
-        Ok(analysis.finish())
+        if outcome.is_cancelled() {
+            outcome.log_unfinished("cancelled");
+            return Ok(Err("Cancelled".into()));
+        }
+        // The analysis' error is of an earlier frame than a conversion error that raced with it
+        if let Some(e) = outcome.error.clone().or_else(|| error.borrow_mut().take()) {
+            outcome.log_unfinished("error");
+            return Ok(Err(e));
+        }
+        if let Err(e) = decoded {
+            outcome.log_unfinished("decoding failed");
+            return Err(e);
+        }
+        Ok(outcome.finish())
     };
 
     let (codec_sig, try_gpu) = if gpu_decoding {

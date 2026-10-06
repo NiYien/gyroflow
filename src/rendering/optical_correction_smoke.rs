@@ -129,6 +129,14 @@ pub fn run(paths: &str) -> i32 {
     }
     let ignore = std::env::var("GYROFLOW_OPTICAL_CORRECTION_SMOKE_IGNORE").as_deref() == Ok("1");
     let score_truth = ignore && smoke_truth_resolved();
+    // Optional: every analyzed project is also saved here, to compare analysis results between builds byte for byte
+    let export_dir = std::env::var("GYROFLOW_OPTICAL_CORRECTION_SMOKE_EXPORT").ok().filter(|dir| !dir.trim().is_empty());
+    if let Some(dir) = &export_dir {
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            eprintln!("Cannot create {dir}: {e}");
+            return 1;
+        }
+    }
     let mut summary = String::from("# Optical correction smoke\n\n| Project | frames | measured_frames | rms_deg | from_video | applied | elapsed_ms | Result |\n|---|---:|---:|---:|---|---|---:|---|\n");
     let mut truth_summary = String::from("\n## Pure-optical vs gyro\n\n| Project | trajectory | mode | correction_forced | stabilization_verdict | sync_points | pairs | gaps | held | hp_xy_px | hp_xy_max_px | hp_roll_deg | drift_deg_s | path_deg | truth_path_deg |\n|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
     let mut exit_code = 0;
@@ -197,6 +205,12 @@ pub fn run(paths: &str) -> i32 {
                     let project = stab.export_gyroflow_data(gyroflow_core::GyroflowProjectType::WithGyroData, "{}", None)
                         .map_err(|e| format!("export: {e:?}"))?;
                     let output = out_dir.join(format!("translation-{project_index}.gyroflow"));
+                    std::fs::write(&output, project).map_err(|e| format!("write {}: {e}", output.display()))?;
+                }
+                if let Some(dir) = &export_dir {
+                    let project = stab.export_gyroflow_data(gyroflow_core::GyroflowProjectType::WithGyroData, "{}", None)
+                        .map_err(|e| format!("export: {e:?}"))?;
+                    let output = Path::new(dir).join(format!("project-{project_index}.gyroflow"));
                     std::fs::write(&output, project).map_err(|e| format!("write {}: {e}", output.display()))?;
                 }
             }

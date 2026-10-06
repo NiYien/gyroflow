@@ -23,6 +23,8 @@ pub use base::{OpticalBaseMode, BlendConfig};
 #[cfg(test)] pub(crate) mod synthetic;
 pub mod translation;
 mod image_space;
+#[cfg(feature = "use-opencv")]
+pub mod pipeline;
 #[cfg(test)] mod translation_stress;
 pub(crate) mod sensor;
 mod sensor_solver;
@@ -49,6 +51,9 @@ use super::GrayImage;
 /// Tracks kept alive per frame
 #[cfg(feature = "use-opencv")]
 const MAX_POINTS: usize = 1500;
+/// Width the frames are tracked at
+#[cfg(feature = "use-opencv")]
+const TRACK_WIDTH: u32 = 960;
 /// Bands of rows (along the readout) each frame pair is measured in
 const BANDS: usize = 6;
 /// Frame pairs measured at once
@@ -56,6 +61,81 @@ const CHUNK: usize = 240;
 const MIN_BAND_POINTS: usize = 25;
 /// Floor of the uncertainty of one band's rotation, in pixels of the tracked frame
 const SIGMA_FLOOR_PX: f64 = 0.01;
+
+/// Which decoded frames are analyzed, their index and whether each continues the one before: what `feed_frame`
+/// decides before tracking. A pipeline's decoder thread decides it with a copy, the same way
+#[derive(Clone)]
+pub(crate) struct FrameSequencer {
+    /// The part of the clip analyzed: the trim ranges, in the file's own milliseconds
+    ranges_ms: Vec<(f64, f64)>,
+    fps_scale: Option<f64>,
+    scaled_fps: f64,
+    every_nth_frame: usize,
+    /// Index and time of the frame accepted last
+    last: Option<(usize, f64)>,
+}
+
+/// A frame `FrameSequencer::accept` let through
+pub(crate) struct FrameSlot {
+    pub index: usize,
+    pub ts_ms: f64,
+    pub continuous: bool,
+}
+
+impl FrameSequencer {
+    fn source_fps(&self) -> f64 { self.scaled_fps / self.fps_scale.unwrap_or(1.0) }
+
+    /// Check before grayscale conversion, and again in core for callers without early sampling.
+    pub fn wants_frame(&self, timestamp_us: i64) -> bool {
+        let file_ms = timestamp_us as f64 / 1000.0;
+        self.ranges_ms.iter().any(|(a, b)| file_ms >= *a - 0.5 && file_ms <= *b + 0.5)
+            && super::optical_sampling::keep_frame(timestamp_us, self.source_fps(), self.every_nth_frame)
+    }
+
+    /// Whether frame `index` at `timestamp_ms` follows the one at `last` without a gap: the next one sampled, within
+    /// the same range
+    fn continues(&self, last: Option<(usize, f64)>, index: usize, timestamp_ms: f64) -> bool {
+        last.is_some_and(|(last_index, last_ms)| {
+            let scale = self.fps_scale.unwrap_or(1.0);
+            index == last_index + self.every_nth_frame && self.ranges_ms.iter().any(|(a, b)| {
+                last_ms * scale >= *a - 0.5 && timestamp_ms * scale <= *b + 0.5
+            })
+        })
+    }
+
+    /// The decoded frame at this time if it's analyzed and not a repeat. It's then the last one
+    pub fn accept(&mut self, timestamp_us: i64) -> Option<FrameSlot> {
+        if !self.wants_frame(timestamp_us) { return None; }
+        let file_ms = timestamp_us as f64 / 1000.0;
+        let mut ts_ms = file_ms;
+        if let Some(scale) = self.fps_scale { ts_ms /= scale; }
+        let index = crate::frame_at_timestamp(ts_ms, self.scaled_fps).max(0) as usize;
+        if self.last.map(|(last, _)| index <= last).unwrap_or(false) { return None; } // a repeated frame
+        let continuous = self.continues(self.last, index, ts_ms);
+        self.last = Some((index, ts_ms));
+        Some(FrameSlot { index, ts_ms, continuous })
+    }
+}
+
+/// Whether an analysis is cancelled, or overtaken by another file, a project or Clear. Latched, and shared by every
+/// copy: the cancel flag is shared, and something else may lower it again before the analysis ends
+#[derive(Clone)]
+pub(crate) struct CancelCheck {
+    flag: Arc<AtomicBool>,
+    /// `StabilizationManager::optical_generation`, and its value when this started: another file, a project or Clear
+    /// move it on, and cancel what's running for the one before
+    generation: (Arc<AtomicU64>, u64),
+    latched: Arc<AtomicBool>,
+}
+
+impl CancelCheck {
+    pub fn is_cancelled(&self) -> bool {
+        if !self.latched.load(Relaxed) && (self.flag.load(Relaxed) || self.generation.0.load(SeqCst) != self.generation.1) {
+            self.latched.store(true, Relaxed);
+        }
+        self.latched.load(Relaxed)
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 struct Frame {
@@ -261,6 +341,15 @@ fn frame_timing(params: &ComputeParams, index: usize, timestamp_ms: f64, rows: u
     Frame { index, timestamp_ms, start_ms: ts - readout / 2.0, per_px_ms: readout / rows.max(1) as f64, mid_ms: ts }
 }
 
+/// The points of each pair from `from_seq` on, in the order `derived` has them: one pass instead of one per pair
+fn points_by_pair(derived: &[Derived], from_seq: usize) -> HashMap<usize, Vec<PairPoint>> {
+    let mut points: HashMap<usize, Vec<PairPoint>> = HashMap::new();
+    for d in derived.iter().filter(|d| d.seq >= from_seq) {
+        points.entry(d.seq).or_default().push(PairPoint { id: d.id, band: d.band, p: d.p, r: d.r });
+    }
+    points
+}
+
 /// A bearing from the camera's frame into the quaternions' frame: the axis flips `FrameTransform::at_timestamp` applies
 /// (to upright frames, see `measurement_params`)
 fn to_quat_frame(b: (f32, f32)) -> Vector3<f64> {
@@ -299,8 +388,6 @@ pub struct OpticalMotionAnalysis {
     measured_pairs: usize,
     frames: usize,
     total_frames: usize,
-    /// The part of the clip analyzed: the trim ranges, in the file's own milliseconds
-    ranges_ms: Vec<(f64, f64)>,
     /// A file without motion data: the rotation between each two frames, measured from their tracks and chained, at the
     /// frames' own times. What the rest of the analysis compares the image against instead of the quaternions
     vision: Option<TimeQuat>,
@@ -313,12 +400,12 @@ pub struct OpticalMotionAnalysis {
     /// The robust rotation blended towards the odometry as its structure and leverage warrant.
     base: base::VisionBase,
     sg_cache: HashMap<usize, DMatrix<f64>>,
-    cancel_flag: Arc<AtomicBool>,
-    /// `StabilizationManager::optical_generation`, and its value when this started: another file, a project or Clear
-    /// move it on, and cancel what's running for the one before
-    generation: (Arc<AtomicU64>, u64),
-    /// Latched: the cancel flag is shared, and something else may lower it again before the analysis ends
-    cancelled: AtomicBool,
+    /// Which frames `feed_frame` takes
+    sequencer: FrameSequencer,
+    cancel: CancelCheck,
+    /// When it was made, with the sampling logged: a pipeline's speed log counts from here
+    #[cfg_attr(not(feature = "use-opencv"), allow(dead_code))]
+    started: std::time::Instant,
 }
 
 impl OpticalMotionAnalysis {
@@ -373,7 +460,7 @@ impl OpticalMotionAnalysis {
                 every_nth_frame, hp_min, hp_max,
                 track_size: (0, 0),
                 focal_px: 0.0,
-                tracker: KltTracker::new(MAX_POINTS, 1.0, 960),
+                tracker: Self::new_tracker(),
                 last: None,
                 pairs: VecDeque::new(),
                 next_seq: 0,
@@ -382,66 +469,49 @@ impl OpticalMotionAnalysis {
                 measured_pairs: 0,
                 frames: 0,
                 total_frames,
-                ranges_ms,
+                sequencer: FrameSequencer { ranges_ms, fps_scale, scaled_fps, every_nth_frame, last: None },
                 stab_requested: vision.is_none() && ui.stab_enabled,
                 stab_next_seq: 0, stab_pairs: Vec::new(), stab_bands: Vec::new(), sensor_projections: HashMap::new(),
                 vision,
                 translation,
                 base: base::VisionBase::new(OpticalBaseMode::resolved(), BlendConfig::resolved()),
                 sg_cache: HashMap::new(),
-                cancel_flag,
-                generation: (stab.optical_generation.clone(), generation),
-                cancelled: AtomicBool::new(false),
+                cancel: CancelCheck { flag: cancel_flag, generation: (stab.optical_generation.clone(), generation), latched: Arc::new(AtomicBool::new(false)) },
+                started: std::time::Instant::now(),
             })
         }
     }
 
     /// Whether it's been cancelled, or overtaken by another file, a project or Clear: then the frames fed are ignored
     /// and `finish` says "Cancelled"
-    pub fn is_cancelled(&self) -> bool {
-        if !self.cancelled.load(Relaxed) && (self.cancel_flag.load(Relaxed) || self.generation.0.load(SeqCst) != self.generation.1) {
-            self.cancelled.store(true, Relaxed);
-        }
-        self.cancelled.load(Relaxed)
-    }
+    pub fn is_cancelled(&self) -> bool { self.cancel.is_cancelled() }
+
+    /// The tracker `feed_frame` tracks with: a pipeline's tracking thread makes another one like it
+    #[cfg(feature = "use-opencv")]
+    fn new_tracker() -> KltTracker { KltTracker::new(MAX_POINTS, 1.0, TRACK_WIDTH) }
 
     /// Frames fed so far and to be analyzed
     pub fn progress(&self) -> (usize, usize) { (self.frames, self.total_frames.max(self.frames)) }
 
     /// What to decode: the trim ranges, in the file's own milliseconds
-    pub fn ranges_ms(&self) -> Vec<(f64, f64)> { self.ranges_ms.clone() }
+    pub fn ranges_ms(&self) -> Vec<(f64, f64)> { self.sequencer.ranges_ms.clone() }
 
     pub fn frame_step(&self) -> usize { self.every_nth_frame }
 
     pub fn source_fps(&self) -> f64 { self.scaled_fps / self.fps_scale.unwrap_or(1.0) }
 
     /// Check before grayscale conversion, and again in core for callers without early sampling.
-    pub fn wants_frame(&self, timestamp_us: i64) -> bool {
-        let file_ms = timestamp_us as f64 / 1000.0;
-        self.ranges_ms.iter().any(|(a, b)| file_ms >= *a - 0.5 && file_ms <= *b + 0.5)
-            && super::optical_sampling::keep_frame(timestamp_us, self.source_fps(), self.every_nth_frame)
-    }
+    pub fn wants_frame(&self, timestamp_us: i64) -> bool { self.sequencer.wants_frame(timestamp_us) }
 
     fn continuous(&self, index: usize, timestamp_ms: f64) -> bool {
-        self.last.is_some_and(|last| {
-            let scale = self.fps_scale.unwrap_or(1.0);
-            index == last.index + self.every_nth_frame && self.ranges_ms.iter().any(|(a, b)| {
-                last.timestamp_ms * scale >= *a - 0.5 && timestamp_ms * scale <= *b + 0.5
-            })
-        })
+        self.sequencer.continues(self.last.map(|last| (last.index, last.timestamp_ms)), index, timestamp_ms)
     }
 
     /// Feeds the next decoded frame, in decoding order: 8-bit luma, ideally about 1000 px wide. Frames outside of
     /// `ranges_ms` are ignored
     pub fn feed_frame(&mut self, timestamp_us: i64, width: u32, height: u32, stride: usize, pixels: &[u8]) -> Result<(), String> {
-        if self.is_cancelled() || !self.wants_frame(timestamp_us) { return Ok(()); }
-        let file_ms = timestamp_us as f64 / 1000.0;
-        let mut ts_ms = file_ms;
-        if let Some(scale) = self.fps_scale { ts_ms /= scale; }
-        let index = crate::frame_at_timestamp(ts_ms, self.scaled_fps).max(0) as usize;
-        if self.last.map(|l| index <= l.index).unwrap_or(false) { return Ok(()); } // a repeated frame
-
-        let continuous = self.continuous(index, ts_ms);
+        if self.is_cancelled() { return Ok(()); }
+        let Some(FrameSlot { index, ts_ms, continuous }) = self.sequencer.accept(timestamp_us) else { return Ok(()) };
 
         #[cfg(feature = "use-opencv")]
         let obs = {
@@ -534,7 +604,7 @@ impl OpticalMotionAnalysis {
             video_base,
             frames: self.frames,
             measured_frames: self.measured_pairs,
-            generation: self.generation.1,
+            generation: self.cancel.generation.1,
         })
     }
 
@@ -703,9 +773,9 @@ impl OpticalMotionAnalysis {
             let q = gyro.org_quat_at_timestamp(timestamp);
             [q.w as f32, q.i as f32, q.j as f32, q.k as f32]
         };
+        let mut points_of = points_by_pair(derived, state.next_seq);
         for pair in self.pairs.iter().filter(|pair| pair.seq >= state.next_seq) {
-            let points: Vec<PairPoint> = derived.iter().filter(|d| d.seq == pair.seq)
-                .map(|d| PairPoint { id: d.id, band: d.band, p: d.p, r: d.r }).collect();
+            let points = points_of.remove(&pair.seq).unwrap_or_default();
             let start_us = (pair.a.mid_ms * 1000.0).round() as i64;
             if state.samples.last().is_none_or(|s| s.timestamp_us != start_us) {
                 if !state.samples.is_empty() { state.segment += 1; }
@@ -890,6 +960,30 @@ fn fit_band(derived: &[Derived], rhp: &[Option<Vector3<f64>>], idx: &[usize], si
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn points_grouped_by_pair_match_a_scan_per_pair() {
+        // Pairs laid out one after the other as `derive` does, and interleaved, which it doesn't
+        let point = |seq: usize, id: u32| Derived {
+            id, seq, band: (id % 6) as u8,
+            p: Vector3::new(id as f64 * 0.1, seq as f64 * -0.2, 1.0 + id as f64 * 1e-3), r: Vector3::new(1e-4 * id as f64, -3e-5, 7e-6 * seq as f64),
+            ta_ms: 0.0, tb_ms: 0.0,
+        };
+        let laid_out: Vec<_> = (3..9).flat_map(|seq| (0..40).map(move |id| point(seq, id * 7 + seq as u32))).collect();
+        let interleaved: Vec<_> = (0..120u32).map(|i| point(3 + (i as usize * 5) % 6, i)).collect();
+        let bits = |points: &[PairPoint]| points.iter().map(|p| (p.id, p.band, p.p.map(f64::to_bits), p.r.map(f64::to_bits))).collect::<Vec<_>>();
+        for derived in [&laid_out, &interleaved] {
+            for from_seq in [0, 3, 5, 9] {
+                let mut grouped = points_by_pair(derived, from_seq);
+                for seq in from_seq..10 {
+                    let scanned: Vec<PairPoint> = derived.iter().filter(|d| d.seq == seq)
+                        .map(|d| PairPoint { id: d.id, band: d.band, p: d.p, r: d.r }).collect();
+                    assert_eq!(bits(&grouped.remove(&seq).unwrap_or_default()), bits(&scanned), "seq {seq} from {from_seq}");
+                }
+                assert!(grouped.is_empty(), "nothing before from_seq");
+            }
+        }
+    }
 
     #[cfg(feature = "use-opencv")]
     #[test]
@@ -1249,7 +1343,7 @@ mod tests {
         }
         assert!(!analysis.continuous(125, 125_000.0 / 120.0));
         // A trim gap can be shorter than one sampling step and must still break the pair.
-        analysis.ranges_ms = vec![(0.0, 4_800.0), (4_900.0, 15_000.0)];
+        analysis.sequencer.ranges_ms = vec![(0.0, 4_800.0), (4_900.0, 15_000.0)];
         assert!(!analysis.continuous(120, 1000.0));
         let m = analysis.finish().unwrap();
         assert_eq!(m.scaled_fps, 24.0);
@@ -1439,6 +1533,203 @@ mod tests {
         stab.optical_generation.fetch_add(1, SeqCst);
         assert!(analysis.is_cancelled());
         assert_eq!(analysis.finish().err().as_deref(), Some("Cancelled"));
+    }
+
+    /// Frames of a smooth random texture that moves, turns and zooms a little, 8-bit luma
+    #[cfg(feature = "use-opencv")]
+    fn moving_texture(frames: usize, (w, h): (i32, i32)) -> Vec<Vec<u8>> {
+        use opencv::{ core::{ Mat, Point2f, Size }, imgproc, prelude::* };
+        let mut seed = 99u32;
+        let noise: Vec<u8> = (0..1400 * 900).map(|_| { seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5; seed as u8 }).collect();
+        let noise = Mat::new_rows_cols_with_data::<u8>(900, 1400, &noise).unwrap().try_clone().unwrap();
+        let mut canvas = Mat::default();
+        imgproc::gaussian_blur_def(&noise, &mut canvas, Size::new(0, 0), 1.5).unwrap();
+        (0..frames).map(|k| {
+            let t = k as f64;
+            let mut m = imgproc::get_rotation_matrix_2d(Point2f::new(700.0, 450.0), (t * 0.21).sin() * 2.0, 1.0 + 0.01 * (t * 0.13).sin()).unwrap();
+            *m.at_2d_mut::<f64>(0, 2).unwrap() += -300.0 + 30.0 * (t * 0.17).sin() + 0.5 * t;
+            *m.at_2d_mut::<f64>(1, 2).unwrap() += -250.0 + 6.0 * (t * 0.23).cos();
+            let mut frame = Mat::default();
+            imgproc::warp_affine_def(&canvas, &mut frame, &m, Size::new(w, h)).unwrap();
+            frame.data_bytes().unwrap().to_vec()
+        }).collect()
+    }
+
+    /// A clip without motion data: the analysis measures the motion itself
+    #[cfg(feature = "use-opencv")]
+    fn vision_fixture(frames: usize) -> StabilizationManager {
+        let stab = analysis_fixture(frames, |_| crate::Quat64::identity());
+        stab.gyro.write().file_metadata.write().quaternions.clear();
+        stab.gyro.write().quaternions.clear();
+        assert!(!stab.gyro.read().file_metadata.read().has_motion());
+        stab
+    }
+
+    /// Everything the measurements hold, bit for bit. The bands of a pair measured at the same time (a global
+    /// shutter) come in any order: `process` collects them from a hash map. They're compared as a set
+    #[cfg(feature = "use-opencv")]
+    fn measurement_bits(m: &OpticalMeasurements) -> String {
+        let f = |x: f64| x.to_bits();
+        let mut bands: Vec<String> = m.bands.iter().map(|b| format!("{b:?}")).collect();
+        bands.sort();
+        let mut s = format!("{:?}|{:?}|{}|{}|{}|{}|{}|{}|{}|{}\n", bands, m.translation_samples, m.stab_requested, m.translation_requested,
+            f(m.scaled_fps), m.quats_checksum, m.context_checksum, m.frames, m.measured_frames, m.generation);
+        for (t, q) in &m.video_base { s += &format!("{t}:{:?}", q.map(f32::to_bits)); }
+        for p in &m.stab_pairs {
+            s += &format!("\npair {} {} {}", p.seq, f(p.duration_us), p.points.len());
+            for x in &p.points {
+                s += &format!(" {:?}{:?}{:?}{:?}{}{}{:?}{}", x.a.sensor_full.map(f32::to_bits), x.a.known_translation_full.map(f32::to_bits),
+                    x.b.sensor_full.map(f32::to_bits), x.b.known_translation_full.map(f32::to_bits), f(x.ta_us), f(x.tb_us),
+                    x.gyro_ab.coords.map(f), x.band);
+            }
+        }
+        for b in &m.stab_bands {
+            s += &format!("\nband {} {} {} {} {:?} {:?} {}", b.pair, b.band, f(b.ta_us), f(b.tb_us), b.correction.map(f), b.info.map(f), f(b.cauchy_scale_px));
+        }
+        s
+    }
+
+    /// The frames fed one by one, and through the pipeline; with the error of each, if any
+    #[cfg(feature = "use-opencv")]
+    fn analyze_both_ways(stab: &StabilizationManager, frames: &[(i64, u32, u32, usize, Vec<u8>)]) -> (Result<String, String>, Result<String, String>) {
+        let mut one_by_one = OpticalMotionAnalysis::from_manager(stab, Arc::new(AtomicBool::new(false))).unwrap();
+        let sequential = frames.iter().try_for_each(|(ts, w, h, stride, pixels)| one_by_one.feed_frame(*ts, *w, *h, *stride, pixels))
+            .and_then(|()| one_by_one.finish()).map(|m| measurement_bits(&m));
+        let analysis = OpticalMotionAnalysis::from_manager(stab, Arc::new(AtomicBool::new(false))).unwrap();
+        let (running, mut sink) = pipeline::AnalysisPipeline::start(analysis).unwrap();
+        for (ts, w, h, stride, pixels) in frames {
+            if sink.push(*ts, *w, *h, *stride, pixels).is_err() { break; }
+        }
+        drop(sink);
+        let outcome = running.join().unwrap();
+        let piped = match outcome.error.clone() {
+            Some(e) => Err(e),
+            None => outcome.finish().map(|m| measurement_bits(&m)),
+        };
+        (sequential, piped)
+    }
+
+    #[cfg(feature = "use-opencv")]
+    fn frames_at_30fps(pixels: Vec<Vec<u8>>, (w, h): (u32, u32)) -> Vec<(i64, u32, u32, usize, Vec<u8>)> {
+        pixels.into_iter().enumerate().map(|(k, p)| ((k as f64 * 1e6 / 30.0).round() as i64, w, h, w as usize, p)).collect()
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn pipeline_measures_like_feeding_the_frames_one_by_one() {
+        // Long enough for a measurement while frames are still coming (`CHUNK` pairs past the high-pass window)
+        let rotating = |t: f64| crate::Quat64::from_euler_angles(0.02 * (t * 3.0).sin(), 0.01 * t, 0.015 * (t * 2.0).cos());
+        let stab = analysis_fixture(320, rotating);
+        stab.optical_ui.write().translation_enabled = true;
+        let frames = frames_at_30fps(moving_texture(320, (640, 360)), (640, 360));
+        let (sequential, piped) = analyze_both_ways(&stab, &frames);
+        let sequential = sequential.unwrap();
+        assert!(sequential.len() > 10_000, "the analysis measured too little to compare");
+        assert_eq!(sequential, piped.unwrap());
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn pipeline_matches_in_every_mode_and_on_gaps() {
+        let rotating = |t: f64| crate::Quat64::from_euler_angles(0.02 * (t * 3.0).sin(), 0.01 * t, 0.0);
+        let texture = moving_texture(48, (640, 360));
+        // Correction and translation; a frame with too few pixels; a frame decoded twice
+        let stab = analysis_fixture(48, rotating);
+        stab.optical_ui.write().translation_enabled = true;
+        let mut frames = frames_at_30fps(texture.clone(), (640, 360));
+        frames[17].4.truncate(640 * 100);
+        let repeated = frames[30].clone();
+        frames.insert(31, repeated);
+        let (a, b) = analyze_both_ways(&stab, &frames);
+        assert_eq!(a.unwrap(), b.unwrap(), "correction and translation");
+        // A gap in the trim ranges: tracks start again after it
+        stab.params.write().trim_ranges = vec![(0.0, 0.4), (0.55, 1.0)];
+        let (a, b) = analyze_both_ways(&stab, &frames_at_30fps(texture.clone(), (640, 360)));
+        assert_eq!(a.unwrap(), b.unwrap(), "trim gap");
+        stab.params.write().trim_ranges.clear();
+        // The sensor reconstruction (every frame, raw observations)
+        stab.optical_ui.write().translation_enabled = false;
+        stab.optical_ui.write().stab_enabled = true;
+        let (a, b) = analyze_both_ways(&stab, &frames_at_30fps(texture.clone(), (640, 360)));
+        let a = a.unwrap();
+        assert!(a.contains("\npair "), "no raw sensor observations to compare");
+        assert_eq!(a, b.unwrap(), "sensor reconstruction");
+        // Without motion data: the motion measured from the video
+        let stab = vision_fixture(48);
+        let (a, b) = analyze_both_ways(&stab, &frames_at_30fps(texture, (640, 360)));
+        let a = a.unwrap();
+        assert!(a.contains(':'), "no motion from the video to compare");
+        assert_eq!(a, b.unwrap(), "motion from the video");
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn pipeline_reports_a_tracking_error_like_feed_frame() {
+        let stab = analysis_fixture(30, |_| crate::Quat64::identity());
+        let mut frames = frames_at_30fps(moving_texture(30, (640, 360)), (640, 360));
+        // Wider than the tracking width: tracked at another size than it came in
+        frames[12] = (frames[12].0, 1920, 1080, 1920, vec![128; 1920 * 1080]);
+        let (a, b) = analyze_both_ways(&stab, &frames);
+        assert_eq!(a.as_ref().err().map(String::as_str), Some("Tracking size (960, 540) differs from input (1920, 1080)"));
+        assert_eq!(a, b);
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn pipeline_cancels_within_a_second() {
+        let stab = analysis_fixture(300, |_| crate::Quat64::identity());
+        let cancel = Arc::new(AtomicBool::new(false));
+        let analysis = OpticalMotionAnalysis::from_manager(&stab, cancel.clone()).unwrap();
+        let (running, mut sink) = pipeline::AnalysisPipeline::start(analysis).unwrap();
+        let frames = frames_at_30fps(moving_texture(300, (640, 360)), (640, 360));
+        for (ts, w, h, stride, pixels) in &frames[..40] { sink.push(*ts, *w, *h, *stride, pixels).unwrap(); }
+        cancel.store(true, SeqCst);
+        // Lowered again by something else: the analysis stays cancelled
+        let cancelled_at = std::time::Instant::now();
+        assert!(sink.stopped());
+        cancel.store(false, SeqCst);
+        assert!(sink.push(frames[40].0, 640, 360, 640, &frames[40].4).is_err());
+        let outcome = running.join().unwrap();
+        assert!(cancelled_at.elapsed() < std::time::Duration::from_secs(1), "took {:?}", cancelled_at.elapsed());
+        drop(sink);
+        assert!(outcome.is_cancelled());
+        assert_eq!(outcome.finish().err().as_deref(), Some("Cancelled"));
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn pipeline_queues_are_bounded() {
+        let stab = analysis_fixture(200, |_| crate::Quat64::identity());
+        let analysis = OpticalMotionAnalysis::from_manager(&stab, Arc::new(AtomicBool::new(false))).unwrap();
+        let (running, mut sink) = pipeline::AnalysisPipeline::start(analysis).unwrap();
+        running.hold_measuring(true);
+        let frames = frames_at_30fps(moving_texture(200, (640, 360)), (640, 360));
+        let pushed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let feeder = {
+            let pushed = pushed.clone();
+            std::thread::spawn(move || {
+                for (ts, w, h, stride, pixels) in &frames {
+                    sink.push(*ts, *w, *h, *stride, pixels).unwrap();
+                    pushed.fetch_add(1, SeqCst);
+                }
+            })
+        };
+        // Until the queues are full: nothing more handed over for a second
+        let (mut last, mut still, started) = (0, std::time::Instant::now(), std::time::Instant::now());
+        while still.elapsed().as_millis() < 1000 && started.elapsed().as_secs() < 60 {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            let now = pushed.load(SeqCst);
+            if now != last { (last, still) = (now, std::time::Instant::now()); }
+        }
+        // The measuring queue, one frame in the hands of the measuring and the tracking stage, and per worker its two
+        // queues and the frame it holds
+        let bound = pipeline::MEASURE_QUEUE + 2 + pipeline::PREPARE_WORKERS * (2 * pipeline::PREPARE_QUEUE + 1);
+        assert_eq!(pushed.load(SeqCst), bound, "frames handed over while measuring was held");
+        running.hold_measuring(false);
+        feeder.join().unwrap();
+        let outcome = running.join().unwrap();
+        assert!(outcome.error.is_none());
+        assert_eq!(outcome.finish().unwrap().frames, 200);
     }
 }
 
