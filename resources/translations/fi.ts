@@ -7044,6 +7044,22 @@ Poista objektiivin stabilointi (Optical SteadyShot) käytöstä, jotta voit käy
         <source>Use a supported camera's gyroscope data or import a separate gyroscope file.</source>
         <translation>Use a supported camera's gyroscope data or import a separate gyroscope file.</translation>
     </message>
+    <message>
+        <source>Apply to this video</source>
+        <translation>Käytä tähän videoon</translation>
+    </message>
+    <message>
+        <source>Changes saved to this video.</source>
+        <translation>Muutokset tallennettu tähän videoon.</translation>
+    </message>
+    <message>
+        <source>Could not save the changes. Try again.</source>
+        <translation>Muutoksia ei voitu tallentaa. Yritä uudelleen.</translation>
+    </message>
+    <message>
+        <source>Open a video in preview to use these features.</source>
+        <translation>Avaa video esikatseluun käyttääksesi näitä toimintoja.</translation>
+    </message>
 </context>
 <context>
     <name>MobileFolderPicker</name>

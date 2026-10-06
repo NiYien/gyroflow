@@ -39,6 +39,15 @@ TestCase {
         property bool mobileAutoRotateAvailable: false
         property var exportSettings: null
         property var advanced: null
+        property QtObject motionData: QtObject { property bool opticalEditsPending: false }
+        property int saveCalls: 0
+        property int savedJobId: 0
+        property var saveCallback: null
+        function saveEditingJobToQueue(callback) {
+            saveCalls++;
+            savedJobId = fakeBackend.editing_job_id;
+            saveCallback = callback;
+        }
         property int comparisonCalls: 0
         function setMobileComparison(stable) { comparisonCalls++; }
         function openMobilePreview(id) { fakeBackend.editing_job_id = id; }
@@ -46,6 +55,9 @@ TestCase {
             property bool gyro_loaded: true
             property bool video_loading_in_progress: false
             property bool loading_gyro_in_progress: false
+            property bool sync_in_progress: false
+            property int cancelCalls: 0
+            function cancel_current_operation() { cancelCalls++; }
             function stabilize_step_pending_for_preview() { return false; }
         }
         property QtObject videoArea: QtObject {
@@ -80,6 +92,12 @@ TestCase {
         previewService.videoArea.vid.playing = false;
         previewService.controller.video_loading_in_progress = false;
         previewService.controller.loading_gyro_in_progress = false;
+        previewService.controller.sync_in_progress = false;
+        previewService.controller.cancelCalls = 0;
+        previewService.motionData.opticalEditsPending = false;
+        previewService.saveCalls = 0;
+        previewService.savedJobId = 0;
+        previewService.saveCallback = null;
         folderFilesystem.locations = ["file:///take"];
         samples = [];
         for (let i = 0; i < 32; ++i) samples.push({ id: i + 1, filename: "C" + (1000 + i) + ".mov", duration: 18500,
@@ -89,6 +107,102 @@ TestCase {
         workspace.refresh();
         compare(workspace.rows.length, 32);
         waitForRendering(workspace);
+    }
+    function test_experimental_entry_data() {
+        return [{ tag: "android-portrait", os: "android", w: 360, h: 640 },
+            { tag: "ios-portrait", os: "ios", w: 320, h: 640 },
+            { tag: "android-landscape", os: "android", w: 800, h: 360 }];
+    }
+    function test_experimental_entry(data) {
+        workspace.platformOs = data.os;
+        workspace.width = data.w; workspace.height = data.h;
+        workspace.showPanel("settings");
+        waitForRendering(workspace);
+        const entry = findChild(workspace, "mobileExperimentalFeatures");
+        verify(entry !== null && entry.visible && entry.enabled);
+        workspace.panelFlickable.contentY = Math.max(0, workspace.panelFlickable.contentHeight - workspace.panelFlickable.height);
+        waitForRendering(workspace);
+        verify(entry.height >= 44);
+        const point = entry.mapToItem(workspace, 0, 0);
+        verify(point.x >= 0 && point.x + entry.width <= workspace.width);
+        mouseClick(entry, entry.width / 2, entry.height / 2);
+        compare(workspace.panel, "experimental");
+        verify(!workspace.canEditExperimental);
+        verify(!findChild(workspace, "mobileApplyExperimental").enabled);
+        verify(!workspace.experimentalContent.enabled);
+        workspace.back(false);
+        compare(workspace.panel, "settings");
+        compare(previewService.saveCalls, 0);
+    }
+    function prepareExperimentalPreview() {
+        workspace.host = previewService;
+        workspace.openPreview(7);
+        workspace.previewLoaded();
+        verify(workspace.previewReady);
+        workspace.showPanel("settings");
+        workspace.showPanel("experimental");
+        verify(workspace.canEditExperimental);
+    }
+    function test_experimental_saves_only_current_preview_on_explicit_apply() {
+        prepareExperimentalPreview();
+        workspace.back(false);
+        compare(previewService.saveCalls, 0);
+        workspace.showPanel("experimental");
+        workspace.applyExperimentalToVideo();
+        compare(previewService.saveCalls, 1);
+        compare(previewService.savedJobId, 7);
+        verify(workspace.experimentalSaving && workspace.busy);
+        verify(!findChild(workspace, "mobileApplyExperimental").enabled);
+        workspace.applyExperimentalToVideo();
+        compare(previewService.saveCalls, 1);
+        previewService.saveCallback(true);
+        verify(!workspace.experimentalSaving);
+        verify(workspace.canApplyExperimental);
+        compare(workspace.notice, "Changes saved to this video.");
+        compare(workspace.rows.length, 32);
+        workspace.returnToList();
+        verify(!workspace.canEditExperimental);
+        workspace.applyExperimentalToVideo();
+        compare(previewService.saveCalls, 1);
+    }
+    function test_experimental_guards_loading_and_pending_edits() {
+        prepareExperimentalPreview();
+        previewService.controller.loading_gyro_in_progress = true;
+        verify(!workspace.canEditExperimental);
+        workspace.applyExperimentalToVideo();
+        compare(previewService.saveCalls, 0);
+        previewService.controller.loading_gyro_in_progress = false;
+        previewService.motionData.opticalEditsPending = true;
+        verify(!workspace.canApplyExperimental);
+        verify(workspace.canEditExperimental);
+        workspace.applyExperimentalToVideo();
+        compare(previewService.saveCalls, 0);
+        previewService.motionData.opticalEditsPending = false;
+        fakeBackend.editing_job_id = 8;
+        verify(!workspace.canEditExperimental);
+        workspace.applyExperimentalToVideo();
+        compare(previewService.saveCalls, 0);
+    }
+    function test_experimental_analysis_can_be_cancelled_and_blocks_navigation() {
+        prepareExperimentalPreview();
+        previewService.controller.sync_in_progress = true;
+        verify(workspace.busy && workspace.experimentalAnalyzing);
+        verify(!workspace.canEditExperimental);
+        verify(findChild(workspace, "mobileCancelExperimentalAnalysis").visible);
+        workspace.openPreview(8);
+        compare(workspace.previewJobId, 7);
+        workspace.stopTask();
+        compare(previewService.controller.cancelCalls, 1);
+        previewService.controller.sync_in_progress = false;
+        verify(workspace.canEditExperimental);
+    }
+    function test_experimental_save_failure_allows_retry() {
+        prepareExperimentalPreview();
+        workspace.applyExperimentalToVideo();
+        previewService.saveCallback(false);
+        verify(!workspace.experimentalSaving);
+        verify(workspace.canApplyExperimental);
+        compare(workspace.notice, "Could not save the changes. Try again.");
     }
     function test_density_data() {
         return [{ tag: "portrait", w: 360, h: 640, columns: 1, count: 5 },

@@ -7044,6 +7044,22 @@ Chcete-li použít Gyroflow, vypněte stabilizaci objektivu (Optical SteadyShot)
         <source>Use a supported camera's gyroscope data or import a separate gyroscope file.</source>
         <translation>Use a supported camera's gyroscope data or import a separate gyroscope file.</translation>
     </message>
+    <message>
+        <source>Apply to this video</source>
+        <translation>Použít na toto video</translation>
+    </message>
+    <message>
+        <source>Changes saved to this video.</source>
+        <translation>Změny byly uloženy pro toto video.</translation>
+    </message>
+    <message>
+        <source>Could not save the changes. Try again.</source>
+        <translation>Změny se nepodařilo uložit. Zkuste to znovu.</translation>
+    </message>
+    <message>
+        <source>Open a video in preview to use these features.</source>
+        <translation>Chcete-li použít tyto funkce, otevřete video v náhledu.</translation>
+    </message>
 </context>
 <context>
     <name>MobileFolderPicker</name>

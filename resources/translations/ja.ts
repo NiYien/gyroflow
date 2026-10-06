@@ -7047,6 +7047,22 @@ Gyroflowを使用するには、レンズの手ぶれ補正（Optical SteadyShot
         <source>Use a supported camera's gyroscope data or import a separate gyroscope file.</source>
         <translation>Use a supported camera's gyroscope data or import a separate gyroscope file.</translation>
     </message>
+    <message>
+        <source>Apply to this video</source>
+        <translation>この動画に適用</translation>
+    </message>
+    <message>
+        <source>Changes saved to this video.</source>
+        <translation>この動画への変更を保存しました。</translation>
+    </message>
+    <message>
+        <source>Could not save the changes. Try again.</source>
+        <translation>変更を保存できませんでした。もう一度お試しください。</translation>
+    </message>
+    <message>
+        <source>Open a video in preview to use these features.</source>
+        <translation>これらの機能を使うには、プレビューで動画を開いてください。</translation>
+    </message>
 </context>
 <context>
     <name>MobileFolderPicker</name>

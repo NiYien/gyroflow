@@ -7044,6 +7044,22 @@ Vypnite stabilizáciu objektívu (Optical SteadyShot), aby ste mohli používať
         <source>Use a supported camera's gyroscope data or import a separate gyroscope file.</source>
         <translation>Use a supported camera's gyroscope data or import a separate gyroscope file.</translation>
     </message>
+    <message>
+        <source>Apply to this video</source>
+        <translation>Použiť na toto video</translation>
+    </message>
+    <message>
+        <source>Changes saved to this video.</source>
+        <translation>Zmeny boli uložené pre toto video.</translation>
+    </message>
+    <message>
+        <source>Could not save the changes. Try again.</source>
+        <translation>Zmeny sa nepodarilo uložiť. Skúste to znova.</translation>
+    </message>
+    <message>
+        <source>Open a video in preview to use these features.</source>
+        <translation>Ak chcete použiť tieto funkcie, otvorte video v náhľade.</translation>
+    </message>
 </context>
 <context>
     <name>MobileFolderPicker</name>

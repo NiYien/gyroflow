@@ -7044,6 +7044,22 @@ Desative a estabilização da lente (Optical SteadyShot) para usar Gyroflow.</tr
         <source>Use a supported camera's gyroscope data or import a separate gyroscope file.</source>
         <translation>Use a supported camera's gyroscope data or import a separate gyroscope file.</translation>
     </message>
+    <message>
+        <source>Apply to this video</source>
+        <translation>Aplicar a este vídeo</translation>
+    </message>
+    <message>
+        <source>Changes saved to this video.</source>
+        <translation>Alterações salvas para este vídeo.</translation>
+    </message>
+    <message>
+        <source>Could not save the changes. Try again.</source>
+        <translation>Não foi possível salvar as alterações. Tente novamente.</translation>
+    </message>
+    <message>
+        <source>Open a video in preview to use these features.</source>
+        <translation>Abra um vídeo na prévia para usar estes recursos.</translation>
+    </message>
 </context>
 <context>
     <name>MobileFolderPicker</name>

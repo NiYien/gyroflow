@@ -7044,6 +7044,22 @@ Désactivez la stabilisation de l&apos;objectif (Optical SteadyShot) afin d&apos
         <source>Use a supported camera's gyroscope data or import a separate gyroscope file.</source>
         <translation>Use a supported camera's gyroscope data or import a separate gyroscope file.</translation>
     </message>
+    <message>
+        <source>Apply to this video</source>
+        <translation>Appliquer à cette vidéo</translation>
+    </message>
+    <message>
+        <source>Changes saved to this video.</source>
+        <translation>Modifications enregistrées pour cette vidéo.</translation>
+    </message>
+    <message>
+        <source>Could not save the changes. Try again.</source>
+        <translation>Impossible d’enregistrer les modifications. Réessayez.</translation>
+    </message>
+    <message>
+        <source>Open a video in preview to use these features.</source>
+        <translation>Ouvrez une vidéo dans l’aperçu pour utiliser ces fonctions.</translation>
+    </message>
 </context>
 <context>
     <name>MobileFolderPicker</name>

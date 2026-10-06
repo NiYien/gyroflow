@@ -7044,6 +7044,22 @@ Wyłącz stabilizację obiektywu (Optical SteadyShot), aby używać Gyroflow.</t
         <source>Use a supported camera's gyroscope data or import a separate gyroscope file.</source>
         <translation>Use a supported camera's gyroscope data or import a separate gyroscope file.</translation>
     </message>
+    <message>
+        <source>Apply to this video</source>
+        <translation>Zastosuj do tego filmu</translation>
+    </message>
+    <message>
+        <source>Changes saved to this video.</source>
+        <translation>Zmiany zapisano dla tego filmu.</translation>
+    </message>
+    <message>
+        <source>Could not save the changes. Try again.</source>
+        <translation>Nie udało się zapisać zmian. Spróbuj ponownie.</translation>
+    </message>
+    <message>
+        <source>Open a video in preview to use these features.</source>
+        <translation>Otwórz film w podglądzie, aby korzystać z tych funkcji.</translation>
+    </message>
 </context>
 <context>
     <name>MobileFolderPicker</name>

@@ -67,6 +67,7 @@ Rectangle {
         videoArea.height = Qt.binding(() => mobileUI.previewHost.height);
         simpleSensorLensSection.locked = true;
         pushToEnd(simpleSensorLensSection, mobileUI.settingsContent);
+        if (window.motionData) window.motionData.moveExperimentalControls(mobileUI.experimentalContent);
         mobileSettingsReady = true;
     }
     function openMobilePreview(jobId: int): void {
@@ -227,9 +228,9 @@ Rectangle {
     // Desktop keeps them in simpleModeContainer.
     function reparentSimplePanels(): void {
         if (!simpleVideoInfoSection || !simpleModeContainer) return;
-        if (window.motionData) window.motionData.moveExperimentalControls(
-            isSimpleMode && !isMobile && !useMobileWorkspace ? simpleExperimentalContent : null);
         if (useMobileWorkspace) { Qt.callLater(attachMobileWorkspace); return; }
+        if (window.motionData) window.motionData.moveExperimentalControls(
+            isSimpleMode ? simpleExperimentalContent : null);
         const useTabs = isMobileLayout && isSimpleMode;
         const tab1 = useTabs ? simpleVideoGyroTab.inner : simpleModeContainer;
         const tab2 = useTabs ? simpleStabSettingsTab.inner : simpleModeContainer;

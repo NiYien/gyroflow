@@ -7031,6 +7031,22 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <source>Use a supported camera's gyroscope data or import a separate gyroscope file.</source>
         <translation>Use a supported camera's gyroscope data or import a separate gyroscope file.</translation>
     </message>
+    <message>
+        <source>Apply to this video</source>
+        <translation>Bu videoya uygula</translation>
+    </message>
+    <message>
+        <source>Changes saved to this video.</source>
+        <translation>Değişiklikler bu video için kaydedildi.</translation>
+    </message>
+    <message>
+        <source>Could not save the changes. Try again.</source>
+        <translation>Değişiklikler kaydedilemedi. Tekrar deneyin.</translation>
+    </message>
+    <message>
+        <source>Open a video in preview to use these features.</source>
+        <translation>Bu özellikleri kullanmak için önizlemede bir video açın.</translation>
+    </message>
 </context>
 <context>
     <name>MobileFolderPicker</name>

@@ -7045,6 +7045,22 @@ Deaktiver objektivstabilisering (Optical SteadyShot) for å bruke Gyroflow.</tra
         <source>Use a supported camera's gyroscope data or import a separate gyroscope file.</source>
         <translation>Use a supported camera's gyroscope data or import a separate gyroscope file.</translation>
     </message>
+    <message>
+        <source>Apply to this video</source>
+        <translation>Bruk på denne videoen</translation>
+    </message>
+    <message>
+        <source>Changes saved to this video.</source>
+        <translation>Endringene er lagret for denne videoen.</translation>
+    </message>
+    <message>
+        <source>Could not save the changes. Try again.</source>
+        <translation>Endringene kunne ikke lagres. Prøv igjen.</translation>
+    </message>
+    <message>
+        <source>Open a video in preview to use these features.</source>
+        <translation>Åpne en video i forhåndsvisningen for å bruke disse funksjonene.</translation>
+    </message>
 </context>
 <context>
     <name>MobileFolderPicker</name>

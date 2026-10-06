@@ -57,7 +57,15 @@ Rectangle {
     property int operationSequence: 0
     property bool engineBusy: false
     readonly property bool importing: !!(queueService && queueService.importBusy)
-    readonly property bool busy: importing || engineBusy || !!(operation && operation.active)
+    readonly property bool experimentalAnalyzing: !!(host && host.controller && host.controller.sync_in_progress)
+    property bool experimentalSaving: false
+    readonly property bool busy: importing || engineBusy || !!(operation && operation.active) || experimentalAnalyzing || experimentalSaving
+    readonly property bool hasExperimentalPreview: page === "preview" && previewReady && !!(host && host.videoArea.vid.loaded)
+        && !!backend && backend.editing_job_id === previewJobId && previewJobId > 0
+    readonly property bool canEditExperimental: hasExperimentalPreview && !busy
+        && !host.videoArea.queueEditLoading && !host.controller.video_loading_in_progress && !host.controller.loading_gyro_in_progress
+    readonly property bool canApplyExperimental: canEditExperimental
+        && !(host.motionData && host.motionData.opticalEditsPending)
     property string summary: ""
     property string deepStage: ""
     property bool deepSucceeded: false
@@ -89,6 +97,7 @@ Rectangle {
     onPreviewReadyChanged: if (previewReady) updatePreviewAspectRatio()
     readonly property real previewAvailableHeight: Math.max(0, height - headerHeight - (busy ? footerHeight : 0) - 24 * unit)
     property alias settingsContent: settingsContent
+    property alias experimentalContent: experimentalContent
     property alias panelFlickable: panelScroll
     property alias libraryView: grid
     color: MobileStyle.background(dark)
@@ -214,6 +223,7 @@ Rectangle {
     }
     function resizeFinished() { restoreList(); layoutRestoring = false; }
     function openPreview(id, informationOnly) {
+        if (experimentalAnalyzing || experimentalSaving) return;
         const row = Logic.findRow(rows, id);
         if (!row) return;
         if (!row.previewable) {
@@ -271,7 +281,16 @@ Rectangle {
         if (panel && panel !== name) panelTrail = panelTrail.concat([{ name: panel, contentY: panelScroll.contentY }]);
         panelScroll.contentY = 0;
         panel = name; controlsShown = true;
-        if (name === "info" && host) host.videoArea.vid.pause();
+        if ((name === "info" || name === "experimental") && host) host.videoArea.vid.pause();
+    }
+    function applyExperimentalToVideo() {
+        if (!canApplyExperimental || !host) return;
+        experimentalSaving = true;
+        host.saveEditingJobToQueue(function(saved) {
+            root.experimentalSaving = false;
+            root.notify(saved ? qsTr("Changes saved to this video.") : qsTr("Could not save the changes. Try again."));
+            root.refresh();
+        });
     }
     function closePanel() {
         Qt.inputMethod.hide();
@@ -423,6 +442,8 @@ Rectangle {
         refresh();
     }
     function stopTask() {
+        if (experimentalAnalyzing && host) { host.controller.cancel_current_operation(); return; }
+        if (experimentalSaving) return;
         if (!operation && !engineBusy) return;
         if (operation) operation = Object.assign({}, operation, { stopping: true });
         if (operation && operation.kind === "deep") backend.cancel_deep_gyro_match(deepJobId);
@@ -439,7 +460,7 @@ Rectangle {
         id: progress
         height: 6 * root.unit
         padding: 0
-        indeterminate: !root.operation || root.operation.kind === "deep" || !root.operation.started || (root.queueService && root.queueService.matching)
+        indeterminate: root.experimentalAnalyzing || root.experimentalSaving || !root.operation || root.operation.kind === "deep" || !root.operation.started || (root.queueService && root.queueService.matching)
         from: 0; to: Math.max(1, root.taskCounts.total)
         value: root.taskCounts.settled
         background: Rectangle { color: root.dark ? "#373d47" : "#dce1e8"; radius: 3 * root.unit }
@@ -471,6 +492,8 @@ Rectangle {
         MobileActionRow { visible: !!parent.record.paired; width: parent.width; unit: root.unit; dark: root.dark; iconName: "reset"; text: qsTranslate("RenderQueue", "Unpair gyro"); enabled: !root.busy; onClicked: { if (root.inputsAllowed()) { root.backend.unpair_video(parent.record.id); root.refresh(); } } }
     }
     function taskTitle() {
+        if (experimentalAnalyzing) return qsTranslate("MotionData", "Analyze");
+        if (experimentalSaving) return qsTranslate("App", "Saving...");
         if (importing) return qsTr("Add media");
         if (operation && operation.stopping) return qsTr("Stopping…");
         if (operation && operation.kind === "deep") return qsTr("Deep search · %1").arg((Logic.findRow(rows, deepJobId) || {}).filename || "");
@@ -810,7 +833,7 @@ Rectangle {
             MobileText { unit: root.unit; dark: root.dark; width: parent.width; text: root.busy ? root.taskTitle() : root.summary; color: root.textColor; elide: Text.ElideMiddle }
             MobileText { unit: root.unit; dark: root.dark;
                 objectName: "mobileTaskSecondaryStatus"
-                visible: root.busy && !(root.operation && root.operation.kind === "deep")
+                visible: root.busy && !root.experimentalAnalyzing && !root.experimentalSaving && !(root.operation && root.operation.kind === "deep")
                 width: parent.width
                 text: root.importing ? qsTr("Reading…") : qsTr("Processed %1 / %2").arg(root.taskCounts.settled).arg(root.taskCounts.total || root.rows.length)
                 color: root.mutedColor; secondary: true; elide: Text.ElideRight
@@ -819,7 +842,7 @@ Rectangle {
         MouseArea {
             visible: (root.busy || root.summary.length > 0) && !root.continueAfterSummary
             x: 8 * root.unit; width: parent.width - 104 * root.unit; height: parent.height
-            onClicked: root.showTaskDetails(0)
+            onClicked: root.experimentalAnalyzing || root.experimentalSaving ? root.showPanel("experimental") : root.showTaskDetails(0)
         }
         MobileButton {
             id: taskStatusAction
@@ -830,7 +853,7 @@ Rectangle {
             width: Math.min(implicitWidth, parent.width * 0.38)
             unit: root.unit; dark: root.dark; emphasized: !root.busy
             text: root.busy ? (root.operation && root.operation.kind === "deep" ? qsTr("Cancel") : qsTr("Stop")) : qsTr("View results")
-            enabled: !root.importing && !(root.operation && root.operation.stopping)
+            enabled: !root.importing && !root.experimentalSaving && !(root.operation && root.operation.stopping)
             onClicked: { if (root.busy) root.stopTask(); else root.showTaskDetails(0); }
         }
         OperationProgress {
@@ -888,6 +911,7 @@ Rectangle {
                 text: root.panel === "settings" ? qsTr("Settings") : root.panel === "info" ? qsTr("Video information")
                     : root.panel === "about" ? qsTr("About NiYien") : root.panel === "privacy" ? qsTr("Privacy policy")
                     : root.panel === "licenses" ? qsTr("Open-source licenses") : root.panel === "help" ? qsTr("Help and support")
+                    : root.panel === "experimental" ? qsTranslate("App", "Experimental features")
                     : root.panel === "folderConfirm" ? qsTr("Confirm folder import")
                     : root.panel === "folders" ? qsTr("Choose folders")
                     : root.panel === "files" ? qsTr("Choose files")
@@ -956,8 +980,41 @@ Rectangle {
                         spacing: 16 * root.unit
                         MobileText { unit: root.unit; dark: root.dark; visible: root.busy; width: parent.width; text: qsTr("Stop the current task to adjust processing settings."); wrapMode: Text.WordWrap; color: root.mutedColor; secondary: true; }
                         MobileText { unit: root.unit; dark: root.dark; visible: root.settingsTab < 2; width: parent.width; text: qsTr("Changes apply to all videos."); wrapMode: Text.WordWrap; secondary: true }
-                        MobileSettings { visible: root.settingsTab !== 1; width: parent.width; host: root.host; unit: root.unit; dark: root.dark; busy: root.busy; platformOs: root.platformOs; section: ["stabilization", "lens", "app"][root.settingsTab]; onDocumentRequested: kind => root.showPanel(kind) }
+                        MobileSettings { visible: root.settingsTab !== 1; width: parent.width; host: root.host; unit: root.unit; dark: root.dark; busy: root.busy; platformOs: root.platformOs; section: ["stabilization", "lens", "app"][root.settingsTab]; onDocumentRequested: kind => root.showPanel(kind); onExperimentalRequested: root.showPanel("experimental") }
                         Column { id: settingsContent; visible: root.settingsTab === 1; width: parent.width; spacing: 16 * root.unit; enabled: !root.busy; opacity: enabled ? 1 : 0.55 }
+                    }
+                    Column {
+                        visible: root.panel === "experimental"
+                        width: parent.width; spacing: 16 * root.unit
+                        MobileText {
+                            width: parent.width; unit: root.unit; dark: root.dark; secondary: true; wrapMode: Text.WordWrap
+                            text: root.hasExperimentalPreview ? qsTranslate("App", "Applies to the video open in the preview.")
+                                : qsTr("Open a video in preview to use these features.")
+                        }
+                        MobileText { visible: root.hasExperimentalPreview; width: parent.width; unit: root.unit; dark: root.dark; wrapMode: Text.WrapAnywhere; text: root.previewRecord ? root.previewRecord.filename : "" }
+                        MobileGroup {
+                            width: parent.width; unit: root.unit; dark: root.dark
+                            Column {
+                                id: experimentalContent
+                                objectName: "mobileExperimentalContent"
+                                width: parent.width
+                                enabled: root.canEditExperimental
+                            }
+                        }
+                        Column {
+                            visible: root.experimentalAnalyzing
+                            width: parent.width; spacing: 8 * root.unit
+                            MobileText { width: parent.width; unit: root.unit; dark: root.dark; text: qsTranslate("MotionData", "Analyze") }
+                            QQC.ProgressBar { width: parent.width; indeterminate: true }
+                            MobileButton { objectName: "mobileCancelExperimentalAnalysis"; width: parent.width; unit: root.unit; dark: root.dark; text: qsTr("Cancel"); onClicked: root.stopTask() }
+                        }
+                        MobileButton {
+                            objectName: "mobileApplyExperimental"
+                            width: parent.width; unit: root.unit; dark: root.dark; emphasized: true
+                            text: qsTr("Apply to this video")
+                            enabled: root.canApplyExperimental
+                            onClicked: root.applyExperimentalToVideo()
+                        }
                     }
                     Column {
                         visible: root.documentPanel

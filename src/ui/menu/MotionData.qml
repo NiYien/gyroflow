@@ -30,6 +30,9 @@ MenuItem {
     property url lastSelectedFile: "";
     property alias extensions: fileDialog.extensions;
     property alias experimentalControls: experimentalControls;
+    readonly property bool opticalEditsPending: opticalStrengthTimer.running || translationReferenceTimer.running
+        || translationSmoothnessTimer.running || translationAlongAxisTimer.running
+        || (opticalcb.checked && opticalcb.info.available && opticalcb.info.outdated);
 
     function moveExperimentalControls(target: var): void {
         experimentalControls.parent = target || opticalControlsHost;
@@ -472,12 +475,17 @@ MenuItem {
                 unit: "%";
                 precision: 0;
                 width: parent.width;
+                slider.height: root.mobileStyle ? 44 * dpiScale : 20 * dpiScale;
                 // Each change refits the correction (up to half a second on a long clip): not on every step of a drag
                 onValueChanged: if (root.initialized && !root.updatingOpticalControls) opticalStrengthTimer.restart();
                 Timer {
                     id: opticalStrengthTimer;
                     interval: 150;
-                    onTriggered: if (!controller.video_loading_in_progress && !controller.loading_gyro_in_progress) controller.set_optical_correction_strength(opticalStrength.value / 100);
+                    onTriggered: {
+                        if (controller.video_loading_in_progress || controller.loading_gyro_in_progress) return;
+                        controller.set_optical_correction_strength(opticalStrength.value / 100);
+                        root.refreshOpticalInfo(false, false);
+                    }
                 }
             }
         }
@@ -513,6 +521,7 @@ MenuItem {
                 }
                 Slider {
                     id: translationReference;
+                    height: root.mobileStyle ? 44 * dpiScale : 20 * dpiScale;
                     width: parent.width - translationNear.width - translationFar.width - 2 * parent.spacing;
                     from: 0; to: 200; value: 100;
                     showValueTooltip: false;
@@ -534,6 +543,7 @@ MenuItem {
                 spacing: 5 * dpiScale;
                 Slider {
                     id: translationSmoothness;
+                    height: root.mobileStyle ? 44 * dpiScale : 20 * dpiScale;
                     width: parent.width - translationSmoothnessValue.width - parent.spacing;
                     from: -1; to: 1; value: 0;
                     onValueChanged: if (root.initialized && !root.updatingOpticalControls) translationSmoothnessTimer.restart();

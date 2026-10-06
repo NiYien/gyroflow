@@ -12,6 +12,7 @@ Column {
     property string section: "stabilization"
     property string platformOs: Qt.platform.os
     signal documentRequested(string kind)
+    signal experimentalRequested()
     property color accentColor: MobileStyle.accent(dark)
     spacing: 24 * unit
     component Divider: Rectangle {
@@ -73,6 +74,17 @@ Column {
             text: qsTr("Lens correction")
             checked: root.host ? root.host.batchState.lensCorrection >= 0.5 : true
             onToggled: if (root.host) root.host.batchState.lensCorrection = checked ? 1 : 0
+        }
+    }
+    MobileGroup {
+        visible: root.section === "stabilization"
+        width: parent.width; unit: root.unit; dark: root.dark; contentInset: 0
+        MobileActionRow {
+            objectName: "mobileExperimentalFeatures"
+            width: parent.width; unit: root.unit; dark: root.dark; navigation: true; iconName: "gyroflow"
+            text: qsTranslate("App", "Experimental features")
+            enabled: !root.busy
+            onClicked: root.experimentalRequested()
         }
     }
     MobileGroup {

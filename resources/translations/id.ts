@@ -7040,6 +7040,22 @@ Nonaktifkan stabilisasi lensa (Optical SteadyShot) untuk menggunakan Gyroflow.</
         <source>Use a supported camera's gyroscope data or import a separate gyroscope file.</source>
         <translation>Use a supported camera's gyroscope data or import a separate gyroscope file.</translation>
     </message>
+    <message>
+        <source>Apply to this video</source>
+        <translation>Terapkan ke video ini</translation>
+    </message>
+    <message>
+        <source>Changes saved to this video.</source>
+        <translation>Perubahan disimpan untuk video ini.</translation>
+    </message>
+    <message>
+        <source>Could not save the changes. Try again.</source>
+        <translation>Perubahan tidak dapat disimpan. Coba lagi.</translation>
+    </message>
+    <message>
+        <source>Open a video in preview to use these features.</source>
+        <translation>Buka video di pratinjau untuk menggunakan fitur ini.</translation>
+    </message>
 </context>
 <context>
     <name>MobileFolderPicker</name>

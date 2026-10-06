@@ -7040,6 +7040,22 @@ Desactive la estabilización de la lente (SteadyShot óptico) para poder utiliza
         <source>Use a supported camera's gyroscope data or import a separate gyroscope file.</source>
         <translation>Use a supported camera's gyroscope data or import a separate gyroscope file.</translation>
     </message>
+    <message>
+        <source>Apply to this video</source>
+        <translation>Aplicar a este vídeo</translation>
+    </message>
+    <message>
+        <source>Changes saved to this video.</source>
+        <translation>Cambios guardados para este vídeo.</translation>
+    </message>
+    <message>
+        <source>Could not save the changes. Try again.</source>
+        <translation>No se pudieron guardar los cambios. Inténtalo de nuevo.</translation>
+    </message>
+    <message>
+        <source>Open a video in preview to use these features.</source>
+        <translation>Abre un vídeo en la vista previa para usar estas funciones.</translation>
+    </message>
 </context>
 <context>
     <name>MobileFolderPicker</name>

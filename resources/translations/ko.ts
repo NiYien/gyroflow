@@ -7044,6 +7044,22 @@ Gyroflow를 사용하려면 렌즈 안정화(광학 SteadyShot)를 비활성화�
         <source>Use a supported camera's gyroscope data or import a separate gyroscope file.</source>
         <translation>Use a supported camera's gyroscope data or import a separate gyroscope file.</translation>
     </message>
+    <message>
+        <source>Apply to this video</source>
+        <translation>이 동영상에 적용</translation>
+    </message>
+    <message>
+        <source>Changes saved to this video.</source>
+        <translation>이 동영상의 변경 사항을 저장했습니다.</translation>
+    </message>
+    <message>
+        <source>Could not save the changes. Try again.</source>
+        <translation>변경 사항을 저장할 수 없습니다. 다시 시도하세요.</translation>
+    </message>
+    <message>
+        <source>Open a video in preview to use these features.</source>
+        <translation>이 기능을 사용하려면 미리보기에서 동영상을 여세요.</translation>
+    </message>
 </context>
 <context>
     <name>MobileFolderPicker</name>
