@@ -2758,7 +2758,7 @@ Do you want to submit your profile?</source>
     </message>
     <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="483"/>
-        <source>Which distance to hold steady: 0% keeps the picture as the gyro stabilization has it, 100% steadies the middle of the tracked points, higher values nearer objects.</source>
+        <source>0% stabilizes very distant content, 100% stabilizes the farther parts of the image (default), and higher values stabilize nearer objects.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

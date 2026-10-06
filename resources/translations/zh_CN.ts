@@ -2955,8 +2955,8 @@ Do you want to submit your profile?</source>
     </message>
     <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="483"/>
-        <source>Which distance to hold steady: 0% keeps the picture as the gyro stabilization has it, 100% steadies the middle of the tracked points, higher values nearer objects.</source>
-        <translation>选择要稳住的距离：0% 保持陀螺仪防抖后的画面，100% 稳住跟踪点深度的中间层，更高的值稳住更近的物体。</translation>
+        <source>0% stabilizes very distant content, 100% stabilizes the farther parts of the image (default), and higher values stabilize nearer objects.</source>
+        <translation>0% 稳定极远处，100% 稳定画面中较远的部分（默认），更高的值稳定更近的物体</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="492"/>

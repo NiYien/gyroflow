@@ -1767,6 +1767,9 @@ impl StabilizationManager {
     pub fn recompute_adaptive_zoom(&self) {
         let mut params = stabilization::ComputeParams::from_manager(self);
         params.calculate_camera_fovs();
+        let generation = self.optical_generation.load(SeqCst);
+        if !Self::refresh_translation_for_zoom(&mut params, &self.optical_ui,
+            &|| self.optical_generation.load(SeqCst) != generation) { return; }
 
         Self::apply_focal_length_smoothing(&mut params, &self.params);
 
@@ -1913,6 +1916,8 @@ impl StabilizationManager {
                     }
 
                     Self::apply_focal_length_smoothing(&mut params, &self.params);
+                    if !Self::refresh_translation_for_zoom(&mut params, &self.optical_ui,
+                        &|| self.optical_generation.load(SeqCst) != generation) { return; }
                     // Zooming
                     let lens_fov_adjustment = params.lens.optimal_fov.unwrap_or(1.0);
                     let (fovs, minimal_fovs, debug_points) =
@@ -2046,8 +2051,6 @@ impl StabilizationManager {
     pub fn recompute_blocking(&self) {
         let optical_generation = self.optical_generation.load(SeqCst);
         self.refresh_optical_correction();
-        if !Self::refresh_translation_settings(&self.gyro, &self.optical_ui,
-            &|| self.optical_generation.load(SeqCst) != optical_generation) { return; }
         crate::smooth_diag::init_session();
         if !smooth_blocking_gate_enabled() {
             self.recompute_smoothness();
@@ -2085,6 +2088,9 @@ impl StabilizationManager {
         };
         self.smoothing_checksum.store(ledger, SeqCst);
 
+        if !Self::refresh_translation_for_zoom(&mut compute_params, &self.optical_ui,
+            &|| self.optical_generation.load(SeqCst) != optical_generation) { return; }
+
         let zoom_checksum = zooming::get_checksum(&compute_params, ledger);
         let run_zoom = run_smoothing
             || self.zooming_invalidated.load(SeqCst)
@@ -2095,7 +2101,9 @@ impl StabilizationManager {
             self.recompute_adaptive_zoom();
             zoom_ms = t.elapsed().as_secs_f64() * 1000.0;
             self.zooming_invalidated.store(false, SeqCst);
-            self.zooming_checksum.store(zoom_checksum, SeqCst);
+            // Max Zoom can change the retained path and rebuild translation again.
+            compute_params.optical_translation_checksum = self.gyro.read().optical_translation.as_ref().map_or(0, |t| t.checksum());
+            self.zooming_checksum.store(zooming::get_checksum(&compute_params, ledger), SeqCst);
         }
         // Undistortion stays unconditional: it's the cheap leg and keeps
         // callers that write params directly (fov, lens_correction_amount,
@@ -2161,14 +2169,6 @@ impl StabilizationManager {
             if prevent_recompute.load(SeqCst) { return cb((compute_id, true)); } // we're still loading, don't recompute
             if current_compute_id.load(SeqCst) != compute_id { return cb((compute_id, true)); }
 
-            if !Self::refresh_translation_settings(&gyro, &optical_ui, &|| current_compute_id.load(SeqCst) != compute_id
-                || optical_generation.load(SeqCst) != requested_generation) {
-                return cb((compute_id, true));
-            }
-            params.optical_translation_checksum = if params.apply_optical_translation {
-                gyro.read().optical_translation.as_ref().map_or(0, |t| t.checksum())
-            } else { 0 };
-
             let commit = |checksum: &AtomicU64, value: u64| -> bool {
                 checksum.store(value, SeqCst);
                 if current_compute_id.load(SeqCst) != compute_id { checksum.store(0, SeqCst); return false; }
@@ -2201,6 +2201,11 @@ impl StabilizationManager {
             }
             let smoothing_state = smoothing.read().get_state_checksum(gyro_checksum, &params);
             if smoothing_recomputed && !commit(&*smoothing_checksum, smoothing_state) { return cb((compute_id, true)); }
+
+            if !Self::refresh_translation_for_zoom(&mut params, &optical_ui, &|| current_compute_id.load(SeqCst) != compute_id
+                || optical_generation.load(SeqCst) != requested_generation) {
+                return cb((compute_id, true));
+            }
 
             // Before the zoom: it accounts for the focal length compensation
             Self::apply_focal_length_smoothing(&mut params, &stabilization_params);
@@ -2332,6 +2337,11 @@ impl StabilizationManager {
                         // The focal length curves don't change within max-zoom iterations:
                         // settings and raw metadata are the same, so the outer apply is reused
 
+                        if !Self::refresh_translation_for_zoom(&mut params, &optical_ui, &|| current_compute_id.load(SeqCst) != compute_id
+                            || optical_generation.load(SeqCst) != requested_generation) {
+                            return cb((compute_id, true));
+                        }
+
                         let (fovs, minimal_fovs, debug_points) = Self::recompute_adaptive_zoom_static(&params, &stabilization_params);
                         params.fovs = fovs;
                         params.minimal_fovs = minimal_fovs;
@@ -2351,7 +2361,7 @@ impl StabilizationManager {
                     if !commit(&*smoothing_checksum, smoothing_state) { return cb((compute_id, true)); }
                 }
 
-                if !commit(&*zooming_checksum, zoom_key) { return cb((compute_id, true)); }
+                if !commit(&*zooming_checksum, zooming::get_checksum(&params, smoothing_state)) { return cb((compute_id, true)); }
             }
             ::log::info!(
                 target: "stab.timing",
@@ -3151,24 +3161,35 @@ impl StabilizationManager {
 
     fn refresh_translation_settings(gyro: &RwLock<GyroSource>, ui: &RwLock<OpticalUi>, cancelled: &dyn Fn() -> bool) -> bool {
         if cancelled() { return false; }
-        let (mut result, old_key, settings) = {
+        let (mut result, old_key, settings, path, path_key) = {
             let gyro = gyro.read();
             let ui = ui.read();
             let Some(result) = &gyro.optical_translation else { return true; };
-            if result.settings == ui.translation_settings { return true; }
-            (result.clone(), result.content_checksum(), ui.translation_settings)
+            let (path, path_key) = result.output_path(&gyro);
+            if result.settings == ui.translation_settings && result.output_path_checksum == path_key { return true; }
+            (result.clone(), result.content_checksum(), ui.translation_settings, path, path_key)
         };
         result.settings = settings;
-        if !result.rebuild_with_cancel(gyro_source::TranslationConfig::resolved().track_age_k, cancelled) { return false; }
+        if !result.rebuild_with_output_path(gyro_source::TranslationConfig::resolved().track_age_k, &path, path_key, cancelled) { return false; }
         if cancelled() { return false; }
         let mut gyro = gyro.write();
         let ui = ui.read();
         if cancelled() || ui.translation_settings != settings { return false; }
+        if result.output_path(&gyro).1 != path_key { return false; }
         let Some(current) = gyro.optical_translation.as_mut() else { return false; };
         if current.content_checksum() != old_key { return false; }
         result.enabled = current.enabled;
         result.applies = current.applies;
         *current = result;
+        true
+    }
+
+    /// Rotation smoothing has finished; publish the matching translation before zoom reads it.
+    fn refresh_translation_for_zoom(params: &mut ComputeParams, ui: &RwLock<OpticalUi>, cancelled: &dyn Fn() -> bool) -> bool {
+        if !Self::refresh_translation_settings(&params.gyro, ui, cancelled) { return false; }
+        params.optical_translation_checksum = if params.apply_optical_translation {
+            params.gyro.read().optical_translation.as_ref().map_or(0, |t| t.checksum())
+        } else { 0 };
         true
     }
     pub fn translation_stabilization_info(&self) -> serde_json::Value {
@@ -3752,11 +3773,9 @@ impl StabilizationManager {
         if let Some(s) = &mut gyro.optical_stab { changed |= std::mem::replace(&mut s.enabled, ui.stab_enabled) != ui.stab_enabled; }
         if let Some(t) = &mut gyro.optical_translation {
             t.enabled = ui.translation_enabled;
-            // Rebuild only the snapshot, after releasing both source locks.
-            if t.settings != ui.translation_settings { t.set_settings(ui.translation_settings); }
         }
         if changed { gyro.integrate(); }
-        StabilizationManager {
+        let cloned = StabilizationManager {
             params: Arc::new(RwLock::new(self.params.read().clone())),
             gyro: Arc::new(RwLock::new(gyro)),
             lens: Arc::new(RwLock::new(self.lens.read().clone())),
@@ -3782,7 +3801,10 @@ impl StabilizationManager {
             // prevent_recompute
             // camera_id
             ..Default::default()
-        }
+        };
+        let has_translation = cloned.gyro.read().optical_translation.is_some();
+        if has_translation { cloned.recompute_blocking(); }
+        cloned
     }
     pub fn set_render_params(&self, size: (usize, usize), output_size: (usize, usize)) {
         self.params.write().framebuffer_inverted = false;
@@ -4725,7 +4747,7 @@ impl StabilizationManager {
                                     if obj.get("translation_along_axis").and_then(|x| x.as_bool()).is_none() { ui.translation_settings.along_axis = translation.settings.along_axis; }
                                     translation.settings = ui.translation_settings;
                                 }
-                                translation.rebuild();
+                                translation.validate_geometry();
                                 gyro.optical_translation = Some(translation);
                             }
                             Err(error) => ::log::warn!("Failed to load optical translation: {:?}", error),
@@ -4750,7 +4772,6 @@ impl StabilizationManager {
                     if let Some(c) = &mut gyro.optical_correction { c.enabled = ui.correction_enabled; }
                     if let Some(t) = &mut gyro.optical_translation {
                         t.enabled = ui.translation_enabled;
-                        if t.settings != ui.translation_settings { t.set_settings(ui.translation_settings); }
                     }
                     if let Some(s) = &mut gyro.optical_stab { s.enabled = ui.stab_enabled; }
                 }
@@ -5835,6 +5856,8 @@ mod tests {
     fn project_without_correction_exports_new_fields_only() {
         use std::hash::{Hash, Hasher};
         let manager = optical_project_manager();
+        // Keep this golden project's original explicit setting; test the new default separately.
+        manager.set_translation_along_axis(false);
         manager.gyro.write().set_offset(2_000_000, 12.0);
         let mut project = optical_export(&manager);
         fn contains_correction(value: &serde_json::Value) -> bool {
@@ -5913,6 +5936,9 @@ mod tests {
             position: [0.01 * (i as f32 * std::f32::consts::TAU * 3.0 / 30.0).sin(), 0.0, 0.0],
             ref_inv_depth: 1.0, confidence: 1.0, track_age_s: 2.0, segment: 0,
             camera_to_world: [1.0, 0.0, 0.0, 0.0], focal_length_over_short_side: 1.0,
+            layer_motion: [0.01 * ((i as f32 * std::f32::consts::TAU * 3.0 / 30.0).sin()
+                - ((i as f32 - 1.0) * std::f32::consts::TAU * 3.0 / 30.0).sin()), 0.0],
+            far_beta: 1.0, weight: 1.0, layer_scale_rate: 0.0,
         }).collect()
     }
 
@@ -6134,6 +6160,84 @@ mod tests {
         assert_eq!(info["requested"], true);
         assert!(info["max_shift_pct"].as_f64().unwrap() > 0.0);
         assert!(info["max_shift_pct"].as_f64().unwrap() <= 4.0);
+    }
+
+    #[test]
+    fn translation_axis_defaults_on_and_explicit_project_false_wins() {
+        let manager = optical_project_manager();
+        assert!(manager.optical_ui.read().translation_settings.along_axis);
+        let mut project = optical_export(&manager);
+        project["gyro_source"]["translation_along_axis"] = false.into();
+        let restored = optical_import(&project);
+        assert!(!restored.optical_ui.read().translation_settings.along_axis);
+        assert_eq!(optical_export(&restored)["gyro_source"]["translation_along_axis"], false);
+    }
+
+    #[test]
+    fn translation_recompute_routes_share_the_same_curve() {
+        let manager = optical_project_manager();
+        manager.params.write().frame_count = 90;
+        manager.set_translation_stabilization_enabled(true);
+        install_translation(&manager);
+        manager.recompute_blocking();
+        // Start every route from the same serialized project, including its stored gyro precision.
+        let manager = optical_import(&optical_export(&manager));
+        let cloned = manager.get_cloned();
+        let imported = optical_import(&optical_export(&manager));
+        let threaded = manager.get_cloned();
+        threaded.invalidate_smoothing();
+        run_threaded_recompute(&threaded);
+        let original = manager.gyro.read().optical_translation.clone().unwrap();
+        assert!(original.output_path_checksum != 0 && original.is_active());
+        for (name, other) in [("clone", cloned), ("import", imported), ("threaded", threaded)] {
+            let result = other.gyro.read().optical_translation.clone().unwrap();
+            assert!(result.is_active(), "{name}");
+            for sample in &original.samples {
+                let time = sample.timestamp_us as f64 / 1000.0;
+                assert_eq!(original.shift_at(time), result.shift_at(time), "{name} at {time}");
+            }
+        }
+    }
+
+    #[test]
+    fn translation_threaded_rotation_change_rebuilds_curve_and_zoom() {
+        let manager = optical_project_manager();
+        manager.params.write().frame_count = 90;
+        manager.set_translation_stabilization_enabled(true);
+        install_translation(&manager);
+        manager.set_smoothing_param("smoothness", 0.05);
+        run_threaded_recompute(&manager);
+        let before = manager.gyro.read().optical_translation.clone().unwrap();
+        let zoom_before = manager.zooming_checksum.load(SeqCst);
+        manager.params.write().fovs.fill(0.123);
+        manager.set_smoothing_param("smoothness", 0.8);
+        run_threaded_recompute(&manager);
+        let after = manager.gyro.read().optical_translation.clone().unwrap();
+        assert!(after.rebuild_count > before.rebuild_count);
+        assert_ne!(after.output_path_checksum, before.output_path_checksum);
+        assert!((after.shift_at(500.0) - before.shift_at(500.0)).norm() > 1e-9);
+        assert_ne!(manager.zooming_checksum.load(SeqCst), zoom_before);
+        assert!(manager.params.read().fovs.iter().any(|f| *f != 0.123));
+        let mut compute = ComputeParams::from_manager(&manager);
+        compute.calculate_camera_fovs();
+        assert_eq!(compute.optical_translation_checksum, after.checksum());
+    }
+
+    #[test]
+    fn translation_threaded_unchanged_path_skips_curve_rebuild() {
+        let manager = optical_project_manager();
+        manager.params.write().frame_count = 90;
+        manager.set_translation_stabilization_enabled(true);
+        install_translation(&manager);
+        run_threaded_recompute(&manager);
+        let before = manager.gyro.read().optical_translation.clone().unwrap();
+        let zoom_before = manager.zooming_checksum.load(SeqCst);
+        run_threaded_recompute(&manager);
+        let after = manager.gyro.read().optical_translation.clone().unwrap();
+        assert_eq!(after.rebuild_count, before.rebuild_count);
+        assert_eq!(after.checksum(), before.checksum());
+        assert_eq!(after.shift_at(500.0), before.shift_at(500.0));
+        assert_eq!(manager.zooming_checksum.load(SeqCst), zoom_before);
     }
 
     #[test]
@@ -6378,20 +6482,20 @@ mod tests {
         assert!(source_still_old, "cloning must not synchronize the source manager");
         let result = cloned.gyro.read().optical_translation.clone().unwrap();
         assert_eq!(result.settings, cloned.optical_ui.read().translation_settings);
-        assert_eq!(result.shift_at(100.0), nalgebra::Vector3::zeros());
+        assert!(result.shift_at(100.0).norm() > 0.0, "zero reference still compensates retained rotation");
         assert_eq!(result.quats_checksum, original.quats_checksum);
         assert_eq!(result.context_checksum, original.context_checksum);
         cloned.recompute_blocking();
         let without = cloned.get_cloned();
         without.gyro.write().optical_translation = None;
-        assert_eq!(stabilization::FrameTransform::at_timestamp(&ComputeParams::from_manager(&cloned), 100.0, 0).matrices,
+        assert_ne!(stabilization::FrameTransform::at_timestamp(&ComputeParams::from_manager(&cloned), 100.0, 0).matrices,
             stabilization::FrameTransform::at_timestamp(&ComputeParams::from_manager(&without), 100.0, 0).matrices);
         let project = optical_export(&cloned);
         let payload: gyro_source::OpticalTranslation = util::decompress_from_base91_cbor(project["gyro_source"]["optical_translation"].as_str().unwrap()).unwrap();
         assert_eq!(payload.settings.reference, project["gyro_source"]["translation_reference"].as_f64().unwrap());
         let reopened = optical_import(&project);
         assert_eq!(reopened.gyro.read().optical_translation.as_ref().unwrap().settings, result.settings);
-        assert_eq!(reopened.gyro.read().optical_translation.as_ref().unwrap().shift_at(100.0), nalgebra::Vector3::zeros());
+        assert!(reopened.gyro.read().optical_translation.as_ref().unwrap().shift_at(100.0).norm() > 0.0);
     }
 
     #[test]
@@ -6408,7 +6512,12 @@ mod tests {
         let restored = optical_import(&project);
         let result = restored.gyro.read().optical_translation.clone().unwrap();
         assert_eq!(result.settings, restored.optical_ui.read().translation_settings);
-        assert_eq!(result.shift_at(100.0), nalgebra::Vector3::zeros());
+        assert_eq!(result.settings.reference, 0.0);
+        let mut rotation_only = result.clone();
+        for sample in &mut rotation_only.samples { sample.weight = 0.0; }
+        let (path, key) = rotation_only.output_path(&restored.gyro.read());
+        rotation_only.rebuild_with_output_path(2.0, &path, key, &|| false);
+        assert_eq!(result.shift_at(100.0), rotation_only.shift_at(100.0));
         assert_eq!(result.samples, original.samples);
         assert_eq!(result.quats_checksum, original.quats_checksum);
         assert_eq!(result.context_checksum, original.context_checksum);
@@ -6432,7 +6541,11 @@ mod tests {
         let result = restored.gyro.read().optical_translation.clone().unwrap();
         assert_eq!(result.settings, settings);
         assert_eq!(restored.optical_ui.read().translation_settings, settings);
-        assert_eq!(result.shift_at(100.0), original.shift_at(100.0));
+        let mut expected = original.clone();
+        expected.settings = settings;
+        let (path, key) = expected.output_path(&restored.gyro.read());
+        expected.rebuild_with_output_path(2.0, &path, key, &|| false);
+        assert_eq!(result.shift_at(100.0), expected.shift_at(100.0));
         assert_eq!(result.quats_checksum, original.quats_checksum);
         assert_eq!(result.context_checksum, original.context_checksum);
     }
@@ -6464,7 +6577,8 @@ mod tests {
         assert!(ui.translation_settings.along_axis);
         assert_eq!(result.settings, ui.translation_settings);
         let mut rebuilt = result.clone();
-        rebuilt.set_settings(ui.translation_settings);
+        let (path, key) = rebuilt.output_path(&manager.gyro.read());
+        rebuilt.rebuild_with_output_path(2.0, &path, key, &|| false);
         assert_eq!(result.shift_at(100.0), rebuilt.shift_at(100.0));
     }
 

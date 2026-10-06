@@ -22,6 +22,7 @@ mod base;
 pub use base::{OpticalBaseMode, BlendConfig};
 #[cfg(test)] pub(crate) mod synthetic;
 pub mod translation;
+mod image_space;
 #[cfg(test)] mod translation_stress;
 pub(crate) mod sensor;
 mod sensor_solver;
@@ -684,6 +685,7 @@ impl OpticalMotionAnalysis {
         let Some(state) = &mut self.translation else { return };
         // Lens queries take the gyro lock themselves. Complete them before reading poses.
         let mut focal_ratios = HashMap::new();
+        let mut output_projections = HashMap::new();
         for pair in self.pairs.iter().filter(|pair| pair.seq >= state.next_seq) {
             for frame in [pair.a, pair.b] {
                 focal_ratios.entry(frame.index).or_insert_with(|| {
@@ -692,6 +694,9 @@ impl OpticalMotionAnalysis {
                     (k[(0, 0)] / self.params.width.min(self.params.height).max(1) as f64) as f32
                 });
             }
+            let centre = [(self.params.width as f32 / 2.0, self.params.height as f32 / 2.0)];
+            let transform = FrameTransform::at_timestamp_for_points(&self.params, &centre, pair.b.timestamp_ms, Some(pair.b.index), true);
+            output_projections.insert(pair.b.index, transform.3[0]);
         }
         let gyro = self.params.gyro.read();
         let camera_to_world = |timestamp| {
@@ -701,18 +706,23 @@ impl OpticalMotionAnalysis {
         for pair in self.pairs.iter().filter(|pair| pair.seq >= state.next_seq) {
             let points: Vec<PairPoint> = derived.iter().filter(|d| d.seq == pair.seq)
                 .map(|d| PairPoint { id: d.id, band: d.band, p: d.p, r: d.r }).collect();
-            let result = state.solver.step(&points, 1.0 / self.focal_px, pair.b.mid_ms / 1000.0);
-            if state.samples.is_empty() || result.new_segment {
+            let start_us = (pair.a.mid_ms * 1000.0).round() as i64;
+            if state.samples.last().is_none_or(|s| s.timestamp_us != start_us) {
                 if !state.samples.is_empty() { state.segment += 1; }
+                state.solver.reset();
                 state.position = Vector3::zeros();
                 state.samples.push(TranslationSample {
-                    timestamp_us: (pair.a.mid_ms * 1000.0).round() as i64,
+                    timestamp_us: start_us,
                     segment: state.segment,
                     camera_to_world: camera_to_world(pair.a.mid_ms),
                     focal_length_over_short_side: focal_ratios[&pair.a.index],
                     ..Default::default()
                 });
             }
+            let result = state.solver.step(&points, 1.0 / self.focal_px, pair.b.mid_ms / 1000.0);
+            let layer = image_space::fit(&points, &result, &output_projections[&pair.b.index],
+                (self.params.output_width, self.params.output_height));
+            if result.new_segment { state.position = Vector3::zeros(); }
             if result.confidence > 0.0 {
                 state.position += gyro.org_quat_at_timestamp(pair.b.mid_ms) * result.c_segment;
                 state.pairs.insert(pair.seq, (result.c, result.inv_depth));
@@ -726,6 +736,10 @@ impl OpticalMotionAnalysis {
                 segment: state.segment,
                 camera_to_world: camera_to_world(pair.b.mid_ms),
                 focal_length_over_short_side: focal_ratios[&pair.b.index],
+                layer_motion: layer.motion,
+                layer_scale_rate: layer.scale_rate,
+                far_beta: layer.far_beta,
+                weight: layer.weight,
             });
         }
         state.next_seq = self.next_seq;

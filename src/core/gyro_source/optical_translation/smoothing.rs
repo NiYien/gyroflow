@@ -163,7 +163,7 @@ fn barrier(
     Some(energy)
 }
 
-/// Keep the requested world-space compensation, subtracting only a smooth budget correction.
+/// Keep the requested compensation, subtracting only a smooth budget correction in its coordinate system.
 pub(super) fn constrain(
     times: &[f64], request: &[Vector3<f64>], geometry: &[Geometry], fixed: &[bool],
     sigma: f64, budget: f64, axial_budget: f64, along_axis: bool, cancelled: &dyn Fn() -> bool,
@@ -278,6 +278,28 @@ fn constrain_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "writes the fixture for the external Python planner comparison"]
+    fn translation_planner_python_fixture() {
+        use std::io::Write;
+        let n = 181;
+        let times: Vec<_> = (0..n).map(|i| i as f64 / 30.0).collect();
+        let request: Vec<_> = times.iter().map(|t| {
+            let ramp = (std::f64::consts::PI * t / 6.0).sin();
+            Vector3::new(0.065 * ramp, 0.021 * ramp * (t * 1.7).sin(), 0.037 * ramp * (t * 0.8).sin())
+        }).collect();
+        let geometry = vec![Geometry { world_to_camera: Matrix3::identity(), focal_ratio: 1.0 }; n];
+        let fixed: Vec<_> = (0..n).map(|i| i == 0 || i + 1 == n).collect();
+        let (curve, _) = constrain(&times, &request, &geometry, &fixed, 0.962716, 0.04, 0.02, true, &|| false).unwrap();
+        let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/translation-image-space");
+        std::fs::create_dir_all(&directory).unwrap();
+        let mut out = std::io::BufWriter::new(std::fs::File::create(directory.join("planner-rust.csv")).unwrap());
+        writeln!(out, "time,request_x,request_y,request_z,shift_x,shift_y,shift_z").unwrap();
+        for ((t, r), s) in times.iter().zip(&request).zip(&curve) {
+            writeln!(out, "{t:.17},{:.17},{:.17},{:.17},{:.17},{:.17},{:.17}", r.x, r.y, r.z, s.x, s.y, s.z).unwrap();
+        }
+    }
 
     #[test]
     fn budget_solver_matches_a_dense_system_with_exact_fixed_nodes() {

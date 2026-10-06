@@ -5,6 +5,79 @@ use crate::{StabilizationManager, stabilization::{ComputeParams, FrameTransform,
 use std::{fs::File, io::{BufWriter, Write}, sync::{Arc, atomic::AtomicBool}};
 
 #[test]
+#[ignore = "requires a reanalyzed project and maps from the frozen baseline binary"]
+fn translation_image_space_projection_acceptance() {
+    let config_path = std::env::var("GYROFLOW_TRANSLATION_ACCEPTANCE").unwrap();
+    let config: serde_json::Value = serde_json::from_reader(File::open(config_path).unwrap()).unwrap();
+    let manager = StabilizationManager::default();
+    manager.import_gyroflow_file(&crate::filesystem::path_to_url(config["project"].as_str().unwrap()), true,
+        |_| {}, Arc::new(AtomicBool::new(false)), false).unwrap();
+    manager.set_translation_stabilization_enabled(true);
+    manager.set_translation_reference(1.0);
+    manager.set_translation_smoothness(0.962716);
+    manager.set_translation_along_axis(true);
+    manager.recompute_blocking();
+    let mut params = ComputeParams::from_manager(&manager);
+    if let Some(values) = config["fixed_fovs"].as_array() {
+        params.fovs = values.iter().map(|v| v.as_f64().unwrap()).collect();
+        assert_eq!(params.fovs.len(), params.frame_count);
+    }
+    let result = manager.gyro.read().optical_translation.clone().unwrap();
+    assert!(result.is_active() && result.geometry_version == 2);
+    let zooms: Vec<_> = params.fovs.iter().map(|f| 1.0 / f).collect();
+    let mut sorted_zooms = zooms.clone();
+    let median_zoom = median(&mut sorted_zooms);
+    let curves: Vec<_> = result.samples.iter().map(|s| {
+        let shift = result.shift_at(s.timestamp_us as f64 / 1000.0);
+        serde_json::json!([s.timestamp_us, shift.x, shift.y, shift.z])
+    }).collect();
+    let mut metadata = serde_json::json!({"frames":params.frame_count,"fps":params.scaled_fps,
+        "fixed_fovs":params.fovs,"maximum_zoom":zooms.iter().copied().fold(0.0, f64::max),"median_zoom":median_zoom,
+        "grid":[65,37],"size":[640,360],"variants":["off","image_space","previous"],
+        "info":manager.translation_stabilization_info(),"samples":result.samples,"curve":curves});
+    if config["crop_only"].as_bool() != Some(true) {
+        let baseline = std::fs::read(config["previous_maps"].as_str().unwrap()).unwrap();
+        const BYTES: usize = 65 * 37 * 2 * 4;
+        assert_eq!(baseline.len(), params.frame_count * 3 * BYTES);
+        let mut output = BufWriter::new(File::create(config["maps"].as_str().unwrap()).unwrap());
+        params.output_width = 640;
+        params.output_height = 360;
+        for frame in 0..params.frame_count {
+            for enabled in [false, true] {
+                params.apply_optical_translation = enabled;
+                let transform = FrameTransform::at_timestamp(&params, frame as f64 * 1000.0 / params.scaled_fps, frame);
+                let mut kernel = transform.kernel_params;
+                kernel.width = params.width as i32; kernel.height = params.height as i32;
+                kernel.output_width = 640; kernel.output_height = 360;
+                let mesh: Vec<f64> = transform.mesh_data.iter().map(|v| *v as f64).collect();
+                let mut bytes = Vec::with_capacity(BYTES);
+                for y in 0..37 { for x in 0..65 {
+                    let point = (x as f32 * 639.0 / 64.0, y as f32 * 359.0 / 36.0);
+                    let mut row = transform.matrices.len() / 2;
+                    let mut value = None;
+                    for _ in 0..3 {
+                        value = Stabilization::rotate_and_distort(point, row, &kernel, &transform.matrices,
+                            &params.distortion_model, None, kernel.r_limit * kernel.r_limit, &mesh);
+                        row = value.map(|v| v.1.round().clamp(0.0, (transform.matrices.len()-1) as f32) as usize).unwrap_or(row);
+                    }
+                    let value = value.unwrap_or((-60000.0, -60000.0));
+                    bytes.extend_from_slice(&(value.0 / (params.width as f32 / 640.0)).to_le_bytes());
+                    bytes.extend_from_slice(&(value.1 / (params.height as f32 / 360.0)).to_le_bytes());
+                }}
+                if !enabled {
+                    assert!(bytes == baseline[frame*3*BYTES..(frame*3+1)*BYTES], "off maps differ at frame {frame}");
+                }
+                output.write_all(&bytes).unwrap();
+            }
+            output.write_all(&baseline[(frame*3+1)*BYTES..(frame*3+2)*BYTES]).unwrap();
+        }
+        output.flush().unwrap();
+        metadata["off_maps_bit_exact"] = true.into();
+    }
+    std::fs::write(config["metadata"].as_str().unwrap(), serde_json::to_string_pretty(&metadata).unwrap()).unwrap();
+}
+
+#[test]
 #[ignore = "requires an explicitly supplied project and external reference curves"]
 fn translation_video_projection_acceptance() {
     let config_path = std::env::var("GYROFLOW_TRANSLATION_ACCEPTANCE").expect("set GYROFLOW_TRANSLATION_ACCEPTANCE to a diagnostic JSON file");

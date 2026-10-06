@@ -1157,7 +1157,7 @@ mod tests {
 
     use crate::gyro_source::{OpticalTranslation, Quat64, TranslationConfig};
 
-    /// `stabilized_params` without the smoothing correction, at a fixed orientation, with a constant world shift
+    /// Convert a physical camera movement to the image-plane curve expected by the renderer.
     fn translated(readout_time: f64, orientation: Quat64, shift: [f64; 3], along_axis: bool) -> ComputeParams {
         let mut p = params(vec![1.0], readout_time);
         p.suppress_rotation = false;
@@ -1167,7 +1167,9 @@ mod tests {
             gyro.duration_ms = 1000.0;
             gyro.quaternions.insert(0, orientation);
             gyro.quaternions.insert(1_000_000, orientation);
-            let mut t = OpticalTranslation::with_curve(vec![(0, shift), (1_000_000, shift)]);
+            let camera = orientation.inverse() * Vector3::from(shift);
+            let image = [-camera.x, camera.y, -camera.z];
+            let mut t = OpticalTranslation::with_curve(vec![(0, image), (1_000_000, image)]);
             t.settings.along_axis = along_axis;
             gyro.optical_translation = Some(t);
         }
@@ -1352,6 +1354,55 @@ mod tests {
             assert!(((b.0 - a.0) as f64 - want.0).abs() < 0.02 && ((b.1 - a.1) as f64 - want.1).abs() < 0.02,
                 "{pt:?}: moved by {:?}, expected {want:?}", (b.0 - a.0, b.1 - a.1));
         }
+    }
+
+    #[test]
+    fn translation_retained_rotation_matches_forward_centre_projection() {
+        use crate::gyro_source::optical_translation::{output_orientation, retained_rotation};
+        let mut p = params(vec![1.0], 0.0);
+        p.suppress_rotation = false;
+        p.frame_count = 61;
+        {
+            let mut gyro = p.gyro.write();
+            gyro.duration_ms = 2000.0;
+            for i in 0..=60 {
+                let t = i as f64 / 30.0;
+                let raw = Quat64::from_euler_angles(0.07 * t, -0.04 * t, 0.03 * t);
+                let smooth = Quat64::from_euler_angles(0.025 * (3.0 * t).sin(), 0.035 * (2.0 * t).sin(), 0.012 * t);
+                let ts = (t * 1e6).round() as i64;
+                gyro.quaternions.insert(ts, raw);
+                gyro.smoothed_quaternions.insert(ts, smooth.inverse() * raw);
+            }
+        }
+        let (mut measured, mut expected) = (nalgebra::Vector2::<f64>::zeros(), nalgebra::Vector2::<f64>::zeros());
+        for i in 1..=60 {
+            let time = i as f64 * 1000.0 / 30.0;
+            let (previous, current, source_ray) = {
+                let gyro = p.gyro.read();
+                let previous = output_orientation(&gyro, time - 1000.0 / 30.0);
+                let current = output_orientation(&gyro, time);
+                let source_ray = gyro.org_quat_at_timestamp(time).inverse() * previous * Vector3::new(0.0, 0.0, -1.0);
+                (previous, current, source_ray)
+            };
+            let (_, _, k, forward, ..) = FrameTransform::at_timestamp_for_points(&p, &[POINTS[2]], time, Some(i), true);
+            let output = forward[0] * Vector3::new(source_ray.x, -source_ray.y, -source_ray.z);
+            measured += retained_rotation(&previous, &current) * k[(0, 0)];
+            expected += nalgebra::Vector2::new(output.x / output.z - k[(0, 2)], output.y / output.z - k[(1, 2)]);
+            assert!((measured - expected).norm() < 0.05, "sample {i}: {measured:?} vs {expected:?}");
+        }
+        assert!(expected.x.abs() > 5.0 && expected.y.abs() > 5.0);
+    }
+
+    #[test]
+    fn translation_camera_curve_centre_forward_and_inverse_agree() {
+        let mut p = translated(0.0, Quat64::from_euler_angles(0.2, -0.1, 0.4), [0.0; 3], true);
+        p.gyro.write().optical_translation = Some(OpticalTranslation::with_curve(vec![(0, [0.004, -0.003, 0.01]), (1_000_000, [0.004, -0.003, 0.01])]));
+        p.gyro.write().optical_translation.as_mut().unwrap().settings.along_axis = true;
+        let centre = POINTS[2];
+        let output = to_output(&p, centre);
+        let inverse = to_source(&p, output, 0).unwrap();
+        assert!((inverse.0 - centre.0).hypot(inverse.1 - centre.1) < 0.01, "{centre:?} -> {output:?} -> {inverse:?}");
+        assert!(output.0 < centre.0 && output.1 > centre.1);
     }
 
     #[test]

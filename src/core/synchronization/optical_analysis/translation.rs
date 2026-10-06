@@ -2,7 +2,7 @@
 
 //! Camera translation and persistent depths after the measured gyro rotation has been removed.
 
-use std::{collections::HashMap, sync::OnceLock};
+use std::{collections::{HashMap, HashSet}, sync::OnceLock};
 use nalgebra::{Matrix3, Matrix3x6, Matrix6, Rotation3, Vector3, Vector6};
 use super::{MIN_BAND_POINTS, odometry::{NOISE_PX, ROBUST_PX, ITERATIONS, DEPTH_NOISE_REL}};
 
@@ -21,6 +21,8 @@ pub struct PairTranslation {
     pub c_segment: Vector3<f64>,
     /// Inverse depths used by this pair's model, before propagation and normalization.
     pub inv_depth: HashMap<u32, f64>,
+    /// Tracks with a depth carried into this solve, before adding any new tracks.
+    pub carried_depth: HashSet<u32>,
     /// Median inverse depth of the inliers, in the segment's scale.
     pub ref_inv_depth: f64,
     pub confidence: f64,
@@ -99,11 +101,11 @@ impl TranslationSolver {
             lambda: 1.0, first_seen: HashMap::new(), pred: None }
     }
 
-    fn reset(&mut self) { *self = Self::new(self.config); }
+    pub(super) fn reset(&mut self) { *self = Self::new(self.config); }
 
     fn failed(&mut self) -> PairTranslation {
         self.reset();
-        PairTranslation { c: Vector3::zeros(), c_segment: Vector3::zeros(), inv_depth: HashMap::new(),
+        PairTranslation { c: Vector3::zeros(), c_segment: Vector3::zeros(), inv_depth: HashMap::new(), carried_depth: HashSet::new(),
             ref_inv_depth: 0.0, confidence: 0.0, track_age_s: 0.0, new_segment: true, pred: None }
     }
 
@@ -167,8 +169,8 @@ impl TranslationSolver {
         let b: Vec<_> = pts.iter().map(|p| (p.p + p.r).normalize()).collect();
         let weight = 1.0 / (NOISE_PX * px).powi(2);
         let robust = ROBUST_PX * px;
-        let known = pts.iter().filter(|p| self.depth.contains_key(&p.id)).count();
-        let new_segment = known < MIN_BAND_POINTS;
+        let carried_depth: HashSet<_> = pts.iter().filter(|p| self.depth.contains_key(&p.id)).map(|p| p.id).collect();
+        let new_segment = carried_depth.len() < MIN_BAND_POINTS;
         let (rho0, var, v0) = if new_segment {
             self.reset();
             Self::start(&a, &b, Matrix3::identity(), robust)
@@ -247,6 +249,7 @@ impl TranslationSolver {
         let output = PairTranslation {
             c, c_segment: c * self.lambda,
             inv_depth: pts.iter().zip(&rho).map(|(p, r)| (p.id, *r)).collect(),
+            carried_depth,
             ref_inv_depth: ref_rho / self.lambda, confidence,
             track_age_s: median(inliers.iter().map(|&i| tb_s - self.first_seen[&pts[i].id]).collect()),
             new_segment, pred: self.pred,
@@ -632,6 +635,31 @@ mod tests {
             if !evaluation.test_pass(test) { failures.push(format!("seed={seed:#018x} metrics={metrics:?}")); }
         }
         assert!(failures.is_empty(), "test={test}\n{}", failures.join("\n"));
+    }
+
+    #[test]
+    fn translation_carried_depth_excludes_new_tracks_and_preserves_three_layers() {
+        let mut pairs = scene(300, &LAYERS, 0.0, true_move, 0.0, 0.0, 12, SEED);
+        let mut solver = TranslationSolver::new(TranslationSolverConfig::DEFAULT);
+        for (i, pair) in pairs.iter().take(11).enumerate() {
+            let result = solver.step(&pair.points, PX, (i + 1) as f64 / 30.0);
+            assert_eq!(result.carried_depth.len(), if i == 0 { 0 } else { 300 });
+        }
+        for point in pairs[11].points.iter_mut().take(30) { point.id += 1000; }
+        let result = solver.step(&pairs[11].points, PX, 12.0 / 30.0);
+        assert_eq!(result.carried_depth.len(), 270);
+        assert!(result.carried_depth.iter().all(|id| (30..300).contains(id)));
+        let mut measured = Vec::new();
+        let mut truth = Vec::new();
+        for layer in 0..3 {
+            let points: Vec<_> = pairs[11].points.iter().filter(|p| result.carried_depth.contains(&p.id) && p.id as usize % 3 == layer).collect();
+            measured.push(median(points.iter().map(|p| result.inv_depth[&p.id]).collect()));
+            truth.push(median(points.iter().map(|p| -p.p.z / (LAYERS[layer] + 11.0 * true_move(0).z)).collect()));
+        }
+        for layer in [0, 2] {
+            let error = (measured[layer] / measured[1] / (truth[layer] / truth[1]) - 1.0).abs();
+            assert!(error < 0.05, "layer={layer} relative depth error={error}");
+        }
     }
 
     #[test]
