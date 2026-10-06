@@ -967,6 +967,22 @@ Due to limitations of the system video encoders, rendering in the background is 
         <translation>渲染失敗：%1</translation>
     </message>
     <message>
+        <source>This graphics card does not support exporting in %1. Choose another output format.</source>
+        <translation>這張顯卡不支援匯出 %1 格式。請選擇其他輸出格式。</translation>
+    </message>
+    <message>
+        <source>This graphics card does not support the selected export resolution (%1). Lower the resolution, for example to 1920x1080.</source>
+        <translation>這張顯卡不支援目前的匯出解析度（%1）。請調低解析度，例如改為 1920x1080。</translation>
+    </message>
+    <message>
+        <source>This graphics card does not support the current color format. Try another output format.</source>
+        <translation>這張顯卡不支援目前的色彩格式。請嘗試其他輸出格式。</translation>
+    </message>
+    <message>
+        <source>You can also turn off "Use GPU encoding" and try again. Exporting will be slower.</source>
+        <translation>也可以關閉「使用 GPU 編碼」後重試，匯出速度會慢一些。</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2850"/>
         <source>Failed to export gyro data.</source>
         <translation>陀螺儀資料匯出失敗。</translation>

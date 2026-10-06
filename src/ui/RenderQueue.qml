@@ -2414,6 +2414,8 @@ Item {
                         BasicText {
                             id: messageAreaText;
                             textFormat: Text.RichText;
+                            width: parent.width;
+                            wrapMode: Text.WordWrap;
                             leftPadding: 0;
                             font.pixelSize: basicTextSize;
                         }

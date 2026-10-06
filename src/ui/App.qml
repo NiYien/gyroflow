@@ -3325,6 +3325,20 @@ Rectangle {
     }
 
     function getReadableError(text: string): string {
+        if (text.startsWith("gpu_encoder_failed:")) {
+            const fields = text.substring("gpu_encoder_failed:".length).split(";");
+            let cause = "";
+            if (fields[0] === "codec") {
+                cause = qsTr("This graphics card does not support exporting in %1. Choose another output format.").arg(fields[1]);
+            } else if (fields[0] === "resolution") {
+                cause = qsTr("This graphics card does not support the selected export resolution (%1). Lower the resolution, for example to 1920x1080.").arg(fields[2] + "x" + fields[3]);
+            } else if (fields[0] === "pixel_format") {
+                cause = qsTr("This graphics card does not support the current color format. Try another output format.");
+            }
+            if (cause) {
+                return cause + "\n" + qsTr("You can also turn off \"Use GPU encoding\" and try again. Exporting will be slower.");
+            }
+        }
         // Marker-based short causes (render-queue-error-messages spec): Rust sends
         // machine-readable markers; the full diagnostics are already in the log file.
         if (text.startsWith("render_failed:")) {

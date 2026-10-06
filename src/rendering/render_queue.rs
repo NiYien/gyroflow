@@ -8344,7 +8344,16 @@ impl RenderQueue {
                                     break 'ranges;
                                 }
                             }
-                            err(("%1".to_string(), format!("render_failed:{e}")));
+                            let message = rendering::take_encoder_error_marker(
+                                render_options.use_gpu,
+                                render_options.output_width,
+                                render_options.output_height,
+                            )
+                            .unwrap_or_else(|| format!("render_failed:{e}"));
+                            if message.starts_with("gpu_encoder_failed:") {
+                                ::log::error!(target: "video.codec", "hardware encoding failed job_id={job_id} error={e} hint={message}");
+                            }
+                            err(("%1".to_string(), message));
                             render_ok = false;
                             break 'ranges;
                         } else {

@@ -850,6 +850,22 @@ Due to limitations of the system video encoders, rendering in the background is 
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>This graphics card does not support exporting in %1. Choose another output format.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This graphics card does not support the selected export resolution (%1). Lower the resolution, for example to 1920x1080.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This graphics card does not support the current color format. Try another output format.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>You can also turn off "Use GPU encoding" and try again. Exporting will be slower.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2850"/>
         <source>Failed to export gyro data.</source>
         <translation type="unfinished"></translation>

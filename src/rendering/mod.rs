@@ -3,6 +3,7 @@
 // Ported from upstream gyroflow 322cb312 + eabdc789
 
 mod audio_resampler;
+mod encoder_error;
 mod ffmpeg_audio;
 pub mod ffmpeg_hw;
 pub mod ffmpeg_processor;
@@ -21,6 +22,7 @@ use zero_copy::*;
 pub mod ffmpeg_android;
 
 pub use self::ffmpeg_processor::{FFmpegError, FfmpegProcessor};
+pub(crate) use self::encoder_error::take_message_marker as take_encoder_error_marker;
 pub use self::video_processor::VideoProcessor;
 use crate::core::{StabilizationManager, stabilization::*};
 use ffmpeg_next::{Error, codec, ffi, format::Pixel, frame::Video};
@@ -359,6 +361,7 @@ where
     F: Fn((f64, usize, usize, bool, bool)) + Send + Sync + Clone,
     F2: Fn(String) + Send + Sync + Clone,
 {
+    encoder_error::clear();
     log::debug!(
         "ffmpeg_hw::supported_gpu_backends: {:?}",
         ffmpeg_hw::supported_gpu_backends()
@@ -1298,6 +1301,7 @@ unsafe extern "C" fn ffmpeg_log(avcl: *mut c_void, level: i32, fmt: *const c_cha
 
                     match level {
                         ffi::AV_LOG_PANIC | ffi::AV_LOG_FATAL | ffi::AV_LOG_ERROR => {
+                            encoder_error::record(&line);
                             ::log::error!("{}", line.trim());
                             line = format!("<font color=\"#d82626\">{}</font>", line);
                         }
