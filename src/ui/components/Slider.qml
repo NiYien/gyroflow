@@ -11,6 +11,7 @@ QQC.Slider {
     property string unit: "";
     property int precision: 3;
     property real defaultValue: 0;
+    property bool showValueTooltip: true;
     Component.onCompleted: defaultValue = value;
 
     background: Rectangle {
@@ -87,7 +88,7 @@ QQC.Slider {
     ToolTip {
         delay: 0;
         parent: handle;
-        visible: !isMobile && slider.pressed;
+        visible: slider.showValueTooltip && !isMobile && slider.pressed;
         text: slider.valueAt(slider.position).toFixed(slider.precision) + (slider.unit? " " + slider.unit : "");
         bottomMargin: 5 * dpiScale;
     }

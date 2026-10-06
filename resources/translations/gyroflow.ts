@@ -186,6 +186,14 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <source>Experimental features</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Applies to the video open in the preview.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2144"/>
         <source>The export folder does not exist:
 %1
@@ -2601,6 +2609,22 @@ Do you want to submit your profile?</source>
 </context>
 <context>
     <name>MotionData</name>
+    <message>
+        <source>Optical stabilization</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Near</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Far</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Move toward Near to stabilize closer objects, or toward Far to stabilize more distant content. The middle position stabilizes the farther parts of the image (default).</source>
+        <translation type="unfinished"></translation>
+    </message>
     <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="11"/>
         <source>Motion data</source>

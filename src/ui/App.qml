@@ -227,6 +227,8 @@ Rectangle {
     // Desktop keeps them in simpleModeContainer.
     function reparentSimplePanels(): void {
         if (!simpleVideoInfoSection || !simpleModeContainer) return;
+        if (window.motionData) window.motionData.moveExperimentalControls(
+            isSimpleMode && !isMobile && !useMobileWorkspace ? simpleExperimentalContent : null);
         if (useMobileWorkspace) { Qt.callLater(attachMobileWorkspace); return; }
         const useTabs = isMobileLayout && isSimpleMode;
         const tab1 = useTabs ? simpleVideoGyroTab.inner : simpleModeContainer;
@@ -237,6 +239,8 @@ Rectangle {
         pushToEnd(simpleSensorLensHr,      tab1);
         pushToEnd(simpleStabSection,       tab2);
         pushToEnd(simpleStabHr,            tab2);
+        pushToEnd(simpleExperimentalSection, tab2);
+        pushToEnd(simpleExperimentalHr,      tab2);
         pushToEnd(simpleSettingsSection,   tab2);
         if (useTabs) {
             // Push per-tab Full-mode LinkButtons to the end after sections are placed.
@@ -1008,7 +1012,7 @@ Rectangle {
             Hr { id: lensProfileHr; }
             ItemLoader { id: motionData; sourceComponent: Component {
                 Menu.MotionData { }
-            } }
+            } onLoaded: Qt.callLater(window.reparentSimplePanels); }
         }
 
         Column {
@@ -2018,6 +2022,28 @@ Rectangle {
                     }
                 }
                 Hr { id: simpleStabHr; width: parent ? parent.width : 0; }
+
+                MenuItem {
+                    id: simpleExperimentalSection;
+                    width: parent ? parent.width : 0;
+                    text: qsTr("Experimental features");
+                    iconName: "gyroflow";
+                    objectName: "simple-experimental";
+                    opened: false;
+                    visible: !isMobile && !window.useMobileWorkspace;
+                    innerItem.enabled: window.videoArea.vid.loaded && !controller.video_loading_in_progress && !controller.loading_gyro_in_progress;
+                    Column {
+                        id: simpleExperimentalContent;
+                        width: parent.width;
+                        spacing: 10 * dpiScale;
+                        BasicText {
+                            width: parent.width;
+                            wrapMode: Text.WordWrap;
+                            text: qsTr("Applies to the video open in the preview.");
+                        }
+                    }
+                }
+                Hr { id: simpleExperimentalHr; width: parent ? parent.width : 0; visible: simpleExperimentalSection.visible; }
 
                 // ── 4. Settings ──
                 MenuItem {

@@ -187,6 +187,14 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <source>Experimental features</source>
+        <translation>实验性功能</translation>
+    </message>
+    <message>
+        <source>Applies to the video open in the preview.</source>
+        <translation>作用于当前预览中的视频。</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2144"/>
         <source>The export folder does not exist:
 %1
@@ -2798,6 +2806,22 @@ Do you want to submit your profile?</source>
 </context>
 <context>
     <name>MotionData</name>
+    <message>
+        <source>Optical stabilization</source>
+        <translation>光学防抖</translation>
+    </message>
+    <message>
+        <source>Near</source>
+        <translation>近处</translation>
+    </message>
+    <message>
+        <source>Far</source>
+        <translation>远处</translation>
+    </message>
+    <message>
+        <source>Move toward Near to stabilize closer objects, or toward Far to stabilize more distant content. The middle position stabilizes the farther parts of the image (default).</source>
+        <translation>向“近处”拖动可稳定较近的物体，向“远处”拖动可稳定更远的景物。中间位置稳定画面中的远景层（默认）。</translation>
+    </message>
     <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="11"/>
         <source>Motion data</source>

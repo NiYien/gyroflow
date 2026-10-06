@@ -29,6 +29,11 @@ MenuItem {
     property string detectedFormat: "";
     property url lastSelectedFile: "";
     property alias extensions: fileDialog.extensions;
+    property alias experimentalControls: experimentalControls;
+
+    function moveExperimentalControls(target: var): void {
+        experimentalControls.parent = target || opticalControlsHost;
+    }
 
     FileDialog {
         id: fileDialog;
@@ -82,7 +87,7 @@ MenuItem {
             ignoreFileMotion.checked = !!opticalcb.info.ignore_file_motion;
             // Statistics refreshes must not replace edits still waiting for their debounce timers.
             if (restoreParameters || !translationReferenceTimer.running)
-                translationReference.value = translationcb.info.reference * 100;
+                translationReference.value = 200 - translationcb.info.reference * 100;
             if (restoreParameters || !translationSmoothnessTimer.running)
                 translationSmoothness.value = Math.log(translationcb.info.smoothness_s) / Math.LN10;
             if (restoreParameters || !translationAlongAxisTimer.running)
@@ -173,7 +178,7 @@ MenuItem {
             try {
                 if (typeof gyro.optical_correction_strength === "number") opticalStrength.value = gyro.optical_correction_strength * 100;
                 if (typeof gyro.translation_stabilization_enabled === "boolean") translationcb.checked = gyro.translation_stabilization_enabled;
-                if (typeof gyro.translation_reference === "number") translationReference.value = gyro.translation_reference * 100;
+                if (typeof gyro.translation_reference === "number") translationReference.value = 200 - gyro.translation_reference * 100;
                 if (typeof gyro.translation_smoothness === "number") translationSmoothness.value = Math.log(gyro.translation_smoothness) / Math.LN10;
                 if (typeof gyro.translation_along_axis === "boolean") translationAlongAxis.checked = gyro.translation_along_axis;
                 if (typeof gyro.stab_reconstruction_enabled === "boolean") stabcb.checked = gyro.stab_reconstruction_enabled;
@@ -417,9 +422,17 @@ MenuItem {
             }
         }
     }
+    Item {
+        id: opticalControlsHost;
+        width: parent.width;
+        height: experimentalControls.parent === opticalControlsHost ? experimentalControls.height : 0;
+    Column {
+        id: experimentalControls;
+        width: parent.width;
+        spacing: 5 * dpiScale;
     CheckBoxWithContent {
         id: opticalcb;
-        text: qsTr("Optical correction");
+        text: window.isSimpleMode ? qsTr("Optical stabilization") : qsTr("Optical correction");
         cb.tooltip: qsTr("Measure the camera rotation from the video itself and correct the motion data where they disagree. Useful when vibrations corrupt the gyro data, e.g. on a hard-mounted FPV camera. The analysis samples frames at an integer interval near 25 fps within the selected trim range.");
         property var info: ({ available: false });
         cb.enabled: !stabcb.checked;
@@ -489,12 +502,27 @@ MenuItem {
         Label {
             text: qsTr("Reference distance");
             width: parent.width;
-            tooltip: qsTr("0% stabilizes very distant content, 100% stabilizes the farther parts of the image (default), and higher values stabilize nearer objects.");
-            SliderWithField {
-                id: translationReference;
+            tooltip: qsTr("Move toward Near to stabilize closer objects, or toward Far to stabilize more distant content. The middle position stabilizes the farther parts of the image (default).");
+            Row {
                 width: parent.width;
-                from: 0; to: 200; defaultValue: 100; value: 100; precision: 0; unit: "%";
-                onValueChanged: if (root.initialized && !root.updatingOpticalControls) translationReferenceTimer.restart();
+                spacing: 5 * dpiScale;
+                BasicText {
+                    id: translationNear;
+                    text: qsTr("Near");
+                    anchors.verticalCenter: parent.verticalCenter;
+                }
+                Slider {
+                    id: translationReference;
+                    width: parent.width - translationNear.width - translationFar.width - 2 * parent.spacing;
+                    from: 0; to: 200; value: 100;
+                    showValueTooltip: false;
+                    onValueChanged: if (root.initialized && !root.updatingOpticalControls) translationReferenceTimer.restart();
+                }
+                BasicText {
+                    id: translationFar;
+                    text: qsTr("Far");
+                    anchors.verticalCenter: parent.verticalCenter;
+                }
             }
         }
         Label {
@@ -528,7 +556,7 @@ MenuItem {
     Timer {
         id: translationReferenceTimer;
         interval: 150;
-        onTriggered: if (!controller.video_loading_in_progress && !controller.loading_gyro_in_progress) controller.set_translation_reference(translationReference.value / 100);
+        onTriggered: if (!controller.video_loading_in_progress && !controller.loading_gyro_in_progress) controller.set_translation_reference((200 - translationReference.value) / 100);
     }
     Timer {
         id: translationSmoothnessTimer;
@@ -577,6 +605,8 @@ MenuItem {
             enabled: !controller.sync_in_progress;
             onClicked: controller.clear_optical_correction();
         }
+    }
+    }
     }
     Item {
         width: parent.width;
