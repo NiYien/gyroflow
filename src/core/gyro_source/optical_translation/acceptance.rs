@@ -4,6 +4,127 @@ use super::*;
 use crate::{StabilizationManager, stabilization::{ComputeParams, FrameTransform, Stabilization}};
 use std::{fs::File, io::{BufWriter, Write}, sync::{Arc, atomic::AtomicBool}};
 
+fn preview_export_grid(params: &ComputeParams, transform: &FrameTransform) -> Vec<Option<(f64, f64)>> {
+    let kernel = &transform.kernel_params;
+    let mesh: Vec<f64> = transform.mesh_data.iter().map(|value| *value as f64).collect();
+    let mut points = Vec::with_capacity(65 * 37);
+    for y in 0..37 { for x in 0..65 {
+        let output = (x as f32 * (params.output_width - 1) as f32 / 64.0,
+            y as f32 * (params.output_height - 1) as f32 / 36.0);
+        let mut row = transform.matrices.len() / 2;
+        let mut source = None;
+        for _ in 0..3 {
+            source = Stabilization::rotate_and_distort(output, row, kernel, &transform.matrices,
+                &params.distortion_model, params.digital_lens.as_ref(), kernel.r_limit * kernel.r_limit, &mesh);
+            if let Some((sx, sy)) = source.filter(|(sx, sy)| sx.is_finite() && sy.is_finite()) {
+                let coordinate = if params.frame_readout_direction.is_horizontal() { sx } else { sy };
+                row = coordinate.round().clamp(0.0, (transform.matrices.len() - 1) as f32) as usize;
+            } else {
+                source = None;
+                break;
+            }
+        }
+        points.push(source.map(|(sx, sy)| (sx as f64 * 3840.0 / params.width as f64,
+            sy as f64 * 2160.0 / params.height as f64)));
+    }}
+    points
+}
+
+#[test]
+#[ignore = "requires the explicitly supplied GUI-saved R50 V project"]
+fn translation_preview_export_core_acceptance() {
+    use crate::gpu::{BufferDescription, Buffers};
+    use crate::stabilization::RGBA8;
+    const THRESHOLD_4K_PX: f64 = 0.2;
+    const FRAMES: [usize; 4] = [246, 520, 778, 940];
+    let project = std::env::var("GYROFLOW_TRANSLATION_PREVIEW_EXPORT_PROJECT")
+        .expect("set GYROFLOW_TRANSLATION_PREVIEW_EXPORT_PROJECT to the GUI-saved project");
+    let preview = StabilizationManager::default();
+    preview.import_gyroflow_file(&crate::filesystem::path_to_url(&project), true,
+        |_| {}, Arc::new(AtomicBool::new(false)), false).unwrap();
+
+    // Import initializes the media geometry. Force a fresh preview worker instead of testing its import cache.
+    preview.invalidate_smoothing();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let compute_id = preview.recompute_threaded(move |result| { let _ = sender.send(result); });
+    assert_eq!(receiver.recv_timeout(std::time::Duration::from_secs(60)).unwrap(), (compute_id, false));
+    let preview_params = ComputeParams::from_manager(&preview);
+    let preview_translation = preview.gyro.read().optical_translation.clone().unwrap();
+
+    let export = preview.get_cloned();
+    // Also exercise a fresh blocking pass after the clone, even when its normal queue pass could reuse the cache.
+    export.invalidate_smoothing();
+    export.recompute_blocking();
+    let export_params = ComputeParams::from_manager(&export);
+    let export_translation = export.gyro.read().optical_translation.clone().unwrap();
+    assert!(preview_params.frame_count > FRAMES[3]);
+    assert_eq!((preview_params.width, preview_params.height), (3840, 2160));
+    assert_eq!((preview_params.width, preview_params.height, preview_params.output_width, preview_params.output_height),
+        (export_params.width, export_params.height, export_params.output_width, export_params.output_height));
+    assert_eq!(preview_params.scaled_fps, export_params.scaled_fps);
+    let independent_gyro = !Arc::ptr_eq(&preview_params.gyro, &export_params.gyro);
+    let translation_active = preview_translation.is_active() && export_translation.is_active();
+    let curve_equal = preview_translation.samples == export_translation.samples
+        && preview_translation.samples.iter().all(|sample| {
+            let time = sample.timestamp_us as f64 / 1000.0;
+            preview_translation.shift_at(time) == export_translation.shift_at(time)
+        });
+    let buffers = Buffers {
+        input: BufferDescription { size: (preview_params.width, preview_params.height, preview_params.width * 4), ..Default::default() },
+        output: BufferDescription { size: (preview_params.output_width, preview_params.output_height, preview_params.output_width * 4), ..Default::default() },
+    };
+    let mut checks = Vec::new();
+    let mut maximum = 0.0f64;
+    let mut all_valid = true;
+    for frame in FRAMES {
+        let timestamp_us = (crate::timestamp_at_frame(frame as i32, preview_params.scaled_fps) * 1000.0).round() as i64;
+        // Read the actual parameters published to the preview renderer by the threaded worker.
+        let preview_transform = preview.stabilization.read().get_frame_transform_at::<RGBA8>(timestamp_us, Some(frame), &buffers);
+        let mut export_transform = FrameTransform::at_timestamp(&export_params, timestamp_us as f64 / 1000.0, frame);
+        // These dimensions are filled by the render buffers after FrameTransform builds its matrices.
+        export_transform.kernel_params.width = export_params.width as i32;
+        export_transform.kernel_params.height = export_params.height as i32;
+        export_transform.kernel_params.output_width = export_params.output_width as i32;
+        export_transform.kernel_params.output_height = export_params.output_height as i32;
+        let a = preview_export_grid(&preview_params, &preview_transform);
+        let b = preview_export_grid(&export_params, &export_transform);
+        let (mut compared, mut invalid, mut frame_max, mut squared_sum) = (0usize, 0usize, 0.0f64, 0.0f64);
+        let mut worst = serde_json::Value::Null;
+        for (index, (a, b)) in a.iter().zip(&b).enumerate() {
+            if let (Some(a), Some(b)) = (a, b) {
+                let distance = (a.0 - b.0).hypot(a.1 - b.1);
+                if worst.is_null() || distance > frame_max {
+                    frame_max = distance;
+                    worst = serde_json::json!({"grid_x":index % 65,"grid_y":index / 65,
+                        "preview_source_4k_px":[a.0,a.1],"export_source_4k_px":[b.0,b.1]});
+                }
+                squared_sum += distance * distance;
+                compared += 1;
+            } else { invalid += 1; }
+        }
+        maximum = maximum.max(frame_max);
+        let passed = invalid == 0 && compared == 65 * 37 && frame_max < THRESHOLD_4K_PX;
+        all_valid &= passed;
+        checks.push(serde_json::json!({"frame":frame,"timestamp_us":timestamp_us,"compared_points":compared,
+            "invalid_points":invalid,"max_difference_4k_px":frame_max,
+            "rms_difference_4k_px":(compared > 0).then(|| (squared_sum / compared as f64).sqrt()),
+            "preview_fov":preview_transform.fov,"export_fov":export_transform.fov,"worst_point":worst,"passed":passed}));
+    }
+    let passed = independent_gyro && translation_active && curve_equal && all_valid;
+    let report = serde_json::json!({"project":project,"grid":[65,37],"input_size":[preview_params.width,preview_params.height],
+        "output_size":[preview_params.output_width,preview_params.output_height],"fps":preview_params.scaled_fps,
+        "preview_path":"import -> invalidate_smoothing -> recompute_threaded -> published FrameTransform",
+        "export_path":"get_cloned -> invalidate_smoothing -> recompute_blocking -> from_manager -> FrameTransform",
+        "independent_gyro":independent_gyro,"translation_active":translation_active,"curve_samples":preview_translation.samples.len(),
+        "curves_samplewise_equal":curve_equal,"fixed_crop_override":false,"threshold_4k_px":THRESHOLD_4K_PX,
+        "max_difference_4k_px":maximum,"checks":checks,"passed":passed});
+    let output = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/translation-image-space/preview-export-core.json");
+    std::fs::create_dir_all(output.parent().unwrap()).unwrap();
+    std::fs::write(&output, serde_json::to_string_pretty(&report).unwrap()).unwrap();
+    println!("preview/export core maximum={maximum:.12} 4K px, passed={passed}, report={}", output.display());
+    assert!(passed, "preview/export core comparison failed; see {}", output.display());
+}
+
 #[test]
 #[ignore = "requires a reanalyzed project and maps from the frozen baseline binary"]
 fn translation_image_space_projection_acceptance() {
