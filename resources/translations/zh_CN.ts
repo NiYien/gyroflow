@@ -921,12 +921,12 @@ Due to limitations of the system video encoders, rendering in the background is 
     <message>
         <location filename="../../src/ui/App.qml" line="674"/>
         <source>Choose a video or motion data file</source>
-        <translation type="unfinished"></translation>
+        <translation>选择视频或运动数据文件</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="675"/>
         <source>Supported files</source>
-        <translation type="unfinished"></translation>
+        <translation>支持的文件</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1407"/>
@@ -2638,47 +2638,47 @@ Do you want to submit your profile?</source>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="574"/>
         <source>Anchor:</source>
-        <translation type="unfinished"></translation>
+        <translation>参考半径：</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="579"/>
         <source>Inner ring — narrow / tele lenses</source>
-        <translation type="unfinished"></translation>
+        <translation>内圈 — 窄视角 / 长焦镜头</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="580"/>
         <source>Default — normal lenses</source>
-        <translation type="unfinished"></translation>
+        <translation>默认 — 普通镜头</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="581"/>
         <source>Wider — ultra-wide / anamorphic</source>
-        <translation type="unfinished"></translation>
+        <translation>更宽 — 超广角 / 变形镜头</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="582"/>
         <source>Ultra-wide / fisheye</source>
-        <translation type="unfinished"></translation>
+        <translation>超广角 / 鱼眼</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="605"/>
         <source>Bend @ r=</source>
-        <translation type="unfinished"></translation>
+        <translation>弯曲量，r=</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="630"/>
         <source>Anchor radius (0.4-0.9). Switching anchor keeps the bend value but rebuilds k1/k2 so the new ring shows that bend.</source>
-        <translation type="unfinished"></translation>
+        <translation>参考半径（0.4-0.9）。切换时保留弯曲量，但会重算 k1/k2，让新参考圆具有同样的弯曲量。</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="657"/>
         <source>Reset bend / corner / anchor and clear k1..k4.</source>
-        <translation type="unfinished"></translation>
+        <translation>重置弯曲量 / 角落 / 参考半径，并清空 k1..k4。</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="667"/>
         <source>Corner bend @ r=1.0</source>
-        <translation type="unfinished"></translation>
+        <translation>角落弯曲量，r=1.0</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="705"/>
@@ -3684,7 +3684,7 @@ Close and reopen Final Cut Pro before using the effect.</source>
     <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="358"/>
         <source>Edit</source>
-        <translation type="unfinished"></translation>
+        <translation>编辑</translation>
     </message>
     <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="360"/>
@@ -4054,7 +4054,7 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
     </message>
     <message>
         <source>Scanning segment %1 of %2</source>
-        <translation type="vanished">正在扫描第 %1 / %2 段</translation>
+        <translation>正在扫描第 %1 / %2 段</translation>
     </message>
     <message>
         <source>Click Ok to run Auto match and assign the data.</source>
@@ -4225,7 +4225,7 @@ Please check and try again.</source>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1697"/>
         <source>Focal length (mm)</source>
-        <translation type="unfinished">焦距 (mm)</translation>
+        <translation>焦距 (mm)</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2387"/>
@@ -4300,12 +4300,12 @@ Please check and try again.</source>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="3424"/>
         <source>%1 files could not be read and were skipped.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 个文件无法读取，已跳过。</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="3429"/>
         <source>%1 file(s) are already in the render queue.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 个文件已在渲染队列中。</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2558"/>
@@ -4377,13 +4377,13 @@ If there is no usable time-sync data at all, right-click the video → **&quot;D
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1653"/>
         <source>Frame rate (0=unchanged)</source>
-        <translation type="unfinished">帧率 (0=不变)</translation>
+        <translation>帧率 (0=不变)</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1654"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1698"/>
         <source>OK</source>
-        <translation type="unfinished">确定</translation>
+        <translation>确定</translation>
     </message>
     <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="362"/>
@@ -4457,13 +4457,13 @@ Click Ok and select the destination folder.</source>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="3125"/>
         <source>No supported files were found in the selection.</source>
-        <translation type="unfinished"></translation>
+        <translation>所选内容中未找到支持的文件。</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="3169"/>
         <source>Image sequence has been detected.
 Please provide frame rate: </source>
-        <translation type="unfinished">已检测到图像序列。
+        <translation>已检测到图像序列。
 请提供帧率： </translation>
     </message>
     <message>
@@ -6262,27 +6262,27 @@ Are you sure you want to continue?</source>
     <message>
         <location filename="../../src/ui/Util.js" line="10"/>
         <source>d</source>
-        <translation type="unfinished"></translation>
+        <translation>天</translation>
     </message>
     <message>
         <location filename="../../src/ui/Util.js" line="11"/>
         <source>h</source>
-        <translation type="unfinished"></translation>
+        <translation>时</translation>
     </message>
     <message>
         <location filename="../../src/ui/Util.js" line="12"/>
         <source>m</source>
-        <translation type="unfinished"></translation>
+        <translation>分</translation>
     </message>
     <message>
         <location filename="../../src/ui/Util.js" line="13"/>
         <source>s</source>
-        <translation type="unfinished">秒</translation>
+        <translation>秒</translation>
     </message>
     <message>
         <location filename="../../src/ui/Util.js" line="15"/>
         <source>&amp;lt; 1s</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;lt; 1秒</translation>
     </message>
 </context>
 <context>
@@ -6472,7 +6472,7 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
     <message>
         <location filename="../../src/ui/VideoArea.qml" line="472"/>
         <source>Previous video is still loading, please wait...</source>
-        <translation type="unfinished"></translation>
+        <translation>上一个视频仍在加载，请稍候...</translation>
     </message>
     <message>
         <location filename="../../src/ui/VideoArea.qml" line="524"/>

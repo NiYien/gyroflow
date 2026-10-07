@@ -792,12 +792,12 @@ Sisteminizin video enkoderlerinin sınırlarından ötürü arkaplanda render i�
     <message>
         <location filename="../../src/ui/App.qml" line="674"/>
         <source>Choose a video or motion data file</source>
-        <translation type="unfinished"></translation>
+        <translation>Video veya hareket verisi dosyası seçin</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="675"/>
         <source>Supported files</source>
-        <translation type="unfinished"></translation>
+        <translation>Desteklenen dosyalar</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1407"/>
@@ -1109,6 +1109,54 @@ Farklı bir çıkış kodeki deneyin (H.265/HEVC, H.264/AVC&apos;den daha fazla 
     <message>
         <source>This video is still loading.</source>
         <translation>Bu video hâlâ yükleniyor.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2030"/>
+        <location filename="../../src/ui/mobile/MobileSettings.qml" line="85"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="914"/>
+        <source>Experimental features</source>
+        <translation>Deneysel özellikler</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2044"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="991"/>
+        <source>These features are experimental and may not be stable yet.</source>
+        <translation>Bu özellikler deneyseldir ve henüz kararlı olmayabilir.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3360"/>
+        <source>This graphics card does not support exporting in %1. Choose another output format.</source>
+        <translation>Bu ekran kartı %1 biçiminde dışa aktarmayı desteklemiyor. Başka bir çıktı biçimi seçin.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3362"/>
+        <source>This graphics card does not support the selected export resolution (%1). Lower the resolution, for example to 1920x1080.</source>
+        <translation>Bu ekran kartı seçilen dışa aktarma çözünürlüğünü (%1) desteklemiyor. Çözünürlüğü örneğin 1920x1080'e düşürün.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3364"/>
+        <source>This graphics card does not support the current color format. Try another output format.</source>
+        <translation>Bu ekran kartı mevcut renk biçimini desteklemiyor. Başka bir çıktı biçimi deneyin.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3367"/>
+        <source>You can also turn off "Use GPU encoding" and try again. Exporting will be slower.</source>
+        <translation>“GPU kodlamasını kullan” seçeneğini kapatıp tekrar deneyebilirsiniz. Dışa aktarma daha yavaş olacaktır.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3383"/>
+        <source>In-camera stabilization could not be reconstructed (%1).</source>
+        <translation>Kamera içi sabitleme yeniden oluşturulamadı (%1).</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3389"/>
+        <source>%1 could not be applied (%2). Processed without it.</source>
+        <translation>%1 uygulanamadı (%2). Bu özellik olmadan işlendi.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3389"/>
+        <source>, </source>
+        <translation>, </translation>
     </message>
 </context>
 <context>
@@ -2384,7 +2432,7 @@ Profilinizi yüklemek istiyor musunuz?</translation>
     <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="226"/>
         <source>Now</source>
-        <translation type="unfinished"></translation>
+        <translation>Şimdi</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="755"/>
@@ -2598,47 +2646,47 @@ Profilinizi yüklemek istiyor musunuz?</translation>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="574"/>
         <source>Anchor:</source>
-        <translation type="unfinished"></translation>
+        <translation>Referans yarıçapı:</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="579"/>
         <source>Inner ring — narrow / tele lenses</source>
-        <translation type="unfinished"></translation>
+        <translation>İç halka — dar açılı / tele lensler</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="580"/>
         <source>Default — normal lenses</source>
-        <translation type="unfinished"></translation>
+        <translation>Varsayılan — normal lensler</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="581"/>
         <source>Wider — ultra-wide / anamorphic</source>
-        <translation type="unfinished"></translation>
+        <translation>Daha geniş — ultra geniş açı / anamorfik</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="582"/>
         <source>Ultra-wide / fisheye</source>
-        <translation type="unfinished"></translation>
+        <translation>Ultra geniş açı / balıkgözü</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="605"/>
         <source>Bend @ r=</source>
-        <translation type="unfinished"></translation>
+        <translation>r= için eğrilik: </translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="630"/>
         <source>Anchor radius (0.4-0.9). Switching anchor keeps the bend value but rebuilds k1/k2 so the new ring shows that bend.</source>
-        <translation type="unfinished"></translation>
+        <translation>Referans yarıçapı (0.4-0.9). Değiştirmek eğrilik değerini korur, ancak yeni halkada aynı eğriliği oluşturmak için k1/k2'yi yeniden hesaplar.</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="657"/>
         <source>Reset bend / corner / anchor and clear k1..k4.</source>
-        <translation type="unfinished"></translation>
+        <translation>Eğrilik / köşeler / referans yarıçapını sıfırla ve k1..k4'ü temizle.</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="667"/>
         <source>Corner bend @ r=1.0</source>
-        <translation type="unfinished"></translation>
+        <translation>Köşe eğriliği, r=1.0</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="705"/>
@@ -2684,6 +2732,51 @@ Profilinizi yüklemek istiyor musunuz?</translation>
         <location filename="../../src/ui/menu/LensProfile.qml" line="552"/>
         <source>Distortion coefficients</source>
         <translation>Bozulma sabitleri</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="195"/>
+        <source>The lens metadata delay could not be estimated. The clip needs a zoom recorded in the lens metadata, and the picture has to follow it clearly.</source>
+        <translation>Lens meta verisi gecikmesi tahmin edilemedi. Klipte lens meta verisine kaydedilmiş bir zum olmalı ve görüntü bu değişimi açıkça yansıtmalıdır.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="195"/>
+        <source>Ok</source>
+        <translation>Tamam</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="478"/>
+        <source>Lens breathing compensation</source>
+        <translation>Lens nefes alma telafisi</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="480"/>
+        <source>Keeps the field of view constant while focusing, using the lens breathing data recorded by the camera.</source>
+        <translation>Kameranın kaydettiği lens nefes alma verisini kullanarak odaklama sırasında görüş açısını sabit tutar.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="539"/>
+        <source>Lens metadata delay</source>
+        <translation>Lens meta verisi gecikmesi</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="542"/>
+        <source>How many frames later than the picture the lens reports its focal length. It depends on the lens, not on the frame rate: some report two frames late.</source>
+        <translation>Lensin odak uzaklığını görüntüden kaç kare sonra bildirdiğidir. Kare hızına değil lense bağlıdır: bazıları iki kare geç bildirir.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="543"/>
+        <source>"Analyze" measures it on the zooms recorded in this clip. Positive values read the lens metadata later.</source>
+        <translation>“Analiz et”, bu klipteki zum değişimlerinden gecikmeyi ölçer. Pozitif değerler lens meta verisini daha sonraki zamandan okur.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="551"/>
+        <source>frames</source>
+        <translation>kare</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="562"/>
+        <source>Analyze</source>
+        <translation>Analiz et</translation>
     </message>
 </context>
 <context>
@@ -3121,6 +3214,51 @@ Profilinizi yüklemek istiyor musunuz?</translation>
         <location filename="../../src/ui/menu/MotionData.qml" line="846"/>
         <source>Export project file (including processed gyro data)</source>
         <translation>Proje dosyasını dışa aktar (işlenmiş gyro verisi dahil)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="463"/>
+        <source>Optical stabilization</source>
+        <translation>Optik sabitleme</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="464"/>
+        <source>Measure the camera rotation from the video itself and correct the motion data where they disagree. Useful when vibrations corrupt the gyro data, e.g. on a hard-mounted FPV camera. The analysis samples frames at an integer interval near 25 fps within the selected trim range.</source>
+        <translation>Kamera dönüşünü videodan ölçer ve hareket verisiyle uyuşmayan yerleri düzeltir. Titreşimlerin jiroskop verisini bozduğu durumlarda, örneğin sert monte edilmiş FPV kameralarında yararlıdır. Analiz, seçilen kırpma aralığında yaklaşık 25 fps sağlayan tam sayı kare aralıklarıyla örnekleme yapar.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="522"/>
+        <source>Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis samples frames at an integer interval near 25 fps within the selected trim range. Can't be used together with in-camera stabilization reconstruction. The reported shift is sampled at frame centers; output cropping changes its apparent size.</source>
+        <translation>Kameranın yana ve yukarı aşağı hareketini videodan ölçer ve bir uzaklığı sabit tutmak için tüm görüntüyü kaydırır. Dosyadan hareket verisi gerekir; analiz, seçilen kırpma aralığında yaklaşık 25 fps sağlayan tam sayı kare aralıklarıyla örnekleme yapar. Kamera içi sabitleme yeniden oluşturmasıyla birlikte kullanılamaz. Bildirilen kaydırma kare merkezlerinde ölçülür; çıktı kırpması görünen büyüklüğünü değiştirir.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="534"/>
+        <source>Measured in %1 of %2 frames, applied shift up to %3% of the source frame's short side</source>
+        <translation>%2 karenin %1 tanesinde ölçüldü, uygulanan kaydırma kaynak karenin kısa kenarının en fazla %3% kadarı</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="538"/>
+        <source>Automatic parameters</source>
+        <translation>Otomatik parametreler</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="539"/>
+        <source>Choose the reference distance and the smoothness from the analysis: hold the distant scenery steady, or the subject once it fills most of the picture, and smooth as much as the shift range allows.</source>
+        <translation>Analizden referans uzaklığını ve yumuşatmayı seçer: uzak manzarayı veya görüntünün çoğunu kapladığında konuyu sabit tutar ve kaydırma aralığının izin verdiği kadar yumuşatır.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="547"/>
+        <source>Move toward Near to stabilize closer objects, or toward Far to stabilize more distant content. The middle position stabilizes the farther parts of the image (default).</source>
+        <translation>Yakındaki nesneleri sabitlemek için Yakın'a, daha uzaktakileri sabitlemek için Uzak'a kaydırın. Orta konum görüntünün daha uzak kısımlarını sabitler (varsayılan).</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="553"/>
+        <source>Near</source>
+        <translation>Yakın</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="566"/>
+        <source>Far</source>
+        <translation>Uzak</translation>
     </message>
 </context>
 <context>
@@ -3591,7 +3729,7 @@ Efekti kullanmadan önce Final Cut Pro&apos;yu kapatıp yeniden açın.</transla
     <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="358"/>
         <source>Edit</source>
-        <translation type="unfinished"></translation>
+        <translation>Düzenle</translation>
     </message>
     <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="360"/>
@@ -3961,7 +4099,7 @@ Eşleşmeyen videoları manuel olarak eşleştirebilirsiniz: videoya sağ tıkla
     </message>
     <message>
         <source>Scanning segment %1 of %2</source>
-        <translation type="vanished">Segment %1/%2 taranıyor</translation>
+        <translation>Segment %1/%2 taranıyor</translation>
     </message>
     <message>
         <source>Click Ok to run Auto match and assign the data.</source>
@@ -4115,7 +4253,7 @@ Kontrol edip tekrar deneyin.</translation>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1697"/>
         <source>Focal length (mm)</source>
-        <translation type="unfinished">Odak uzaklığı (mm)</translation>
+        <translation>Odak uzaklığı (mm)</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2387"/>
@@ -4182,12 +4320,12 @@ Kontrol edip tekrar deneyin.</translation>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="3424"/>
         <source>%1 files could not be read and were skipped.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 dosya okunamadı ve atlandı.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="3429"/>
         <source>%1 file(s) are already in the render queue.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 dosya zaten render kuyruğunda.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2558"/>
@@ -4259,13 +4397,13 @@ Hiç kullanılabilir zaman senkronizasyonu verisi yoksa, videoya sağ tıklayın
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1653"/>
         <source>Frame rate (0=unchanged)</source>
-        <translation type="unfinished">Kare hızı (0=değiştirilmemiş)</translation>
+        <translation>Kare hızı (0=değiştirilmemiş)</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1654"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1698"/>
         <source>OK</source>
-        <translation type="unfinished">Tamam</translation>
+        <translation>Tamam</translation>
     </message>
     <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="362"/>
@@ -4338,14 +4476,14 @@ Click Ok and select the destination folder.</source>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="3125"/>
         <source>No supported files were found in the selection.</source>
-        <translation type="unfinished"></translation>
+        <translation>Seçimde desteklenen dosya bulunamadı.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="3169"/>
         <source>Image sequence has been detected.
 Please provide frame rate: </source>
-        <translation type="unfinished">Görüntü sekansı seçildi.
-Lütfen frame rate&apos;i belirtin: </translation>
+        <translation>Görüntü sekansı seçildi.
+Lütfen frame rate'i belirtin: </translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="3229"/>
@@ -4515,6 +4653,38 @@ Lütfen frame rate&apos;i belirtin: </translation>
     <message>
         <source>Search stage %1 of %2</source>
         <translation>Arama aşaması %1 / %2</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="413"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="758"/>
+        <source>Unable to open the video for deep matching. Please select the video again.</source>
+        <translation>Derin eşleştirme için video açılamadı. Videoyu yeniden seçin.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="415"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="760"/>
+        <source>Unable to decode the video for deep matching. Please try another video.</source>
+        <translation>Derin eşleştirme için video çözülemedi. Başka bir video deneyin.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="762"/>
+        <source>Unable to convert video frames for deep matching. Please try another video.</source>
+        <translation>Derin eşleştirme için video kareleri dönüştürülemedi. Başka bir video deneyin.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="764"/>
+        <source>No usable video frames were found in the deep-match analysis windows. Please try another video.</source>
+        <translation>Derin eşleştirme analiz aralıklarında kullanılabilir video karesi bulunamadı. Başka bir video deneyin.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2639"/>
+        <source>Analyzing: %1</source>
+        <translation>Analiz: %1</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2849"/>
+        <source>Analyzing...</source>
+        <translation>Analiz ediliyor...</translation>
     </message>
 </context>
 <context>
@@ -5245,6 +5415,26 @@ If you need more accuracy, increase the number of iterations in &quot;Advanced&q
         <location filename="../../src/ui/menu/Stabilization.qml" line="861"/>
         <source>Link with zooming speed</source>
         <translation>Zoomlama hızıyla bağla</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="762"/>
+        <source>Stabilize focal length</source>
+        <translation>Odak uzaklığını sabitle</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="764"/>
+        <source>Limits how fast the picture may zoom when the lens metadata records a changing focal length.</source>
+        <translation>Lens meta verisi değişen odak uzaklığı kaydettiğinde görüntünün zum hızını sınırlar.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="765"/>
+        <source>Zooms slower than the limit pass through untouched. Faster zooms are spread out by cropping ahead of a zoom-in and after a zoom-out. Lower values give a smoother zoom and more crop.</source>
+        <translation>Sınırdan yavaş zumlar değiştirilmez. Daha hızlı zumlar, yakınlaştırmadan önce ve uzaklaştırmadan sonra kırpılarak zamana yayılır. Daha düşük değerler daha yumuşak zum ve daha fazla kırpma sağlar.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="774"/>
+        <source>Max zoom speed</source>
+        <translation>Maksimum zum hızı</translation>
     </message>
 </context>
 <context>
@@ -6061,6 +6251,11 @@ Bu özellik deneyseldir, sonuçlar hiç düzgün görünmeyebilir. Devam etmek i
         <source>Save</source>
         <translation>Kaydet</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/components/Timeline.qml" line="273"/>
+        <source>Focal length</source>
+        <translation>Odak uzunluğu</translation>
+    </message>
 </context>
 <context>
     <name>TimelineSyncPoint</name>
@@ -6123,27 +6318,27 @@ Bu özellik deneyseldir, sonuçlar hiç düzgün görünmeyebilir. Devam etmek i
     <message>
         <location filename="../../src/ui/Util.js" line="10"/>
         <source>d</source>
-        <translation type="unfinished"></translation>
+        <translation>g</translation>
     </message>
     <message>
         <location filename="../../src/ui/Util.js" line="11"/>
         <source>h</source>
-        <translation type="unfinished"></translation>
+        <translation>sa</translation>
     </message>
     <message>
         <location filename="../../src/ui/Util.js" line="12"/>
         <source>m</source>
-        <translation type="unfinished"></translation>
+        <translation>dk</translation>
     </message>
     <message>
         <location filename="../../src/ui/Util.js" line="13"/>
         <source>s</source>
-        <translation type="unfinished">s</translation>
+        <translation>s</translation>
     </message>
     <message>
         <location filename="../../src/ui/Util.js" line="15"/>
         <source>&amp;lt; 1s</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;lt; 1 sn</translation>
     </message>
 </context>
 <context>
@@ -6349,7 +6544,7 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
     <message>
         <location filename="../../src/ui/VideoArea.qml" line="472"/>
         <source>Previous video is still loading, please wait...</source>
-        <translation type="unfinished"></translation>
+        <translation>Önceki video hâlâ yükleniyor, lütfen bekleyin...</translation>
     </message>
     <message>
         <location filename="../../src/ui/VideoArea.qml" line="524"/>
@@ -6554,19 +6749,19 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
     </message>
     <message>
         <source>About NiYien</source>
-        <translation>About NiYien</translation>
+        <translation>NiYien hakkında</translation>
     </message>
     <message>
         <source>Help and support</source>
-        <translation>Help and support</translation>
+        <translation>Yardım ve destek</translation>
     </message>
     <message>
         <source>Open-source licenses</source>
-        <translation>Open-source licenses</translation>
+        <translation>Açık kaynak lisansları</translation>
     </message>
     <message>
         <source>Privacy policy</source>
-        <translation>Privacy policy</translation>
+        <translation>Gizlilik politikası</translation>
     </message>
 </context>
 <context>
@@ -6981,7 +7176,7 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
     </message>
     <message>
         <source>About NiYien</source>
-        <translation>About NiYien</translation>
+        <translation>NiYien hakkında</translation>
     </message>
     <message>
         <source>Export editing project</source>
@@ -6993,7 +7188,7 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
     </message>
     <message>
         <source>Help and support</source>
-        <translation>Help and support</translation>
+        <translation>Yardım ve destek</translation>
     </message>
     <message>
         <source>How it works</source>
@@ -7001,31 +7196,31 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
     </message>
     <message>
         <source>Open-source licenses</source>
-        <translation>Open-source licenses</translation>
+        <translation>Açık kaynak lisansları</translation>
     </message>
     <message>
         <source>Privacy policy</source>
-        <translation>Privacy policy</translation>
+        <translation>Gizlilik politikası</translation>
     </message>
     <message>
         <source>Share / Save to Files</source>
-        <translation>Share / Save to Files</translation>
+        <translation>Paylaş / Dosyalara Kaydet</translation>
     </message>
     <message>
         <source>Source code</source>
-        <translation>Source code</translation>
+        <translation>Kaynak kodu</translation>
     </message>
     <message>
         <source>The demo could not be prepared. Please try again.</source>
-        <translation>The demo could not be prepared. Please try again.</translation>
+        <translation>Demo hazırlanamadı. Lütfen tekrar deneyin.</translation>
     </message>
     <message>
         <source>The output file is unavailable. Check the output folder.</source>
-        <translation>The output file is unavailable. Check the output folder.</translation>
+        <translation>Çıktı dosyası kullanılamıyor. Çıktı klasörünü kontrol edin.</translation>
     </message>
     <message>
         <source>Try a generated demo</source>
-        <translation>Try a generated demo</translation>
+        <translation>Oluşturulan demoyu dene</translation>
     </message>
     <message>
         <source>Use a supported camera's gyroscope data or import a separate gyroscope file.</source>
@@ -7132,6 +7327,35 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
     <message>
         <source>Not added</source>
         <translation>Eklenmedi</translation>
+    </message>
+</context>
+<context>
+    <name>VideoSourcePicker</name>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="23"/>
+        <source>Unable to open the photo library.</source>
+        <translation>Fotoğraf arşivi açılamadı.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="38"/>
+        <source>Choose video source</source>
+        <translation>Video kaynağını seçin</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="40"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="972"/>
+        <source>Photos</source>
+        <translation>Fotoğraflar</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="47"/>
+        <source>Files and external storage</source>
+        <translation>Dosyalar ve harici depolama</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="70"/>
+        <source>Some videos could not be imported: %1</source>
+        <translation>Bazı videolar içe aktarılamadı: %1</translation>
     </message>
 </context>
 </TS>

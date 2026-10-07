@@ -793,12 +793,12 @@ Aufgrund von Einschränkungen der Systemvideo-Encoder wird das Rendern im Hinter
     <message>
         <location filename="../../src/ui/App.qml" line="674"/>
         <source>Choose a video or motion data file</source>
-        <translation type="unfinished"></translation>
+        <translation>Video oder Datei mit Bewegungsdaten auswählen</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="675"/>
         <source>Supported files</source>
-        <translation type="unfinished"></translation>
+        <translation>Unterstützte Dateien</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1407"/>
@@ -1112,6 +1112,54 @@ Versuchen Sie einen anderen Ausgabe-Codec (H.265/HEVC deckt mehr Fälle ab als H
     <message>
         <source>This video is still loading.</source>
         <translation>Dieses Video wird noch geladen.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2030"/>
+        <location filename="../../src/ui/mobile/MobileSettings.qml" line="85"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="914"/>
+        <source>Experimental features</source>
+        <translation>Experimentelle Funktionen</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2044"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="991"/>
+        <source>These features are experimental and may not be stable yet.</source>
+        <translation>Diese Funktionen sind experimentell und möglicherweise noch nicht stabil.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3360"/>
+        <source>This graphics card does not support exporting in %1. Choose another output format.</source>
+        <translation>Diese Grafikkarte unterstützt keinen Export in %1. Wählen Sie ein anderes Ausgabeformat.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3362"/>
+        <source>This graphics card does not support the selected export resolution (%1). Lower the resolution, for example to 1920x1080.</source>
+        <translation>Diese Grafikkarte unterstützt die gewählte Exportauflösung (%1) nicht. Verringern Sie die Auflösung, zum Beispiel auf 1920x1080.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3364"/>
+        <source>This graphics card does not support the current color format. Try another output format.</source>
+        <translation>Diese Grafikkarte unterstützt das aktuelle Farbformat nicht. Versuchen Sie ein anderes Ausgabeformat.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3367"/>
+        <source>You can also turn off "Use GPU encoding" and try again. Exporting will be slower.</source>
+        <translation>Sie können auch „GPU-Kodierung verwenden“ ausschalten und es erneut versuchen. Der Export dauert dann länger.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3383"/>
+        <source>In-camera stabilization could not be reconstructed (%1).</source>
+        <translation>Die kamerainterne Stabilisierung konnte nicht rekonstruiert werden (%1).</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3389"/>
+        <source>%1 could not be applied (%2). Processed without it.</source>
+        <translation>%1 konnte nicht angewendet werden (%2). Ohne diese Funktion verarbeitet.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3389"/>
+        <source>, </source>
+        <translation>, </translation>
     </message>
 </context>
 <context>
@@ -2387,7 +2435,7 @@ Soll das Profil hoch geladen werden?</translation>
     <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="226"/>
         <source>Now</source>
-        <translation type="unfinished"></translation>
+        <translation>Jetzt</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="755"/>
@@ -2601,47 +2649,47 @@ Soll das Profil hoch geladen werden?</translation>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="574"/>
         <source>Anchor:</source>
-        <translation type="unfinished"></translation>
+        <translation>Referenzradius:</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="579"/>
         <source>Inner ring — narrow / tele lenses</source>
-        <translation type="unfinished"></translation>
+        <translation>Innerer Ring — enger Bildwinkel / Teleobjektive</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="580"/>
         <source>Default — normal lenses</source>
-        <translation type="unfinished"></translation>
+        <translation>Standard — normale Objektive</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="581"/>
         <source>Wider — ultra-wide / anamorphic</source>
-        <translation type="unfinished"></translation>
+        <translation>Weiter — Ultraweitwinkel / anamorphotisch</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="582"/>
         <source>Ultra-wide / fisheye</source>
-        <translation type="unfinished"></translation>
+        <translation>Ultraweitwinkel / Fischauge</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="605"/>
         <source>Bend @ r=</source>
-        <translation type="unfinished"></translation>
+        <translation>Krümmung bei r=</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="630"/>
         <source>Anchor radius (0.4-0.9). Switching anchor keeps the bend value but rebuilds k1/k2 so the new ring shows that bend.</source>
-        <translation type="unfinished"></translation>
+        <translation>Referenzradius (0.4-0.9). Beim Wechsel bleibt die Krümmung erhalten; k1/k2 werden neu berechnet, damit der neue Ring diese Krümmung zeigt.</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="657"/>
         <source>Reset bend / corner / anchor and clear k1..k4.</source>
-        <translation type="unfinished"></translation>
+        <translation>Krümmung / Ecken / Referenzradius zurücksetzen und k1..k4 löschen.</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="667"/>
         <source>Corner bend @ r=1.0</source>
-        <translation type="unfinished"></translation>
+        <translation>Eckenkrümmung bei r=1.0</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="705"/>
@@ -2687,6 +2735,51 @@ Soll das Profil hoch geladen werden?</translation>
         <location filename="../../src/ui/menu/LensProfile.qml" line="552"/>
         <source>Distortion coefficients</source>
         <translation>Verzerrungskoeffizienten</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="195"/>
+        <source>The lens metadata delay could not be estimated. The clip needs a zoom recorded in the lens metadata, and the picture has to follow it clearly.</source>
+        <translation>Die Verzögerung der Objektivmetadaten konnte nicht geschätzt werden. Der Clip benötigt einen in den Objektivmetadaten erfassten Zoom, dem das Bild klar folgt.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="195"/>
+        <source>Ok</source>
+        <translation>Ok</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="478"/>
+        <source>Lens breathing compensation</source>
+        <translation>Fokus-Breathing-Kompensation</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="480"/>
+        <source>Keeps the field of view constant while focusing, using the lens breathing data recorded by the camera.</source>
+        <translation>Hält den Bildwinkel beim Fokussieren konstant, anhand der von der Kamera aufgezeichneten Fokus-Breathing-Daten.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="539"/>
+        <source>Lens metadata delay</source>
+        <translation>Verzögerung der Objektivmetadaten</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="542"/>
+        <source>How many frames later than the picture the lens reports its focal length. It depends on the lens, not on the frame rate: some report two frames late.</source>
+        <translation>Um wie viele Bilder später das Objektiv seine Brennweite meldet. Das hängt vom Objektiv ab, nicht von der Bildrate: Manche melden sie zwei Bilder später.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="543"/>
+        <source>"Analyze" measures it on the zooms recorded in this clip. Positive values read the lens metadata later.</source>
+        <translation>„Analysieren“ misst die Verzögerung anhand der Zooms in diesem Clip. Positive Werte lesen die Objektivmetadaten später.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="551"/>
+        <source>frames</source>
+        <translation>Bilder</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="562"/>
+        <source>Analyze</source>
+        <translation>Analysieren</translation>
     </message>
 </context>
 <context>
@@ -3125,6 +3218,51 @@ Soll das Profil hoch geladen werden?</translation>
         <source>Export project file (including processed gyro data)</source>
         <translation>Projekt-Datei exportieren (inkl. verarbeiteter Gyro-Daten)</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="463"/>
+        <source>Optical stabilization</source>
+        <translation>Optische Stabilisierung</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="464"/>
+        <source>Measure the camera rotation from the video itself and correct the motion data where they disagree. Useful when vibrations corrupt the gyro data, e.g. on a hard-mounted FPV camera. The analysis samples frames at an integer interval near 25 fps within the selected trim range.</source>
+        <translation>Misst die Kameradrehung direkt aus dem Video und korrigiert abweichende Bewegungsdaten. Hilfreich bei durch Vibrationen gestörten Gyrodaten, etwa einer starr montierten FPV-Kamera. Die Analyse nimmt im ausgewählten Schnittbereich Bilder in ganzzahligen Abständen mit ungefähr 25 fps.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="522"/>
+        <source>Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis samples frames at an integer interval near 25 fps within the selected trim range. Can't be used together with in-camera stabilization reconstruction. The reported shift is sampled at frame centers; output cropping changes its apparent size.</source>
+        <translation>Misst die seitliche und vertikale Kamerabewegung aus dem Video und verschiebt das ganze Bild, um eine Entfernung stabil zu halten. Benötigt Bewegungsdaten aus der Datei; die Analyse nimmt im ausgewählten Schnittbereich Bilder in ganzzahligen Abständen mit ungefähr 25 fps. Kann nicht zusammen mit der Rekonstruktion der kamerainternen Stabilisierung verwendet werden. Die angezeigte Verschiebung wird in den Bildmitten gemessen; der Ausgabebeschnitt verändert ihre sichtbare Größe.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="534"/>
+        <source>Measured in %1 of %2 frames, applied shift up to %3% of the source frame's short side</source>
+        <translation>In %1 von %2 Bildern gemessen, angewendete Verschiebung bis %3% der kurzen Seite des Quellbildes</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="538"/>
+        <source>Automatic parameters</source>
+        <translation>Automatische Parameter</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="539"/>
+        <source>Choose the reference distance and the smoothness from the analysis: hold the distant scenery steady, or the subject once it fills most of the picture, and smooth as much as the shift range allows.</source>
+        <translation>Wählt Referenzentfernung und Glättung anhand der Analyse: Hält die ferne Landschaft stabil, oder das Motiv, sobald es den Großteil des Bildes ausfüllt, und glättet so stark, wie der Verschiebungsbereich erlaubt.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="547"/>
+        <source>Move toward Near to stabilize closer objects, or toward Far to stabilize more distant content. The middle position stabilizes the farther parts of the image (default).</source>
+        <translation>Bewegen Sie den Regler zu Nah, um nähere Objekte zu stabilisieren, oder zu Fern für weiter entfernte Inhalte. Die mittlere Position stabilisiert die ferneren Bildbereiche (Standard).</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="553"/>
+        <source>Near</source>
+        <translation>Nah</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="566"/>
+        <source>Far</source>
+        <translation>Fern</translation>
+    </message>
 </context>
 <context>
     <name>MountingPresetSelector</name>
@@ -3257,7 +3395,7 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <source>%1 folder doesn&apos;t exist.
 Due to sandbox limitations, you have to create it yourself.
 Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
-        <translation>Der Ordner „GFPH0“ existiert nicht.
+        <translation>Der Ordner „%1“ existiert nicht.
 Aufgrund von Sandbox-Einschränkungen müssen Sie es selbst erstellen.
 Öffnen Sie &lt;b&gt;Terminal&lt;/b&gt; und geben Sie den folgenden Befehl ein:</translation>
     </message>
@@ -3595,7 +3733,7 @@ Schließen und öffnen Sie Final Cut Pro erneut, bevor Sie den Effekt verwenden.
     <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="358"/>
         <source>Edit</source>
-        <translation type="unfinished"></translation>
+        <translation>Bearbeiten</translation>
     </message>
     <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="360"/>
@@ -3965,7 +4103,7 @@ Nicht zugeordnete Videos kannst du manuell zuordnen: Rechtsklick auf das Video �
     </message>
     <message>
         <source>Scanning segment %1 of %2</source>
-        <translation type="vanished">Durchsuche Abschnitt %1 von %2</translation>
+        <translation>Durchsuche Abschnitt %1 von %2</translation>
     </message>
     <message>
         <source>Click Ok to run Auto match and assign the data.</source>
@@ -4120,7 +4258,7 @@ Bitte prüfen und erneut versuchen.</translation>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1697"/>
         <source>Focal length (mm)</source>
-        <translation type="unfinished">Brennweite (mm)</translation>
+        <translation>Brennweite (mm)</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2387"/>
@@ -4187,12 +4325,12 @@ Bitte prüfen und erneut versuchen.</translation>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="3424"/>
         <source>%1 files could not be read and were skipped.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 Dateien konnten nicht gelesen werden und wurden übersprungen.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="3429"/>
         <source>%1 file(s) are already in the render queue.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 Datei(en) befinden sich bereits in der Renderwarteschlange.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2558"/>
@@ -4264,13 +4402,13 @@ Wenn überhaupt keine verwertbaren Zeitsynchronisationsdaten vorhanden sind: Rec
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1653"/>
         <source>Frame rate (0=unchanged)</source>
-        <translation type="unfinished">Bildrate (0=unverändert)</translation>
+        <translation>Bildrate (0=unverändert)</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1654"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1698"/>
         <source>OK</source>
-        <translation type="unfinished">Okay</translation>
+        <translation>Okay</translation>
     </message>
     <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="362"/>
@@ -4344,13 +4482,13 @@ Klicke auf Ok, um den Zielordner auszuwählen.</translation>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="3125"/>
         <source>No supported files were found in the selection.</source>
-        <translation type="unfinished"></translation>
+        <translation>Die Auswahl enthält keine unterstützten Dateien.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="3169"/>
         <source>Image sequence has been detected.
 Please provide frame rate: </source>
-        <translation type="unfinished">Eine Bildsequenz wurde erkannt.
+        <translation>Eine Bildsequenz wurde erkannt.
 Bitte Bildrate in FPS angeben: </translation>
     </message>
     <message>
@@ -4521,6 +4659,38 @@ Bitte Bildrate in FPS angeben: </translation>
     <message>
         <source>Search stage %1 of %2</source>
         <translation>Suchphase %1 von %2</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="413"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="758"/>
+        <source>Unable to open the video for deep matching. Please select the video again.</source>
+        <translation>Das Video für den tiefen Abgleich konnte nicht geöffnet werden. Wählen Sie das Video erneut aus.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="415"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="760"/>
+        <source>Unable to decode the video for deep matching. Please try another video.</source>
+        <translation>Das Video für den tiefen Abgleich konnte nicht dekodiert werden. Versuchen Sie ein anderes Video.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="762"/>
+        <source>Unable to convert video frames for deep matching. Please try another video.</source>
+        <translation>Videobilder für den tiefen Abgleich konnten nicht konvertiert werden. Versuchen Sie ein anderes Video.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="764"/>
+        <source>No usable video frames were found in the deep-match analysis windows. Please try another video.</source>
+        <translation>In den Analysefenstern des tiefen Abgleichs wurden keine nutzbaren Videobilder gefunden. Versuchen Sie ein anderes Video.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2639"/>
+        <source>Analyzing: %1</source>
+        <translation>Analyse: %1</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2849"/>
+        <source>Analyzing...</source>
+        <translation>Analyse läuft...</translation>
     </message>
 </context>
 <context>
@@ -5253,6 +5423,26 @@ Wenn Sie mehr Genauigkeit benötigen, erhöhen Sie die Anzahl der Iterationen un
         <location filename="../../src/ui/menu/Stabilization.qml" line="861"/>
         <source>Link with zooming speed</source>
         <translation>Mit Zoomgeschwindigkeit verbinden</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="762"/>
+        <source>Stabilize focal length</source>
+        <translation>Brennweite stabilisieren</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="764"/>
+        <source>Limits how fast the picture may zoom when the lens metadata records a changing focal length.</source>
+        <translation>Begrenzt die Zoomgeschwindigkeit des Bildes, wenn die Objektivmetadaten eine sich ändernde Brennweite aufzeichnen.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="765"/>
+        <source>Zooms slower than the limit pass through untouched. Faster zooms are spread out by cropping ahead of a zoom-in and after a zoom-out. Lower values give a smoother zoom and more crop.</source>
+        <translation>Zooms unterhalb des Grenzwerts bleiben unverändert. Schnellere Zooms werden durch Beschnitt vor dem Einzoomen und nach dem Auszoomen zeitlich gestreckt. Niedrigere Werte ergeben einen sanfteren Zoom und mehr Beschnitt.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="774"/>
+        <source>Max zoom speed</source>
+        <translation>Maximale Zoomgeschwindigkeit</translation>
     </message>
 </context>
 <context>
@@ -6072,6 +6262,11 @@ Soll trotzdem mit der Analyse fortgefahren werden?</translation>
         <source>Save</source>
         <translation>Speichern</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/components/Timeline.qml" line="273"/>
+        <source>Focal length</source>
+        <translation>Brennweite</translation>
+    </message>
 </context>
 <context>
     <name>TimelineSyncPoint</name>
@@ -6134,27 +6329,27 @@ Soll trotzdem mit der Analyse fortgefahren werden?</translation>
     <message>
         <location filename="../../src/ui/Util.js" line="10"/>
         <source>d</source>
-        <translation type="unfinished"></translation>
+        <translation>T</translation>
     </message>
     <message>
         <location filename="../../src/ui/Util.js" line="11"/>
         <source>h</source>
-        <translation type="unfinished"></translation>
+        <translation>h</translation>
     </message>
     <message>
         <location filename="../../src/ui/Util.js" line="12"/>
         <source>m</source>
-        <translation type="unfinished"></translation>
+        <translation>min</translation>
     </message>
     <message>
         <location filename="../../src/ui/Util.js" line="13"/>
         <source>s</source>
-        <translation type="unfinished">s</translation>
+        <translation>s</translation>
     </message>
     <message>
         <location filename="../../src/ui/Util.js" line="15"/>
         <source>&amp;lt; 1s</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;lt; 1 s</translation>
     </message>
 </context>
 <context>
@@ -6363,7 +6558,7 @@ Deaktivieren Sie die Objektivstabilisierung (Optical SteadyShot), um Gyroflow ve
     <message>
         <location filename="../../src/ui/VideoArea.qml" line="472"/>
         <source>Previous video is still loading, please wait...</source>
-        <translation type="unfinished"></translation>
+        <translation>Das vorherige Video wird noch geladen, bitte warten...</translation>
     </message>
     <message>
         <location filename="../../src/ui/VideoArea.qml" line="524"/>
@@ -6568,19 +6763,19 @@ Deaktivieren Sie die Objektivstabilisierung (Optical SteadyShot), um Gyroflow ve
     </message>
     <message>
         <source>About NiYien</source>
-        <translation>About NiYien</translation>
+        <translation>Über NiYien</translation>
     </message>
     <message>
         <source>Help and support</source>
-        <translation>Help and support</translation>
+        <translation>Hilfe und Support</translation>
     </message>
     <message>
         <source>Open-source licenses</source>
-        <translation>Open-source licenses</translation>
+        <translation>Open-Source-Lizenzen</translation>
     </message>
     <message>
         <source>Privacy policy</source>
-        <translation>Privacy policy</translation>
+        <translation>Datenschutzerklärung</translation>
     </message>
 </context>
 <context>
@@ -6995,7 +7190,7 @@ Deaktivieren Sie die Objektivstabilisierung (Optical SteadyShot), um Gyroflow ve
     </message>
     <message>
         <source>About NiYien</source>
-        <translation>About NiYien</translation>
+        <translation>Über NiYien</translation>
     </message>
     <message>
         <source>Export editing project</source>
@@ -7007,7 +7202,7 @@ Deaktivieren Sie die Objektivstabilisierung (Optical SteadyShot), um Gyroflow ve
     </message>
     <message>
         <source>Help and support</source>
-        <translation>Help and support</translation>
+        <translation>Hilfe und Support</translation>
     </message>
     <message>
         <source>How it works</source>
@@ -7015,31 +7210,31 @@ Deaktivieren Sie die Objektivstabilisierung (Optical SteadyShot), um Gyroflow ve
     </message>
     <message>
         <source>Open-source licenses</source>
-        <translation>Open-source licenses</translation>
+        <translation>Open-Source-Lizenzen</translation>
     </message>
     <message>
         <source>Privacy policy</source>
-        <translation>Privacy policy</translation>
+        <translation>Datenschutzerklärung</translation>
     </message>
     <message>
         <source>Share / Save to Files</source>
-        <translation>Share / Save to Files</translation>
+        <translation>Teilen / In Dateien sichern</translation>
     </message>
     <message>
         <source>Source code</source>
-        <translation>Source code</translation>
+        <translation>Quellcode</translation>
     </message>
     <message>
         <source>The demo could not be prepared. Please try again.</source>
-        <translation>The demo could not be prepared. Please try again.</translation>
+        <translation>Die Demo konnte nicht vorbereitet werden. Bitte erneut versuchen.</translation>
     </message>
     <message>
         <source>The output file is unavailable. Check the output folder.</source>
-        <translation>The output file is unavailable. Check the output folder.</translation>
+        <translation>Die Ausgabedatei ist nicht verfügbar. Prüfen Sie den Ausgabeordner.</translation>
     </message>
     <message>
         <source>Try a generated demo</source>
-        <translation>Try a generated demo</translation>
+        <translation>Generierte Demo ausprobieren</translation>
     </message>
     <message>
         <source>Use a supported camera's gyroscope data or import a separate gyroscope file.</source>
@@ -7146,6 +7341,35 @@ Deaktivieren Sie die Objektivstabilisierung (Optical SteadyShot), um Gyroflow ve
     <message>
         <source>Not added</source>
         <translation>Nicht hinzugefügt</translation>
+    </message>
+</context>
+<context>
+    <name>VideoSourcePicker</name>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="23"/>
+        <source>Unable to open the photo library.</source>
+        <translation>Die Fotomediathek konnte nicht geöffnet werden.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="38"/>
+        <source>Choose video source</source>
+        <translation>Videoquelle auswählen</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="40"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="972"/>
+        <source>Photos</source>
+        <translation>Fotos</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="47"/>
+        <source>Files and external storage</source>
+        <translation>Dateien und externe Speichermedien</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="70"/>
+        <source>Some videos could not be imported: %1</source>
+        <translation>Einige Videos konnten nicht importiert werden: %1</translation>
     </message>
 </context>
 </TS>

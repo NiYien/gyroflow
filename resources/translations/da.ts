@@ -794,12 +794,12 @@ På grund af begrænsninger af systemets videokodere understøttes gengivelse i 
     <message>
         <location filename="../../src/ui/App.qml" line="674"/>
         <source>Choose a video or motion data file</source>
-        <translation type="unfinished"></translation>
+        <translation>Vælg en video- eller bevægelsesdatafil</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="675"/>
         <source>Supported files</source>
-        <translation type="unfinished"></translation>
+        <translation>Understøttede filer</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1407"/>
@@ -1113,6 +1113,54 @@ Prøv en anden output-codec (H.265/HEVC klarer flere tilfælde end H.264/AVC), s
     <message>
         <source>This video is still loading.</source>
         <translation>Denne video indlæses stadig.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2030"/>
+        <location filename="../../src/ui/mobile/MobileSettings.qml" line="85"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="914"/>
+        <source>Experimental features</source>
+        <translation>Eksperimentelle funktioner</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2044"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="991"/>
+        <source>These features are experimental and may not be stable yet.</source>
+        <translation>Disse funktioner er eksperimentelle og er muligvis ikke stabile endnu.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3360"/>
+        <source>This graphics card does not support exporting in %1. Choose another output format.</source>
+        <translation>Dette grafikkort understøtter ikke eksport i %1. Vælg et andet outputformat.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3362"/>
+        <source>This graphics card does not support the selected export resolution (%1). Lower the resolution, for example to 1920x1080.</source>
+        <translation>Dette grafikkort understøtter ikke den valgte eksportopløsning (%1). Sænk opløsningen, f.eks. til 1920x1080.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3364"/>
+        <source>This graphics card does not support the current color format. Try another output format.</source>
+        <translation>Dette grafikkort understøtter ikke det aktuelle farveformat. Prøv et andet outputformat.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3367"/>
+        <source>You can also turn off "Use GPU encoding" and try again. Exporting will be slower.</source>
+        <translation>Du kan også slå „Brug GPU-kodning“ fra og prøve igen. Eksporten vil være langsommere.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3383"/>
+        <source>In-camera stabilization could not be reconstructed (%1).</source>
+        <translation>Kameraets stabilisering kunne ikke rekonstrueres (%1).</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3389"/>
+        <source>%1 could not be applied (%2). Processed without it.</source>
+        <translation>%1 kunne ikke anvendes (%2). Behandlet uden funktionen.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3389"/>
+        <source>, </source>
+        <translation>, </translation>
     </message>
 </context>
 <context>
@@ -2388,7 +2436,7 @@ Vil du indsende din profil?</translation>
     <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="226"/>
         <source>Now</source>
-        <translation type="unfinished"></translation>
+        <translation>Nu</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="755"/>
@@ -2602,47 +2650,47 @@ Vil du indsende din profil?</translation>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="574"/>
         <source>Anchor:</source>
-        <translation type="unfinished"></translation>
+        <translation>Referenceradius:</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="579"/>
         <source>Inner ring — narrow / tele lenses</source>
-        <translation type="unfinished"></translation>
+        <translation>Indre ring — smal billedvinkel / teleobjektiver</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="580"/>
         <source>Default — normal lenses</source>
-        <translation type="unfinished"></translation>
+        <translation>Standard — normale objektiver</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="581"/>
         <source>Wider — ultra-wide / anamorphic</source>
-        <translation type="unfinished"></translation>
+        <translation>Bredere — ultra-vidvinkel / anamorfisk</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="582"/>
         <source>Ultra-wide / fisheye</source>
-        <translation type="unfinished"></translation>
+        <translation>Ultra-vidvinkel / fiskeøje</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="605"/>
         <source>Bend @ r=</source>
-        <translation type="unfinished"></translation>
+        <translation>Bøjning ved r=</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="630"/>
         <source>Anchor radius (0.4-0.9). Switching anchor keeps the bend value but rebuilds k1/k2 so the new ring shows that bend.</source>
-        <translation type="unfinished"></translation>
+        <translation>Referenceradius (0.4-0.9). Ændring bevarer bøjningsværdien, men genberegner k1/k2, så den nye ring får denne bøjning.</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="657"/>
         <source>Reset bend / corner / anchor and clear k1..k4.</source>
-        <translation type="unfinished"></translation>
+        <translation>Nulstil bøjning / hjørner / referenceradius, og ryd k1..k4.</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="667"/>
         <source>Corner bend @ r=1.0</source>
-        <translation type="unfinished"></translation>
+        <translation>Hjørnebøjning ved r=1.0</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="705"/>
@@ -2688,6 +2736,51 @@ Vil du indsende din profil?</translation>
         <location filename="../../src/ui/menu/LensProfile.qml" line="552"/>
         <source>Distortion coefficients</source>
         <translation>Forvrængningskoefficienter</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="195"/>
+        <source>The lens metadata delay could not be estimated. The clip needs a zoom recorded in the lens metadata, and the picture has to follow it clearly.</source>
+        <translation>Forsinkelsen af objektivmetadata kunne ikke estimeres. Klippet skal have zoom registreret i objektivmetadata, og billedet skal tydeligt følge det.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="195"/>
+        <source>Ok</source>
+        <translation>Ok</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="478"/>
+        <source>Lens breathing compensation</source>
+        <translation>Kompensation for objektivånding</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="480"/>
+        <source>Keeps the field of view constant while focusing, using the lens breathing data recorded by the camera.</source>
+        <translation>Holder billedvinklen konstant under fokusering ved hjælp af objektivåndingsdata optaget af kameraet.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="539"/>
+        <source>Lens metadata delay</source>
+        <translation>Forsinkelse af objektivmetadata</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="542"/>
+        <source>How many frames later than the picture the lens reports its focal length. It depends on the lens, not on the frame rate: some report two frames late.</source>
+        <translation>Hvor mange billeder senere end billedet objektivet rapporterer sin brændvidde. Det afhænger af objektivet, ikke billedfrekvensen: nogle rapporterer to billeder for sent.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="543"/>
+        <source>"Analyze" measures it on the zooms recorded in this clip. Positive values read the lens metadata later.</source>
+        <translation>„Analyser“ måler forsinkelsen ud fra zoom i dette klip. Positive værdier læser objektivmetadata senere.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="551"/>
+        <source>frames</source>
+        <translation>billeder</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="562"/>
+        <source>Analyze</source>
+        <translation>Analyser</translation>
     </message>
 </context>
 <context>
@@ -3125,6 +3218,51 @@ Vil du indsende din profil?</translation>
         <location filename="../../src/ui/menu/MotionData.qml" line="846"/>
         <source>Export project file (including processed gyro data)</source>
         <translation>Eksporter projektfil (inklusive behandlede gyrodata)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="463"/>
+        <source>Optical stabilization</source>
+        <translation>Optisk stabilisering</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="464"/>
+        <source>Measure the camera rotation from the video itself and correct the motion data where they disagree. Useful when vibrations corrupt the gyro data, e.g. on a hard-mounted FPV camera. The analysis samples frames at an integer interval near 25 fps within the selected trim range.</source>
+        <translation>Mål kameraets rotation fra selve videoen og korrigér bevægelsesdata, hvor de afviger. Nyttigt når vibrationer forvrænger gyrodata, f.eks. på et fastmonteret FPV-kamera. Analysen udtager billeder med et heltalsinterval tæt på 25 fps inden for det valgte beskæringsinterval.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="522"/>
+        <source>Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis samples frames at an integer interval near 25 fps within the selected trim range. Can't be used together with in-camera stabilization reconstruction. The reported shift is sampled at frame centers; output cropping changes its apparent size.</source>
+        <translation>Mål fra videoen, hvordan kameraet bevægede sig sidelæns og op og ned, og forskyd hele billedet for at holde én afstand stabil. Kræver bevægelsesdata fra filen; analysen udtager billeder med et heltalsinterval tæt på 25 fps i det valgte beskæringsinterval. Kan ikke bruges sammen med rekonstruktion af kameraets stabilisering. Den viste forskydning måles i billedernes centre; beskæring af output ændrer dens tilsyneladende størrelse.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="534"/>
+        <source>Measured in %1 of %2 frames, applied shift up to %3% of the source frame's short side</source>
+        <translation>Målt i %1 af %2 billeder, anvendt forskydning op til %3% af kildebilledets korte side</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="538"/>
+        <source>Automatic parameters</source>
+        <translation>Automatiske parametre</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="539"/>
+        <source>Choose the reference distance and the smoothness from the analysis: hold the distant scenery steady, or the subject once it fills most of the picture, and smooth as much as the shift range allows.</source>
+        <translation>Vælg referenceafstand og udjævning ud fra analysen: hold det fjerne landskab stabilt, eller motivet når det fylder det meste af billedet, og udjævn så meget som forskydningsområdet tillader.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="547"/>
+        <source>Move toward Near to stabilize closer objects, or toward Far to stabilize more distant content. The middle position stabilizes the farther parts of the image (default).</source>
+        <translation>Flyt mod Nær for at stabilisere nærmere objekter eller mod Fjern for mere fjernt indhold. Midterpositionen stabiliserer de fjernere dele af billedet (standard).</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="553"/>
+        <source>Near</source>
+        <translation>Nær</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="566"/>
+        <source>Far</source>
+        <translation>Fjern</translation>
     </message>
 </context>
 <context>
@@ -3596,7 +3734,7 @@ Luk og åbn Final Cut Pro igen, før du bruger effekten.</translation>
     <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="358"/>
         <source>Edit</source>
-        <translation type="unfinished"></translation>
+        <translation>Rediger</translation>
     </message>
     <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="360"/>
@@ -3966,7 +4104,7 @@ Du kan parre manuelt: højreklik på videoen → **&quot;Par med gyro&quot;** og
     </message>
     <message>
         <source>Scanning segment %1 of %2</source>
-        <translation type="vanished">Scanner segment %1 af %2</translation>
+        <translation>Scanner segment %1 af %2</translation>
     </message>
     <message>
         <source>Click Ok to run Auto match and assign the data.</source>
@@ -4121,7 +4259,7 @@ Kontrollér dette, og prøv igen.</translation>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1697"/>
         <source>Focal length (mm)</source>
-        <translation type="unfinished">Brændvidde (mm)</translation>
+        <translation>Brændvidde (mm)</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2387"/>
@@ -4188,12 +4326,12 @@ Kontrollér dette, og prøv igen.</translation>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="3424"/>
         <source>%1 files could not be read and were skipped.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 filer kunne ikke læses og blev sprunget over.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="3429"/>
         <source>%1 file(s) are already in the render queue.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 fil(er) er allerede i gengivelseskøen.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2558"/>
@@ -4265,13 +4403,13 @@ Hvis der slet ikke er brugbare tidssynkroniseringsdata, så højreklik på video
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1653"/>
         <source>Frame rate (0=unchanged)</source>
-        <translation type="unfinished">Billedhastighed (0=uændret)</translation>
+        <translation>Billedhastighed (0=uændret)</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1654"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1698"/>
         <source>OK</source>
-        <translation type="unfinished">OK</translation>
+        <translation>OK</translation>
     </message>
     <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="362"/>
@@ -4345,13 +4483,13 @@ Klik på Ok, og vælg destinationsmappen.</translation>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="3125"/>
         <source>No supported files were found in the selection.</source>
-        <translation type="unfinished"></translation>
+        <translation>Der blev ikke fundet understøttede filer i valget.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="3169"/>
         <source>Image sequence has been detected.
 Please provide frame rate: </source>
-        <translation type="unfinished">Billedsekvens er blevet opdaget.
+        <translation>Billedsekvens er blevet opdaget.
 Angiv venligst billedhastighed: </translation>
     </message>
     <message>
@@ -4522,6 +4660,38 @@ Angiv venligst billedhastighed: </translation>
     <message>
         <source>Search stage %1 of %2</source>
         <translation>Søgetrin %1 af %2</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="413"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="758"/>
+        <source>Unable to open the video for deep matching. Please select the video again.</source>
+        <translation>Videoen kunne ikke åbnes til dyb matching. Vælg videoen igen.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="415"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="760"/>
+        <source>Unable to decode the video for deep matching. Please try another video.</source>
+        <translation>Videoen kunne ikke afkodes til dyb matching. Prøv en anden video.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="762"/>
+        <source>Unable to convert video frames for deep matching. Please try another video.</source>
+        <translation>Videobillederne kunne ikke konverteres til dyb matching. Prøv en anden video.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="764"/>
+        <source>No usable video frames were found in the deep-match analysis windows. Please try another video.</source>
+        <translation>Der blev ikke fundet brugbare videobilleder i analyseintervallerne til dyb matching. Prøv en anden video.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2639"/>
+        <source>Analyzing: %1</source>
+        <translation>Analyserer: %1</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2849"/>
+        <source>Analyzing...</source>
+        <translation>Analyserer...</translation>
     </message>
 </context>
 <context>
@@ -5253,6 +5423,26 @@ Hvis du har brug for mere nøjagtighed, skal du øge antallet af iterationer i &
         <location filename="../../src/ui/menu/Stabilization.qml" line="861"/>
         <source>Link with zooming speed</source>
         <translation>Forbind med zoomhastighed</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="762"/>
+        <source>Stabilize focal length</source>
+        <translation>Stabilisér brændvidde</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="764"/>
+        <source>Limits how fast the picture may zoom when the lens metadata records a changing focal length.</source>
+        <translation>Begrænser hvor hurtigt billedet må zoome, når objektivmetadata registrerer en ændret brændvidde.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="765"/>
+        <source>Zooms slower than the limit pass through untouched. Faster zooms are spread out by cropping ahead of a zoom-in and after a zoom-out. Lower values give a smoother zoom and more crop.</source>
+        <translation>Zoom langsommere end grænsen forbliver uændret. Hurtigere zoom fordeles over tid ved at beskære før indzoomning og efter udzoomning. Lavere værdier giver mere jævn zoom og mere beskæring.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="774"/>
+        <source>Max zoom speed</source>
+        <translation>Maks. zoomhastighed</translation>
     </message>
 </context>
 <context>
@@ -6072,6 +6262,11 @@ Er du sikker på, at du vil fortsætte?</translation>
         <source>Save</source>
         <translation>Gem</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/components/Timeline.qml" line="273"/>
+        <source>Focal length</source>
+        <translation>Brændvidde</translation>
+    </message>
 </context>
 <context>
     <name>TimelineSyncPoint</name>
@@ -6134,27 +6329,27 @@ Er du sikker på, at du vil fortsætte?</translation>
     <message>
         <location filename="../../src/ui/Util.js" line="10"/>
         <source>d</source>
-        <translation type="unfinished"></translation>
+        <translation>d</translation>
     </message>
     <message>
         <location filename="../../src/ui/Util.js" line="11"/>
         <source>h</source>
-        <translation type="unfinished"></translation>
+        <translation>t</translation>
     </message>
     <message>
         <location filename="../../src/ui/Util.js" line="12"/>
         <source>m</source>
-        <translation type="unfinished"></translation>
+        <translation>min</translation>
     </message>
     <message>
         <location filename="../../src/ui/Util.js" line="13"/>
         <source>s</source>
-        <translation type="unfinished">s</translation>
+        <translation>s</translation>
     </message>
     <message>
         <location filename="../../src/ui/Util.js" line="15"/>
         <source>&amp;lt; 1s</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;lt; 1 s</translation>
     </message>
 </context>
 <context>
@@ -6363,7 +6558,7 @@ Deaktiver objektivstabilisering (Optical SteadyShot) for at bruge Gyroflow.</tra
     <message>
         <location filename="../../src/ui/VideoArea.qml" line="472"/>
         <source>Previous video is still loading, please wait...</source>
-        <translation type="unfinished"></translation>
+        <translation>Den forrige video indlæses stadig, vent venligst...</translation>
     </message>
     <message>
         <location filename="../../src/ui/VideoArea.qml" line="524"/>
@@ -6568,19 +6763,19 @@ Deaktiver objektivstabilisering (Optical SteadyShot) for at bruge Gyroflow.</tra
     </message>
     <message>
         <source>About NiYien</source>
-        <translation>About NiYien</translation>
+        <translation>Om NiYien</translation>
     </message>
     <message>
         <source>Help and support</source>
-        <translation>Help and support</translation>
+        <translation>Hjælp og support</translation>
     </message>
     <message>
         <source>Open-source licenses</source>
-        <translation>Open-source licenses</translation>
+        <translation>Open source-licenser</translation>
     </message>
     <message>
         <source>Privacy policy</source>
-        <translation>Privacy policy</translation>
+        <translation>Privatlivspolitik</translation>
     </message>
 </context>
 <context>
@@ -6995,7 +7190,7 @@ Deaktiver objektivstabilisering (Optical SteadyShot) for at bruge Gyroflow.</tra
     </message>
     <message>
         <source>About NiYien</source>
-        <translation>About NiYien</translation>
+        <translation>Om NiYien</translation>
     </message>
     <message>
         <source>Export editing project</source>
@@ -7007,7 +7202,7 @@ Deaktiver objektivstabilisering (Optical SteadyShot) for at bruge Gyroflow.</tra
     </message>
     <message>
         <source>Help and support</source>
-        <translation>Help and support</translation>
+        <translation>Hjælp og support</translation>
     </message>
     <message>
         <source>How it works</source>
@@ -7015,31 +7210,31 @@ Deaktiver objektivstabilisering (Optical SteadyShot) for at bruge Gyroflow.</tra
     </message>
     <message>
         <source>Open-source licenses</source>
-        <translation>Open-source licenses</translation>
+        <translation>Open source-licenser</translation>
     </message>
     <message>
         <source>Privacy policy</source>
-        <translation>Privacy policy</translation>
+        <translation>Privatlivspolitik</translation>
     </message>
     <message>
         <source>Share / Save to Files</source>
-        <translation>Share / Save to Files</translation>
+        <translation>Del / Gem i Arkiver</translation>
     </message>
     <message>
         <source>Source code</source>
-        <translation>Source code</translation>
+        <translation>Kildekode</translation>
     </message>
     <message>
         <source>The demo could not be prepared. Please try again.</source>
-        <translation>The demo could not be prepared. Please try again.</translation>
+        <translation>Demoen kunne ikke forberedes. Prøv igen.</translation>
     </message>
     <message>
         <source>The output file is unavailable. Check the output folder.</source>
-        <translation>The output file is unavailable. Check the output folder.</translation>
+        <translation>Outputfilen er ikke tilgængelig. Tjek outputmappen.</translation>
     </message>
     <message>
         <source>Try a generated demo</source>
-        <translation>Try a generated demo</translation>
+        <translation>Prøv en genereret demo</translation>
     </message>
     <message>
         <source>Use a supported camera's gyroscope data or import a separate gyroscope file.</source>
@@ -7146,6 +7341,35 @@ Deaktiver objektivstabilisering (Optical SteadyShot) for at bruge Gyroflow.</tra
     <message>
         <source>Not added</source>
         <translation>Ikke tilføjet</translation>
+    </message>
+</context>
+<context>
+    <name>VideoSourcePicker</name>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="23"/>
+        <source>Unable to open the photo library.</source>
+        <translation>Fotobiblioteket kunne ikke åbnes.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="38"/>
+        <source>Choose video source</source>
+        <translation>Vælg videokilde</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="40"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="972"/>
+        <source>Photos</source>
+        <translation>Fotos</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="47"/>
+        <source>Files and external storage</source>
+        <translation>Filer og eksternt lager</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="70"/>
+        <source>Some videos could not be imported: %1</source>
+        <translation>Nogle videoer kunne ikke importeres: %1</translation>
     </message>
 </context>
 </TS>

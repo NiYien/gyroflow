@@ -794,12 +794,12 @@ Z důvodu omezení systémových kodérů není vykreslování na pozadí podpor
     <message>
         <location filename="../../src/ui/App.qml" line="674"/>
         <source>Choose a video or motion data file</source>
-        <translation type="unfinished"></translation>
+        <translation>Vyberte video nebo soubor pohybových dat</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="675"/>
         <source>Supported files</source>
-        <translation type="unfinished"></translation>
+        <translation>Podporované soubory</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1407"/>
@@ -1113,6 +1113,54 @@ Zkuste jiný výstupní kodek (H.265/HEVC zvládne více případů než H.264/A
     <message>
         <source>This video is still loading.</source>
         <translation>Toto video se stále načítá.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2030"/>
+        <location filename="../../src/ui/mobile/MobileSettings.qml" line="85"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="914"/>
+        <source>Experimental features</source>
+        <translation>Experimentální funkce</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2044"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="991"/>
+        <source>These features are experimental and may not be stable yet.</source>
+        <translation>Tyto funkce jsou experimentální a nemusí být ještě stabilní.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3360"/>
+        <source>This graphics card does not support exporting in %1. Choose another output format.</source>
+        <translation>Tato grafická karta nepodporuje export do %1. Vyberte jiný výstupní formát.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3362"/>
+        <source>This graphics card does not support the selected export resolution (%1). Lower the resolution, for example to 1920x1080.</source>
+        <translation>Tato grafická karta nepodporuje vybrané rozlišení exportu (%1). Snižte rozlišení, například na 1920x1080.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3364"/>
+        <source>This graphics card does not support the current color format. Try another output format.</source>
+        <translation>Tato grafická karta nepodporuje aktuální barevný formát. Zkuste jiný výstupní formát.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3367"/>
+        <source>You can also turn off "Use GPU encoding" and try again. Exporting will be slower.</source>
+        <translation>Můžete také vypnout „Použít GPU kódování“ a zkusit to znovu. Export bude pomalejší.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3383"/>
+        <source>In-camera stabilization could not be reconstructed (%1).</source>
+        <translation>Stabilizaci ve fotoaparátu se nepodařilo rekonstruovat (%1).</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3389"/>
+        <source>%1 could not be applied (%2). Processed without it.</source>
+        <translation>%1 se nepodařilo použít (%2). Zpracováno bez této funkce.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3389"/>
+        <source>, </source>
+        <translation>, </translation>
     </message>
 </context>
 <context>
@@ -2388,7 +2436,7 @@ Chcete odeslat svůj profil?</translation>
     <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="226"/>
         <source>Now</source>
-        <translation type="unfinished"></translation>
+        <translation>Nyní</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="755"/>
@@ -2602,47 +2650,47 @@ Chcete odeslat svůj profil?</translation>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="574"/>
         <source>Anchor:</source>
-        <translation type="unfinished"></translation>
+        <translation>Referenční poloměr:</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="579"/>
         <source>Inner ring — narrow / tele lenses</source>
-        <translation type="unfinished"></translation>
+        <translation>Vnitřní kruh — úzký záběr / teleobjektivy</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="580"/>
         <source>Default — normal lenses</source>
-        <translation type="unfinished"></translation>
+        <translation>Výchozí — běžné objektivy</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="581"/>
         <source>Wider — ultra-wide / anamorphic</source>
-        <translation type="unfinished"></translation>
+        <translation>Širší — ultraširokoúhlý / anamorfní</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="582"/>
         <source>Ultra-wide / fisheye</source>
-        <translation type="unfinished"></translation>
+        <translation>Ultraširokoúhlý / rybí oko</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="605"/>
         <source>Bend @ r=</source>
-        <translation type="unfinished"></translation>
+        <translation>Zakřivení při r=</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="630"/>
         <source>Anchor radius (0.4-0.9). Switching anchor keeps the bend value but rebuilds k1/k2 so the new ring shows that bend.</source>
-        <translation type="unfinished"></translation>
+        <translation>Referenční poloměr (0.4-0.9). Změna zachová hodnotu zakřivení, ale přepočítá k1/k2, aby nové referenční kružnici odpovídalo stejné zakřivení.</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="657"/>
         <source>Reset bend / corner / anchor and clear k1..k4.</source>
-        <translation type="unfinished"></translation>
+        <translation>Obnovit zakřivení / rohy / referenční poloměr a vymazat k1..k4.</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="667"/>
         <source>Corner bend @ r=1.0</source>
-        <translation type="unfinished"></translation>
+        <translation>Zakřivení rohů při r=1.0</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="705"/>
@@ -2688,6 +2736,51 @@ Chcete odeslat svůj profil?</translation>
         <location filename="../../src/ui/menu/LensProfile.qml" line="552"/>
         <source>Distortion coefficients</source>
         <translation>Koeficienty zkreslení</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="195"/>
+        <source>The lens metadata delay could not be estimated. The clip needs a zoom recorded in the lens metadata, and the picture has to follow it clearly.</source>
+        <translation>Zpoždění metadat objektivu nelze odhadnout. Klip musí obsahovat zoom zaznamenaný v metadatech objektivu a obraz musí jeho změnu jasně odrážet.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="195"/>
+        <source>Ok</source>
+        <translation>Ok</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="478"/>
+        <source>Lens breathing compensation</source>
+        <translation>Kompenzace dýchání objektivu</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="480"/>
+        <source>Keeps the field of view constant while focusing, using the lens breathing data recorded by the camera.</source>
+        <translation>Udržuje stálý zorný úhel při ostření pomocí dat o dýchání objektivu zaznamenaných kamerou.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="539"/>
+        <source>Lens metadata delay</source>
+        <translation>Zpoždění metadat objektivu</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="542"/>
+        <source>How many frames later than the picture the lens reports its focal length. It depends on the lens, not on the frame rate: some report two frames late.</source>
+        <translation>O kolik snímků později než obraz objektiv hlásí ohniskovou vzdálenost. Závisí na objektivu, ne na snímkové frekvenci: některé hlásí o dva snímky později.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="543"/>
+        <source>"Analyze" measures it on the zooms recorded in this clip. Positive values read the lens metadata later.</source>
+        <translation>„Analyzovat“ změří zpoždění z přiblížení zaznamenaných v tomto klipu. Kladné hodnoty čtou metadata objektivu později.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="551"/>
+        <source>frames</source>
+        <translation>snímky</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="562"/>
+        <source>Analyze</source>
+        <translation>Analyzovat</translation>
     </message>
 </context>
 <context>
@@ -3126,6 +3219,51 @@ Chcete odeslat svůj profil?</translation>
         <source>Export project file (including processed gyro data)</source>
         <translation>Export souboru projektu (včetně zpracovaných gyroskopických dat)</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="463"/>
+        <source>Optical stabilization</source>
+        <translation>Optická stabilizace</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="464"/>
+        <source>Measure the camera rotation from the video itself and correct the motion data where they disagree. Useful when vibrations corrupt the gyro data, e.g. on a hard-mounted FPV camera. The analysis samples frames at an integer interval near 25 fps within the selected trim range.</source>
+        <translation>Změří otáčení kamery přímo z videa a opraví pohybová data tam, kde se neshodují. Hodí se při vibracích narušujících data gyroskopu, například u pevně uchycené FPV kamery. Analýza vzorkuje snímky v celočíselném kroku přibližně 25 fps ve vybraném rozsahu ořezu.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="522"/>
+        <source>Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis samples frames at an integer interval near 25 fps within the selected trim range. Can't be used together with in-camera stabilization reconstruction. The reported shift is sampled at frame centers; output cropping changes its apparent size.</source>
+        <translation>Změří z videa pohyb kamery do stran a nahoru a dolů a posune celý obraz tak, aby zvolená vzdálenost zůstala stabilní. Vyžaduje pohybová data ze souboru; analýza vzorkuje snímky v celočíselném kroku přibližně 25 fps ve vybraném rozsahu ořezu. Nelze používat společně s rekonstrukcí stabilizace ve fotoaparátu. Uváděný posun se měří ve středech snímků; ořez výstupu mění jeho zdánlivou velikost.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="534"/>
+        <source>Measured in %1 of %2 frames, applied shift up to %3% of the source frame's short side</source>
+        <translation>Změřeno v %1 z %2 snímků, použitý posun až %3% krátké strany zdrojového snímku</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="538"/>
+        <source>Automatic parameters</source>
+        <translation>Automatické parametry</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="539"/>
+        <source>Choose the reference distance and the smoothness from the analysis: hold the distant scenery steady, or the subject once it fills most of the picture, and smooth as much as the shift range allows.</source>
+        <translation>Z analýzy zvolí referenční vzdálenost a vyhlazení: stabilizuje vzdálenou krajinu, nebo subjekt, pokud zabírá většinu obrazu, a vyhladí pohyb, jak jen rozsah posunu dovolí.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="547"/>
+        <source>Move toward Near to stabilize closer objects, or toward Far to stabilize more distant content. The middle position stabilizes the farther parts of the image (default).</source>
+        <translation>Posunem k Blízko stabilizujete bližší objekty, posunem k Daleko vzdálenější obsah. Střední poloha stabilizuje vzdálenější části obrazu (výchozí).</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="553"/>
+        <source>Near</source>
+        <translation>Blízko</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="566"/>
+        <source>Far</source>
+        <translation>Daleko</translation>
+    </message>
 </context>
 <context>
     <name>MountingPresetSelector</name>
@@ -3441,7 +3579,7 @@ Před použitím efektu zavřete a znovu otevřete Final Cut Pro.</translation>
     <message>
         <location filename="../../src/ui/menu/Advanced.qml" line="186"/>
         <source>Mobile Light</source>
-        <translation></translation>
+        <translation>Mobilní světlý</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/Advanced.qml" line="187"/>
@@ -3596,7 +3734,7 @@ Před použitím efektu zavřete a znovu otevřete Final Cut Pro.</translation>
     <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="358"/>
         <source>Edit</source>
-        <translation type="unfinished"></translation>
+        <translation>Upravit</translation>
     </message>
     <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="360"/>
@@ -3966,7 +4104,7 @@ Nespárované video můžete spárovat ručně: klikněte na video pravým tlač
     </message>
     <message>
         <source>Scanning segment %1 of %2</source>
-        <translation type="vanished">Prohledávání úseku %1 z %2</translation>
+        <translation>Prohledávání úseku %1 z %2</translation>
     </message>
     <message>
         <source>Click Ok to run Auto match and assign the data.</source>
@@ -4121,7 +4259,7 @@ Zkontrolujte nastavení a zkuste to znovu.</translation>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1697"/>
         <source>Focal length (mm)</source>
-        <translation type="unfinished">Ohnisková vzdálenost (mm)</translation>
+        <translation>Ohnisková vzdálenost (mm)</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2387"/>
@@ -4188,12 +4326,12 @@ Zkontrolujte nastavení a zkuste to znovu.</translation>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="3424"/>
         <source>%1 files could not be read and were skipped.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 souborů se nepodařilo přečíst a bylo přeskočeno.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="3429"/>
         <source>%1 file(s) are already in the render queue.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 souborů je již ve frontě renderování.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2558"/>
@@ -4265,13 +4403,13 @@ Pokud nejsou k dispozici vůbec žádná použitelná data časové synchronizac
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1653"/>
         <source>Frame rate (0=unchanged)</source>
-        <translation type="unfinished">Snímková frekvence (0=nezměněno)</translation>
+        <translation>Snímková frekvence (0=nezměněno)</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1654"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1698"/>
         <source>OK</source>
-        <translation type="unfinished">OK</translation>
+        <translation>OK</translation>
     </message>
     <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="362"/>
@@ -4345,13 +4483,13 @@ Klepněte na tlačítko OK a vyberte cílovou složku.</translation>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="3125"/>
         <source>No supported files were found in the selection.</source>
-        <translation type="unfinished"></translation>
+        <translation>Ve výběru nebyly nalezeny podporované soubory.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="3169"/>
         <source>Image sequence has been detected.
 Please provide frame rate: </source>
-        <translation type="unfinished">Byla zjištěna sekvence obrázků.
+        <translation>Byla zjištěna sekvence obrázků.
 Zadejte prosím frekvenci snímku: </translation>
     </message>
     <message>
@@ -4522,6 +4660,38 @@ Zadejte prosím frekvenci snímku: </translation>
     <message>
         <source>Search stage %1 of %2</source>
         <translation>Fáze hledání %1 z %2</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="413"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="758"/>
+        <source>Unable to open the video for deep matching. Please select the video again.</source>
+        <translation>Video pro hloubkové párování nelze otevřít. Vyberte video znovu.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="415"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="760"/>
+        <source>Unable to decode the video for deep matching. Please try another video.</source>
+        <translation>Video pro hloubkové párování nelze dekódovat. Zkuste jiné video.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="762"/>
+        <source>Unable to convert video frames for deep matching. Please try another video.</source>
+        <translation>Snímky videa pro hloubkové párování nelze převést. Zkuste jiné video.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="764"/>
+        <source>No usable video frames were found in the deep-match analysis windows. Please try another video.</source>
+        <translation>V úsecích analýzy hloubkového párování nebyly nalezeny použitelné snímky videa. Zkuste jiné video.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2639"/>
+        <source>Analyzing: %1</source>
+        <translation>Analyzuje se: %1</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2849"/>
+        <source>Analyzing...</source>
+        <translation>Analyzuje se...</translation>
     </message>
 </context>
 <context>
@@ -5253,6 +5423,26 @@ Pokud potřebujete větší přesnost, zvyšte počet iterací v části „Pokr
         <location filename="../../src/ui/menu/Stabilization.qml" line="861"/>
         <source>Link with zooming speed</source>
         <translation>Propojit s rychlostí přiblížení</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="762"/>
+        <source>Stabilize focal length</source>
+        <translation>Stabilizovat ohniskovou vzdálenost</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="764"/>
+        <source>Limits how fast the picture may zoom when the lens metadata records a changing focal length.</source>
+        <translation>Omezuje rychlost přiblížení obrazu, když metadata objektivu zaznamenávají měnící se ohniskovou vzdálenost.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="765"/>
+        <source>Zooms slower than the limit pass through untouched. Faster zooms are spread out by cropping ahead of a zoom-in and after a zoom-out. Lower values give a smoother zoom and more crop.</source>
+        <translation>Zoom pomalejší než limit zůstane beze změny. Rychlejší zoom se rozloží v čase ořezem před přiblížením a po oddálení. Nižší hodnoty znamenají plynulejší zoom a větší ořez.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="774"/>
+        <source>Max zoom speed</source>
+        <translation>Maximální rychlost zoomu</translation>
     </message>
 </context>
 <context>
@@ -6071,6 +6261,11 @@ Opravdu chcete pokračovat?</translation>
         <source>Save</source>
         <translation>Uložit</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/components/Timeline.qml" line="273"/>
+        <source>Focal length</source>
+        <translation>Ohnisková vzdálenost</translation>
+    </message>
 </context>
 <context>
     <name>TimelineSyncPoint</name>
@@ -6133,27 +6328,27 @@ Opravdu chcete pokračovat?</translation>
     <message>
         <location filename="../../src/ui/Util.js" line="10"/>
         <source>d</source>
-        <translation type="unfinished"></translation>
+        <translation>d</translation>
     </message>
     <message>
         <location filename="../../src/ui/Util.js" line="11"/>
         <source>h</source>
-        <translation type="unfinished"></translation>
+        <translation>h</translation>
     </message>
     <message>
         <location filename="../../src/ui/Util.js" line="12"/>
         <source>m</source>
-        <translation type="unfinished"></translation>
+        <translation>min</translation>
     </message>
     <message>
         <location filename="../../src/ui/Util.js" line="13"/>
         <source>s</source>
-        <translation type="unfinished">s</translation>
+        <translation>s</translation>
     </message>
     <message>
         <location filename="../../src/ui/Util.js" line="15"/>
         <source>&amp;lt; 1s</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;lt; 1 s</translation>
     </message>
 </context>
 <context>
@@ -6362,7 +6557,7 @@ Chcete-li použít Gyroflow, vypněte stabilizaci objektivu (Optical SteadyShot)
     <message>
         <location filename="../../src/ui/VideoArea.qml" line="472"/>
         <source>Previous video is still loading, please wait...</source>
-        <translation type="unfinished"></translation>
+        <translation>Předchozí video se stále načítá, počkejte prosím...</translation>
     </message>
     <message>
         <location filename="../../src/ui/VideoArea.qml" line="524"/>
@@ -6567,19 +6762,19 @@ Chcete-li použít Gyroflow, vypněte stabilizaci objektivu (Optical SteadyShot)
     </message>
     <message>
         <source>About NiYien</source>
-        <translation>About NiYien</translation>
+        <translation>O NiYien</translation>
     </message>
     <message>
         <source>Help and support</source>
-        <translation>Help and support</translation>
+        <translation>Nápověda a podpora</translation>
     </message>
     <message>
         <source>Open-source licenses</source>
-        <translation>Open-source licenses</translation>
+        <translation>Licence otevřeného softwaru</translation>
     </message>
     <message>
         <source>Privacy policy</source>
-        <translation>Privacy policy</translation>
+        <translation>Zásady ochrany soukromí</translation>
     </message>
 </context>
 <context>
@@ -6994,7 +7189,7 @@ Chcete-li použít Gyroflow, vypněte stabilizaci objektivu (Optical SteadyShot)
     </message>
     <message>
         <source>About NiYien</source>
-        <translation>About NiYien</translation>
+        <translation>O NiYien</translation>
     </message>
     <message>
         <source>Export editing project</source>
@@ -7006,7 +7201,7 @@ Chcete-li použít Gyroflow, vypněte stabilizaci objektivu (Optical SteadyShot)
     </message>
     <message>
         <source>Help and support</source>
-        <translation>Help and support</translation>
+        <translation>Nápověda a podpora</translation>
     </message>
     <message>
         <source>How it works</source>
@@ -7014,31 +7209,31 @@ Chcete-li použít Gyroflow, vypněte stabilizaci objektivu (Optical SteadyShot)
     </message>
     <message>
         <source>Open-source licenses</source>
-        <translation>Open-source licenses</translation>
+        <translation>Licence otevřeného softwaru</translation>
     </message>
     <message>
         <source>Privacy policy</source>
-        <translation>Privacy policy</translation>
+        <translation>Zásady ochrany soukromí</translation>
     </message>
     <message>
         <source>Share / Save to Files</source>
-        <translation>Share / Save to Files</translation>
+        <translation>Sdílet / Uložit do Souborů</translation>
     </message>
     <message>
         <source>Source code</source>
-        <translation>Source code</translation>
+        <translation>Zdrojový kód</translation>
     </message>
     <message>
         <source>The demo could not be prepared. Please try again.</source>
-        <translation>The demo could not be prepared. Please try again.</translation>
+        <translation>Ukázku se nepodařilo připravit. Zkuste to znovu.</translation>
     </message>
     <message>
         <source>The output file is unavailable. Check the output folder.</source>
-        <translation>The output file is unavailable. Check the output folder.</translation>
+        <translation>Výstupní soubor není dostupný. Zkontrolujte výstupní složku.</translation>
     </message>
     <message>
         <source>Try a generated demo</source>
-        <translation>Try a generated demo</translation>
+        <translation>Vyzkoušet vygenerovanou ukázku</translation>
     </message>
     <message>
         <source>Use a supported camera's gyroscope data or import a separate gyroscope file.</source>
@@ -7145,6 +7340,35 @@ Chcete-li použít Gyroflow, vypněte stabilizaci objektivu (Optical SteadyShot)
     <message>
         <source>Not added</source>
         <translation>Nepřidáno</translation>
+    </message>
+</context>
+<context>
+    <name>VideoSourcePicker</name>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="23"/>
+        <source>Unable to open the photo library.</source>
+        <translation>Knihovnu fotek nelze otevřít.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="38"/>
+        <source>Choose video source</source>
+        <translation>Vyberte zdroj videa</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="40"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="972"/>
+        <source>Photos</source>
+        <translation>Fotky</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="47"/>
+        <source>Files and external storage</source>
+        <translation>Soubory a externí úložiště</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="70"/>
+        <source>Some videos could not be imported: %1</source>
+        <translation>Některá videa se nepodařilo importovat: %1</translation>
     </message>
 </context>
 </TS>

@@ -793,12 +793,12 @@ Due to limitations of the system video encoders, rendering in the background is 
     <message>
         <location filename="../../src/ui/App.qml" line="674"/>
         <source>Choose a video or motion data file</source>
-        <translation type="unfinished"></translation>
+        <translation>동영상 또는 모션 데이터 파일 선택</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="675"/>
         <source>Supported files</source>
-        <translation type="unfinished"></translation>
+        <translation>지원되는 파일</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1407"/>
@@ -1112,6 +1112,54 @@ Try a different output codec (H.265/HEVC handles more cases than H.264/AVC), low
     <message>
         <source>This video is still loading.</source>
         <translation>이 동영상을 아직 불러오는 중입니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2030"/>
+        <location filename="../../src/ui/mobile/MobileSettings.qml" line="85"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="914"/>
+        <source>Experimental features</source>
+        <translation>실험 기능</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2044"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="991"/>
+        <source>These features are experimental and may not be stable yet.</source>
+        <translation>이 기능들은 실험 단계이며 아직 안정적이지 않을 수 있습니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3360"/>
+        <source>This graphics card does not support exporting in %1. Choose another output format.</source>
+        <translation>이 그래픽 카드는 %1 형식으로 내보내기를 지원하지 않습니다. 다른 출력 형식을 선택하세요.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3362"/>
+        <source>This graphics card does not support the selected export resolution (%1). Lower the resolution, for example to 1920x1080.</source>
+        <translation>이 그래픽 카드는 선택한 내보내기 해상도 (%1)를 지원하지 않습니다. 예를 들어 1920x1080으로 해상도를 낮추세요.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3364"/>
+        <source>This graphics card does not support the current color format. Try another output format.</source>
+        <translation>이 그래픽 카드는 현재 색상 형식을 지원하지 않습니다. 다른 출력 형식을 시도하세요.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3367"/>
+        <source>You can also turn off "Use GPU encoding" and try again. Exporting will be slower.</source>
+        <translation>“GPU 인코딩 사용”을 끄고 다시 시도할 수도 있습니다. 내보내기가 느려집니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3383"/>
+        <source>In-camera stabilization could not be reconstructed (%1).</source>
+        <translation>카메라 내 손떨림 보정을 재구성할 수 없습니다 (%1).</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3389"/>
+        <source>%1 could not be applied (%2). Processed without it.</source>
+        <translation>%1을(를) 적용할 수 없습니다 (%2). 이 기능 없이 처리했습니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3389"/>
+        <source>, </source>
+        <translation>, </translation>
     </message>
 </context>
 <context>
@@ -2387,7 +2435,7 @@ Do you want to submit your profile?</source>
     <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="226"/>
         <source>Now</source>
-        <translation type="unfinished"></translation>
+        <translation>현재</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="755"/>
@@ -2601,47 +2649,47 @@ Do you want to submit your profile?</source>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="574"/>
         <source>Anchor:</source>
-        <translation type="unfinished"></translation>
+        <translation>기준 반경:</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="579"/>
         <source>Inner ring — narrow / tele lenses</source>
-        <translation type="unfinished"></translation>
+        <translation>안쪽 원 — 좁은 화각 / 망원 렌즈</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="580"/>
         <source>Default — normal lenses</source>
-        <translation type="unfinished"></translation>
+        <translation>기본 — 일반 렌즈</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="581"/>
         <source>Wider — ultra-wide / anamorphic</source>
-        <translation type="unfinished"></translation>
+        <translation>넓게 — 초광각 / 아나모픽</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="582"/>
         <source>Ultra-wide / fisheye</source>
-        <translation type="unfinished"></translation>
+        <translation>초광각 / 어안</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="605"/>
         <source>Bend @ r=</source>
-        <translation type="unfinished"></translation>
+        <translation>r=에서의 굽힘: </translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="630"/>
         <source>Anchor radius (0.4-0.9). Switching anchor keeps the bend value but rebuilds k1/k2 so the new ring shows that bend.</source>
-        <translation type="unfinished"></translation>
+        <translation>기준 반경 (0.4-0.9). 변경 시 굽힘 값은 유지되지만 새 원에서 같은 굽힘이 나타나도록 k1/k2를 다시 계산합니다.</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="657"/>
         <source>Reset bend / corner / anchor and clear k1..k4.</source>
-        <translation type="unfinished"></translation>
+        <translation>굽힘 / 모서리 / 기준 반경을 초기화하고 k1..k4를 지웁니다.</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="667"/>
         <source>Corner bend @ r=1.0</source>
-        <translation type="unfinished"></translation>
+        <translation>모서리 굽힘 (r=1.0)</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="705"/>
@@ -2687,6 +2735,51 @@ Do you want to submit your profile?</source>
         <location filename="../../src/ui/menu/LensProfile.qml" line="552"/>
         <source>Distortion coefficients</source>
         <translation>왜곡 계수</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="195"/>
+        <source>The lens metadata delay could not be estimated. The clip needs a zoom recorded in the lens metadata, and the picture has to follow it clearly.</source>
+        <translation>렌즈 메타데이터 지연을 추정할 수 없습니다. 클립의 렌즈 메타데이터에 줌이 기록되어 있고, 영상에도 그 변화가 명확히 나타나야 합니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="195"/>
+        <source>Ok</source>
+        <translation>확인</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="478"/>
+        <source>Lens breathing compensation</source>
+        <translation>렌즈 브리딩 보정</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="480"/>
+        <source>Keeps the field of view constant while focusing, using the lens breathing data recorded by the camera.</source>
+        <translation>카메라에 기록된 렌즈 브리딩 데이터를 사용해 초점을 맞추는 동안 화각을 일정하게 유지합니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="539"/>
+        <source>Lens metadata delay</source>
+        <translation>렌즈 메타데이터 지연</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="542"/>
+        <source>How many frames later than the picture the lens reports its focal length. It depends on the lens, not on the frame rate: some report two frames late.</source>
+        <translation>영상보다 렌즈의 초점 거리 보고가 몇 프레임 늦는지를 나타냅니다. 프레임 레이트가 아닌 렌즈에 따라 달라지며, 일부는 두 프레임 늦게 보고합니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="543"/>
+        <source>"Analyze" measures it on the zooms recorded in this clip. Positive values read the lens metadata later.</source>
+        <translation>“분석”은 이 클립에 기록된 줌으로 지연을 측정합니다. 양수 값은 렌즈 메타데이터를 더 늦은 시점에서 읽습니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="551"/>
+        <source>frames</source>
+        <translation>프레임</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="562"/>
+        <source>Analyze</source>
+        <translation>분석</translation>
     </message>
 </context>
 <context>
@@ -3124,6 +3217,51 @@ Do you want to submit your profile?</source>
         <location filename="../../src/ui/menu/MotionData.qml" line="846"/>
         <source>Export project file (including processed gyro data)</source>
         <translation>프로젝트 파일 내보내기 (처리된 자이로 데이터 포함)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="463"/>
+        <source>Optical stabilization</source>
+        <translation>광학 안정화</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="464"/>
+        <source>Measure the camera rotation from the video itself and correct the motion data where they disagree. Useful when vibrations corrupt the gyro data, e.g. on a hard-mounted FPV camera. The analysis samples frames at an integer interval near 25 fps within the selected trim range.</source>
+        <translation>동영상에서 카메라 회전을 측정하고 모션 데이터와 다른 부분을 보정합니다. 단단히 장착된 FPV 카메라처럼 진동이 자이로 데이터를 손상시키는 경우에 유용합니다. 분석은 선택한 트림 범위에서 약 25 fps에 가까운 정수 프레임 간격으로 샘플링합니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="522"/>
+        <source>Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis samples frames at an integer interval near 25 fps within the selected trim range. Can't be used together with in-camera stabilization reconstruction. The reported shift is sampled at frame centers; output cropping changes its apparent size.</source>
+        <translation>동영상에서 카메라의 좌우 및 상하 움직임을 측정하고 화면 전체를 이동해 특정 거리의 장면을 안정화합니다. 파일의 모션 데이터가 필요하며, 선택한 트림 범위에서 약 25 fps에 가까운 정수 프레임 간격으로 샘플링합니다. 카메라 내 손떨림 보정 재구성과 함께 사용할 수 없습니다. 표시되는 이동량은 프레임 중심에서 측정되며, 출력 크롭에 따라 보이는 크기가 달라집니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="534"/>
+        <source>Measured in %1 of %2 frames, applied shift up to %3% of the source frame's short side</source>
+        <translation>%2개 중 %1개 프레임에서 측정, 적용 이동량은 원본 프레임 짧은 변의 최대 %3%</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="538"/>
+        <source>Automatic parameters</source>
+        <translation>자동 매개변수</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="539"/>
+        <source>Choose the reference distance and the smoothness from the analysis: hold the distant scenery steady, or the subject once it fills most of the picture, and smooth as much as the shift range allows.</source>
+        <translation>분석 결과로 기준 거리와 평활화를 선택합니다. 먼 풍경을 안정화하거나 피사체가 화면 대부분을 차지하면 피사체를 안정화하고, 이동 범위가 허용하는 만큼 평활화합니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="547"/>
+        <source>Move toward Near to stabilize closer objects, or toward Far to stabilize more distant content. The middle position stabilizes the farther parts of the image (default).</source>
+        <translation>가까운 물체를 안정화하려면 “가까이” 쪽으로, 더 먼 장면을 안정화하려면 “멀리” 쪽으로 이동하세요. 가운데 위치는 영상에서 더 먼 부분을 안정화합니다 (기본값).</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="553"/>
+        <source>Near</source>
+        <translation>가까이</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="566"/>
+        <source>Far</source>
+        <translation>멀리</translation>
     </message>
 </context>
 <context>
@@ -3595,7 +3733,7 @@ Close and reopen Final Cut Pro before using the effect.</source>
     <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="358"/>
         <source>Edit</source>
-        <translation type="unfinished"></translation>
+        <translation>편집</translation>
     </message>
     <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="360"/>
@@ -3965,7 +4103,7 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
     </message>
     <message>
         <source>Scanning segment %1 of %2</source>
-        <translation type="vanished">세그먼트 %1/%2 스캔 중</translation>
+        <translation>세그먼트 %1/%2 스캔 중</translation>
     </message>
     <message>
         <source>Click Ok to run Auto match and assign the data.</source>
@@ -4120,7 +4258,7 @@ Please check and try again.</source>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1697"/>
         <source>Focal length (mm)</source>
-        <translation type="unfinished">초점 거리 (mm)</translation>
+        <translation>초점 거리 (mm)</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2387"/>
@@ -4187,12 +4325,12 @@ Please check and try again.</source>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="3424"/>
         <source>%1 files could not be read and were skipped.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1개 파일을 읽을 수 없어 건너뛰었습니다.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="3429"/>
         <source>%1 file(s) are already in the render queue.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1개 파일이 이미 렌더링 대기열에 있습니다.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2558"/>
@@ -4264,13 +4402,13 @@ If there is no usable time-sync data at all, right-click the video → **&quot;D
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1653"/>
         <source>Frame rate (0=unchanged)</source>
-        <translation type="unfinished">프레임 레이트 (0=변경 없음)</translation>
+        <translation>프레임 레이트 (0=변경 없음)</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1654"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1698"/>
         <source>OK</source>
-        <translation type="unfinished">OK</translation>
+        <translation>OK</translation>
     </message>
     <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="362"/>
@@ -4344,13 +4482,13 @@ Click Ok and select the destination folder.</source>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="3125"/>
         <source>No supported files were found in the selection.</source>
-        <translation type="unfinished"></translation>
+        <translation>선택 항목에서 지원되는 파일을 찾지 못했습니다.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="3169"/>
         <source>Image sequence has been detected.
 Please provide frame rate: </source>
-        <translation type="unfinished">이미지 시퀀스가 감지되었습니다.
+        <translation>이미지 시퀀스가 감지되었습니다.
 프레임률을 입력하세요: </translation>
     </message>
     <message>
@@ -4521,6 +4659,38 @@ Please provide frame rate: </source>
     <message>
         <source>Search stage %1 of %2</source>
         <translation>검색 단계 %1 / %2</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="413"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="758"/>
+        <source>Unable to open the video for deep matching. Please select the video again.</source>
+        <translation>심층 매칭을 위해 동영상을 열 수 없습니다. 동영상을 다시 선택하세요.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="415"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="760"/>
+        <source>Unable to decode the video for deep matching. Please try another video.</source>
+        <translation>심층 매칭을 위해 동영상을 디코딩할 수 없습니다. 다른 동영상을 시도하세요.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="762"/>
+        <source>Unable to convert video frames for deep matching. Please try another video.</source>
+        <translation>심층 매칭을 위한 동영상 프레임을 변환할 수 없습니다. 다른 동영상을 시도하세요.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="764"/>
+        <source>No usable video frames were found in the deep-match analysis windows. Please try another video.</source>
+        <translation>심층 매칭 분석 구간에서 사용 가능한 동영상 프레임을 찾지 못했습니다. 다른 동영상을 시도하세요.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2639"/>
+        <source>Analyzing: %1</source>
+        <translation>분석 중: %1</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2849"/>
+        <source>Analyzing...</source>
+        <translation>분석 중...</translation>
     </message>
 </context>
 <context>
@@ -5252,6 +5422,26 @@ If you need more accuracy, increase the number of iterations in &quot;Advanced&q
         <location filename="../../src/ui/menu/Stabilization.qml" line="861"/>
         <source>Link with zooming speed</source>
         <translation>줌 속도에 맞춤</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="762"/>
+        <source>Stabilize focal length</source>
+        <translation>초점 거리 안정화</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="764"/>
+        <source>Limits how fast the picture may zoom when the lens metadata records a changing focal length.</source>
+        <translation>렌즈 메타데이터에 초점 거리 변화가 기록된 경우 영상의 줌 속도를 제한합니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="765"/>
+        <source>Zooms slower than the limit pass through untouched. Faster zooms are spread out by cropping ahead of a zoom-in and after a zoom-out. Lower values give a smoother zoom and more crop.</source>
+        <translation>제한보다 느린 줌은 그대로 유지됩니다. 더 빠른 줌은 줌인 전에, 줌아웃 후에 크롭해 시간에 걸쳐 분산합니다. 값이 낮을수록 줌이 부드러워지고 크롭이 늘어납니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="774"/>
+        <source>Max zoom speed</source>
+        <translation>최대 줌 속도</translation>
     </message>
 </context>
 <context>
@@ -6071,6 +6261,11 @@ Are you sure you want to continue?</source>
         <source>Save</source>
         <translation>저장</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/components/Timeline.qml" line="273"/>
+        <source>Focal length</source>
+        <translation>초점 거리</translation>
+    </message>
 </context>
 <context>
     <name>TimelineSyncPoint</name>
@@ -6133,27 +6328,27 @@ Are you sure you want to continue?</source>
     <message>
         <location filename="../../src/ui/Util.js" line="10"/>
         <source>d</source>
-        <translation type="unfinished"></translation>
+        <translation>일</translation>
     </message>
     <message>
         <location filename="../../src/ui/Util.js" line="11"/>
         <source>h</source>
-        <translation type="unfinished"></translation>
+        <translation>시간</translation>
     </message>
     <message>
         <location filename="../../src/ui/Util.js" line="12"/>
         <source>m</source>
-        <translation type="unfinished"></translation>
+        <translation>분</translation>
     </message>
     <message>
         <location filename="../../src/ui/Util.js" line="13"/>
         <source>s</source>
-        <translation type="unfinished"></translation>
+        <translation>초</translation>
     </message>
     <message>
         <location filename="../../src/ui/Util.js" line="15"/>
         <source>&amp;lt; 1s</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;lt; 1초</translation>
     </message>
 </context>
 <context>
@@ -6362,7 +6557,7 @@ Gyroflow를 사용하려면 렌즈 안정화(광학 SteadyShot)를 비활성화�
     <message>
         <location filename="../../src/ui/VideoArea.qml" line="472"/>
         <source>Previous video is still loading, please wait...</source>
-        <translation type="unfinished"></translation>
+        <translation>이전 동영상을 아직 불러오는 중입니다. 잠시 기다려 주세요...</translation>
     </message>
     <message>
         <location filename="../../src/ui/VideoArea.qml" line="524"/>
@@ -6567,19 +6762,19 @@ Gyroflow를 사용하려면 렌즈 안정화(광학 SteadyShot)를 비활성화�
     </message>
     <message>
         <source>About NiYien</source>
-        <translation>About NiYien</translation>
+        <translation>NiYien 정보</translation>
     </message>
     <message>
         <source>Help and support</source>
-        <translation>Help and support</translation>
+        <translation>도움말 및 지원</translation>
     </message>
     <message>
         <source>Open-source licenses</source>
-        <translation>Open-source licenses</translation>
+        <translation>오픈 소스 라이선스</translation>
     </message>
     <message>
         <source>Privacy policy</source>
-        <translation>Privacy policy</translation>
+        <translation>개인정보 처리방침</translation>
     </message>
 </context>
 <context>
@@ -6994,7 +7189,7 @@ Gyroflow를 사용하려면 렌즈 안정화(광학 SteadyShot)를 비활성화�
     </message>
     <message>
         <source>About NiYien</source>
-        <translation>About NiYien</translation>
+        <translation>NiYien 정보</translation>
     </message>
     <message>
         <source>Export editing project</source>
@@ -7006,7 +7201,7 @@ Gyroflow를 사용하려면 렌즈 안정화(광학 SteadyShot)를 비활성화�
     </message>
     <message>
         <source>Help and support</source>
-        <translation>Help and support</translation>
+        <translation>도움말 및 지원</translation>
     </message>
     <message>
         <source>How it works</source>
@@ -7014,31 +7209,31 @@ Gyroflow를 사용하려면 렌즈 안정화(광학 SteadyShot)를 비활성화�
     </message>
     <message>
         <source>Open-source licenses</source>
-        <translation>Open-source licenses</translation>
+        <translation>오픈 소스 라이선스</translation>
     </message>
     <message>
         <source>Privacy policy</source>
-        <translation>Privacy policy</translation>
+        <translation>개인정보 처리방침</translation>
     </message>
     <message>
         <source>Share / Save to Files</source>
-        <translation>Share / Save to Files</translation>
+        <translation>공유 / 파일에 저장</translation>
     </message>
     <message>
         <source>Source code</source>
-        <translation>Source code</translation>
+        <translation>소스 코드</translation>
     </message>
     <message>
         <source>The demo could not be prepared. Please try again.</source>
-        <translation>The demo could not be prepared. Please try again.</translation>
+        <translation>데모를 준비할 수 없습니다. 다시 시도하세요.</translation>
     </message>
     <message>
         <source>The output file is unavailable. Check the output folder.</source>
-        <translation>The output file is unavailable. Check the output folder.</translation>
+        <translation>출력 파일을 사용할 수 없습니다. 출력 폴더를 확인하세요.</translation>
     </message>
     <message>
         <source>Try a generated demo</source>
-        <translation>Try a generated demo</translation>
+        <translation>생성된 데모 체험</translation>
     </message>
     <message>
         <source>Use a supported camera's gyroscope data or import a separate gyroscope file.</source>
@@ -7145,6 +7340,35 @@ Gyroflow를 사용하려면 렌즈 안정화(광학 SteadyShot)를 비활성화�
     <message>
         <source>Not added</source>
         <translation>추가 안 됨</translation>
+    </message>
+</context>
+<context>
+    <name>VideoSourcePicker</name>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="23"/>
+        <source>Unable to open the photo library.</source>
+        <translation>사진 보관함을 열 수 없습니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="38"/>
+        <source>Choose video source</source>
+        <translation>동영상 소스 선택</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="40"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="972"/>
+        <source>Photos</source>
+        <translation>사진</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="47"/>
+        <source>Files and external storage</source>
+        <translation>파일 및 외부 저장소</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/VideoSourcePicker.qml" line="70"/>
+        <source>Some videos could not be imported: %1</source>
+        <translation>일부 동영상을 가져올 수 없습니다: %1</translation>
     </message>
 </context>
 </TS>
