@@ -3,6 +3,8 @@
 // Ported from upstream gyroflow 322cb312 + eabdc789
 
 mod audio_resampler;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+mod apple_analysis_decoder;
 mod encoder_error;
 mod ffmpeg_audio;
 pub mod ffmpeg_hw;
@@ -1073,7 +1075,7 @@ pub fn analyze_optically(stab: &StabilizationManager, cancel_flag: Arc<AtomicBoo
     }
 
     // Decoding errors alone can trigger a retry; analysis errors stay inside the successful decoder result.
-    let try_run = |use_gpu: bool| -> Result<Result<OpticalMeasurements, String>, FFmpegError> {
+    let try_run = |use_gpu: bool, async_decode: bool| -> Result<Result<OpticalMeasurements, String>, FFmpegError> {
         if operation_cancelled() { return Ok(Err("Cancelled".into())); }
         let analysis = match OpticalMotionAnalysis::from_manager(stab, cancel_flag.clone()) {
             Ok(analysis) => analysis,
@@ -1101,7 +1103,11 @@ pub fn analyze_optically(stab: &StabilizationManager, cancel_flag: Arc<AtomicBoo
         // What the decoder stops on: the analysis cancelled (it knows of more than `cancel_flag`), or the first error.
         // Every frame after that would be decoded for nothing
         let stop = Arc::new(AtomicBool::new(false));
-        let mut proc = VideoProcessor::from_file(&input_file.url, use_gpu, 0, Some(decoder_options))?;
+        let mut proc = if async_decode {
+            VideoProcessor::for_optical_analysis(&input_file.url, use_gpu, Some(decoder_options), input_file.image_sequence_fps > 0.0)?
+        } else {
+            VideoProcessor::from_file(&input_file.url, use_gpu, 0, Some(decoder_options))?
+        };
         proc.set_decode_frame_step(frame_step, source_fps);
         // Preparing, tracking and measuring run on their own threads while this one decodes, see `AnalysisPipeline`
         let (pipeline, mut sink) = match AnalysisPipeline::start(analysis) {
@@ -1184,7 +1190,14 @@ pub fn analyze_optically(stab: &StabilizationManager, cancel_flag: Arc<AtomicBoo
         (None, false)
     };
     let result = if try_gpu {
-        match try_run(true) {
+        let hardware = match try_run(true, true) {
+            Err(FFmpegError::AsyncDecodingFailed) => {
+                ::log::info!(target: "video.codec", "Asynchronous optical decode failed, retrying with FFmpeg hardware decoding");
+                try_run(true, false)
+            }
+            result => result,
+        };
+        match hardware {
             Err(FFmpegError::GPUDecodingFailed) => {
                 match codec_sig {
                     Some(sig) => {
@@ -1193,12 +1206,12 @@ pub fn analyze_optically(stab: &StabilizationManager, cancel_flag: Arc<AtomicBoo
                     }
                     None => ::log::info!("[optical] GPU decode failed (no signature available), retrying with software"),
                 }
-                try_run(false)
+                try_run(false, false)
             }
             other => other,
         }
     } else {
-        try_run(false)
+        try_run(false, false)
     };
     if operation_cancelled() { return Err("Cancelled".into()); }
     let measurements = result.map_err(|e| e.to_string())??;

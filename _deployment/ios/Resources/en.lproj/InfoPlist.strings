@@ -1,3 +1,4 @@
 "CFBundleDisplayName" = "NiYien";
 "CFBundleName" = "NiYien";
 "NSPhotoLibraryUsageDescription" = "Choose videos to stabilize in NiYien. Only videos you select are imported.";
+"NSCameraUsageDescription" = "NiYien stabilizes videos you select from Photos or Files. This version does not capture camera video, and you can use it without camera access.";

@@ -275,6 +275,13 @@ fn entry() {
     let _ = external_sdk::cleanup();
 
     let ctl = RefCell::new(controller::Controller::new());
+    if !ui::components::settings_policy::gate_disabled() {
+        // The core reads persisted settings before the QML settings gate applies.
+        // Start each Simple-mode session with hardware decoding enabled, without
+        // overwriting Full-mode preferences or changing per-codec fallback.
+        ctl.borrow().stabilizer.set_gpu_decoding(true);
+        ::log::info!(target: "video.codec", "GPU decoding enabled for Simple-mode startup");
+    }
     let ctlpinned = unsafe { QObjectPinned::new(&ctl) };
 
     let ui_tools = RefCell::new(UITools::default());

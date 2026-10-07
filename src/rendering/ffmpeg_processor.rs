@@ -78,6 +78,7 @@ pub enum FFmpegError {
     CannotCreateGPUDecoding,
     NoFramesContext,
     GPUDecodingFailed,
+    AsyncDecodingFailed,
     ToHWBufferError(i32),
     PixelFormatNotSupported((format::Pixel, Vec<format::Pixel>, Option<format::Pixel>)),
     /// The device rejected the encoder itself, not merely a pixel format: the
@@ -97,6 +98,7 @@ pub enum FFmpegError {
 impl std::fmt::Display for FFmpegError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
+            FFmpegError::AsyncDecodingFailed => write!(f, "Asynchronous hardware decoding failed"),
             FFmpegError::EncoderNotFound => write!(f, "Encoder not found"),
             FFmpegError::DecoderNotFound => write!(f, "Decoder not found"),
             FFmpegError::NoSupportedFormats => write!(f, "No supported formats"),

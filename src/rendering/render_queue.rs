@@ -6184,6 +6184,7 @@ impl RenderQueue {
             if let (Some(data), Some(opts)) = (project_data, render_options) {
                 let stab = Arc::new(StabilizationManager {
                     lens_profile_db,
+                    gpu_decoding: self.stabilizer.gpu_decoding.clone(),
                     ..Default::default()
                 });
                 let mut is_preset = false;
@@ -9011,6 +9012,7 @@ impl RenderQueue {
                             preset_output_size: None,
                         })),
                         lens_profile_db: stabilizer.lens_profile_db.clone(),
+                        gpu_decoding: stabilizer.gpu_decoding.clone(),
                         ..Default::default()
                     };
 

@@ -122,8 +122,13 @@ pub fn run(paths: &str) -> i32 {
         return 2;
     }
     let export_translation = std::env::var("GYROFLOW_OPTICAL_CORRECTION_SMOKE_TRANSLATION").as_deref() == Ok("1");
-    let out_dir = Path::new(if export_translation { "target/translation-optimization/smoke" } else { "target/optical_correction_smoke" });
-    if let Err(e) = std::fs::create_dir_all(out_dir) {
+    // Mobile applications cannot write to their launch directory.
+    let out_dir = if cfg!(any(target_os = "ios", target_os = "android")) {
+        gyroflow_core::settings::data_dir().join(if export_translation { "translation-smoke" } else { "optical_correction_smoke" })
+    } else {
+        std::path::PathBuf::from(if export_translation { "target/translation-optimization/smoke" } else { "target/optical_correction_smoke" })
+    };
+    if let Err(e) = std::fs::create_dir_all(&out_dir) {
         eprintln!("Cannot create {}: {e}", out_dir.display());
         return 1;
     }

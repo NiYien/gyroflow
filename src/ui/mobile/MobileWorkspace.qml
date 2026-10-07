@@ -58,6 +58,20 @@ Rectangle {
     property bool engineBusy: false
     readonly property bool importing: !!(queueService && queueService.importBusy)
     readonly property bool experimentalAnalyzing: !!(host && host.controller && host.controller.sync_in_progress)
+    property real analysisProgress: 0
+    property int analysisReady: 0
+    property int analysisTotal: 0
+    property real analysisStartedAt: 0
+    property real analysisFps: 0
+    readonly property string analysisTitle: qsTranslate("VideoArea", "Analyzing %1...").arg((analysisProgress * 100).toFixed(1) + "%")
+    readonly property string analysisStats: analysisReady + " / " + analysisTotal + " · " + analysisFps.toFixed(1) + " fps"
+    onExperimentalAnalyzingChanged: {
+        analysisProgress = 0;
+        analysisReady = 0;
+        analysisTotal = 0;
+        analysisFps = 0;
+        analysisStartedAt = experimentalAnalyzing ? Date.now() : 0;
+    }
     property bool experimentalSaving: false
     readonly property bool busy: importing || engineBusy || !!(operation && operation.active) || experimentalAnalyzing || experimentalSaving
     readonly property bool hasExperimentalPreview: page === "preview" && previewReady && !!(host && host.videoArea.vid.loaded)
@@ -460,9 +474,9 @@ Rectangle {
         id: progress
         height: 6 * root.unit
         padding: 0
-        indeterminate: root.experimentalAnalyzing || root.experimentalSaving || !root.operation || root.operation.kind === "deep" || !root.operation.started || (root.queueService && root.queueService.matching)
-        from: 0; to: Math.max(1, root.taskCounts.total)
-        value: root.taskCounts.settled
+        indeterminate: root.experimentalAnalyzing ? root.analysisTotal <= 0 : root.experimentalSaving || !root.operation || root.operation.kind === "deep" || !root.operation.started || (root.queueService && root.queueService.matching)
+        from: 0; to: root.experimentalAnalyzing ? 1 : Math.max(1, root.taskCounts.total)
+        value: root.experimentalAnalyzing ? root.analysisProgress : root.taskCounts.settled
         background: Rectangle { color: root.dark ? "#373d47" : "#dce1e8"; radius: 3 * root.unit }
         contentItem: Item {
             clip: true
@@ -492,7 +506,7 @@ Rectangle {
         MobileActionRow { visible: !!parent.record.paired; width: parent.width; unit: root.unit; dark: root.dark; iconName: "reset"; text: qsTranslate("RenderQueue", "Unpair gyro"); enabled: !root.busy; onClicked: { if (root.inputsAllowed()) { root.backend.unpair_video(parent.record.id); root.refresh(); } } }
     }
     function taskTitle() {
-        if (experimentalAnalyzing) return qsTranslate("MotionData", "Analyze");
+        if (experimentalAnalyzing) return analysisTitle;
         if (experimentalSaving) return qsTranslate("App", "Saving...");
         if (importing) return qsTr("Add media");
         if (operation && operation.stopping) return qsTr("Stopping…");
@@ -548,6 +562,16 @@ Rectangle {
     }
     Connections {
         target: root.host ? root.host.controller : null
+        function onSync_progress(progress, ready, total) {
+            if (!root.experimentalAnalyzing) return;
+            // A decoder fallback can restart the frame count within the same operation.
+            if (ready < root.analysisReady || root.analysisStartedAt <= 0) root.analysisStartedAt = Date.now();
+            root.analysisProgress = Math.max(0, Math.min(1, progress));
+            root.analysisReady = ready;
+            root.analysisTotal = total;
+            const elapsed = (Date.now() - root.analysisStartedAt) / 1000;
+            root.analysisFps = elapsed > 0 ? ready / elapsed : 0;
+        }
         function onVideo_loading_in_progressChanged() { if (!root.host.controller.video_loading_in_progress) Qt.callLater(root.previewLoaded); }
         function onLoading_gyro_in_progressChanged() { if (!root.host.controller.loading_gyro_in_progress) Qt.callLater(root.previewLoaded); }
     }
@@ -833,9 +857,9 @@ Rectangle {
             MobileText { unit: root.unit; dark: root.dark; width: parent.width; text: root.busy ? root.taskTitle() : root.summary; color: root.textColor; elide: Text.ElideMiddle }
             MobileText { unit: root.unit; dark: root.dark;
                 objectName: "mobileTaskSecondaryStatus"
-                visible: root.busy && !root.experimentalAnalyzing && !root.experimentalSaving && !(root.operation && root.operation.kind === "deep")
+                visible: root.busy && !root.experimentalSaving && (root.experimentalAnalyzing || !(root.operation && root.operation.kind === "deep"))
                 width: parent.width
-                text: root.importing ? qsTr("Reading…") : qsTr("Processed %1 / %2").arg(root.taskCounts.settled).arg(root.taskCounts.total || root.rows.length)
+                text: root.experimentalAnalyzing ? root.analysisStats : root.importing ? qsTr("Reading…") : qsTr("Processed %1 / %2").arg(root.taskCounts.settled).arg(root.taskCounts.total || root.rows.length)
                 color: root.mutedColor; secondary: true; elide: Text.ElideRight
             }
         }
@@ -1004,8 +1028,9 @@ Rectangle {
                         Column {
                             visible: root.experimentalAnalyzing
                             width: parent.width; spacing: 8 * root.unit
-                            MobileText { width: parent.width; unit: root.unit; dark: root.dark; text: qsTranslate("MotionData", "Analyze") }
-                            QQC.ProgressBar { width: parent.width; indeterminate: true }
+                            MobileText { objectName: "mobileAnalysisTitle"; width: parent.width; unit: root.unit; dark: root.dark; text: root.analysisTitle }
+                            MobileText { objectName: "mobileAnalysisStats"; width: parent.width; unit: root.unit; dark: root.dark; text: root.analysisStats; secondary: true; wrapMode: Text.WordWrap }
+                            OperationProgress { objectName: "mobileAnalysisProgress"; width: parent.width }
                             MobileButton { objectName: "mobileCancelExperimentalAnalysis"; width: parent.width; unit: root.unit; dark: root.dark; text: qsTr("Cancel"); onClicked: root.stopTask() }
                         }
                         MobileButton {

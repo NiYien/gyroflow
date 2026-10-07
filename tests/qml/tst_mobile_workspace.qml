@@ -56,6 +56,7 @@ TestCase {
             property bool video_loading_in_progress: false
             property bool loading_gyro_in_progress: false
             property bool sync_in_progress: false
+            signal sync_progress(real progress, int ready, int total)
             property int cancelCalls: 0
             function cancel_current_operation() { cancelCalls++; }
             function stabilize_step_pending_for_preview() { return false; }
@@ -195,6 +196,38 @@ TestCase {
         compare(previewService.controller.cancelCalls, 1);
         previewService.controller.sync_in_progress = false;
         verify(workspace.canEditExperimental);
+    }
+    function test_analysis_progress_and_fps_data() {
+        return [{ tag: "ios", os: "ios" }, { tag: "android", os: "android" }];
+    }
+    function test_analysis_progress_and_fps(data) {
+        prepareExperimentalPreview();
+        workspace.platformOs = data.os;
+        previewService.controller.sync_in_progress = true;
+        previewService.controller.sync_progress(0, 0, 0);
+        const footer = findChild(workspace, "mobileTaskProgress");
+        const panel = findChild(workspace, "mobileAnalysisProgress");
+        verify(footer.indeterminate && panel.indeterminate);
+        workspace.analysisStartedAt = Date.now() - 2000;
+        previewService.controller.sync_progress(0.495, 50, 100);
+        verify(!footer.indeterminate && !panel.indeterminate);
+        compare(footer.position, 0.495);
+        compare(panel.position, 0.495);
+        verify(workspace.analysisFps > 24 && workspace.analysisFps <= 25);
+        verify(findChild(workspace, "mobileAnalysisTitle").text.indexOf("49.5%") >= 0);
+        const stats = findChild(workspace, "mobileTaskSecondaryStatus");
+        verify(stats.visible);
+        verify(stats.text.indexOf("50 / 100") >= 0 && stats.text.indexOf("fps") >= 0);
+        compare(findChild(workspace, "mobileAnalysisStats").text, stats.text);
+        previewService.controller.sync_progress(0, 0, 100);
+        compare(workspace.analysisFps, 0);
+        previewService.controller.sync_in_progress = false;
+        previewService.controller.sync_progress(1, 0, 0);
+        verify(!footer.visible);
+        previewService.controller.sync_in_progress = true;
+        compare(workspace.analysisReady, 0);
+        compare(workspace.analysisProgress, 0);
+        compare(workspace.analysisFps, 0);
     }
     function test_experimental_save_failure_allows_retry() {
         prepareExperimentalPreview();

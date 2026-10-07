@@ -1,3 +1,4 @@
 "CFBundleDisplayName" = "NiYien";
 "CFBundleName" = "NiYien";
 "NSPhotoLibraryUsageDescription" = "選擇需要在 NiYien 中進行穩定處理的影片。僅匯入您選擇的影片。";
+"NSCameraUsageDescription" = "NiYien 對您從相簿或檔案中選擇的影片進行穩定處理。此版本不透過相機拍攝影片，無需相機權限即可使用。";
