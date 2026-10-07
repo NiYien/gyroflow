@@ -42,6 +42,8 @@
 	<true/>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Choose videos to stabilize in NiYien. Only videos you select are imported.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>NiYien stabilizes videos you select from Photos or Files. This version does not capture camera video, and you can use it without camera access.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>ITSAppUsesNonExemptEncryption</key>

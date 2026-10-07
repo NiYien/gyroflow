@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ios_metadata import load_metadata
-from package_ios import signing_settings, validate_distribution_toolchain
+from package_ios import signing_settings, validate_distribution_toolchain, xcode_toolchain_metadata
 
 
 class IOSIdentityTests(unittest.TestCase):
@@ -84,6 +84,31 @@ class IOSIdentityTests(unittest.TestCase):
         build = 'platform IOS\n    minos 15.0\n    sdk 26.0\n'
         validate_distribution_toolchain('2600', '26.0', build)
         validate_distribution_toolchain('2640', '26.4', build)
+
+    def test_xcode_product_build_overrides_xcodes_internal_compiler_build(self):
+        developer = self.root / 'Xcode.app/Contents/Developer'
+        developer.mkdir(parents=True)
+        (developer.parent / 'Info.plist').write_bytes(plistlib.dumps({'DTXcode': '2660', 'DTXcodeBuild': '17F112'}))
+        (developer.parent / 'version.plist').write_bytes(plistlib.dumps({'CFBundleShortVersionString': '26.6', 'ProductBuildVersion': '17F113'}))
+        metadata = xcode_toolchain_metadata(developer)
+        self.assertEqual(metadata['DTXcode'], '2660')
+        self.assertEqual(metadata['DTXcodeBuild'], '17F113')
+        self.assertEqual(metadata['DTAppStoreToolsBuild'], '17F113')
+
+    def test_xcode_version_encoding_preserves_patch_versions(self):
+        developer = self.root / 'Xcode.app/Contents/Developer'
+        developer.mkdir(parents=True)
+        (developer.parent / 'version.plist').write_bytes(plistlib.dumps({'CFBundleShortVersionString': '26.4.1', 'ProductBuildVersion': '17E202'}))
+        self.assertEqual(xcode_toolchain_metadata(developer)['DTXcode'], '2641')
+
+    def test_xcode_product_metadata_must_not_fall_back_to_internal_build(self):
+        developer = self.root / 'Xcode.app/Contents/Developer'
+        developer.mkdir(parents=True)
+        for metadata in [{'CFBundleShortVersionString': '26.6'}, {'CFBundleShortVersionString': 'unknown', 'ProductBuildVersion': '17F113'}]:
+            with self.subTest(metadata=metadata):
+                (developer.parent / 'version.plist').write_bytes(plistlib.dumps(metadata))
+                with self.assertRaises(ValueError):
+                    xcode_toolchain_metadata(developer)
 
     def test_new_packaging_sdk_does_not_hide_an_old_executable(self):
         build = 'platform IOS\n    minos 15.0\n    sdk 18.5\n'

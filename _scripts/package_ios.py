@@ -23,6 +23,19 @@ def output(*args):
     return subprocess.check_output([str(arg) for arg in args], text=True).strip()
 
 
+def xcode_toolchain_metadata(developer):
+    # Info.plist describes the toolchain used to build Xcode itself.
+    # version.plist identifies the installed Xcode product used for this app.
+    version = plistlib.loads((Path(developer).parent / "version.plist").read_bytes())
+    match = re.fullmatch(r"([0-9]+)(?:\.([0-9]))?(?:\.([0-9]))?", str(version.get("CFBundleShortVersionString", "")))
+    build = version.get("ProductBuildVersion")
+    if not match or not isinstance(build, str) or not re.fullmatch(r"[0-9]+[A-Z][0-9]+[a-z]?", build):
+        raise ValueError("The installed Xcode product version and build cannot be verified")
+    major, minor, patch = (int(part or 0) for part in match.groups())
+    return {"DTXcode": str(major * 100 + minor * 10 + patch), "DTXcodeBuild": build,
+            "DTAppStoreToolsBuild": build}
+
+
 def validate_distribution_toolchain(xcode_version, sdk_version, executable_build):
     if not str(xcode_version).isdigit() or int(xcode_version) < 2600:
         raise ValueError("App Store Connect requires Xcode 26 or later")
@@ -84,7 +97,7 @@ def package(profile, signing):
     if not re.search(r"^\s*platform IOS\s*$", platform, re.MULTILINE):
         raise ValueError("The executable is not an iOS device build")
     developer = Path(output("xcode-select", "-p"))
-    xcode = plistlib.loads((developer.parent / "Info.plist").read_bytes())
+    xcode = xcode_toolchain_metadata(developer)
     sdk_version = output("xcrun", "--sdk", "iphoneos", "--show-sdk-version")
     sdk_build = output("xcrun", "--sdk", "iphoneos", "--show-sdk-build-version")
     if signing == "distribution":
@@ -112,10 +125,10 @@ def package(profile, signing):
     info.update(CFBundleDisplayName=metadata["display_name"], CFBundleName=metadata["display_name"],
                 CFBundleIdentifier=metadata["bundle_identifier"], CFBundleShortVersionString=metadata["version"],
                 CFBundleVersion=metadata["build_number"], MinimumOSVersion=metadata["minimum_os_version"])
-    info.update(BuildMachineOSBuild=output("sw_vers", "-buildVersion"), DTCompiler=xcode.get("DTCompiler", "com.apple.compilers.llvm.clang.1_0"),
+    info.update(BuildMachineOSBuild=output("sw_vers", "-buildVersion"), DTCompiler="com.apple.compilers.llvm.clang.1_0",
                 DTPlatformBuild=sdk_build, DTPlatformName="iphoneos", DTPlatformVersion=sdk_version,
                 DTSDKBuild=sdk_build, DTSDKName="iphoneos" + sdk_version,
-                DTXcode=xcode["DTXcode"], DTXcodeBuild=xcode["DTXcodeBuild"])
+                **xcode)
     info.update(make_icons(stage, app, metadata))
     (app / "Info.plist").write_bytes(plistlib.dumps(info, sort_keys=False))
     run("xcrun", "ibtool", "--errors", "--warnings", "--notices", "--module", "gyroflow", "--target-device", "iphone", "--target-device", "ipad",
