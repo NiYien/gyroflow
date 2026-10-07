@@ -56,13 +56,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.targets.type }}-gyroflow-niyien-0
+          key: ${{ matrix.targets.type }}-gyroflow-niyien-${{ matrix.targets.type == 'macos' && hashFiles('_scripts/macos.just') || '0' }}
       - name: Dependencies cache
         id: extcache
         uses: actions/cache@v4
         with:
           path: '${{ github.workspace }}/ext/'
-          key: ${{ matrix.targets.type }}-gyroflow-niyien-ext-0
+          key: ${{ matrix.targets.type }}-gyroflow-niyien-ext-${{ matrix.targets.type == 'macos' && hashFiles('_scripts/macos.just') || '0' }}
 
       # NeuFlow v2 Burn (default feature) does not require Vulkan SDK at build
       # OR runtime: burn-onnx ModelGen is a host-side tool (ndarray, no GPU);

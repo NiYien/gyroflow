@@ -8499,7 +8499,8 @@ impl RenderQueue {
                 } else {
                     vec![None]
                 };
-                let original_gpu_decode = stab.gpu_decoding.load(SeqCst);
+                // Keep the fallback local to this export, across all trim ranges.
+                let mut decoder_index = if stab.gpu_decoding.load(SeqCst) { 0 } else { -1 };
                 let render_start = std::time::Instant::now();
                 let mut render_ok = true;
                 // Mutable from here on so the encoder-capability fallback in the retry loop can
@@ -8514,14 +8515,17 @@ impl RenderQueue {
                         render_ok = false;
                         break;
                     }
-                    let mut i = 0;
                     loop {
+                        if cancel_flag.load(SeqCst) {
+                            render_ok = false;
+                            break 'ranges;
+                        }
                         let result = rendering::render(
                             stab.clone(),
                             progress.clone(),
                             &input_file,
                             &render_options,
-                            i,
+                            decoder_index,
                             range,
                             cancel_flag.clone(),
                             pause_flag.clone(),
@@ -8585,24 +8589,12 @@ impl RenderQueue {
                                 render_ok = false;
                                 break 'ranges;
                             }
-                            if original_gpu_decode
-                                && stab.gpu_decoding.load(SeqCst)
-                                && matches!(e, rendering::FFmpegError::GPUDecodingFailed)
-                            {
-                                stab.gpu_decoding.store(false, SeqCst);
+                            if let Some(next) = rendering::ffmpeg_processor::next_decoder_attempt(
+                                decoder_index, rendered_frames.load(SeqCst), &e,
+                            ) {
+                                ::log::warn!(target: "video.codec", "retrying render job_id={job_id} decoder_index={decoder_index}->{next} reason={e:?}");
+                                decoder_index = next;
                                 continue;
-                            }
-                            if rendered_frames.load(SeqCst) == 0 {
-                                if (0..4).contains(&i) {
-                                    // Try 4 times with different GPU decoders
-                                    i += 1;
-                                    continue;
-                                }
-                                if (0..5).contains(&i) {
-                                    // Try without GPU decoder
-                                    i = -1;
-                                    continue;
-                                }
                             }
                             if let rendering::FFmpegError::CannotOpenOutputFile((ref url, ref fe)) = e {
                                 // macOS TCC: a denied output folder surfaces as a PermissionDenied
@@ -8632,7 +8624,6 @@ impl RenderQueue {
                         }
                     }
                 }
-                stab.gpu_decoding.store(original_gpu_decode, SeqCst);
                 if render_ok && !cancel_flag.load(SeqCst) {
                     let sample = {
                         let mut sample = eta_sample.lock();

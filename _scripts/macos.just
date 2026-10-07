@@ -72,6 +72,9 @@ install-deps:
         rm -rf ./vcpkg/downloads
     fi
 
+    ffmpeg_url="https://github.com/NiYien/avbuild/releases/download/gyroflow-ffmpeg-8.1.3-macos-v1/ffmpeg-8.1-macOS-gpl-lite.tar.xz"
+    ffmpeg_sha256="cf232e07c14282031591ff1376b7f9114974c4ddb4a7a6b022ddb8e809716e32"
+
     # Probing the files we actually consume, not just the directory: the section
     # below creates the arch dirs up front and only fills include/ at the very
     # end, so an interrupted run leaves behind directories that a bare -d check
@@ -87,6 +90,9 @@ install-deps:
 
     ffmpeg_installed() {
         for arch_dir in ffmpeg-x86_64 ffmpeg-arm64; do
+            # A complete older SDK must still be replaced when the package changes.
+            [ -f "$arch_dir/.gyroflow-package-sha256" ] || return 1
+            [ "$(cat "$arch_dir/.gyroflow-package-sha256")" = "$ffmpeg_sha256" ] || return 1
             [ -f "$arch_dir/include/libavutil/avutil.h" ] || return 1
             [ -f "$arch_dir/lib/libavutil.a" ] || return 1
             [ -f "$arch_dir/lib/libavcodec.a" ] || return 1
@@ -99,8 +105,6 @@ install-deps:
         echo "Downloading ffmpeg"
 
         # Download, verify, and extract the pinned FFmpeg package.
-        ffmpeg_url="https://github.com/NiYien/avbuild/releases/download/gyroflow-ffmpeg-8.1.2-macos-v1/ffmpeg-8.1-macOS-gpl-lite.tar.xz"
-        ffmpeg_sha256="81f2753520ca1dc463fb681d5fdfa7f45def36a4ee974576d8b978b9cd747f3e"
         curl --fail --location --retry 3 "$ffmpeg_url" -o ffmpeg.tar.xz
         echo "$ffmpeg_sha256  ffmpeg.tar.xz" | shasum -a 256 --check -
         7z x -aoa ffmpeg.tar.xz
@@ -154,6 +158,10 @@ install-deps:
         cp -R include/. ../ffmpeg-x86_64/include/
         cp -R include/. ../ffmpeg-arm64/include/
         cd ..
+
+        for arch_dir in ffmpeg-x86_64 ffmpeg-arm64; do
+            printf '%s\n' "$ffmpeg_sha256" > "$arch_dir/.gyroflow-package-sha256"
+        done
 
         if ! ffmpeg_installed; then
             echo "ffmpeg was installed but is incomplete or missing VideoToolbox encoders in ffmpeg-x86_64 or ffmpeg-arm64" >&2

@@ -176,7 +176,7 @@ pub struct VideoTranscoder<'a> {
     pub input_index: usize,
     pub output_index: Option<usize>,
     pub decoder: Option<decoder::Video>,
-    pub encoder: Option<encoder::video::Video>,
+    pub encoder: Option<encoder::video::Encoder>,
     pub encoder_name: String,
 
     pub encoder_params: EncoderParams<'a>,
@@ -251,7 +251,7 @@ impl<'a> VideoTranscoder<'a> {
         octx: &mut format::context::Output,
         output_index: usize,
         hw_upload_format: &Option<format::Pixel>,
-    ) -> Result<encoder::video::Video, FFmpegError> {
+    ) -> Result<encoder::video::Encoder, FFmpegError> {
         let global_header = octx.format().flags().contains(format::Flags::GLOBAL_HEADER);
         let mut ost = octx.stream_mut(output_index).unwrap();
         let encoder_codec = params.codec.unwrap();
@@ -259,7 +259,8 @@ impl<'a> VideoTranscoder<'a> {
         let options = params.options.to_owned();
 
         let ctx_ptr = unsafe { ffi::avcodec_alloc_context3(encoder_codec.as_ptr()) };
-        let context = unsafe { codec::context::Context::wrap(ctx_ptr, Some(std::rc::Rc::new(0))) };
+        // Own the context from allocation onward, including failed encoder opens.
+        let context = unsafe { codec::context::Context::wrap(ctx_ptr, None) };
         let mut encoder = context.encoder().video()?;
         let codec_name = encoder
             .codec()
@@ -368,9 +369,13 @@ impl<'a> VideoTranscoder<'a> {
             }
         }
 
-        let encoder = encoder.open_with(new_options)?;
+        log::debug!(target: "video.codec", "encoder open begin codec={codec_name} pixel_format={pixel_format:?}");
+        let encoder = encoder.open_with(new_options).map_err(|e| {
+            log::error!(target: "video.codec", "encoder open failed codec={codec_name}: {e:?}");
+            e
+        })?;
+        log::debug!(target: "video.codec", "encoder open complete codec={codec_name}");
         ost.set_parameters(&encoder);
-        let context = unsafe { codec::context::Context::wrap(ctx_ptr, None) };
 
         if codec_name.contains("hevc") || codec_name.contains("x265") {
             let hvc1_tag: u32 = (b'h' as u32)
@@ -382,7 +387,7 @@ impl<'a> VideoTranscoder<'a> {
             }
         }
 
-        Ok(context.encoder().video()?)
+        Ok(encoder)
     }
 
     pub fn receive_and_process_video_frames(
@@ -404,11 +409,11 @@ impl<'a> VideoTranscoder<'a> {
 
         loop {
             if let Err(e) = decoder.receive_frame(&mut frame) {
-                if self.strict_decode_errors
-                    && e != ffmpeg_next::Error::Eof
+                if e != ffmpeg_next::Error::Eof
                     && e != (ffmpeg_next::Error::Other { errno: ffmpeg_next::util::error::EAGAIN })
+                    && (self.gpu_decoding || self.strict_decode_errors || !self.decode_only)
                 {
-                    return Err(e.into());
+                    return Err(super::ffmpeg_processor::decoder_error(self.gpu_decoding, "receive_frame", e));
                 }
                 break;
             }
@@ -1013,6 +1018,50 @@ impl<'a> VideoTranscoder<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decode_fallback_receive_failure_is_not_swallowed() {
+        ffmpeg_next::init().unwrap();
+        for hardware in [false, true] {
+            // An unopened native decoder makes avcodec_receive_frame return EINVAL.
+            let codec = decoder::find(codec::Id::RAWVIDEO).unwrap();
+            let context = codec::context::Context::new_with_codec(codec);
+            let mut video = VideoTranscoder {
+                decoder: Some(decoder::Video(decoder::Opened(context.decoder()))),
+                gpu_decoding: hardware,
+                ..Default::default()
+            };
+            let result = video.receive_and_process_video_frames((32, 24), None, None,
+                &mut Vec::new(), None, None, &mut FrameTimestamps::default());
+            if hardware {
+                assert!(matches!(result, Err(FFmpegError::GPUDecodingFailed)));
+            } else {
+                assert!(matches!(result, Err(FFmpegError::InternalError(_))));
+            }
+        }
+    }
+
+    #[test]
+    fn decode_fallback_eagain_and_eof_are_normal() {
+        ffmpeg_next::init().unwrap();
+        let codec = decoder::find(codec::Id::RAWVIDEO).unwrap();
+        let mut context = codec::context::Context::new_with_codec(codec);
+        unsafe {
+            (*context.as_mut_ptr()).width = 32;
+            (*context.as_mut_ptr()).height = 24;
+            (*context.as_mut_ptr()).pix_fmt = format::Pixel::GRAY8.into();
+        }
+        let mut video = VideoTranscoder {
+            decoder: Some(context.decoder().open_as(codec).unwrap().video().unwrap()),
+            gpu_decoding: true,
+            ..Default::default()
+        };
+        for eof in [false, true] {
+            if eof { video.decoder.as_mut().unwrap().send_eof().unwrap(); }
+            assert!(matches!(video.receive_and_process_video_frames((32, 24), None, None,
+                &mut Vec::new(), None, None, &mut FrameTimestamps::default()), Ok(Status::Continue)));
+        }
+    }
 
     #[test]
     fn decode_frame_step_preserves_frames_and_range_boundaries() {

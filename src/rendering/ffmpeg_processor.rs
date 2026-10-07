@@ -195,18 +195,43 @@ impl Default for VideoInfo {
     }
 }
 
-/// Returns true when the captured ffmpeg log indicates an unrecoverable GPU
-/// decode/transfer failure that warrants falling back to software decoding.
-/// Historically this only matched the hwaccel "failed to decode picture" error;
-/// it now also matches Vulkan device loss (VK_ERROR_DEVICE_LOST), which surfaces
-/// as a failed command-buffer submission during HW frame transfer/scale and would
-/// otherwise be swallowed per-frame, leaving the caller with zero decoded frames.
-fn ffmpeg_log_indicates_gpu_decode_failure() -> bool {
-    let log = FFMPEG_LOG.read();
-    log.contains("failed to decode picture")
-        || log.contains("VK_ERROR_DEVICE_LOST")
-        || log.contains("device lost")
-        || log.contains("Unable to submit command buffer")
+pub(super) fn decoder_error(gpu_decoding: bool, stage: &str, error: ffmpeg_next::Error) -> FFmpegError {
+    ::log::warn!(target: "video.codec", "decoder failed stage={stage} hardware={gpu_decoding} error={error:?}");
+    if gpu_decoding && error != Error::Eof
+        && error != (Error::Other { errno: ffmpeg_next::util::error::EAGAIN })
+    {
+        FFmpegError::GPUDecodingFailed
+    } else {
+        error.into()
+    }
+}
+
+fn frame_processing_error(gpu_decoding: bool, error: FFmpegError) -> FFmpegError {
+    // A download failure belongs to decoding. Upload and encoder failures do not.
+    // Never use the shared FFmpeg log to classify errors from parallel jobs.
+    if gpu_decoding && matches!(error, FFmpegError::FromHWTransferError(_)) {
+        ::log::warn!(target: "video.codec", "hardware frame download failed: {error:?}");
+        FFmpegError::GPUDecodingFailed
+    } else {
+        error
+    }
+}
+
+pub(super) fn next_decoder_attempt(index: i32, rendered_frames: usize, error: &FFmpegError) -> Option<i32> {
+    if index < 0 {
+        return None;
+    }
+    if matches!(error, FFmpegError::GPUDecodingFailed) {
+        return Some(-1);
+    }
+    if rendered_frames == 0 {
+        match index {
+            0..=3 => return Some(index + 1),
+            4 => return Some(-1),
+            _ => {}
+        }
+    }
+    None
 }
 
 impl<'a> FfmpegProcessor<'a> {
@@ -373,7 +398,8 @@ impl<'a> FfmpegProcessor<'a> {
                     options: Dictionary::new(),
                     ..EncoderParams::default()
                 },
-                decoder: Some(decoder_ctx.decoder().open_as(codec)?.video()?),
+                decoder: Some(decoder_ctx.decoder().open_as(codec)
+                    .map_err(|e| decoder_error(gpu_decoding, "open", e))?.video()?),
                 ..VideoTranscoder::default()
             },
 
@@ -606,8 +632,6 @@ impl<'a> FfmpegProcessor<'a> {
             Ok(false)
         };
 
-        let mut any_encoded = false;
-
         loop {
             let mut pending_packets: Vec<(Stream, ffmpeg_next::Packet, usize, isize)> = Vec::new();
 
@@ -627,14 +651,8 @@ impl<'a> FfmpegProcessor<'a> {
                             let decoder =
                                 self.video.decoder.as_mut().ok_or(Error::DecoderNotFound)?;
                             packet.rescale_ts(stream.time_base(), (1, 1000000)); // rescale to microseconds
-                            if let Err(err) = decoder.send_packet(&packet) {
-                                if self.gpu_decoding && ffmpeg_log_indicates_gpu_decode_failure() {
-                                    return Err(FFmpegError::GPUDecodingFailed);
-                                }
-                                if !any_encoded {
-                                    return Err(err.into());
-                                }
-                            }
+                            decoder.send_packet(&packet)
+                                .map_err(|e| decoder_error(self.gpu_decoding, "send_packet", e))?;
                         }
 
                         match self.video.receive_and_process_video_frames(
@@ -669,7 +687,6 @@ impl<'a> FfmpegProcessor<'a> {
                                             )?;
                                         }
                                     }
-                                    any_encoded = true;
                                 }
                                 if encoding_status == Status::Finish {
                                     encoding_video = false;
@@ -679,23 +696,7 @@ impl<'a> FfmpegProcessor<'a> {
                                 }
                             }
                             Err(e) => {
-                                // A HW frame transfer failure or a Vulkan device loss
-                                // means GPU decoding cannot continue; surface it as
-                                // GPUDecodingFailed so the caller retries in software
-                                // instead of swallowing every frame once encoding has
-                                // started (any_encoded == true).
-                                if self.gpu_decoding
-                                    && (matches!(
-                                        e,
-                                        FFmpegError::FromHWTransferError(_)
-                                            | FFmpegError::ToHWTransferError(_)
-                                    ) || ffmpeg_log_indicates_gpu_decode_failure())
-                                {
-                                    return Err(FFmpegError::GPUDecodingFailed);
-                                }
-                                if !any_encoded {
-                                    return Err(e);
-                                }
+                                return Err(frame_processing_error(self.gpu_decoding, e));
                             }
                         }
                     }
@@ -752,7 +753,8 @@ impl<'a> FfmpegProcessor<'a> {
                 .decoder
                 .as_mut()
                 .ok_or(Error::DecoderNotFound)?
-                .send_eof()?;
+                .send_eof()
+                .map_err(|e| decoder_error(self.gpu_decoding, "send_eof", e))?;
             // self.video.decoder.as_mut().ok_or(Error::DecoderNotFound)?.flush();
             self.video.receive_and_process_video_frames(
                 output_size,
@@ -762,7 +764,7 @@ impl<'a> FfmpegProcessor<'a> {
                 start_ms,
                 end_ms,
                 &mut self.frame_ts,
-            )?;
+            ).map_err(|e| frame_processing_error(self.gpu_decoding, e))?;
             self.video
                 .encoder
                 .as_mut()
@@ -838,11 +840,8 @@ impl<'a> FfmpegProcessor<'a> {
 
                     if let Err(err) = decoder.send_packet(&packet) {
                         ::log::error!("Decoder error {:?}", err);
-                        if self.gpu_decoding && ffmpeg_log_indicates_gpu_decode_failure() {
-                            return Err(FFmpegError::GPUDecodingFailed);
-                        }
-                        if !any_encoded || self.video.strict_decode_errors {
-                            return Err(err.into());
+                        if self.gpu_decoding || !any_encoded || self.video.strict_decode_errors {
+                            return Err(decoder_error(self.gpu_decoding, "send_packet", err));
                         }
                     }
                     match self.video.receive_and_process_video_frames(
@@ -862,21 +861,8 @@ impl<'a> FfmpegProcessor<'a> {
                         }
                         Err(e) => {
                             ::log::error!("Encoder error {:?}", e);
-                            // A HW frame transfer failure or a Vulkan device loss is
-                            // unrecoverable for GPU decoding. Return GPUDecodingFailed
-                            // so the caller retries in software, instead of swallowing
-                            // every subsequent frame (any_encoded flips true on the
-                            // first buffered receive) and yielding zero frames.
-                            if self.gpu_decoding
-                                && (matches!(
-                                    e,
-                                    FFmpegError::FromHWTransferError(_)
-                                        | FFmpegError::ToHWTransferError(_)
-                                ) || ffmpeg_log_indicates_gpu_decode_failure())
-                            {
-                                return Err(FFmpegError::GPUDecodingFailed);
-                            }
-                            if !any_encoded || self.video.strict_decode_errors {
+                            let e = frame_processing_error(self.gpu_decoding, e);
+                            if matches!(e, FFmpegError::GPUDecodingFailed) || !any_encoded || self.video.strict_decode_errors {
                                 return Err(e);
                             }
                         }
@@ -902,7 +888,8 @@ impl<'a> FfmpegProcessor<'a> {
             .decoder
             .as_mut()
             .ok_or(Error::DecoderNotFound)?
-            .send_eof()?;
+            .send_eof()
+            .map_err(|e| decoder_error(self.gpu_decoding, "send_eof", e))?;
         self.video.receive_and_process_video_frames(
             (0, 0),
             None,
@@ -911,7 +898,7 @@ impl<'a> FfmpegProcessor<'a> {
             start_ms,
             end_ms,
             &mut self.frame_ts,
-        )?;
+        ).map_err(|e| frame_processing_error(self.gpu_decoding, e))?;
 
         if let Some(step) = &self.video.decode_frame_step {
             ::log::debug!(target: "sync", "[optical] decode sampling: decoded={} retained={} skipped_before_transfer={}",
@@ -1027,6 +1014,128 @@ impl<'a> FfmpegProcessor<'a> {
             }
         }
         Err(ffmpeg_next::Error::StreamNotFound)
+    }
+}
+
+#[cfg(test)]
+mod decode_fallback_tests {
+    use super::*;
+
+    #[test]
+    fn decode_fallback_stops_after_software_and_keeps_encoder_errors() {
+        assert_eq!(next_decoder_attempt(0, 12, &FFmpegError::GPUDecodingFailed), Some(-1));
+        assert_eq!(next_decoder_attempt(-1, 0, &FFmpegError::GPUDecodingFailed), None);
+        for stage in ["open", "send_packet", "receive_frame", "send_eof"] {
+            assert!(matches!(decoder_error(true, stage, Error::Unknown), FFmpegError::GPUDecodingFailed));
+            assert!(matches!(decoder_error(false, stage, Error::Unknown), FFmpegError::InternalError(Error::Unknown)));
+        }
+        for error in [Error::Eof, Error::Other { errno: ffmpeg_next::util::error::EAGAIN }] {
+            assert!(matches!(decoder_error(true, "send_packet", error), FFmpegError::InternalError(_)));
+        }
+        let encoder_error = FFmpegError::ToHWTransferError(-1);
+        assert!(matches!(frame_processing_error(true, encoder_error), FFmpegError::ToHWTransferError(-1)));
+        assert!(matches!(frame_processing_error(true, FFmpegError::FromHWTransferError(-1)), FFmpegError::GPUDecodingFailed));
+        assert!(matches!(frame_processing_error(false, FFmpegError::InternalError(Error::InvalidData)), FFmpegError::InternalError(Error::InvalidData)));
+        let mut index = 0;
+        let mut attempts = vec![index];
+        while let Some(next) = next_decoder_attempt(index, 0, &FFmpegError::DecoderNotFound) {
+            index = next;
+            attempts.push(index);
+            assert!(attempts.len() <= 6);
+        }
+        assert_eq!(attempts, [0, 1, 2, 3, 4, -1]);
+    }
+
+    fn fixture(dir: &std::path::Path) -> String {
+        let path = dir.join("source.y4m");
+        let mut data = b"YUV4MPEG2 W32 H24 F25:1 Ip A1:1 C420\n".to_vec();
+        for index in 0..8u8 {
+            data.extend_from_slice(b"FRAME\n");
+            data.extend(vec![16 + index; 32 * 24]);
+            data.extend(vec![128; 32 * 24 / 2]);
+        }
+        std::fs::write(&path, data).unwrap();
+        filesystem::path_to_url(path.to_str().unwrap())
+    }
+
+    #[test]
+    fn decode_fallback_recreates_pipeline_and_replaces_partial_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = fixture(dir.path());
+        let folder = filesystem::path_to_url(dir.path().to_str().unwrap());
+        let captured = Arc::new(());
+        let mut index = 0;
+        let mut attempts = 0;
+        loop {
+            attempts += 1;
+            assert!(attempts <= 2);
+            // No callback or native codec from the previous attempt may survive here.
+            assert_eq!(Arc::strong_count(&captured), 1);
+            let (result, frames) = {
+                let mut proc = FfmpegProcessor::from_file(&input, false, 0, None).unwrap();
+                proc.video_codec = Some("ffv1".into());
+                proc.video.gpu_encoding = false;
+                proc.video.processing_order = ProcessingOrder::PostConversion;
+                proc.audio_codec = codec::Id::None;
+                let frames = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let observed = frames.clone();
+                let captured = captured.clone();
+                proc.on_frame(move |_, input, output, _, _| {
+                    let _keep_until_pipeline_drop = &captured;
+                    let frame = observed.fetch_add(1, Relaxed);
+                    // Exercise the real export cleanup after several frames were encoded.
+                    if index == 0 && frame == 3 {
+                        return Err(FFmpegError::GPUDecodingFailed);
+                    }
+                    *output.unwrap() = input.clone();
+                    Ok(())
+                });
+                let result = proc.render(&folder, "result.nut.tmp", (32, 24), None,
+                    Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+                (result, frames.load(Relaxed))
+            };
+            match result {
+                Err(ref error) => index = next_decoder_attempt(index, frames, error).unwrap(),
+                Ok(()) => break,
+            }
+        }
+        assert_eq!(attempts, 2);
+        assert_eq!(Arc::strong_count(&captured), 1);
+        let output = filesystem::get_file_url(&folder, "result.nut.tmp", false);
+        let mut decoded = Vec::new();
+        {
+            let mut proc = FfmpegProcessor::from_file(&output, false, 0, None).unwrap();
+            proc.video.strict_decode_errors = true;
+            proc.on_frame(|ts, frame, _, _, _| {
+                decoded.push((ts, frame.data(0)[0]));
+                Ok(())
+            });
+            proc.start_decoder_only(Vec::new(), Arc::new(AtomicBool::new(false))).unwrap();
+        }
+        assert_eq!(decoded, (0..8).map(|i| (i * 40_000, 16 + i as u8)).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn decode_fallback_software_failure_after_frames_is_not_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = fixture(dir.path());
+        let folder = filesystem::path_to_url(dir.path().to_str().unwrap());
+        let mut proc = FfmpegProcessor::from_file(&input, false, 0, None).unwrap();
+        proc.video_codec = Some("ffv1".into());
+        proc.video.gpu_encoding = false;
+        proc.video.processing_order = ProcessingOrder::PostConversion;
+        proc.audio_codec = codec::Id::None;
+        let mut frames = 0;
+        proc.on_frame(move |_, input, output, _, _| {
+            frames += 1;
+            if frames == 4 { return Err(Error::InvalidData.into()); }
+            *output.unwrap() = input.clone();
+            Ok(())
+        });
+        let error = proc.render(&folder, "failed.nut", (32, 24), None,
+            Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false))).unwrap_err();
+        assert!(matches!(error, FFmpegError::InternalError(Error::InvalidData)));
+        assert_eq!(next_decoder_attempt(-1, 3, &error), None);
     }
 }
 

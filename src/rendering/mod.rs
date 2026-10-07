@@ -614,7 +614,7 @@ where
             let log = FFMPEG_LOG.read().clone();
             if let Some(enc) = ffmpeg_next::encoder::find_by_name("h264_videotoolbox") {
                 let ctx_ptr = unsafe { ffi::avcodec_alloc_context3(enc.as_ptr()) };
-                let context = unsafe { codec::context::Context::wrap(ctx_ptr, Some(Rc::new(0))) };
+                let context = unsafe { codec::context::Context::wrap(ctx_ptr, None) };
                 let mut encoder = context.encoder().video()?;
                 encoder.set_width(1920);
                 encoder.set_height(1080);
