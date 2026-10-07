@@ -32528,6 +32528,23 @@ mod tests {
 
     // ---- stabilize-flow-optical-analysis ----
 
+    #[test]
+    fn simple_mode_experimental_panel_works_without_a_preview_video() {
+        // The ticks are the render queue's settings as well: queued videos alone must be enough to edit them
+        let qml = include_str!("../ui/App.qml").replace("\r\n", "\n");
+        let section = &qml[qml.find("objectName: \"simple-experimental\";").expect("the simple-mode section")..];
+        let line = section.lines().find(|l| l.trim_start().starts_with("innerItem.enabled:")).expect("its enable condition");
+        assert!(!line.contains("vid.loaded"), "{line}");
+        for loading in ["controller.video_loading_in_progress", "controller.loading_gyro_in_progress"] {
+            assert!(line.contains(&format!("!{loading}")), "still disabled while loading: {line}");
+        }
+        // Analyzing still needs the preview's video
+        let motion = include_str!("../ui/menu/MotionData.qml").replace("\r\n", "\n");
+        let analyze = &motion[motion.find("text: qsTr(\"Analyze\");").expect("the Analyze button")..];
+        let enabled = analyze.lines().find(|l| l.trim_start().starts_with("enabled:")).unwrap();
+        assert!(enabled.contains("window.videoArea.vid.loaded"), "{enabled}");
+    }
+
     fn translation_ticked() -> serde_json::Value {
         serde_json::json!({ "translation": true })
     }

@@ -95,7 +95,8 @@ MenuItem {
                 translationSmoothness.value = Math.log(translationcb.info.smoothness_s) / Math.LN10;
             if (restoreParameters || !translationAlongAxisTimer.running)
                 translationAlongAxis.checked = !!translationcb.info.along_axis;
-            if (restoreParameters) opticalStrength.value = opticalcb.info.strength * 100;
+            // The core reports a strength only with a correction fitted; without one the slider keeps its value
+            if (restoreParameters && typeof opticalcb.info.strength === "number") opticalStrength.value = opticalcb.info.strength * 100;
         } finally {
             root.updatingOpticalControls = false;
         }

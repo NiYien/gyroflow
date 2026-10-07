@@ -2032,7 +2032,8 @@ Rectangle {
                     objectName: "simple-experimental";
                     opened: false;
                     visible: !isMobile && !window.useMobileWorkspace;
-                    innerItem.enabled: window.videoArea.vid.loaded && !controller.video_loading_in_progress && !controller.loading_gyro_in_progress;
+                    // The ticks also set the render queue's analysis, so queued videos are enough; Analyze needs a preview video itself
+                    innerItem.enabled: !controller.video_loading_in_progress && !controller.loading_gyro_in_progress;
                     Column {
                         id: simpleExperimentalContent;
                         width: parent.width;
