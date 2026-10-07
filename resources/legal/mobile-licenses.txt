@@ -9610,7 +9610,7 @@ Public License instead of this License.  But first, please read
   through a channel without those restrictive terms and conditions.
 
 - As an additional permission under section 7, you are allowed to link or combine
-  Gyroflow with mdk-sdk, and to distribute the resulting combined work, provided
+  Gyroflow with mdk-sdk for iOS and Android, and to distribute the resulting combined work, provided
   that every other part of the combined work is distributed under terms compatible
   with the GNU GPL version 3.
 

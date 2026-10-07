@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def collect(metadata):
     index_file = ROOT / "resources/legal/notice-sources.json"
-    recovered = json.loads(index_file.read_text()) if index_file.exists() else {}
+    recovered = json.loads(index_file.read_text(encoding="utf-8")) if index_file.exists() else {}
     nodes = {node["id"]: node for node in metadata["resolve"]["nodes"]}
     selected = set()
 
@@ -49,7 +49,7 @@ def collect(metadata):
         for path in sorted(set(files)):
             if not path.is_file():
                 continue
-            text = path.read_text(errors="replace").strip()
+            text = path.read_text(encoding="utf-8", errors="replace").strip()
             if not text:
                 continue
             digest = hashlib.sha256(text.encode()).hexdigest()
@@ -81,10 +81,10 @@ def main():
                             + str(p['repository'] or p['source']) + "\n" + p['notice_origin'] for p in entries))
     for notice in notices.values():
         parts.append("\n\n" + "=" * 64 + "\n" + ", ".join(notice["packages"]) + "\n\n" + notice["text"])
-    for path in sorted((legal / "native").glob("*.txt")):
-        parts.append("\n\n" + "=" * 64 + "\n" + path.stem + "\n\n" + path.read_text())
-    (legal / "mobile-licenses.txt").write_text("\n".join(parts) + "\n")
-    (legal / "ios-dependencies.json").write_text(json.dumps(entries, ensure_ascii=False, indent=2) + "\n")
+    for path in sorted((legal / "native").glob("*.txt"), key=lambda path: path.name):
+        parts.append("\n\n" + "=" * 64 + "\n" + path.stem + "\n\n" + path.read_text(encoding="utf-8"))
+    (legal / "mobile-licenses.txt").write_text("\n".join(parts) + "\n", encoding="utf-8", newline="\n")
+    (legal / "ios-dependencies.json").write_text(json.dumps(entries, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
     print(json.dumps({"packages": len(entries), "unique_notices": len(notices), "missing_notice_files": missing}, indent=2))
 
 

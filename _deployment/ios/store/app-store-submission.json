@@ -1,6 +1,6 @@
 {
   "status": "prepared_not_submitted",
-  "prepared_on": "2026-09-15",
+  "prepared_on": "2026-10-07",
   "app": {
     "name": "NiYien",
     "bundle_identifier": "com.niyien.stabilizer",
@@ -9,10 +9,22 @@
     "support_email": "support@niyien.com"
   },
   "urls": {
-    "status": "awaiting_website_deployment",
+    "status": "verified_public_http_200",
+    "verified_on": "2026-10-07",
     "privacy_policy": "https://www.niyien.com/mobile/privacy.html",
     "support": "https://www.niyien.com/mobile/help.html",
     "marketing": "https://www.niyien.com/"
+  },
+  "testflight": {
+    "beta_description_en": "NiYien is a video stabilization and batch export tool using compatible gyroscope data. Processing takes place on the device. No account is required. A generated sample is available under Settings → App → Help and support → Try a generated demo.",
+    "beta_description_zh": "NiYien 使用兼容的陀螺仪数据稳定视频并批量导出，在设备本地处理，无需账号。可从“设置 → 应用 → 帮助与支持 → 体验内置示例”开始测试。",
+    "what_to_test_en": "Test importing from Photos and Files, Original / Stabilized preview, video export, and Share / Save to Files. Include your device model, iOS version, input format and steps to reproduce in feedback. Keep the app in the foreground during processing. The queue is not restored after app termination; imported Photos copies are temporary. Ordinary phone footage may lack compatible motion data.",
+    "what_to_test_zh": "重点测试相册／文件导入、原始／稳定后预览、视频导出和分享／存储到文件。反馈请附设备型号、iOS 版本、输入格式和复现步骤。处理期间保持应用在前台；应用进程结束后不会恢复队列，相册导入副本为临时文件。普通手机视频可能没有兼容的运动数据。",
+    "feedback_email": "support@niyien.com",
+    "review_sample_url": "https://www.niyien.com/mobile/NiYien-review-sample.zip",
+    "review_sample_sha256": "1e44481938a863fb1641d4247934301688939e64431656c180124cf84fcd24f5",
+    "mac_handoff": "_deployment/ios/store/testflight-handoff.txt",
+    "native_build_status": "pending_mac_build_and_device_smoke_test"
   },
   "app_privacy": {
     "collects_data": true,
@@ -99,12 +111,12 @@
   },
   "review": {
     "sign_in_required": false,
-    "notes_en": "No account or sign-in is required. Add compatible video and matching gyroscope data, configure the lens and stabilization settings, then export a stabilized video. Open the completed task and use Share / Save to Files to retrieve the result. The stabilization-for-plugins action produces a project for desktop plugins and is distinct from video export. Core processing is local. User-initiated feedback includes diagnostic attachments; background mobile usage analytics are disabled. The iOS app has no APK updater or real-time A1 USB channel.",
+    "notes_en": "No account or external hardware is required. For a complete review workflow, open Settings → App → Help and support → Try a generated demo. This imports an original six-second synthetic clip, matching motion data and a lens model. Open the preview to compare Original / Stabilized, return to the video list, then tap Export stabilized video. Keep the app in the foreground until it finishes. Open the completed task and use Share / Save to Files to retrieve the MP4. The sample is also available at https://www.niyien.com/mobile/NiYien-review-sample.zip. It demonstrates the workflow rather than measured camera quality. The stabilization-for-plugins action produces a desktop plugin project. Real footage requires compatible gyroscope data. Core processing is local. User-initiated feedback includes diagnostic attachments; background mobile usage analytics are disabled. The iOS app has no APK updater or real-time A1 USB channel.",
     "contact_first_name": null,
     "contact_last_name": null,
     "contact_phone": null,
     "contact_email": "support@niyien.com",
-    "review_media_attachment": "pending_upload"
+    "review_media_attachment": "public_sample_zip_prepared_native_verification_pending"
   },
   "age_rating": {
     "status": "answers_prepared_console_questionnaire_not_completed",
@@ -124,7 +136,6 @@
     "notes_zh": "现有配置为不使用非豁免加密。应用使用 HTTPS/标准传输加密；需确认随包原生 SDK 没有另行引入非豁免功能。"
   },
   "publisher_follow_up": [
-    "官网部署并核验两个公开 URL 返回实际页面",
     "填写审核联系人的姓名和电话",
     "确认 MDK 授权覆盖 NiYien iOS 与 Android 分发；核实 BRAW 条款及 Qt/FFmpeg 对应源码交付",
     "在 App Store Connect 完成年龄分级、发行地区及适用的主体/合规字段",

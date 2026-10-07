@@ -23,6 +23,17 @@ def output(*args):
     return subprocess.check_output([str(arg) for arg in args], text=True).strip()
 
 
+def validate_distribution_toolchain(xcode_version, sdk_version, executable_build):
+    if not str(xcode_version).isdigit() or int(xcode_version) < 2600:
+        raise ValueError("App Store Connect requires Xcode 26 or later")
+    versions = [sdk_version] + re.findall(r"^\s*sdk\s+([0-9.]+)\s*$", executable_build, re.MULTILINE)
+    if len(versions) < 2:
+        raise ValueError("The executable has no verifiable iOS SDK build version")
+    for version in versions:
+        if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", str(version)) or int(str(version).split(".")[0]) < 26:
+            raise ValueError("App Store Connect requires an executable built with iOS SDK 26 or later")
+
+
 def signing_settings(kind, metadata):
     if kind == "unsigned":
         return None
@@ -72,6 +83,12 @@ def package(profile, signing):
     platform = output("xcrun", "vtool", "-show-build", executable)
     if not re.search(r"^\s*platform IOS\s*$", platform, re.MULTILINE):
         raise ValueError("The executable is not an iOS device build")
+    developer = Path(output("xcode-select", "-p"))
+    xcode = plistlib.loads((developer.parent / "Info.plist").read_bytes())
+    sdk_version = output("xcrun", "--sdk", "iphoneos", "--show-sdk-version")
+    sdk_build = output("xcrun", "--sdk", "iphoneos", "--show-sdk-build-version")
+    if signing == "distribution":
+        validate_distribution_toolchain(xcode.get("DTXcode"), sdk_version, platform)
 
     binaries = ROOT / "_deployment/_binaries"
     stage = binaries / "ios"
@@ -95,10 +112,6 @@ def package(profile, signing):
     info.update(CFBundleDisplayName=metadata["display_name"], CFBundleName=metadata["display_name"],
                 CFBundleIdentifier=metadata["bundle_identifier"], CFBundleShortVersionString=metadata["version"],
                 CFBundleVersion=metadata["build_number"], MinimumOSVersion=metadata["minimum_os_version"])
-    developer = Path(output("xcode-select", "-p"))
-    xcode = plistlib.loads((developer.parent / "Info.plist").read_bytes())
-    sdk_version = output("xcrun", "--sdk", "iphoneos", "--show-sdk-version")
-    sdk_build = output("xcrun", "--sdk", "iphoneos", "--show-sdk-build-version")
     info.update(BuildMachineOSBuild=output("sw_vers", "-buildVersion"), DTCompiler=xcode.get("DTCompiler", "com.apple.compilers.llvm.clang.1_0"),
                 DTPlatformBuild=sdk_build, DTPlatformName="iphoneos", DTPlatformVersion=sdk_version,
                 DTSDKBuild=sdk_build, DTSDKName="iphoneos" + sdk_version,

@@ -54,7 +54,7 @@ def main():
         "offsets": {"0": 0},
         "calibration_data": {"name": "NiYien generated pinhole camera", "camera_brand": "NiYien", "camera_model": "Synthetic demo", "calib_dimension": {"w": WIDTH, "h": HEIGHT}, "orig_dimension": {"w": WIDTH, "h": HEIGHT}, "fps": FPS, "distortion_model": "opencv_standard", "fisheye_params": {"camera_matrix": [[450, 0, WIDTH / 2], [0, 450, HEIGHT / 2], [0, 0, 1]], "distortion_coeffs": [0, 0, 0, 0, 0]}},
         "stabilization": {"method": "Default", "smoothing_params": [{"name": "smoothness", "value": 0.5}], "fov": 0.85, "adaptive_zoom_window": 0, "frame_readout_time": 0},
-        "output": {"codec": "H.264/AVC", "output_width": WIDTH, "output_height": HEIGHT, "bitrate": 8, "use_gpu": True, "audio": False, "pixel_format": "yuv420p", "output_filename": "NiYien-demo-stabilized.mp4"}}
+        "output": {"codec": "H.264/AVC", "output_width": WIDTH, "output_height": HEIGHT, "bitrate": 8, "keyframe_distance": 1.0, "use_gpu": True, "audio": False, "pixel_format": "yuv420p", "output_filename": "NiYien-demo-stabilized.mp4"}}
     (destination / "niyien-demo.gyroflow").write_text(json.dumps(project, indent=2) + "\n")
 
 

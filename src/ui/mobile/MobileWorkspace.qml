@@ -1029,6 +1029,24 @@ Rectangle {
                             Accessible.name: text
                         }
                         MobileActionRow { visible: root.panel === "about" || root.panel === "licenses"; width: parent.width; unit: root.unit; dark: root.dark; text: qsTr("Source code"); navigation: true; iconName: "info"; onClicked: Qt.openUrlExternally("https://github.com/NiYien/gyroflow") }
+                        MobileActionRow {
+                            objectName: "mobileGeneratedDemo"
+                            visible: root.panel === "help"
+                            width: parent.width; unit: root.unit; dark: root.dark
+                            text: qsTr("Try a generated demo"); iconName: "play"
+                            enabled: root.inputsAllowed()
+                            onClicked: {
+                                if (!root.inputsAllowed() || !root.queueService) return;
+                                const url = ui_tools.prepare_mobile_demo();
+                                if (!url || !root.queueService.loadMobileDemoProject(url)) {
+                                    root.notify(qsTr("The demo could not be prepared. Please try again."));
+                                    return;
+                                }
+                                if (root.host) root.host.videoArea.vid.pause();
+                                root.page = "library";
+                                root.dismissPanel();
+                            }
+                        }
                         MobileActionRow { visible: root.panel === "help" || root.panel === "privacy"; width: parent.width; unit: root.unit; dark: root.dark; text: qsTr("Feedback"); navigation: true; iconName: "message"; onClicked: if (root.host) root.host.feedbackDialog.open() }
                     }
                     Column {

@@ -1,0 +1,61 @@
+NiYien TestFlight — Mac 接续步骤（2026-10-07）
+
+目标：先发布小范围 TestFlight，按测试反馈再修功能。保留当前并发、
+队列生命周期、导出流程和界面设计，不把额外功能改造当作首版前置条件。
+
+1. 同步源码
+   在 Mac 的 gyroflow 仓库切到 niyien，git pull --ff-only origin niyien。
+   Windows 的 .cargo/config.toml 存在未提交的 ../qml-video-rs 本地覆盖；
+   不要复制它到 Mac。使用远端提交中的 Cargo.toml、Cargo.lock 和配置。
+   官网是 NiYien/docs 的 main 分支，移动页面在 mobile/。
+
+2. 工具链与签名
+   使用正式版 Xcode 26 或更新版本及 iOS 26 或更新 SDK。
+   先检查 xcodebuild -version、xcrun --sdk iphoneos --show-sdk-version。
+   必要时切换 xcode-select 到完整 Xcode.app，而非 CommandLineTools。
+   最低系统版本保持 iOS 15.0；不需改到 iOS 26。
+   运行 just ios install-deps。检查 Qt iOS、OpenCV、FFmpeg 和 MDK 构建依赖。
+   发布前请确认 MDK 授权覆盖 NiYien 的 iOS bundle ID，确认 Qt/FFmpeg
+   及所修改 Qt 库的对应源码交付。仓库中的许可文本不是授权确认记录。
+   配置 SIGN_KEY 为 Apple Distribution 证书 SHA-1，PROVISIONING_PROFILE
+   为明确授权 com.niyien.stabilizer 的 App Store 分发描述文件绝对路径。
+   签名资料保留在本机或环境变量中，不提交证书、描述文件、密码或 API key。
+
+3. 构建
+   先核对 App Store Connect 中已上传的 build number，然后设置
+   NIYIEN_IOS_BUILD_NUMBER 为更大的整数。仓库默认为 4，不代表可重复上传。
+   运行 python3 -B -m unittest discover -s _scripts/tests -p test_ios_metadata.py。
+   运行 _scripts/test_ios_video_picker_bridge.sh 做原生桥接检查。
+   运行 just ios build-ipa。此命令生成 deploy/distribution 包，保留 dSYM。
+   package_ios.py 会检查实际可执行文件的 SDK，避免用新 Info.plist
+   包装旧 SDK 构建。遇到原生编译或上传错误时，只修发布必需的问题。
+   记录 IPA 的 SHA-256、build-receipt.json、dSYM 及 App Store Connect 上传结果。
+
+4. 最小真机验证
+   用 development 描述文件运行 just ios run，或安装内部 TestFlight 构建。
+   冷启动后进入“设置 → 应用 → 帮助与支持 → 体验内置示例”。
+   预览原始／稳定后，返回列表，导出，打开完成任务并分享／存储到文件。
+   再用 Photos 或 Files 导入一段实际兼容素材，确认选择器取消后能重开。
+   Windows 通过的宿主检查不能标记为 iOS 真机通过。
+
+5. 上传与外部 TestFlight
+   用 Transporter 或当前苹果支持的上传工具上传 distribution IPA。
+   使用 _deployment/ios/store/app-store-submission.json 填写测试说明、
+   Beta App Review 信息、反馈邮箱与隐私资料。
+   核验 https://www.niyien.com/mobile/privacy.html 和 /mobile/help.html
+   返回有效页面；审核示例下载地址为 /mobile/NiYien-review-sample.zip。
+   当前示例 ZIP 的 SHA-256 为
+   1e44481938a863fb1641d4247934301688939e64431656c180124cf84fcd24f5。
+   审核联系人姓名、电话须由发布者提供；不能虚构。填写加密问题时须核对
+   实际原生 SDK 的加密范围，不仅依据 Info.plist 的 false。
+   提交首个外部构建的 Beta App Review，通过后邀请少量目标用户。
+   用户已经授权本轮 Windows 准备并 push；本交接本身不代表已上传或送审。
+
+6. 后续 App Store
+   完成真机截图、年龄分级、发行地区及适用的主体/备案信息。
+   并发、后台返回、长批次、4K/HDR、空间不足等放进 TestFlight 测试清单。
+   不宣称未验证的编码器、格式或 iOS 性能已经受支持。
+
+官方依据：
+https://developer.apple.com/news/upcoming-requirements/?id=04282026a
+https://developer.apple.com/help/app-store-connect/test-a-beta-version/testflight-overview/

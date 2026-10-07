@@ -2120,7 +2120,7 @@
     ],
     "notice_origin": "package or upstream notice",
     "notice_hashes": [
-      "921a933a9812321e2814963bfe1db51b0225dd73b17482d315da1f42ae37b0b8"
+      "bd4abd3214a277a788f34d80cec35f419d752afc943620cdfe2595e9efef473d"
     ]
   },
   {
@@ -2135,7 +2135,7 @@
     ],
     "notice_origin": "package or upstream notice",
     "notice_hashes": [
-      "921a933a9812321e2814963bfe1db51b0225dd73b17482d315da1f42ae37b0b8"
+      "bd4abd3214a277a788f34d80cec35f419d752afc943620cdfe2595e9efef473d"
     ]
   },
   {
@@ -3097,7 +3097,7 @@
     "authors": [],
     "notice_origin": "package or upstream notice",
     "notice_hashes": [
-      "921a933a9812321e2814963bfe1db51b0225dd73b17482d315da1f42ae37b0b8"
+      "bd4abd3214a277a788f34d80cec35f419d752afc943620cdfe2595e9efef473d"
     ]
   },
   {
@@ -5007,7 +5007,7 @@
     "authors": [],
     "notice_origin": "package or upstream notice",
     "notice_hashes": [
-      "921a933a9812321e2814963bfe1db51b0225dd73b17482d315da1f42ae37b0b8"
+      "bd4abd3214a277a788f34d80cec35f419d752afc943620cdfe2595e9efef473d"
     ]
   },
   {
@@ -5245,7 +5245,7 @@
     "name": "telemetry-parser",
     "version": "0.3.0",
     "license": "MIT OR Apache-2.0",
-    "source": "git+https://github.com/NiYien/telemetry-parser.git?branch=niyien#fecd03e152f6ebe5467f7322ad2fa4476c2184c9",
+    "source": "git+https://github.com/NiYien/telemetry-parser.git?branch=niyien#665a5e887df35f2d52f7523b8b743bb48c1a1c59",
     "repository": "https://github.com/AdrianEddy/telemetry-parser",
     "authors": [
       "Adrian <adrian.eddy@gmail.com>"

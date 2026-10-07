@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ios_metadata import load_metadata
-from package_ios import signing_settings
+from package_ios import signing_settings, validate_distribution_toolchain
 
 
 class IOSIdentityTests(unittest.TestCase):
@@ -79,6 +79,28 @@ class IOSIdentityTests(unittest.TestCase):
                     'Entitlements': {'application-identifier': 'TESTTEAM.com.niyien.stabilizer', 'get-task-allow': False}, **extra}
             with self.subTest(extra=extra), patch.dict(os.environ, {'PROVISIONING_PROFILE': str(profile), 'SIGN_KEY': hashlib.sha1(certificate).hexdigest()}), patch('package_ios.subprocess.check_output', return_value=plistlib.dumps(data)), self.assertRaises(ValueError):
                 signing_settings('distribution', self.metadata)
+
+    def test_distribution_accepts_current_toolchain_and_ios_15_deployment(self):
+        build = 'platform IOS\n    minos 15.0\n    sdk 26.0\n'
+        validate_distribution_toolchain('2600', '26.0', build)
+        validate_distribution_toolchain('2640', '26.4', build)
+
+    def test_new_packaging_sdk_does_not_hide_an_old_executable(self):
+        build = 'platform IOS\n    minos 15.0\n    sdk 18.5\n'
+        with self.assertRaises(ValueError):
+            validate_distribution_toolchain('2640', '26.4', build)
+
+    def test_distribution_rejects_old_or_unverifiable_toolchains(self):
+        for xcode, sdk, build in [
+            ('1640', '26.0', 'sdk 26.0\n'),
+            (None, '26.0', 'sdk 26.0\n'),
+            ('2600', '18.5', 'sdk 26.0\n'),
+            ('2600', 'unknown', 'sdk 26.0\n'),
+            ('2600', '26.0', 'platform IOS\n'),
+            ('2600', '26.0', 'sdk 26.0\nsdk 18.5\n'),
+        ]:
+            with self.subTest(xcode=xcode, sdk=sdk, build=build), self.assertRaises(ValueError):
+                validate_distribution_toolchain(xcode, sdk, build)
 
 
 if __name__ == '__main__':
