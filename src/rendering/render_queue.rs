@@ -996,6 +996,9 @@ struct DeepMatchState {
     // always describe the CURRENT probe.
     probe_plan: Vec<core::synchronization::deep_match::ProbeTask>,
     current_probe: usize,
+    // Only completed full-domain scans count; loads and local verification
+    // probes do not. Never reuse coverage across gyro files or separate runs.
+    completed_scan_ranges: std::collections::HashMap<usize, Vec<(f64, f64)>>,
     // Pool runs advance to the next candidate on a broken gyro file instead
     // of terminating (one bad file must not kill the pool search).
     pool_run: bool,
@@ -15050,12 +15053,10 @@ impl RenderQueue {
         QString::from("ok")
     }
 
-    // Rebuilds the current probe's chunk plan on `state`: a focused probe is
-    // chunked within its window (chunk starts stay file-relative — the
-    // accepted-offset absolutization contract is unchanged), a full-span
-    // probe chunks [0, total] exactly as the pre-change single-file path.
-    // Missing / zero duration falls back to a single chunk-length range —
-    // the load clamps to the actual file contents anyway.
+    // Rebuilds the current probe's file-relative chunks, excluding completed
+    // scans of this file while keeping context around uncovered boundaries.
+    // Only invalid metadata gets a fallback range; a fully covered probe
+    // stays empty so the caller can skip it.
     fn fill_probe_chunks(
         state: &mut DeepMatchState,
         task: gyroflow_core::synchronization::deep_match::ProbeTask,
@@ -15066,15 +15067,24 @@ impl RenderQueue {
         let chunk_ms = deep_match::max_scan_ms();
         state.gyro_index = task.gyro_index;
         state.current_chunk = 0;
-        state.chunk_plan = deep_match::probe_chunk_plan(
+        let original = deep_match::probe_chunk_plan(
             task.window_ms,
             total_ms,
             chunk_ms,
             deep_match::chunk_overlap_ms(video_duration_ms),
             deep_match::max_chunks(),
         );
-        if state.chunk_plan.is_empty() {
+        if original.is_empty() {
             state.chunk_plan = vec![task.window_ms.unwrap_or((0.0, chunk_ms))];
+        } else {
+            state.chunk_plan = deep_match::unsearched_probe_chunks(
+                task.window_ms,
+                total_ms,
+                chunk_ms,
+                deep_match::chunk_overlap_ms(video_duration_ms),
+                deep_match::max_chunks(),
+                state.completed_scan_ranges.get(&task.gyro_index).map(Vec::as_slice).unwrap_or(&[]),
+            );
         }
     }
 
@@ -15089,40 +15099,47 @@ impl RenderQueue {
             .and_then(|j| j.stab.as_ref())
             .map(|s| s.params.read().duration_ms)
             .unwrap_or(0.0);
-        // Peek the next task before the mutable borrow so the gyro pool can
-        // be consulted for its duration.
-        let Some(task) = self
-            .deep_match_pending
-            .get(&job_id)
-            .and_then(|s| s.probe_plan.get(s.current_probe + 1).copied())
-        else {
-            return false;
-        };
-        let total_ms = self
-            .gyro_files
-            .get(task.gyro_index)
-            .and_then(|g| g.duration_ms)
-            .unwrap_or(0.0);
-        let gyro_filename = self
-            .gyro_files
-            .get(task.gyro_index)
-            .map(|g| g.filename.clone())
-            .unwrap_or_default();
-        let (first_chunk, probe_ord, probe_total) = {
-            let Some(state) = self.deep_match_pending.get_mut(&job_id) else {
+        loop {
+            // Peek the next task before the mutable borrow so the gyro pool can
+            // be consulted for its duration.
+            let Some(task) = self
+                .deep_match_pending
+                .get(&job_id)
+                .and_then(|s| s.probe_plan.get(s.current_probe + 1).copied())
+            else {
                 return false;
             };
-            state.current_probe += 1;
-            Self::fill_probe_chunks(state, task, total_ms, video_duration_ms);
-            (state.chunk_plan[0], state.current_probe + 1, state.probe_plan.len())
-        };
-        ::log::info!(
-            target: "sync",
-            "[deep-match] probe {}/{}: tier={} gyro='{}' window={:?}",
-            probe_ord, probe_total, task.tier, gyro_filename, task.window_ms
-        );
-        self.spawn_deep_match_gyro_load(job_id, first_chunk);
-        true
+            let total_ms = self
+                .gyro_files
+                .get(task.gyro_index)
+                .and_then(|g| g.duration_ms)
+                .unwrap_or(0.0);
+            let gyro_filename = self
+                .gyro_files
+                .get(task.gyro_index)
+                .map(|g| g.filename.clone())
+                .unwrap_or_default();
+            let (first_chunk, probe_ord, probe_total) = {
+                let Some(state) = self.deep_match_pending.get_mut(&job_id) else {
+                    return false;
+                };
+                state.current_probe += 1;
+                Self::fill_probe_chunks(state, task, total_ms, video_duration_ms);
+                (state.chunk_plan.first().copied(), state.current_probe + 1, state.probe_plan.len())
+            };
+            let Some(first_chunk) = first_chunk else {
+                ::log::info!(target: "sync", "[deep-match] probe {}/{}: tier={} gyro='{}' skipped (range already searched)",
+                    probe_ord, probe_total, task.tier, gyro_filename);
+                continue;
+            };
+            ::log::info!(
+                target: "sync",
+                "[deep-match] probe {}/{}: tier={} gyro='{}' window={:?}",
+                probe_ord, probe_total, task.tier, gyro_filename, task.window_ms
+            );
+            self.spawn_deep_match_gyro_load(job_id, first_chunk);
+            return true;
+        }
     }
 
     // Background (off-UI-thread) load of one scan chunk of the probe gyro
@@ -15614,6 +15631,7 @@ impl RenderQueue {
             current_chunk: 0,
             probe_plan: Vec::new(),
             current_probe: 0,
+            completed_scan_ranges: std::collections::HashMap::new(),
             pool_run: false,
             optical_judge: false,
             verify: None,
@@ -15724,6 +15742,13 @@ impl RenderQueue {
             if self.deep_match_pending.get(&job_id).map(|s| s.verify.is_some()).unwrap_or(false) {
                 self.finish_deep_match_verify(job_id, stab, curves);
                 return;
+            }
+            if windows_scanned > 0 {
+                if let Some(state) = self.deep_match_pending.get_mut(&job_id) {
+                    if let Some(&range) = state.chunk_plan.get(state.current_chunk) {
+                        state.completed_scan_ranges.entry(state.gyro_index).or_default().push(range);
+                    }
+                }
             }
             use gyroflow_core::synchronization::optical_motion::judge::{JudgeMode, JudgeOutcome, JudgeVerdict};
             match optical {
@@ -23390,6 +23415,75 @@ mod tests {
         ];
         state.current_probe = 0;
         state.pool_run = true;
+    }
+
+    #[test]
+    fn deep_match_completed_ranges_skip_same_file_and_preserve_other_files() {
+        use gyroflow_core::synchronization::deep_match::{self, ProbeTask};
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = setup_deep_match_job(&mut queue, false);
+        simulate_deep_match_probe_chunks(&mut queue, &stab, vec![(0.0, 3_600_000.0)], 0);
+        make_pool_plan(&mut queue);
+        queue.gyro_files[0].duration_ms = Some(3_600_000.0);
+        queue.deep_match_pending.get_mut(&1).unwrap().probe_plan.insert(1,
+            ProbeTask { gyro_index: 0, tier: 3, window_ms: None });
+        deep_match::arm(2);
+        deep_match::record_window_scanned();
+        deep_match::record_window_scanned();
+        queue.record_batch_sync_result(1, vec![], vec![]);
+        let state = queue.deep_match_pending.get(&1).unwrap();
+        assert_eq!(state.current_probe, 2);
+        assert_eq!(state.gyro_index, 1);
+        assert_eq!(state.completed_scan_ranges.get(&0), Some(&vec![(0.0, 3_600_000.0)]));
+        assert_eq!(state.chunk_plan[0].0, 3_600_000.0);
+        assert!(!state.completed_scan_ranges.contains_key(&1));
+        queue.deep_match_pending.remove(&1);
+    }
+
+    #[test]
+    fn deep_match_all_remaining_ranges_covered_terminates_with_rollback() {
+        use gyroflow_core::synchronization::deep_match::{self, ProbeTask};
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = setup_deep_match_job(&mut queue, true);
+        simulate_deep_match_probe_chunks(&mut queue, &stab, vec![(0.0, 3_600_000.0)], 0);
+        queue.gyro_files[0].duration_ms = Some(3_600_000.0);
+        let state = queue.deep_match_pending.get_mut(&1).unwrap();
+        state.pool_run = true;
+        state.probe_plan = vec![
+            ProbeTask { gyro_index: 0, tier: 1, window_ms: Some((0.0, 3_600_000.0)) },
+            ProbeTask { gyro_index: 0, tier: 3, window_ms: None },
+        ];
+        deep_match::arm(2);
+        deep_match::record_window_scanned();
+        deep_match::record_window_scanned();
+        queue.record_batch_sync_result(1, vec![], vec![]);
+        assert!(queue.deep_match_pending.is_empty());
+        assert!(queue.deep_match_results.is_empty());
+        assert_eq!(stab.gyro.read().file_url, "file:///builtin-source.mp4");
+    }
+
+    #[test]
+    fn deep_match_fallback_clips_only_completed_scans_and_keeps_boundary_context() {
+        use gyroflow_core::synchronization::deep_match::{self, ProbeTask};
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = setup_deep_match_job(&mut queue, false);
+        let mut state = RenderQueue::snapshot_deep_match_state(&queue.jobs[&1], &stab, 0, None);
+        let task = ProbeTask { gyro_index: 0, tier: 3, window_ms: None };
+        let chunk = deep_match::max_scan_ms();
+        let total = chunk * 3.0;
+        let overlap = deep_match::chunk_overlap_ms(30_000.0);
+        RenderQueue::fill_probe_chunks(&mut state, task, total, 30_000.0);
+        assert_eq!(state.chunk_plan[0], (0.0, chunk), "a planned range is not completed coverage");
+        state.completed_scan_ranges.insert(0, vec![(0.0, chunk)]);
+        RenderQueue::fill_probe_chunks(&mut state, task, total, 30_000.0);
+        assert_eq!(state.chunk_plan[0].0, chunk - overlap);
+        assert!(state.chunk_plan.iter().all(|&(a, b)| a >= chunk - overlap && b > chunk));
+        let other = ProbeTask { gyro_index: 1, ..task };
+        RenderQueue::fill_probe_chunks(&mut state, other, total, 30_000.0);
+        assert_eq!(state.chunk_plan[0], (0.0, chunk));
     }
 
     #[test]

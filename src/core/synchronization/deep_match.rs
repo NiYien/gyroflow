@@ -510,6 +510,52 @@ pub fn probe_chunk_plan(
     }
 }
 
+/// Plan only clip-start positions that completed scans have not covered.
+/// Keep the usual overlap as gyro context at the right edge of every gap.
+/// Ranges are file-relative and must belong to the same gyro file and run.
+pub fn unsearched_probe_chunks(
+    window_ms: Option<(f64, f64)>,
+    total_ms: f64,
+    chunk_ms: f64,
+    overlap_ms: f64,
+    max_chunks: usize,
+    completed: &[(f64, f64)],
+) -> Vec<(f64, f64)> {
+    let original = probe_chunk_plan(window_ms, total_ms, chunk_ms, overlap_ms, max_chunks);
+    let mut result = Vec::new();
+    for (start, end) in original {
+        if completed.iter().any(|&(a, b)| a.is_finite() && b.is_finite() && a <= start && b >= end) {
+            continue;
+        }
+        // A scan shorter than its required context cannot safely exclude
+        // positions from another scan. Exact containment above is still safe.
+        if !overlap_ms.is_finite() || overlap_ms < 0.0 || end - start <= overlap_ms {
+            result.push((start, end));
+            continue;
+        }
+        let covered_end = |b: f64| if b >= total_ms { b } else { b - overlap_ms };
+        let mut gaps = vec![(start, covered_end(end))];
+        for &(a, b) in completed {
+            if !a.is_finite() || !b.is_finite() || b <= a { continue; }
+            let b = covered_end(b);
+            if b <= a { continue; }
+            let mut remaining = Vec::new();
+            for (lo, hi) in gaps {
+                if b <= lo || a >= hi {
+                    remaining.push((lo, hi));
+                } else {
+                    if lo < a { remaining.push((lo, a)); }
+                    if b < hi { remaining.push((b, hi)); }
+                }
+            }
+            gaps = remaining;
+        }
+        result.extend(gaps.into_iter().map(|(lo, hi)| (lo, (hi + overlap_ms).min(end))));
+    }
+    if max_chunks > 0 { result.truncate(max_chunks); }
+    result
+}
+
 /// Build the ordered probe plan for a pool-wide deep-match run (spec: tiered
 /// timestamp prelocation). Tiers 0-2 place focused probes at predicted
 /// positions under successively weaker clock assumptions; tier 3 is the
@@ -1962,6 +2008,58 @@ mod tests {
         // total = 2 chunks exactly, no overlap: second chunk ends at total.
         let plan = chunk_plan(14_400_000.0, 7_200_000.0, 0.0, 0);
         assert_eq!(plan, vec![(0.0, 7_200_000.0), (7_200_000.0, 14_400_000.0)]);
+    }
+
+    #[test]
+    fn unsearched_probe_chunks_skip_completed_fallback_segments() {
+        assert_eq!(unsearched_probe_chunks(None, 300.0, 100.0, 10.0, 0, &[(0.0, 100.0)]),
+            vec![(90.0, 190.0), (180.0, 280.0), (270.0, 300.0)]);
+        let all = chunk_plan(300.0, 100.0, 10.0, 0);
+        assert!(unsearched_probe_chunks(None, 300.0, 100.0, 10.0, 0, &all).is_empty());
+        assert!(unsearched_probe_chunks(Some((20.0, 80.0)), 300.0, 100.0, 10.0, 0,
+            &[(0.0, 100.0)]).is_empty());
+    }
+
+    #[test]
+    fn unsearched_probe_chunks_keep_context_at_both_sides_of_a_hole() {
+        assert_eq!(unsearched_probe_chunks(None, 300.0, 100.0, 10.0, 0, &[(40.0, 140.0)]),
+            vec![(0.0, 50.0), (130.0, 190.0), (180.0, 280.0), (270.0, 300.0)]);
+        // Adjacent completed scans only join when they share enough context.
+        assert!(unsearched_probe_chunks(Some((0.0, 100.0)), 300.0, 100.0, 10.0, 0,
+            &[(0.0, 60.0), (50.0, 100.0)]).is_empty());
+        assert_eq!(unsearched_probe_chunks(Some((0.0, 100.0)), 300.0, 100.0, 10.0, 0,
+            &[(0.0, 60.0), (55.0, 100.0)]), vec![(50.0, 65.0)]);
+    }
+
+    #[test]
+    fn unsearched_probe_chunks_preserve_unfinished_and_short_ranges() {
+        let original = chunk_plan(300.0, 100.0, 10.0, 0);
+        assert_eq!(unsearched_probe_chunks(None, 300.0, 100.0, 10.0, 0, &[]), original);
+        assert_eq!(unsearched_probe_chunks(None, 300.0, 100.0, 10.0, 0, &[(40.0, 45.0)]), original);
+        assert_eq!(unsearched_probe_chunks(Some((20.0, 25.0)), 300.0, 100.0, 10.0, 0,
+            &[(21.0, 24.0)]), vec![(20.0, 25.0)]);
+        assert!(unsearched_probe_chunks(Some((20.0, 25.0)), 300.0, 100.0, 10.0, 0,
+            &[(20.0, 25.0)]).is_empty());
+        assert_eq!(unsearched_probe_chunks(None, 300.0, 100.0, 10.0, 1, &[(40.0, 70.0)]).len(), 1);
+    }
+
+    #[test]
+    fn unsearched_probe_chunks_preserve_every_previously_searchable_clip_start() {
+        // Exhaust small interval placements, including gaps narrower than the
+        // overlap. A complete clip must still fit in an old or a new scan.
+        for a in (0..200).step_by(7) {
+            for b in ((a + 1)..=200).step_by(11) {
+                let completed = vec![(a as f64, b as f64)];
+                let remaining = unsearched_probe_chunks(None, 200.0, 80.0, 10.0, 0, &completed);
+                assert!(remaining.iter().all(|&(s, e)| s < e && e - s <= 80.0));
+                for start in 0..=190 {
+                    let start = start as f64;
+                    assert!(completed.iter().chain(&remaining)
+                        .any(|&(s, e)| s <= start && e >= start + 10.0),
+                        "missing clip at {start}, completed={completed:?}, remaining={remaining:?}");
+                }
+            }
+        }
     }
 
     #[test]
