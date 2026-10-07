@@ -722,6 +722,18 @@ impl PoseEstimator {
     ) -> Vec<(f64, f64, f64, f64)> {
         // Logging context for the sync pipeline. Per-segment scope is left
         // to the inner find_offset::* impls (Phase 2 audit refines this).
+        self.find_offsets_with_probe(ranges, sync_params, params, progress_cb, cancel_flag, None)
+    }
+
+    pub(crate) fn find_offsets_with_probe<F: Fn(f64) + Send + Sync>(
+        &self,
+        ranges: &[(i64, i64)],
+        sync_params: &SyncParams,
+        params: &ComputeParams,
+        progress_cb: F,
+        cancel_flag: Arc<AtomicBool>,
+        probe_range_idx: Option<usize>,
+    ) -> Vec<(f64, f64, f64, f64)> {
         let _log_ctx = crate::log_context::LogContext::enter(
             crate::log_context::LogContextUpdate::default().op("sync"),
         );
@@ -744,13 +756,14 @@ impl PoseEstimator {
                 progress_cb,
                 cancel_flag,
             ),
-            2 => find_offset::rs_sync::find_offsets(
+            2 => find_offset::rs_sync::find_offsets_with_probe(
                 &self,
                 ranges,
                 sync_params,
                 params,
                 progress_cb,
                 cancel_flag,
+                probe_range_idx,
             ),
             v => {
                 log::error!("Unknown offset method: {v}");

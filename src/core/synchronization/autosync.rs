@@ -1070,16 +1070,19 @@ impl AutosyncProcess {
                 if let Some(r) = self.lazy_probe_scaled_range() {
                     sync_ranges.push(r);
                 }
+                let probe_range_idx = self.probe_strip_range()
+                    .and_then(|probe| sync_ranges.iter().position(|range| *range == probe));
                 let has_handed = handed.is_some();
                 // Set the thread-local handoff inside the pool that runs the armed search.
                 let find_first = || super::optical_motion::judge::with_handed_tracks(handed, || {
-                    self.strip_probe_offsets(self.estimator.find_offsets(
+                    self.estimator.find_offsets_with_probe(
                         &sync_ranges,
                         &self.sync_params,
                         &self.compute_params.read(),
                         progress_cb2,
                         self.cancel_flag.clone(),
-                    ))
+                        probe_range_idx,
+                    )
                 });
                 let mut offsets = if has_handed {
                     self.thread_pool.install(find_first)
@@ -1100,13 +1103,14 @@ impl AutosyncProcess {
                     // Try also negative rough offset
                     let mut sync_params = self.sync_params.clone();
                     sync_params.initial_offset = -sync_params.initial_offset;
-                    let offsets2 = self.strip_probe_offsets(self.estimator.find_offsets(
+                    let offsets2 = self.estimator.find_offsets_with_probe(
                         &sync_ranges,
                         &sync_params,
                         &self.compute_params.read(),
                         progress_cb2,
                         self.cancel_flag.clone(),
-                    ));
+                        probe_range_idx,
+                    );
                     if offsets2.len() > offsets.len() {
                         cb(AutosyncResult::Offsets(offsets2));
                     } else if offsets2.len() == offsets.len() {
@@ -1190,31 +1194,6 @@ impl AutosyncProcess {
     fn probe_strip_range(&self) -> Option<(i64, i64)> {
         self.probe_range_us
             .or_else(|| self.lazy_probe_scaled_range())
-    }
-
-    /// sync-likelihood-nuisance §3.2: drop the probe-only window's offset row
-    /// (it contributed likelihood evidence inside `find_offsets`; it must not
-    /// become a user-visible sync point).
-    fn strip_probe_offsets(
-        &self,
-        mut offsets: Vec<(f64, f64, f64, f64)>,
-    ) -> Vec<(f64, f64, f64, f64)> {
-        if let Some((pf, pt)) = self.probe_strip_range() {
-            let before = offsets.len();
-            offsets.retain(|(mid_ms, ..)| {
-                let mid_us = (mid_ms * 1000.0).round() as i64;
-                !(mid_us >= pf && mid_us <= pt)
-            });
-            if offsets.len() != before {
-                log::info!(
-                    target: "sync",
-                    "[posterior] probe-only window offset stripped from results ({} -> {})",
-                    before,
-                    offsets.len()
-                );
-            }
-        }
-        offsets
     }
 
     /// Phase-1 verdict: escalate only for single-window synchronize runs that

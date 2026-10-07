@@ -22,6 +22,19 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
     progress_cb: F,
     cancel_flag: Arc<AtomicBool>,
 ) -> Vec<(f64, f64, f64, f64)> {
+    find_offsets_with_probe(estimator, ranges, sync_params, params, progress_cb, cancel_flag, None)
+}
+
+/// Let the probe contribute to every decision, then omit only its own output row.
+pub(crate) fn find_offsets_with_probe<F: Fn(f64) + Send + Sync>(
+    estimator: &PoseEstimator,
+    ranges: &[(i64, i64)],
+    sync_params: &SyncParams,
+    params: &ComputeParams,
+    progress_cb: F,
+    cancel_flag: Arc<AtomicBool>,
+    probe_range_idx: Option<usize>,
+) -> Vec<(f64, f64, f64, f64)> {
     // Vec<(timestamp, offset, cost, confidence)>
     // confidence ∈ [0, 1]: high-confidence offsets bypass sync_data.rank filter in controller.rs
     // Try essential matrix first, because it's much faster
@@ -69,7 +82,7 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
     let progress_cb: std::sync::Arc<dyn Fn(f64) + Send + Sync + '_> =
         std::sync::Arc::new(progress_cb);
 
-    let offsets = {
+    let (offsets, range_indices) = {
         let _g = crate::synchronization::sync_perf::StageGuard::new(
             crate::synchronization::sync_perf::Stage::RsSyncFullSync,
         );
@@ -92,11 +105,15 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
             finder_t0.elapsed().as_secs_f64() * 1000.0
         );
         let fs_t0 = std::time::Instant::now();
-        let mut offsets = {
+        let (mut offsets, range_indices) = {
             let _g_fs = crate::synchronization::sync_perf::StageGuard::new(
                 crate::synchronization::sync_perf::Stage::RsSyncCoreFullSync,
             );
-            finder.full_sync()
+            if probe_range_idx.is_some() {
+                finder.full_sync_with_range_indices()
+            } else {
+                (finder.full_sync(), Vec::new())
+            }
         };
         log::info!(
             "[rssync-timing] full_sync() done in {:.1}ms ({} segments)",
@@ -149,13 +166,36 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
         estimator
             .probe_escalation_hint
             .store(finder.escalation_hint.get(), SeqCst);
-        offsets
+        (offsets, range_indices)
     };
 
     if crate::synchronization::sync_diag::is_enabled() {
         dump_correlation_curves(estimator, ranges, &offsets, &sync_params, params);
     }
 
+    strip_probe_offsets(offsets, &range_indices, probe_range_idx)
+}
+
+fn strip_probe_offsets(
+    mut offsets: Vec<(f64, f64, f64, f64)>,
+    range_indices: &[usize],
+    probe_range_idx: Option<usize>,
+) -> Vec<(f64, f64, f64, f64)> {
+    if let Some(probe_range_idx) = probe_range_idx {
+        let before = offsets.len();
+        debug_assert_eq!(offsets.len(), range_indices.len());
+        let mut row = 0;
+        offsets.retain(|_| {
+            let keep = range_indices.get(row) != Some(&probe_range_idx);
+            row += 1;
+            keep
+        });
+        if offsets.len() != before {
+            log::info!(target: "sync",
+                "[posterior] probe-only window offset stripped from results ({} -> {})",
+                before, offsets.len());
+        }
+    }
     offsets
 }
 
@@ -1028,6 +1068,8 @@ pub struct FindOffsetsRssync<'a> {
     gyro_source: Arc<RwLock<GyroSource>>,
     frame_readout_time: f64,
     sync_points: Vec<(i64, i64)>,
+    /// Original input window for each measured segment, including gaps from missing data.
+    sync_point_range_indices: Vec<usize>,
     sync_params: &'a SyncParams,
     is_guess_orient: Arc<AtomicBool>,
 
@@ -1216,6 +1258,7 @@ impl FindOffsetsRssync<'_> {
             gyro_source: params.gyro.clone(),
             frame_readout_time: frame_readout_time,
             sync_points: Vec::new(),
+            sync_point_range_indices: Vec::new(),
             sync_params,
             is_guess_orient: Arc::new(AtomicBool::new(false)),
             current_sync_point: Arc::new(AtomicUsize::new(0)),
@@ -1249,7 +1292,7 @@ impl FindOffsetsRssync<'_> {
             });
         }
 
-        for range in matched_points {
+        for (range_idx, range) in matched_points.into_iter().enumerate() {
             if range.len() < 2 {
                 log::warn!("Not enough data for sync! range.len: {}", range.len());
                 continue;
@@ -1303,6 +1346,7 @@ impl FindOffsetsRssync<'_> {
                 });
             }
             ret.sync_points.push((from_ts, to_ts));
+            ret.sync_point_range_indices.push(range_idx);
             ret.track_data.push(seg_tracks);
         }
         ret
@@ -1353,11 +1397,16 @@ impl FindOffsetsRssync<'_> {
     }
 
     pub fn full_sync(&mut self) -> Vec<(f64, f64, f64, f64)> {
+        self.full_sync_with_range_indices().0
+    }
+
+    fn full_sync_with_range_indices(&mut self) -> (Vec<(f64, f64, f64, f64)>, Vec<usize>) {
         // Vec<(timestamp, offset, cost, confidence)>
         // Initial confidence = 0.5 (placeholder, updated by subsequent fusion/rerank stage)
         self.is_guess_orient.store(false, SeqCst);
 
         let mut offsets = Vec::new();
+        let mut range_indices = Vec::new();
         {
             let gyro = self.gyro_source.read();
             set_quats(&mut self.sync, &gyro.quaternions);
@@ -1369,6 +1418,7 @@ impl FindOffsetsRssync<'_> {
             .resize(self.sync_points.len(), Vec::new());
         let sync_points = self.sync_points.clone();
         for (range_idx, (from_ts, to_ts)) in sync_points.iter().enumerate() {
+            let before = offsets.len();
             let range_t0 = std::time::Instant::now();
             let presync_step = 5.0;
             let presync_radius = self.sync_params.search_size;
@@ -1509,6 +1559,9 @@ impl FindOffsetsRssync<'_> {
                 // entry to avoid this side effect.
                 let _ = final_offset_external_ms;
             }
+            if offsets.len() > before {
+                range_indices.push(self.sync_point_range_indices[range_idx]);
+            }
             self.current_sync_point.fetch_add(1, SeqCst);
             log::info!(
                 "[rssync-timing] range {}: sync.full_sync={:.1}ms total_range={:.1}ms ({}→{} us, radius={:.0}ms)",
@@ -1520,7 +1573,7 @@ impl FindOffsetsRssync<'_> {
                 presync_radius
             );
         }
-        offsets
+        (offsets, range_indices)
     }
 
     /// M2 pass-2 core (sync-parallax-suppression): compute pure-rotation
@@ -4356,6 +4409,75 @@ fn set_quats(sync: &mut SyncProblem, source_quats: &TimeQuat) {
         timestamps.push(*ts);
     }
     sync.set_gyro_quaternions(&timestamps, &quats);
+}
+
+#[cfg(test)]
+mod probe_result_tests {
+    use super::*;
+
+    #[test]
+    fn overlapping_probe_keeps_the_user_result() {
+        // MVI_2629: both result times fall inside the probe's 380..2880 ms range.
+        let user = (700.0, -1637.1, 1077.2, 0.967);
+        let probe = (1625.0, -1632.3, 1078.0, 0.967);
+        assert_eq!(strip_probe_offsets(vec![user, probe], &[0, 1], Some(1)), vec![user]);
+    }
+
+    #[test]
+    fn eager_probe_before_the_user_is_removed_by_source() {
+        let probe = (1000.0, -1500.0, 10.0, 0.9);
+        let user = (2000.0, -1501.0, 11.0, 0.39);
+        assert_eq!(strip_probe_offsets(vec![probe, user], &[0, 1], Some(0)), vec![user]);
+    }
+
+    #[test]
+    fn missing_window_results_do_not_shift_probe_identity() {
+        let user = (1000.0, -1500.0, 10.0, 0.9);
+        let probe = (2000.0, -1501.0, 11.0, 0.9);
+        assert_eq!(strip_probe_offsets(vec![user, probe], &[1, 3], Some(3)), vec![user]);
+        // The probe produced no result; the remaining user row must survive.
+        assert_eq!(strip_probe_offsets(vec![user], &[1], Some(3)), vec![user]);
+        assert!(strip_probe_offsets(vec![probe], &[3], Some(3)).is_empty());
+    }
+
+    #[test]
+    fn identical_result_times_still_keep_the_user_row() {
+        let row = (1500.0, -1500.0, 10.0, 0.9);
+        assert_eq!(strip_probe_offsets(vec![row, row], &[0, 1], Some(1)), vec![row]);
+    }
+
+    #[test]
+    fn without_a_probe_results_are_unchanged() {
+        let rows = vec![(700.0, -1600.0, 10.0, 0.0), (1600.0, -1601.0, 12.0, 0.967)];
+        assert_eq!(strip_probe_offsets(rows.clone(), &[0, 1], None), rows);
+        assert_eq!(strip_probe_offsets(Vec::new(), &[], Some(1)), Vec::new());
+    }
+
+    #[test]
+    fn measured_segments_keep_original_window_indices() {
+        use crate::synchronization::optical_flow::OpticalFlowMethod;
+        let mut frames = BTreeMap::new();
+        for ts in [100_000, 200_000, 300_000, 400_000] {
+            let points = vec![(20.0, 20.0), (40.0, 20.0), (20.0, 40.0), (40.0, 40.0)];
+            frames.insert(ts, FrameResult {
+                of_method: OpticalFlowMethod::detect_features(2, ts, Arc::new(image::GrayImage::new(64, 64)), None, 64, 64, 64),
+                frame_no: 0, timestamp_us: ts, gyro_timestamp_us: ts, frame_size: (64, 64),
+                rotation: None, quat: None, euler: None,
+                optical_flow: std::cell::RefCell::new(BTreeMap::from([(1, Some(((ts, points.clone()), (ts + 20_000, points))))])),
+            });
+        }
+        // Empty and one-pair windows disappear before solving; later windows retain their input indices.
+        let ranges = [(0, 50_000), (0, 150_000), (0, 250_000), (250_000, 600_000)];
+        let params = SyncParams::default();
+        let mut cp = ComputeParams::default();
+        cp.scaled_fps = 50.0;
+        cp.width = 64;
+        cp.height = 64;
+        let finder = FindOffsetsRssync::new(&ranges, Arc::new(RwLock::new(frames)), &params, &cp,
+            Arc::new(|_| {}), Arc::new(AtomicBool::new(false)));
+        assert_eq!(finder.sync_point_range_indices, vec![2, 3]);
+        assert_eq!(finder.sync_points, vec![(100_000, 220_000), (300_000, 420_000)]);
+    }
 }
 
 #[cfg(test)]
