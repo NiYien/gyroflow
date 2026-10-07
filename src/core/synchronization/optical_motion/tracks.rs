@@ -7,7 +7,14 @@ use nalgebra::Vector3;
 
 /// One tracked point seen in two consecutive frames (px at tracking resolution).
 #[derive(Clone, Copy, Debug)]
-pub struct Observation { pub id: u32, pub a: [f32; 2], pub b: [f32; 2] }
+pub struct Observation {
+    pub id: u32,
+    pub a: [f32; 2],
+    pub b: [f32; 2],
+    /// The corner response (`cornerMinEigenVal`) at `b`: how much texture shows the point's motion. NaN where the
+    /// frame's response was not computed
+    pub texture: f32,
+}
 
 /// Scaled video time of a frame; the per-frame offset is NOT added.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -179,7 +186,7 @@ mod tests {
         assert_eq!(classify_step(Some((7, 7)), 7, 0), Restart);
         assert_eq!(classify_step(Some((7, 9)), 8, 0), Duplicate);
     }
-    fn obs() -> Vec<Observation> { vec![Observation { id: 1, a: [0.0; 2], b: [1.0; 2] }] }
+    fn obs() -> Vec<Observation> { vec![Observation { id: 1, a: [0.0; 2], b: [1.0; 2], texture: f32::NAN }] }
     /// One frame as the tracking thread handles it: a Duplicate is skipped, everything else is recorded
     fn feed(w: &mut WindowBuilder, index: usize, ts_ms: f64) -> FrameStep {
         let s = w.begin_frame(index);

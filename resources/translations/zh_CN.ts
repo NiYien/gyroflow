@@ -3010,6 +3010,14 @@ Do you want to submit your profile?</source>
         <translation>补偿前后方向的位移</translation>
     </message>
     <message>
+        <source>Automatic parameters</source>
+        <translation>自动参数</translation>
+    </message>
+    <message>
+        <source>Choose the reference distance and the smoothness from the analysis: hold the distant scenery steady, or the subject once it fills most of the picture, and smooth as much as the shift range allows.</source>
+        <translation>根据分析结果自动选择参考距离和平滑度：通常稳住远处的景物，主体占满大半画面时改为稳住主体，并在位移范围允许的前提下尽量平滑。</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="475"/>
         <source>Click Analyze to measure the camera movement</source>
         <translation>点击"分析"测量相机位移</translation>

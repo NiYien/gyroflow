@@ -32499,7 +32499,7 @@ mod tests {
         let send = &send[..send.find("\n    }\n").unwrap()];
         assert!(send.contains("render_queue.set_jobs_optical_settings(JSON.stringify("));
         for key in ["correction:", "strength:", "ignore_file_motion:", "translation:", "translation_reference:",
-            "translation_smoothness:", "translation_along_axis:", "reconstruction:"] {
+            "translation_smoothness:", "translation_along_axis:", "translation_auto:", "reconstruction:"] {
             assert!(send.contains(key), "the push carries {key}");
         }
         // Every commit point of a user edit pushes
@@ -32511,7 +32511,8 @@ mod tests {
             let rest = &qml[qml.find(id).unwrap_or_else(|| panic!("{id} exists")) + id.len()..];
             rest.find("root.pushQueueOpticalSettings()").is_some_and(|push| push < rest.find("id: ").unwrap_or(rest.len()))
         };
-        for id in ["id: opticalStrengthTimer;", "id: translationReferenceTimer;", "id: translationSmoothnessTimer;", "id: translationAlongAxisTimer;"] {
+        for id in ["id: opticalStrengthTimer;", "id: translationReferenceTimer;", "id: translationSmoothnessTimer;", "id: translationAlongAxisTimer;",
+            "id: translationAutoTimer;"] {
             assert!(pushes_before_next_id(id), "{id} pushes when it commits");
         }
         assert!(pushes_before_next_id("id: ignoreFileMotion;"), "ignoring the motion data pushes");
@@ -32613,7 +32614,7 @@ mod tests {
             position: [0.01 * (i as f32 * 0.6).sin(), 0.0, 0.0],
             ref_inv_depth: 1.0, confidence: 1.0, track_age_s: 2.0, segment: 0,
             camera_to_world: [1.0, 0.0, 0.0, 0.0], focal_length_over_short_side: 1.0,
-            layer_motion: [0.001, 0.0], far_beta: 1.0, weight: 1.0, layer_scale_rate: 0.0,
+            layer_motion: [0.001, 0.0], far_beta: 1.0, auto_beta: 1.0, weight: 1.0, layer_scale_rate: 0.0,
         }).collect();
         let ui = *stab.optical_ui.read();
         let mut translation = OpticalTranslation::new(samples, ui.translation_settings);

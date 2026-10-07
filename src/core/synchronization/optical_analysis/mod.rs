@@ -166,6 +166,8 @@ struct Derived {
     r: Vector3<f64>,
     ta_ms: f64,
     tb_ms: f64,
+    /// The tracker's corner response in the second frame, NaN when unknown
+    texture: f32,
 }
 
 /// What the image measured: kept (in memory) so a change of the settings refits the correction in a fraction of a
@@ -345,7 +347,7 @@ fn frame_timing(params: &ComputeParams, index: usize, timestamp_ms: f64, rows: u
 fn points_by_pair(derived: &[Derived], from_seq: usize) -> HashMap<usize, Vec<PairPoint>> {
     let mut points: HashMap<usize, Vec<PairPoint>> = HashMap::new();
     for d in derived.iter().filter(|d| d.seq >= from_seq) {
-        points.entry(d.seq).or_default().push(PairPoint { id: d.id, band: d.band, p: d.p, r: d.r });
+        points.entry(d.seq).or_default().push(PairPoint { id: d.id, band: d.band, p: d.p, r: d.r, texture: d.texture });
     }
     points
 }
@@ -363,6 +365,43 @@ struct TranslationState {
     position: Vector3<f64>,
     segment: u32,
     samples: Vec<TranslationSample>,
+    /// The automatic reference's scores of each sample, see `finish`
+    scores: Vec<Option<image_space::LayerScores>>,
+}
+
+/// Time scale (Gaussian sigma) over which the automatic reference pools the scores of neighbouring samples; the same
+/// as the one that smooths the reference depth afterwards
+const AUTO_POOL_SIGMA_S: f64 = 0.25;
+
+impl TranslationState {
+    /// Chooses each sample's automatic layer from its own scores and those of the samples around it in its segment,
+    /// weighted by time and confidence: what a stretch of video shows rather than what one pair of frames does.
+    fn finish(self) -> Vec<TranslationSample> {
+        let TranslationState { mut samples, scores, .. } = self;
+        let seconds = |a: &TranslationSample, b: &TranslationSample| (a.timestamp_us - b.timestamp_us) as f64 / 1e6;
+        let chosen: Vec<_> = (0..samples.len()).map(|i| {
+            scores[i].as_ref()?;
+            let mut pooled = image_space::LayerScores::default();
+            let mut total = 0.0;
+            let mut add = |j: usize| -> bool {
+                let dt = seconds(&samples[j], &samples[i]);
+                if samples[j].segment != samples[i].segment || dt.abs() > 3.0 * AUTO_POOL_SIGMA_S { return false; }
+                if let Some(other) = &scores[j] {
+                    let k = (-0.5 * (dt / AUTO_POOL_SIGMA_S).powi(2)).exp() * samples[j].weight.clamp(0.0, 1.0) as f64;
+                    if k > 0.0 { pooled.add(other, k); total += k; }
+                }
+                true
+            };
+            add(i);
+            for j in (0..i).rev() { if !add(j) { break; } }
+            for j in i + 1..samples.len() { if !add(j) { break; } }
+            (total > 0.0).then(|| pooled.choose() as f32)
+        }).collect();
+        for (sample, chosen) in samples.iter_mut().zip(chosen) {
+            if let Some(beta) = chosen { sample.auto_beta = beta; }
+        }
+        samples
+    }
 }
 
 pub struct OpticalMotionAnalysis {
@@ -453,7 +492,7 @@ impl OpticalMotionAnalysis {
                 scaled_fps / every_nth_frame as f64);
             let translation = (vision.is_none() && ui.translation_enabled).then(|| TranslationState {
                 solver: TranslationSolver::new(TranslationSolverConfig::resolved()),
-                next_seq: 0, pairs: HashMap::new(), position: Vector3::zeros(), segment: 0, samples: Vec::new(),
+                next_seq: 0, pairs: HashMap::new(), position: Vector3::zeros(), segment: 0, samples: Vec::new(), scores: Vec::new(),
             });
             Ok(Self {
                 params, fps_scale, scaled_fps, quats_checksum, context_checksum, horizontal_readout,
@@ -525,7 +564,9 @@ impl OpticalMotionAnalysis {
                     packed.extend_from_slice(&pixels[start..start + width as usize]);
                 }
                 let image = GrayImage::from_raw(width, height, packed).ok_or_else(|| "Invalid frame size".to_string())?;
-                let (obs, tracked_size) = self.tracker.track(&image)?;
+                // Prepared like the pipeline does, corner response included: it gives each point its texture
+                let frame = KltTracker::prepare(&image, TRACK_WIDTH).map(|mut frame| { frame.precompute_corners(); frame });
+                let (obs, tracked_size) = self.tracker.track_prepared(frame)?;
                 if tracked_size != (width, height) {
                     return Err(format!("Tracking size {:?} differs from input {:?}", tracked_size, (width, height)));
                 }
@@ -597,7 +638,7 @@ impl OpticalMotionAnalysis {
             stab_pairs: self.stab_pairs,
             stab_bands: self.stab_bands,
             translation_requested: self.translation.is_some(),
-            translation_samples: self.translation.map(|state| state.samples).unwrap_or_default(),
+            translation_samples: self.translation.map(TranslationState::finish).unwrap_or_default(),
             scaled_fps: self.scaled_fps / self.every_nth_frame as f64,
             quats_checksum,
             context_checksum: self.context_checksum,
@@ -783,6 +824,7 @@ impl OpticalMotionAnalysis {
                 if !state.samples.is_empty() { state.segment += 1; }
                 state.solver.reset();
                 state.position = Vector3::zeros();
+                state.scores.push(None);
                 state.samples.push(TranslationSample {
                     timestamp_us: start_us,
                     segment: state.segment,
@@ -811,8 +853,10 @@ impl OpticalMotionAnalysis {
                 layer_motion: layer.motion,
                 layer_scale_rate: layer.scale_rate,
                 far_beta: layer.far_beta,
+                auto_beta: layer.auto_beta,
                 weight: layer.weight,
             });
+            state.scores.push(layer.scores);
         }
         state.next_seq = self.next_seq;
         for d in derived {
@@ -846,7 +890,7 @@ impl OpticalMotionAnalysis {
                 let (va, vb) = (to_quat_frame(a), to_quat_frame(b));
                 let p = m * va;
                 let band = ((pos_a / track_rows) * BANDS as f32).floor().clamp(0.0, (BANDS - 1) as f32) as u8;
-                out.push(Derived { id: o.id, seq: pair.seq, band, p, r: vb - p, ta_ms: ta, tb_ms: tb });
+                out.push(Derived { id: o.id, seq: pair.seq, band, p, r: vb - p, ta_ms: ta, tb_ms: tb, texture: o.texture });
             }
             out
         }).collect();
@@ -964,12 +1008,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn translation_auto_layer_is_chosen_from_pooled_scores() {
+        let near = |share: usize| {
+            let mut depths: Vec<_> = (0..share).map(|_| (2.0, 1.0, 0.05)).collect();
+            depths.extend((share..100).map(|_| (0.5, 1.0, 0.05)));
+            image_space::LayerScores::new(&depths).unwrap()
+        };
+        let (a, b) = (near(68), near(64));
+        let mut state = TranslationState { solver: TranslationSolver::new(TranslationSolverConfig::DEFAULT), next_seq: 0,
+            pairs: HashMap::new(), position: Vector3::zeros(), segment: 0, samples: Vec::new(), scores: Vec::new() };
+        state.samples.push(TranslationSample { timestamp_us: 0, ..Default::default() });
+        state.scores.push(None);
+        for i in 1..60 {
+            let scores = if i % 2 == 0 { a.clone() } else { b.clone() };
+            state.samples.push(TranslationSample { timestamp_us: i * 40_000, auto_beta: scores.choose() as f32, weight: 1.0, ..Default::default() });
+            state.scores.push(Some(scores));
+        }
+        // A sample of another segment does not join the pool
+        state.samples.push(TranslationSample { timestamp_us: 60 * 40_000, segment: 1, auto_beta: 9.0, weight: 1.0, ..Default::default() });
+        state.scores.push(Some(near(100)));
+        let per_pair: Vec<_> = state.samples.iter().map(|s| s.auto_beta).collect();
+        assert!(per_pair[1..60].iter().any(|b| (b - 2.0).abs() < 0.3) && per_pair[1..60].iter().any(|b| (b - 0.5).abs() < 0.1));
+        let samples = state.finish();
+        assert_eq!(samples[0].auto_beta, 0.0, "nothing measured at the segment start");
+        for s in &samples[5..55] { assert!((s.auto_beta - 0.5).abs() < 0.1, "{}", s.auto_beta); }
+        assert!((samples[60].auto_beta - 2.0).abs() < 0.3, "{}", samples[60].auto_beta);
+    }
+
+    #[test]
     fn points_grouped_by_pair_match_a_scan_per_pair() {
         // Pairs laid out one after the other as `derive` does, and interleaved, which it doesn't
         let point = |seq: usize, id: u32| Derived {
             id, seq, band: (id % 6) as u8,
             p: Vector3::new(id as f64 * 0.1, seq as f64 * -0.2, 1.0 + id as f64 * 1e-3), r: Vector3::new(1e-4 * id as f64, -3e-5, 7e-6 * seq as f64),
-            ta_ms: 0.0, tb_ms: 0.0,
+            ta_ms: 0.0, tb_ms: 0.0, texture: id as f32,
         };
         let laid_out: Vec<_> = (3..9).flat_map(|seq| (0..40).map(move |id| point(seq, id * 7 + seq as u32))).collect();
         let interleaved: Vec<_> = (0..120u32).map(|i| point(3 + (i as usize * 5) % 6, i)).collect();
@@ -979,7 +1051,7 @@ mod tests {
                 let mut grouped = points_by_pair(derived, from_seq);
                 for seq in from_seq..10 {
                     let scanned: Vec<PairPoint> = derived.iter().filter(|d| d.seq == seq)
-                        .map(|d| PairPoint { id: d.id, band: d.band, p: d.p, r: d.r }).collect();
+                        .map(|d| PairPoint { id: d.id, band: d.band, p: d.p, r: d.r, texture: d.texture }).collect();
                     assert_eq!(bits(&grouped.remove(&seq).unwrap_or_default()), bits(&scanned), "seq {seq} from {from_seq}");
                 }
                 assert!(grouped.is_empty(), "nothing before from_seq");
@@ -996,7 +1068,7 @@ mod tests {
         for frame in 1..8 {
             let obs = (0..400).map(|id| {
                 let a = [(id % 20) as f32 * 40.0 + 50.0, (id / 20) as f32 * 25.0 + 20.0];
-                Observation { id, a, b: [a[0] - 1.0, a[1] + 0.5] }
+                Observation { id, a, b: [a[0] - 1.0, a[1] + 0.5], texture: f32::NAN }
             }).collect();
             analysis.push_test_pair(frame - 1, frame, obs);
         }
@@ -1033,7 +1105,7 @@ mod tests {
             { let mut g = stab.gyro.write(); g.set_offset(0, 2.0); g.set_offset(20_000, 4.0); g.set_offset(40_000, 1.0); }
             let obs: Vec<_> = (0..400).map(|id| {
                 let a = [(id % 20) as f32 * 40.0 + 50.0, (id / 20) as f32 * 25.0 + 20.0];
-                Observation { id, a, b: [a[0] - 1.0, a[1] + 0.5] }
+                Observation { id, a, b: [a[0] - 1.0, a[1] + 0.5], texture: f32::NAN }
             }).collect();
             let mut analysis = OpticalMotionAnalysis::from_manager(&stab, Arc::new(AtomicBool::new(false))).unwrap();
             analysis.push_test_pair(0, 1, obs.clone());
@@ -1142,7 +1214,7 @@ mod tests {
         for frame in 1..frames {
             let current = observe(frame);
             let by_id: HashMap<_, _> = previous.into_iter().collect();
-            let obs = current.iter().filter_map(|(id, b)| by_id.get(id).map(|a| Observation { id: *id, a: *a, b: *b })).collect();
+            let obs = current.iter().filter_map(|(id, b)| by_id.get(id).map(|a| Observation { id: *id, a: *a, b: *b, texture: f32::NAN })).collect();
             analysis.push_test_pair(frame - 1, frame, obs);
             previous = current;
         }
@@ -1364,7 +1436,7 @@ mod tests {
         let mut previous: HashMap<_, _> = parallax_observations(0).into_iter().collect();
         for sample in 1..72 {
             let current = parallax_observations(sample);
-            let obs = current.iter().map(|(id, b)| Observation { id: *id, a: previous[id], b: *b }).collect();
+            let obs = current.iter().map(|(id, b)| Observation { id: *id, a: previous[id], b: *b, texture: f32::NAN }).collect();
             analysis.push_test_pair((sample - 1) * 5, sample * 5, obs);
             previous = current.into_iter().collect();
         }
@@ -1408,7 +1480,7 @@ mod tests {
         let mut previous = observe(0);
         for sample in 1..40 {
             let current = observe(sample);
-            let obs = (0..400u32).map(|id| Observation { id, a: previous[&id], b: current[&id] }).collect();
+            let obs = (0..400u32).map(|id| Observation { id, a: previous[&id], b: current[&id], texture: f32::NAN }).collect();
             analysis.push_test_pair((sample - 1) * 10, sample * 10, obs);
             previous = current;
         }

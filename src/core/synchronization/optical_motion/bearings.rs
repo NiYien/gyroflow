@@ -94,7 +94,7 @@ mod tests {
         // A 9x5 grid at the tracking size, moved by a few pixels in the second frame.
         let obs: Vec<Observation> = (0..45u32).map(|i| {
             let (x, y) = (60.0 + 105.0 * (i % 9) as f32, 50.0 + 110.0 * (i / 9) as f32);
-            Observation { id: i, a: [x, y], b: [x + 3.5, y - 2.25] }
+            Observation { id: i, a: [x, y], b: [x + 3.5, y - 2.25], texture: f32::NAN }
         }).collect();
         let raw = RawWindow {
             pairs: vec![RawPair { a: RawFrame { index: 30, ts_ms: 1000.0 }, b: RawFrame { index: 31, ts_ms: 1000.0 + 1000.0 / 30.0 }, obs }],

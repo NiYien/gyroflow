@@ -19,11 +19,13 @@ pub struct OpticalTranslationSettings {
     pub reference: f64,
     pub smoothness_s: f64,
     pub along_axis: bool,
+    /// Choose the reference layer and the smoothness from the analysis; `reference` and `smoothness_s` are kept but unused
+    pub auto: bool,
 }
 
 impl Default for OpticalTranslationSettings {
     fn default() -> Self {
-        Self { reference: 1.0, smoothness_s: 1.0, along_axis: true }
+        Self { reference: 1.0, smoothness_s: 1.0, along_axis: true, auto: false }
     }
 }
 
@@ -47,6 +49,9 @@ pub struct TranslationSample {
     pub layer_scale_rate: f32,
     #[serde(default)]
     pub far_beta: f32,
+    /// Layer the automatic parameters hold steady, relative like `far_beta`; zero in analyses made before it existed.
+    #[serde(default)]
+    pub auto_beta: f32,
     /// Confidence in the translation fit; retained rotation is weighted separately.
     #[serde(default)]
     pub weight: f32,
@@ -243,6 +248,15 @@ pub(crate) fn retained_rotation(previous: &super::Quat64, current: &super::Quat6
 }
 
 fn filtered_far_beta(segment: &[TranslationSample]) -> Vec<f64> {
+    filtered_beta(segment, |s| s.far_beta, false)
+}
+
+/// The automatic reference averages log depth, so that a switch between layers fades evenly in depth.
+fn filtered_auto_beta(segment: &[TranslationSample]) -> Vec<f64> {
+    filtered_beta(segment, |s| s.auto_beta, true)
+}
+
+fn filtered_beta(segment: &[TranslationSample], beta: impl Fn(&TranslationSample) -> f32, log: bool) -> Vec<f64> {
     let n = segment.len();
     let times: Vec<_> = segment.iter().map(|s| time_difference_s(s.timestamp_us, segment[0].timestamp_us)).collect();
     let mut output = vec![0.0; n];
@@ -252,17 +266,102 @@ fn filtered_far_beta(segment: &[TranslationSample]) -> Vec<f64> {
         let (mut sum, mut weights) = (0.0, 0.0);
         for j in left..right {
             let s = &segment[j];
-            if !s.far_beta.is_finite() || s.far_beta <= 0.0 || !s.weight.is_finite() || s.weight <= 0.0 { continue; }
+            let value = beta(s);
+            if !value.is_finite() || value <= 0.0 || !s.weight.is_finite() || s.weight <= 0.0 { continue; }
             let duration = if n == 1 { 1.0 } else {
                 (times[(j + 1).min(n - 1)] - times[j.saturating_sub(1)]) * 0.5
             };
             let weight = (-0.5 * ((times[j] - times[i]) / 0.25).powi(2)).exp() * s.weight.clamp(0.0, 1.0) as f64 * duration;
-            sum += weight * s.far_beta as f64;
+            sum += weight * if log { (value as f64).ln() } else { value as f64 };
             weights += weight;
         }
-        if weights > 0.0 { output[i] = sum / weights; }
+        if weights > 0.0 { output[i] = if log { (sum / weights).exp() } else { sum / weights }; }
     }
     output
+}
+
+/// Position minus its Gaussian average, with time and position reflected at both ends so that a constant velocity
+/// stays unchanged. Fades in and out over 0.25 s and is zero at both ends. `None` when cancelled.
+fn high_pass(times: &[f64], positions: &[nalgebra::Vector3<f64>], sigma: f64, cancelled: &dyn Fn() -> bool) -> Option<Vec<nalgebra::Vector3<f64>>> {
+    let last = times.len() - 1;
+    let mut request = Vec::with_capacity(times.len());
+    for i in 0..times.len() {
+        if cancelled() { return None; }
+        if i == 0 || i == last {
+            request.push(nalgebra::Vector3::zeros());
+            continue;
+        }
+        let mut sum = nalgebra::Vector3::zeros();
+        let mut weight_sum = 0.0;
+        let radius = 3.0 * sigma;
+        let gaussian = |dt: f64| (-0.5 * (dt / sigma).powi(2)).exp();
+        let left = times.partition_point(|time| *time < times[i] - radius);
+        let right = times.partition_point(|time| *time <= times[i] + radius);
+        for j in left..right {
+            let weight = gaussian(times[j] - times[i]);
+            sum += positions[j] * weight;
+            weight_sum += weight;
+        }
+        // Reflect both time and position so a constant velocity stays unchanged.
+        let reflected_left_end = times.partition_point(|time| *time <= radius - times[i]);
+        for j in 1..reflected_left_end {
+            let weight = gaussian(-times[j] - times[i]);
+            sum += (positions[0] * 2.0 - positions[j]) * weight;
+            weight_sum += weight;
+        }
+        let reflected_right_start = times.partition_point(|time| *time < 2.0 * times[last] - times[i] - radius);
+        for j in reflected_right_start..last {
+            let weight = gaussian(2.0 * times[last] - times[j] - times[i]);
+            sum += (positions[last] * 2.0 - positions[j]) * weight;
+            weight_sum += weight;
+        }
+        let ramp = 1.0_f64.min(times[i] / 0.25).min((times[last] - times[i]) / 0.25).max(0.0);
+        request.push((positions[i] - sum / weight_sum) * ramp);
+    }
+    Some(request)
+}
+
+// Automatic smoothness: the strongest smoothing whose request leaves the planning budget for at most
+// AUTO_OVER_BUDGET_TIME of the segment. The threshold first came from an offline sweep whose prototype planner had
+// the barrier gradient sign wrong. Redone with the production planner and checked on rendered output of ten R50 V
+// clips (2026-10-07, target/translation-smoothing): this rule picks 0.8-2 s, fixed 1 s and 1.58 s leave the same shake
+// (within 1.5%), 0.5 s leaves more. Within that range the choice hardly matters, so the rule is kept as it is.
+const AUTO_SIGMA_MIN_S: f64 = 0.1;
+const AUTO_SIGMA_MAX_S: f64 = 10.0;
+const AUTO_SIGMA_STEPS_PER_DECADE: f64 = 10.0;
+const AUTO_OVER_BUDGET_TIME: f64 = 0.3;
+
+/// Share of the segment's time in which the request leaves the planning budget, measured like `smoothing::constrain`.
+fn over_budget_time(times: &[f64], request: &[nalgebra::Vector3<f64>], geometry: &[smoothing::Geometry],
+    budget: f64, axial_budget: f64, along_axis: bool) -> f64 {
+    let n = times.len();
+    if n < 2 { return 0.0; }
+    let (mut over, mut total) = (0.0, 0.0);
+    for i in 0..n {
+        let duration = (times[(i + 1).min(n - 1)] - times[i.saturating_sub(1)]) * 0.5;
+        let lateral = request[i].xy().norm() * geometry[i].focal_ratio;
+        if lateral > budget || (along_axis && request[i].z.abs() > axial_budget) { over += duration; }
+        total += duration;
+    }
+    if total > 0.0 { over / total } else { 0.0 }
+}
+
+/// Smoothness in seconds and its share of time over the budget. Smoothing is tried from weak to strong and the search
+/// stops at the first one that overruns the budget. `None` when cancelled.
+fn auto_sigma(times: &[f64], positions: &[nalgebra::Vector3<f64>], geometry: &[smoothing::Geometry], cap: Option<f64>,
+    config: &TranslationConfig, along_axis: bool, cancelled: &dyn Fn() -> bool) -> Option<(f64, f64)> {
+    let upper = cap.map_or(AUTO_SIGMA_MAX_S, |cap| cap.min(AUTO_SIGMA_MAX_S));
+    let (budget, axial_budget) = (config.max_shift * 0.5, config.max_axial_shift() * 0.5);
+    let mut chosen = None;
+    for step in 0.. {
+        let sigma = (AUTO_SIGMA_MIN_S * 10.0_f64.powf(step as f64 / AUTO_SIGMA_STEPS_PER_DECADE)).min(upper).max(0.001);
+        let request = high_pass(times, positions, sigma, cancelled)?;
+        let over = over_budget_time(times, &request, geometry, budget, axial_budget, along_axis);
+        if over > AUTO_OVER_BUDGET_TIME && chosen.is_some() { break; }
+        chosen = Some((sigma, over));
+        if over > AUTO_OVER_BUDGET_TIME || sigma >= upper { break; }
+    }
+    chosen
 }
 
 impl OpticalTranslation {
@@ -337,9 +436,11 @@ impl OpticalTranslation {
             }
         }
         let requested_sigma = if self.settings.smoothness_s.is_finite() { self.settings.smoothness_s } else { OpticalTranslationSettings::default().smoothness_s };
-        let reference = if self.settings.reference.is_finite() { self.settings.reference } else { 0.0 };
+        let auto = self.settings.auto;
+        let reference = if auto { 1.0 } else if self.settings.reference.is_finite() { self.settings.reference } else { 0.0 };
+        let config = TranslationConfig::resolved();
         let mut smoothness = Vec::new();
-        let (mut solved_segments, mut fallback_segments, mut iterations) = (0, 0, 0);
+        let (mut solved_segments, mut fallback_segments, mut iterations, mut far_fallback_segments) = (0, 0, 0, 0);
         let mut start = 0;
         while start < samples.len() {
             if cancelled() { return false; }
@@ -355,10 +456,12 @@ impl OpticalTranslation {
                 let age = sample.track_age_s as f64;
                 (age.is_finite() && age >= 0.0).then_some(age)
             }).collect();
-            let sigma = if track_age_k.is_finite() && track_age_k > 0.0 { requested_sigma.min(track_age_k * median(&mut ages)) } else { requested_sigma }.max(0.001);
-            smoothness.push(sigma);
+            let age_cap = (track_age_k.is_finite() && track_age_k > 0.0).then(|| track_age_k * median(&mut ages));
             let times: Vec<_> = segment.iter().map(|sample| time_difference_s(sample.timestamp_us, segment[0].timestamp_us)).collect();
-            let depths = filtered_far_beta(segment);
+            let far_fallback = auto && !segment.iter().any(|s| s.auto_beta.is_finite() && s.auto_beta > 0.0 && s.weight > 0.0);
+            // Analysed before the automatic reference existed: hold the far layer until analysed again
+            if far_fallback { far_fallback_segments += 1; }
+            let depths = if auto && !far_fallback { filtered_auto_beta(segment) } else { filtered_far_beta(segment) };
             let mut position = nalgebra::Vector3::zeros();
             let positions: Vec<_> = segment.iter().enumerate().map(|(i, sample)| {
                 if i > 0 {
@@ -372,46 +475,21 @@ impl OpticalTranslation {
                 }
                 position
             }).collect();
-            let mut fixed = vec![false; segment.len()];
-            let curve_start = curve.len();
+            let sigma = if auto {
+                let Some((sigma, over)) = auto_sigma(&times, &positions, &geometry[start..end], age_cap, &config, self.settings.along_axis, cancelled) else { return false; };
+                log::debug!(target: "stab.translation", "translation auto segment={} samples={} sigma_s={} over_budget_time={} reference={}",
+                    segment[0].segment, segment.len(), sigma, over, if far_fallback { "far" } else { "auto" });
+                sigma
+            } else {
+                age_cap.map_or(requested_sigma, |cap| requested_sigma.min(cap))
+            }.max(0.001);
+            smoothness.push(sigma);
             let last = segment.len() - 1;
-            for i in 0..segment.len() {
-                if cancelled() { return false; }
-                if i == 0 || i == last {
-                    fixed[i] = true;
-                    curve.push(TranslationCurvePoint { timestamp_us: segment[i].timestamp_us, segment: segment[i].segment, shift: nalgebra::Vector3::zeros() });
-                    continue;
-                }
-                let mut sum = nalgebra::Vector3::zeros();
-                let mut weight_sum = 0.0;
-                let radius = 3.0 * sigma;
-                let gaussian = |dt: f64| (-0.5 * (dt / sigma).powi(2)).exp();
-                let left = times.partition_point(|time| *time < times[i] - radius);
-                let right = times.partition_point(|time| *time <= times[i] + radius);
-                for j in left..right {
-                    let weight = gaussian(times[j] - times[i]);
-                    sum += positions[j] * weight;
-                    weight_sum += weight;
-                }
-                // Reflect both time and position so a constant velocity stays unchanged.
-                let reflected_left_end = times.partition_point(|time| *time <= radius - times[i]);
-                for j in 1..reflected_left_end {
-                    let weight = gaussian(-times[j] - times[i]);
-                    sum += (positions[0] * 2.0 - positions[j]) * weight;
-                    weight_sum += weight;
-                }
-                let reflected_right_start = times.partition_point(|time| *time < 2.0 * times[last] - times[i] - radius);
-                for j in reflected_right_start..last {
-                    let weight = gaussian(2.0 * times[last] - times[j] - times[i]);
-                    sum += (positions[last] * 2.0 - positions[j]) * weight;
-                    weight_sum += weight;
-                }
-                let ramp = 1.0_f64.min(times[i] / 0.25).min((times[last] - times[i]) / 0.25).max(0.0);
-                let shift = (positions[i] - sum / weight_sum) * ramp;
-                curve.push(TranslationCurvePoint { timestamp_us: segment[i].timestamp_us, segment: segment[i].segment, shift });
-            }
-            let request: Vec<_> = curve[curve_start..].iter().map(|p| p.shift).collect();
-            let config = TranslationConfig::resolved();
+            let fixed: Vec<_> = (0..segment.len()).map(|i| i == 0 || i == last).collect();
+            let curve_start = curve.len();
+            let Some(request) = high_pass(&times, &positions, sigma, cancelled) else { return false; };
+            curve.extend(segment.iter().zip(&request).map(|(sample, shift)|
+                TranslationCurvePoint { timestamp_us: sample.timestamp_us, segment: sample.segment, shift: *shift }));
             match smoothing::constrain(&times, &request, &geometry[start..end], &fixed, sigma,
                 config.max_shift * 0.5, config.max_axial_shift() * 0.5, self.settings.along_axis, cancelled) {
                 Ok((shifts, stats)) => {
@@ -440,6 +518,9 @@ impl OpticalTranslation {
         self.effective_smoothness_s = median(&mut smoothness);
         log::debug!(target: "stab.translation", "translation rebuild samples={} corrected_segments={} fallback_segments={} iterations={} elapsed_ms={:.3}",
             samples.len(), solved_segments, fallback_segments, iterations, began.elapsed().as_secs_f64() * 1000.0);
+        if far_fallback_segments > 0 {
+            log::info!(target: "stab.translation", "translation auto reference missing in {} segments, holding the far layer; analyze again to use it", far_fallback_segments);
+        }
         true
     }
 
@@ -510,6 +591,8 @@ impl OpticalTranslation {
         self.settings.reference.to_bits().hash(hasher);
         self.settings.smoothness_s.to_bits().hash(hasher);
         self.settings.along_axis.hash(hasher);
+        // Hashed only when set, so results without it keep their checksum.
+        if self.settings.auto { true.hash(hasher); }
         self.quats_checksum.hash(hasher);
         self.context_checksum.hash(hasher);
         self.geometry_version.hash(hasher);
@@ -532,6 +615,7 @@ impl OpticalTranslation {
             for value in sample.layer_motion { value.to_bits().hash(hasher); }
             sample.layer_scale_rate.to_bits().hash(hasher);
             sample.far_beta.to_bits().hash(hasher);
+            if sample.auto_beta != 0.0 { sample.auto_beta.to_bits().hash(hasher); }
             sample.weight.to_bits().hash(hasher);
         }
     }
@@ -563,7 +647,7 @@ mod tests {
 
     #[test]
     fn settings_default_to_the_spec_values() {
-        assert_eq!(OpticalTranslationSettings::default(), OpticalTranslationSettings { reference: 1.0, smoothness_s: 1.0, along_axis: true });
+        assert_eq!(OpticalTranslationSettings::default(), OpticalTranslationSettings { reference: 1.0, smoothness_s: 1.0, along_axis: true, auto: false });
         assert_eq!(TranslationConfig::DEFAULT, TranslationConfig { track_age_k: 2.0, max_shift: 0.08, per_row: true });
     }
 
@@ -992,6 +1076,89 @@ mod tests {
         assert!(after.z.abs() <= 0.04);
         t.settings.along_axis = false;
         assert_eq!(t.camera_shift_at(&source,500.0,2160.0,2160.0,false,&new).z,0.0);
+    }
+
+    #[test]
+    fn translation_auto_holds_the_auto_layer_and_ignores_the_manual_values() {
+        let samples: Vec<_> = walk(1.0, 100.0).into_iter().map(|s| TranslationSample { auto_beta: 0.5, ..s }).collect();
+        let auto = built(samples.clone(), OpticalTranslationSettings { reference: 2.0, smoothness_s: 0.2, auto: true, ..Default::default() }, 0.0);
+        let sigma = auto.effective_smoothness_s();
+        assert!(sigma > 0.2, "the manual smoothness is not used: {sigma}");
+        // The same curve as a manual build whose far layer is the automatic one, at the chosen smoothness
+        let manual = built(samples.iter().map(|s| TranslationSample { far_beta: 0.5, ..*s }).collect(),
+            OpticalTranslationSettings { reference: 1.0, smoothness_s: sigma, ..Default::default() }, 0.0);
+        for i in 30..270 {
+            let time = i as f64 / 30.0 * 1000.0;
+            assert!((auto.shift_at(time) - manual.shift_at(time)).norm() < 1e-12, "{time}");
+        }
+        assert!(auto.shift_at(5010.0).norm() > 1e-4);
+    }
+
+    #[test]
+    fn translation_auto_without_auto_depths_holds_the_far_layer() {
+        let auto = built(walk(1.0, 100.0), OpticalTranslationSettings { auto: true, ..Default::default() }, 0.0);
+        let manual = built(walk(1.0, 100.0), OpticalTranslationSettings { smoothness_s: auto.effective_smoothness_s(), ..Default::default() }, 0.0);
+        for time in [1000.0, 3333.0, 5010.0, 8000.0] {
+            assert!((auto.shift_at(time) - manual.shift_at(time)).norm() < 1e-12, "{time}");
+        }
+    }
+
+    #[test]
+    fn translation_auto_off_keeps_the_checksum_and_on_changes_it() {
+        let mut t = OpticalTranslation::new(walk(1.0, 100.0), Default::default());
+        t.applies = true;
+        let before = t.checksum();
+        t.samples[10].auto_beta = 0.0;
+        assert_eq!(t.checksum(), before, "unset automatic depths hash like before");
+        t.settings.auto = true;
+        assert_ne!(t.checksum(), before);
+    }
+
+    /// One minute at 25 fps: a 0.2 Hz sway whose request outgrows the budget as the smoothing gets stronger
+    fn slow_sway() -> (Vec<f64>, Vec<nalgebra::Vector3<f64>>, Vec<smoothing::Geometry>) {
+        let times: Vec<_> = (0..1500).map(|i| i as f64 / 25.0).collect();
+        let positions = times.iter().map(|t| nalgebra::Vector3::new(0.2 * (std::f64::consts::TAU * 0.2 * t).sin() + 0.1 * t, 0.0, 0.0)).collect();
+        let geometry = vec![smoothing::Geometry { world_to_camera: nalgebra::Matrix3::identity(), focal_ratio: 1.0 }; times.len()];
+        (times, positions, geometry)
+    }
+
+    #[test]
+    fn translation_auto_smoothness_is_the_strongest_that_fits_the_budget() {
+        let (times, positions, geometry) = slow_sway();
+        let config = TranslationConfig::DEFAULT;
+        let over = |sigma: f64| over_budget_time(&times, &high_pass(&times, &positions, sigma, &|| false).unwrap(), &geometry,
+            config.max_shift * 0.5, config.max_axial_shift() * 0.5, true);
+        let (sigma, chosen_over) = auto_sigma(&times, &positions, &geometry, None, &config, true, &|| false).unwrap();
+        assert!(sigma > 0.3 && sigma < 0.8, "{sigma}");
+        assert_eq!(chosen_over, over(sigma));
+        assert!(chosen_over <= AUTO_OVER_BUDGET_TIME);
+        assert!(over(sigma * 10.0_f64.powf(1.0 / AUTO_SIGMA_STEPS_PER_DECADE)) > AUTO_OVER_BUDGET_TIME, "the next step overruns");
+        // Small motion fits at the strongest smoothing, which the track age still caps
+        let small: Vec<_> = positions.iter().map(|p| p * 0.01).collect();
+        assert_eq!(auto_sigma(&times, &small, &geometry, None, &config, true, &|| false).unwrap().0, AUTO_SIGMA_MAX_S);
+        assert_eq!(auto_sigma(&times, &small, &geometry, Some(2.5), &config, true, &|| false).unwrap().0, 2.5);
+        assert_eq!(auto_sigma(&times, &small, &geometry, Some(0.05), &config, true, &|| false).unwrap().0, 0.05);
+        // Motion too large for any smoothing takes the weakest one
+        let large: Vec<_> = positions.iter().map(|p| p * 1000.0).collect();
+        assert_eq!(auto_sigma(&times, &large, &geometry, None, &config, true, &|| false).unwrap().0, AUTO_SIGMA_MIN_S);
+        assert!(auto_sigma(&times, &positions, &geometry, None, &config, true, &|| true).is_none(), "cancellation");
+    }
+
+    #[test]
+    fn translation_high_pass_helper_matches_the_manual_curve_before_the_budget() {
+        // The request the rebuild constrains is exactly the helper's output for small motion that fits the budget
+        let t = built(walk(1.0, 100.0), Default::default(), 0.0);
+        let samples = walk(1.0, 100.0);
+        let times: Vec<_> = samples.iter().map(|s| time_difference_s(s.timestamp_us, samples[0].timestamp_us)).collect();
+        let mut position = nalgebra::Vector3::zeros();
+        let positions: Vec<_> = samples.iter().enumerate().map(|(i, s)| {
+            if i > 0 { position += nalgebra::Vector3::new(2.0 * s.layer_motion[0] as f64, 2.0 * s.layer_motion[1] as f64, 0.0); }
+            position
+        }).collect();
+        let request = high_pass(&times, &positions, 1.0, &|| false).unwrap();
+        for (sample, want) in samples.iter().zip(&request) {
+            assert!((t.shift_at(sample.timestamp_us as f64 / 1000.0) - want).norm() < 1e-12);
+        }
     }
 
     #[test]

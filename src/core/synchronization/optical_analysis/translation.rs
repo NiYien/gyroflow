@@ -12,6 +12,8 @@ pub struct PairPoint {
     pub band: u8,
     pub p: Vector3<f64>,
     pub r: Vector3<f64>,
+    /// The tracker's corner response in the pair's second frame, NaN when unknown
+    pub texture: f32,
 }
 
 pub struct PairTranslation {
@@ -21,6 +23,8 @@ pub struct PairTranslation {
     pub c_segment: Vector3<f64>,
     /// Inverse depths used by this pair's model, before propagation and normalization.
     pub inv_depth: HashMap<u32, f64>,
+    /// Variance of each of those inverse depths, from this pair's parallax and the depth carried into it.
+    pub inv_depth_var: HashMap<u32, f64>,
     /// Tracks with a depth carried into this solve, before adding any new tracks.
     pub carried_depth: HashSet<u32>,
     /// Median inverse depth of the inliers, in the segment's scale.
@@ -105,7 +109,7 @@ impl TranslationSolver {
 
     fn failed(&mut self) -> PairTranslation {
         self.reset();
-        PairTranslation { c: Vector3::zeros(), c_segment: Vector3::zeros(), inv_depth: HashMap::new(), carried_depth: HashSet::new(),
+        PairTranslation { c: Vector3::zeros(), c_segment: Vector3::zeros(), inv_depth: HashMap::new(), inv_depth_var: HashMap::new(), carried_depth: HashSet::new(),
             ref_inv_depth: 0.0, confidence: 0.0, track_age_s: 0.0, new_segment: true, pred: None }
     }
 
@@ -249,6 +253,7 @@ impl TranslationSolver {
         let output = PairTranslation {
             c, c_segment: c * self.lambda,
             inv_depth: pts.iter().zip(&rho).map(|(p, r)| (p.id, *r)).collect(),
+            inv_depth_var: pts.iter().zip(&hrr).map(|(p, h)| (p.id, 1.0 / h)).collect(),
             carried_depth,
             ref_inv_depth: ref_rho / self.lambda, confidence,
             track_age_s: median(inliers.iter().map(|&i| tb_s - self.first_seen[&pts[i].id]).collect()),
@@ -390,7 +395,7 @@ mod tests {
             let points = previous.iter().zip(&current).enumerate().map(|(id, (p, b))| {
                 let row = 500.0 * p.y / p.z + 270.0;
                 PairPoint { id: id as u32, band: ((row / 540.0 * 6.0).floor() as i32).clamp(0, 5) as u8,
-                            p: *p, r: gyro_error * b - p }
+                            p: *p, r: gyro_error * b - p, texture: f32::NAN }
             }).collect();
             previous = current;
             ScenePair { points, ref_true, layer_ratio_true }

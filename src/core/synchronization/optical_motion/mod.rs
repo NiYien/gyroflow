@@ -451,7 +451,7 @@ mod tests {
             let obs = if self.n == 1 {
                 Vec::new()
             } else {
-                (0..30).map(|id| Observation { id, a: [id as f32, 10.0], b: [id as f32 + 1.0, 10.0] }).collect()
+                (0..30).map(|id| Observation { id, a: [id as f32, 10.0], b: [id as f32 + 1.0, 10.0], texture: f32::NAN }).collect()
             };
             Ok((obs, (960, 540)))
         }

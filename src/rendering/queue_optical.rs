@@ -29,6 +29,8 @@ pub struct QueueOpticalSettings {
     /// Seconds
     pub translation_smoothness: f64,
     pub translation_along_axis: bool,
+    /// Reference layer and smoothness chosen from the analysis; the two values above are kept but unused
+    pub translation_auto: bool,
     pub reconstruction: bool,
 }
 
@@ -42,6 +44,7 @@ impl Default for QueueOpticalSettings {
             translation_reference: 1.0,
             translation_smoothness: 1.0,
             translation_along_axis: true,
+            translation_auto: false,
             reconstruction: false,
         }
     }
@@ -218,6 +221,9 @@ fn apply_settings(job_id: u32, stab: &StabilizationManager, s: &QueueOpticalSett
     if t.along_axis != s.translation_along_axis {
         stab.set_translation_along_axis(s.translation_along_axis);
     }
+    if t.auto != s.translation_auto {
+        stab.set_translation_auto(s.translation_auto);
+    }
     if stab.optical_ui.read().translation_enabled != s.translation {
         stab.set_translation_stabilization_enabled(s.translation);
     }
@@ -287,6 +293,7 @@ pub fn settings_differ(stab: &StabilizationManager, s: &QueueOpticalSettings) ->
         || t.reference != s.translation_reference.clamp(0.0, 2.0)
         || t.smoothness_s != s.translation_smoothness.clamp(0.1, 10.0)
         || t.along_axis != s.translation_along_axis
+        || t.auto != s.translation_auto
 }
 
 /// stabilize-flow-optical-analysis: whether a job whose batch sync is final needs an analysis pass for the project it
@@ -389,7 +396,7 @@ mod tests {
             position: [0.01 * (i as f32 * 0.6).sin(), 0.0, 0.0],
             ref_inv_depth: 1.0, confidence: 1.0, track_age_s: 2.0, segment: 0,
             camera_to_world: [1.0, 0.0, 0.0, 0.0], focal_length_over_short_side: 1.0,
-            layer_motion: [0.001, 0.0], far_beta: 1.0, weight: 1.0, layer_scale_rate: 0.0,
+            layer_motion: [0.001, 0.0], far_beta: 1.0, auto_beta: 1.0, weight: 1.0, layer_scale_rate: 0.0,
         }).collect();
         let ui = *stab.optical_ui.read();
         let mut translation = OpticalTranslation::new(samples, ui.translation_settings);
@@ -439,7 +446,7 @@ mod tests {
         assert_eq!(s, QueueOpticalSettings { translation: true, ..Default::default() });
         assert_eq!(s.strength, gyroflow_core::gyro_source::OpticalCorrectionSettings::default().strength);
         let ui = gyroflow_core::gyro_source::OpticalTranslationSettings::default();
-        assert_eq!((s.translation_reference, s.translation_smoothness, s.translation_along_axis), (ui.reference, ui.smoothness_s, ui.along_axis));
+        assert_eq!((s.translation_reference, s.translation_smoothness, s.translation_along_axis, s.translation_auto), (ui.reference, ui.smoothness_s, ui.along_axis, ui.auto));
         assert!(QueueOpticalSettings::from_json("{not json").is_err());
         assert!(QueueOpticalSettings::from_json("[1]").is_err());
     }
@@ -468,7 +475,7 @@ mod tests {
         let stab = manager(false);
         let s = settings(serde_json::json!({
             "translation": true, "translation_reference": 0.6, "translation_smoothness": 2.5, "translation_along_axis": false,
-            "strength": 0.3,
+            "translation_auto": true, "strength": 0.3,
         }));
         let calls = Cell::new(0);
         run_queue_optical(1, &stab, &s, false, |_| { calls.set(calls.get() + 1); Err("tracking failed".into()) });
@@ -477,12 +484,23 @@ mod tests {
         assert!(!ui.correction_enabled, "the core default (true) must not survive an unticked correction");
         assert!(!ui.stab_enabled);
         assert_eq!((ui.translation_settings.reference, ui.translation_settings.smoothness_s, ui.translation_settings.along_axis), (0.6, 2.5, false));
+        assert!(ui.translation_settings.auto);
         assert_eq!(stab.optical_settings.read().strength, 0.3);
         // The last tick wins, as on the panel: reconstruction turns the other two off
         let stab = manager(false);
         run_queue_optical(1, &stab, &settings(serde_json::json!({ "translation": true, "correction": true, "reconstruction": true })), false, |_| Err("x".into()));
         let ui = *stab.optical_ui.read();
         assert!(!ui.translation_enabled && !ui.correction_enabled);
+    }
+
+    #[test]
+    fn automatic_parameters_reach_the_manager_and_count_as_a_setting() {
+        let stab = manager(false);
+        let s = settings(serde_json::json!({ "translation": true, "translation_auto": true }));
+        apply_settings(1, &stab, &s);
+        assert!(stab.optical_ui.read().translation_settings.auto);
+        assert!(!settings_differ(&stab, &s));
+        assert!(settings_differ(&stab, &QueueOpticalSettings { translation_auto: false, ..s.clone() }));
     }
 
     #[test]

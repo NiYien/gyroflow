@@ -72,6 +72,15 @@ impl TrackingPyramid {
     }
 
     /// The corner cache of the first level, `size` px
+    /// The corner response at `p` when this frame's `CornerCache` is already there, NaN otherwise. Tracking never
+    /// computes it just for this: only the optical analysis prepares it ahead
+    fn texture_at(&self, p: Point2f) -> f32 {
+        let Some(Ok(cache)) = &self.corners else { return f32::NAN };
+        let (x, y) = (p.x.round() as i32, p.y.round() as i32);
+        if x < 0 || y < 0 || x >= cache.eig.cols() || y >= cache.eig.rows() { return f32::NAN; }
+        cache.eig.at_2d::<f32>(y, x).copied().unwrap_or(f32::NAN)
+    }
+
     fn corners(&mut self, size: (i32, i32)) -> Result<&CornerCache, opencv::Error> {
         if self.corners.is_none() {
             self.corners = Some(self.layers.get(0).and_then(|img| CornerCache::new(&img, size)));
@@ -289,7 +298,7 @@ impl KltTracker {
                     let fb = ((a2.x - a.x).powi(2) + (a2.y - a.y).powi(2)).sqrt();
                     let inside = b.x > 2.0 && b.y > 2.0 && b.x < (w - 3) as f32 && b.y < (h - 3) as f32;
                     if st.get(i)? == 1 && st2.get(i)? == 1 && fb < FB_MAX_PX && inside {
-                        out.push(Observation { id: self.ids[i], a: [a.x, a.y], b: [b.x, b.y] });
+                        out.push(Observation { id: self.ids[i], a: [a.x, a.y], b: [b.x, b.y], texture: cur.texture_at(b) });
                         points.push(b);
                         ids.push(self.ids[i]);
                     }

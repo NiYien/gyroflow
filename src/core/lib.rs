@@ -3145,6 +3145,11 @@ impl StabilizationManager {
         self.sync_optical_translation_from_ui();
         self.invalidate_zooming();
     }
+    pub fn set_translation_auto(&self, auto: bool) {
+        self.optical_ui.write().translation_settings.auto = auto;
+        self.sync_optical_translation_from_ui();
+        self.invalidate_zooming();
+    }
     fn sync_optical_translation_from_ui(&self) -> bool {
         #[cfg(test)]
         tests::TRANSLATION_SETTER_BEFORE_SYNC.with(|hook| { if let Some(hook) = hook.take() { hook(); } });
@@ -4071,6 +4076,7 @@ impl StabilizationManager {
                 "translation_reference": optical_ui.translation_settings.reference,
                 "translation_smoothness": optical_ui.translation_settings.smoothness_s,
                 "translation_along_axis": optical_ui.translation_settings.along_axis,
+                "translation_auto": optical_ui.translation_settings.auto,
                 "ignore_file_motion": gyro.ignores_file_motion(),
             },
 
@@ -4725,6 +4731,7 @@ impl StabilizationManager {
                     if let Some(v) = obj.get("translation_reference").and_then(|x| x.as_f64()) { ui.translation_settings.reference = v.clamp(0.0, 2.0); }
                     if let Some(v) = obj.get("translation_smoothness").and_then(|x| x.as_f64()) { ui.translation_settings.smoothness_s = v.clamp(0.1, 10.0); }
                     if let Some(v) = obj.get("translation_along_axis").and_then(|x| x.as_bool()) { ui.translation_settings.along_axis = v; }
+                    if let Some(v) = obj.get("translation_auto").and_then(|x| x.as_bool()) { ui.translation_settings.auto = v; }
                 }
                 if !*is_preset {
                     gyro.optical_stab = None;
@@ -4745,6 +4752,7 @@ impl StabilizationManager {
                                     if obj.get("translation_reference").and_then(|x| x.as_f64()).is_none() { ui.translation_settings.reference = translation.settings.reference; }
                                     if obj.get("translation_smoothness").and_then(|x| x.as_f64()).is_none() { ui.translation_settings.smoothness_s = translation.settings.smoothness_s; }
                                     if obj.get("translation_along_axis").and_then(|x| x.as_bool()).is_none() { ui.translation_settings.along_axis = translation.settings.along_axis; }
+                                    if obj.get("translation_auto").and_then(|x| x.as_bool()).is_none() { ui.translation_settings.auto = translation.settings.auto; }
                                     translation.settings = ui.translation_settings;
                                 }
                                 translation.validate_geometry();
@@ -5878,6 +5886,7 @@ mod tests {
         assert_eq!(fields.remove("translation_reference"), Some(serde_json::json!(1.0)));
         assert_eq!(fields.remove("translation_smoothness"), Some(serde_json::json!(1.0)));
         assert_eq!(fields.remove("translation_along_axis"), Some(serde_json::json!(false)));
+        assert_eq!(fields.remove("translation_auto"), Some(serde_json::json!(false)));
         project.as_object_mut().unwrap().remove("date");
         let mut hash = std::collections::hash_map::DefaultHasher::new();
         project.to_string().hash(&mut hash);
@@ -5938,7 +5947,7 @@ mod tests {
             camera_to_world: [1.0, 0.0, 0.0, 0.0], focal_length_over_short_side: 1.0,
             layer_motion: [0.01 * ((i as f32 * std::f32::consts::TAU * 3.0 / 30.0).sin()
                 - ((i as f32 - 1.0) * std::f32::consts::TAU * 3.0 / 30.0).sin()), 0.0],
-            far_beta: 1.0, weight: 1.0, layer_scale_rate: 0.0,
+            far_beta: 1.0, auto_beta: 1.0, weight: 1.0, layer_scale_rate: 0.0,
         }).collect()
     }
 
@@ -6160,6 +6169,30 @@ mod tests {
         assert_eq!(info["requested"], true);
         assert!(info["max_shift_pct"].as_f64().unwrap() > 0.0);
         assert!(info["max_shift_pct"].as_f64().unwrap() <= 4.0);
+    }
+
+    #[test]
+    fn translation_auto_round_trips_and_older_projects_stay_manual() {
+        let manager = optical_project_manager();
+        assert!(!manager.optical_ui.read().translation_settings.auto);
+        manager.set_translation_stabilization_enabled(true);
+        manager.set_translation_auto(true);
+        install_translation(&manager);
+        let project = optical_export(&manager);
+        assert_eq!(project["gyro_source"]["translation_auto"], true);
+        let restored = optical_import(&project);
+        assert!(restored.optical_ui.read().translation_settings.auto);
+        assert!(restored.gyro.read().optical_translation.as_ref().unwrap().settings.auto);
+        // A project written before the option keeps the manual parameters, also when its payload says otherwise
+        let mut older = project.clone();
+        older["gyro_source"].as_object_mut().unwrap().remove("translation_auto");
+        assert!(optical_import(&older).optical_ui.read().translation_settings.auto, "missing key: the payload's setting");
+        older["gyro_source"]["translation_auto"] = false.into();
+        assert!(!optical_import(&older).optical_ui.read().translation_settings.auto, "explicit key wins");
+        let manual = optical_project_manager();
+        let mut without = optical_export(&manual);
+        without["gyro_source"].as_object_mut().unwrap().remove("translation_auto");
+        assert!(!optical_import(&without).optical_ui.read().translation_settings.auto);
     }
 
     #[test]

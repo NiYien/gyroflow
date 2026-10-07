@@ -2813,6 +2813,14 @@ Do you want to submit your profile?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Automatic parameters</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Choose the reference distance and the smoothness from the analysis: hold the distant scenery steady, or the subject once it fills most of the picture, and smooth as much as the shift range allows.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="475"/>
         <source>Click Analyze to measure the camera movement</source>
         <translation type="unfinished"></translation>

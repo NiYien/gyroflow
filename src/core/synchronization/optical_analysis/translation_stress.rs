@@ -94,7 +94,7 @@ fn translation_stress_bench() {
                     let p = pair.m_gyro * pair.a[i];
                     PairPoint {
                         id: *id, band: (pair.rows[i] as f64 / c.h * 6.0).floor().clamp(0.0, 5.0) as u8,
-                        p, r: pair.b[i] - p,
+                        p, r: pair.b[i] - p, texture: f32::NAN,
                     }
                 }).collect();
                 finite(pts.iter().flat_map(|p| p.p.iter().chain(p.r.iter()).copied()));

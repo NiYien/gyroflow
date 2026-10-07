@@ -31,7 +31,7 @@ MenuItem {
     property alias extensions: fileDialog.extensions;
     property alias experimentalControls: experimentalControls;
     readonly property bool opticalEditsPending: opticalStrengthTimer.running || translationReferenceTimer.running
-        || translationSmoothnessTimer.running || translationAlongAxisTimer.running
+        || translationSmoothnessTimer.running || translationAlongAxisTimer.running || translationAutoTimer.running
         || (opticalcb.checked && opticalcb.info.available && opticalcb.info.outdated);
 
     function moveExperimentalControls(target: var): void {
@@ -68,6 +68,7 @@ MenuItem {
         translationReferenceTimer.stop();
         translationSmoothnessTimer.stop();
         translationAlongAxisTimer.stop();
+        translationAutoTimer.stop();
     }
     function refreshOpticalInfo(restoreParameters: bool, restoreOpticalRequest: bool): void {
         if (root.updatingOpticalControls) return;
@@ -95,6 +96,8 @@ MenuItem {
                 translationSmoothness.value = Math.log(translationcb.info.smoothness_s) / Math.LN10;
             if (restoreParameters || !translationAlongAxisTimer.running)
                 translationAlongAxis.checked = !!translationcb.info.along_axis;
+            if (restoreParameters || !translationAutoTimer.running)
+                translationAuto.checked = !!translationcb.info.auto;
             // The core reports a strength only with a correction fitted; without one the slider keeps its value
             if (restoreParameters && typeof opticalcb.info.strength === "number") opticalStrength.value = opticalcb.info.strength * 100;
         } finally {
@@ -117,6 +120,7 @@ MenuItem {
             translation_reference: (200 - translationReference.value) / 100,
             translation_smoothness: Math.pow(10, translationSmoothness.value),
             translation_along_axis: translationAlongAxis.checked,
+            translation_auto: translationAuto.checked,
             reconstruction: stabcb.checked
         }));
     }
@@ -204,6 +208,7 @@ MenuItem {
                 if (typeof gyro.translation_reference === "number") translationReference.value = 200 - gyro.translation_reference * 100;
                 if (typeof gyro.translation_smoothness === "number") translationSmoothness.value = Math.log(gyro.translation_smoothness) / Math.LN10;
                 if (typeof gyro.translation_along_axis === "boolean") translationAlongAxis.checked = gyro.translation_along_axis;
+                if (typeof gyro.translation_auto === "boolean") translationAuto.checked = gyro.translation_auto;
                 if (typeof gyro.stab_reconstruction_enabled === "boolean") stabcb.checked = gyro.stab_reconstruction_enabled;
             } finally {
                 root.updatingOpticalControls = false;
@@ -528,9 +533,17 @@ MenuItem {
                   !translationcb.info.available ? "" :
                   qsTr("Measured in %1 of %2 frames, applied shift up to %3% of the source frame's short side").arg(translationcb.info.measured_frames).arg(translationcb.info.frames).arg((+translationcb.info.max_shift_pct).toFixed(1));
         }
+        CheckBox {
+            id: translationAuto;
+            text: qsTr("Automatic parameters");
+            tooltip: qsTr("Choose the reference distance and the smoothness from the analysis: hold the distant scenery steady, or the subject once it fills most of the picture, and smooth as much as the shift range allows.");
+            checked: false;
+            onCheckedChanged: if (root.initialized && !root.updatingOpticalControls) translationAutoTimer.restart();
+        }
         Label {
             text: qsTr("Reference distance");
             width: parent.width;
+            enabled: !translationAuto.checked;
             tooltip: qsTr("Move toward Near to stabilize closer objects, or toward Far to stabilize more distant content. The middle position stabilizes the farther parts of the image (default).");
             Row {
                 width: parent.width;
@@ -558,6 +571,7 @@ MenuItem {
         Label {
             text: qsTr("Translation smoothness");
             width: parent.width;
+            enabled: !translationAuto.checked;
             tooltip: qsTr("Low values only remove fast shakes. High values also remove slow drifts and come close to locking the picture.");
             Row {
                 width: parent.width;
@@ -598,6 +612,11 @@ MenuItem {
         id: translationAlongAxisTimer;
         interval: 150;
         onTriggered: if (!controller.video_loading_in_progress && !controller.loading_gyro_in_progress) { controller.set_translation_along_axis(translationAlongAxis.checked); root.pushQueueOpticalSettings(); }
+    }
+    Timer {
+        id: translationAutoTimer;
+        interval: 150;
+        onTriggered: if (!controller.video_loading_in_progress && !controller.loading_gyro_in_progress) { controller.set_translation_auto(translationAuto.checked); root.pushQueueOpticalSettings(); }
     }
     CheckBoxWithContent {
         id: stabcb;
