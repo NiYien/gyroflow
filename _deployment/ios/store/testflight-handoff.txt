@@ -15,8 +15,8 @@ NiYien TestFlight — Mac 接续步骤（2026-10-07）
    必要时切换 xcode-select 到完整 Xcode.app，而非 CommandLineTools。
    最低系统版本保持 iOS 15.0；不需改到 iOS 26。
    运行 just ios install-deps。检查 Qt iOS、OpenCV、FFmpeg 和 MDK 构建依赖。
-   发布前请确认 MDK 授权覆盖 NiYien 的 iOS bundle ID，确认 Qt/FFmpeg
-   及所修改 Qt 库的对应源码交付。仓库中的许可文本不是授权确认记录。
+   用户于 2026-10-07 确认现有 MDK Key 已获取授权，沿用当前 Key，
+   无需重新申请。Qt/FFmpeg 及所修改 Qt 库的对应源码交付仍需核实。
    配置 SIGN_KEY 为 Apple Distribution 证书 SHA-1，PROVISIONING_PROFILE
    为明确授权 com.niyien.stabilizer 的 App Store 分发描述文件绝对路径。
    签名资料保留在本机或环境变量中，不提交证书、描述文件、密码或 API key。

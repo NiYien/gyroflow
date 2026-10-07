@@ -130,6 +130,13 @@
     "medical_treatment_information": false,
     "notes_zh": "依据当前离线视频工具功能作答。最终分级由 App Store Connect 问卷计算，不手写保证 4+。"
   },
+  "sdk_licensing": {
+    "mdk": {
+      "status": "confirmed_by_publisher",
+      "confirmed_on": "2026-10-07",
+      "notes_zh": "发布者确认现有 MDK Key 已获取授权，继续使用当前 Key，无需重新申请。"
+    }
+  },
   "export_compliance": {
     "info_plist_uses_non_exempt_encryption": false,
     "status": "confirm_native_sdk_crypto_scope_before_submission",
@@ -137,7 +144,7 @@
   },
   "publisher_follow_up": [
     "填写审核联系人的姓名和电话",
-    "确认 MDK 授权覆盖 NiYien iOS 与 Android 分发；核实 BRAW 条款及 Qt/FFmpeg 对应源码交付",
+    "核实 BRAW 条款及 Qt/FFmpeg 对应源码交付",
     "在 App Store Connect 完成年龄分级、发行地区及适用的主体/合规字段",
     "上传包含本次修改的新 iOS 构建与实机截图，再选择构建送审"
   ],
