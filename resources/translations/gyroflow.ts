@@ -190,7 +190,7 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Applies to the video open in the preview and to the videos waiting in the render queue.</source>
+        <source>These features are experimental and may not be stable yet.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

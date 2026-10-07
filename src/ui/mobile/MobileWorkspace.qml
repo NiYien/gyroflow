@@ -988,7 +988,7 @@ Rectangle {
                         width: parent.width; spacing: 16 * root.unit
                         MobileText {
                             width: parent.width; unit: root.unit; dark: root.dark; secondary: true; wrapMode: Text.WordWrap
-                            text: root.hasExperimentalPreview ? qsTranslate("App", "Applies to the video open in the preview and to the videos waiting in the render queue.")
+                            text: root.hasExperimentalPreview ? qsTranslate("App", "These features are experimental and may not be stable yet.")
                                 : qsTr("Open a video in preview to use these features.")
                         }
                         MobileText { visible: root.hasExperimentalPreview; width: parent.width; unit: root.unit; dark: root.dark; wrapMode: Text.WrapAnywhere; text: root.previewRecord ? root.previewRecord.filename : "" }

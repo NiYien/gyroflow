@@ -2040,7 +2040,7 @@ Rectangle {
                         BasicText {
                             width: parent.width;
                             wrapMode: Text.WordWrap;
-                            text: qsTr("Applies to the video open in the preview and to the videos waiting in the render queue.");
+                            text: qsTr("These features are experimental and may not be stable yet.");
                         }
                     }
                 }

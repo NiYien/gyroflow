@@ -191,8 +191,8 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation>实验性功能</translation>
     </message>
     <message>
-        <source>Applies to the video open in the preview and to the videos waiting in the render queue.</source>
-        <translation>作用于当前预览中的视频，以及渲染队列中等待处理的视频。</translation>
+        <source>These features are experimental and may not be stable yet.</source>
+        <translation>这些是实验性功能，尚不稳定。</translation>
     </message>
     <message>
         <source>%1 could not be applied (%2). Processed without it.</source>
