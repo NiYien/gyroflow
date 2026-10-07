@@ -264,6 +264,11 @@ impl OpticalStabReconstruction {
         self.enabled && self.applies && !self.table.is_empty()
     }
 
+    /// Whether the last rebuild produced a compensation table, whatever `enabled` and `applies` say
+    pub fn has_table(&self) -> bool {
+        !self.table.is_empty()
+    }
+
     /// Rebuilds s = u + s0 over the spline support without deciding whether its analysis is current.
     pub fn rebuild(&mut self, quats: &TimeQuat, config: &StabReconConfig) {
         self.table = Arc::default();

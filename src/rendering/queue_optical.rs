@@ -3,6 +3,8 @@
 //! Optical analysis for render queue jobs: the experimental panel's settings as the queue keeps them, and the step the
 //! render worker runs between the sync and the project write / encode (see `RenderQueue::render_job`).
 
+use gyroflow_core::gyro_source::GyroSource;
+use gyroflow_core::synchronization::optical_analysis::{context_checksum, measurement_params};
 use gyroflow_core::StabilizationManager;
 
 pub const CORRECTION: &str = "correction";
@@ -48,6 +50,11 @@ impl Default for QueueOpticalSettings {
 impl QueueOpticalSettings {
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json)
+    }
+
+    /// Whether any of the three items is ticked
+    pub fn any_ticked(&self) -> bool {
+        self.correction || self.translation || self.reconstruction
     }
 }
 
@@ -191,8 +198,7 @@ fn apply_settings(job_id: u32, stab: &StabilizationManager, s: &QueueOpticalSett
     if ui.correction_enabled != s.correction {
         stab.set_optical_correction_enabled(s.correction);
     }
-    // Ignoring the file's motion is part of the correction; a reconstruction needs the motion
-    let ignore = s.correction && s.ignore_file_motion && !s.reconstruction;
+    let ignore = resolve(s).ignore_file_motion;
     if ignoring != ignore {
         stab.set_ignore_file_motion(ignore);
     }
@@ -221,17 +227,102 @@ fn apply_settings(job_id: u32, stab: &StabilizationManager, s: &QueueOpticalSett
     before != state(stab)
 }
 
+/// What `apply_settings` leaves switched on: the core setters keep the modes exclusive and a reconstruction turns the
+/// other two off; ignoring the file's motion is part of the correction, and a reconstruction needs the motion
+struct Resolved {
+    correction: bool,
+    translation: bool,
+    reconstruction: bool,
+    ignore_file_motion: bool,
+}
+
+fn resolve(s: &QueueOpticalSettings) -> Resolved {
+    Resolved {
+        correction: s.correction && !s.reconstruction,
+        translation: s.translation && !s.reconstruction,
+        reconstruction: s.reconstruction,
+        ignore_file_motion: s.correction && s.ignore_file_motion && !s.reconstruction,
+    }
+}
+
+impl Resolved {
+    fn items(&self) -> Vec<&'static str> {
+        [(self.correction, CORRECTION), (self.translation, TRANSLATION), (self.reconstruction, RECONSTRUCTION)]
+            .into_iter()
+            .filter_map(|(on, item)| on.then_some(item))
+            .collect()
+    }
+}
+
+/// stabilize-flow-optical-analysis: whether a ticked item of `settings` lacks a result that applies in the job's
+/// current context, so that `run_queue_optical` would analyze it (or fall back for want of motion data). Leaves the
+/// manager as it is
+pub fn needs_analysis(stab: &StabilizationManager, settings: &QueueOpticalSettings) -> bool {
+    let resolved = resolve(settings);
+    let items = resolved.items();
+    if items.is_empty() {
+        return false;
+    }
+    // Setting the file's motion aside or bringing it back reintegrates: only the analysis step can tell what applies then
+    if stab.gyro.read().ignores_file_motion() != resolved.ignore_file_motion {
+        return true;
+    }
+    // Fresh: the cached context lags behind sync points set without a recompute. Takes the gyro lock itself
+    let context = context_checksum(&measurement_params(stab));
+    let strength = settings.strength.clamp(0.0, 1.0);
+    let gyro = stab.gyro.read();
+    items.iter().any(|item| !result_applies(&gyro, context, item, strength))
+}
+
+/// stabilize-flow-optical-analysis: whether `run_queue_optical` would change the manager's settings
+/// (`settings_changed`), compared as the setters clamp them. Leaves the manager as it is
+pub fn settings_differ(stab: &StabilizationManager, s: &QueueOpticalSettings) -> bool {
+    let r = resolve(s);
+    let (ui, strength) = (*stab.optical_ui.read(), stab.optical_settings.read().strength);
+    let ignoring = stab.gyro.read().ignores_file_motion();
+    let t = ui.translation_settings;
+    (ui.correction_enabled, ui.translation_enabled, ui.stab_enabled) != (r.correction, r.translation, r.reconstruction)
+        || ignoring != r.ignore_file_motion
+        || strength != s.strength.clamp(0.0, 1.0)
+        || t.reference != s.translation_reference.clamp(0.0, 2.0)
+        || t.smoothness_s != s.translation_smoothness.clamp(0.1, 10.0)
+        || t.along_axis != s.translation_along_axis
+}
+
+/// stabilize-flow-optical-analysis: whether a job whose batch sync is final needs an analysis pass for the project it
+/// hands to the plugins: something is ticked, and an item lacks its result or the manager carries other settings
+pub fn stabilize_pass_needed(stab: &StabilizationManager, settings: &QueueOpticalSettings) -> bool {
+    settings.any_ticked() && (needs_analysis(stab, settings) || settings_differ(stab, settings))
+}
+
+/// Whether the result for `item` is there and measured on what the job has now, switched on or not: the uncorrected
+/// motion and `context` (sync, lens, frame timing), for a translation or a reconstruction the file's motion data. A
+/// correction also has to be fitted with `strength`. Shared by `applies` and `needs_analysis`
+fn result_applies(gyro: &GyroSource, context: u64, item: &str, strength: f64) -> bool {
+    let file_motion = gyro.has_motion() && !gyro.ignores_file_motion();
+    let uncorrected = gyro.optical_uncorrected_checksum;
+    match item {
+        CORRECTION => gyro.optical_correction.as_ref()
+            .is_some_and(|c| c.measured_on(uncorrected, context) && c.settings.strength == strength),
+        TRANSLATION => file_motion && gyro.optical_translation.as_ref().is_some_and(|t| {
+            t.has_valid_geometry() && !t.samples.is_empty() && t.quats_checksum == uncorrected && t.context_checksum == context
+        }),
+        _ => file_motion && gyro.optical_stab.as_ref().is_some_and(|s| s.measured_on(uncorrected, context) && s.has_table()),
+    }
+}
+
 /// Whether the result for a ticked item is there and applies, as the render would use it
 fn applies(stab: &StabilizationManager, item: &str) -> bool {
     stab.refresh_optical_correction();
     let strength = stab.optical_settings.read().strength;
     let gyro = stab.gyro.read();
-    match item {
-        CORRECTION => gyro.optical_correction_applied
-            && gyro.optical_correction.as_ref().is_some_and(|c| c.enabled && c.settings.strength == strength),
-        TRANSLATION => gyro.optical_translation.as_ref().is_some_and(|t| t.is_active()),
-        _ => gyro.optical_stab.as_ref().is_some_and(|s| s.is_active()),
-    }
+    let enabled = match item {
+        CORRECTION => gyro.optical_correction.as_ref().is_some_and(|c| c.enabled),
+        TRANSLATION => gyro.optical_translation.as_ref().is_some_and(|t| t.enabled),
+        _ => gyro.optical_stab.as_ref().is_some_and(|s| s.enabled),
+    };
+    // After the refresh the cached context is the current one
+    enabled && result_applies(&gyro, gyro.optical_context, item, strength)
 }
 
 #[cfg(test)]
@@ -537,6 +628,142 @@ mod tests {
         let outcome = run_queue_optical(1, &stab, &QueueOpticalSettings::default(), false, |_| panic!("nothing is ticked"));
         assert_eq!(outcome, QueueOpticalOutcome::Applied { analyzed: false });
         assert!(!translation_active(&stab));
+    }
+
+    // ---- stabilize-flow-optical-analysis ----
+
+    /// What the predicates must leave as it is: the panel state, the strength, the motion data, the results, their context
+    fn manager_state(stab: &StabilizationManager) -> String {
+        let (ui, strength) = (*stab.optical_ui.read(), stab.optical_settings.read().strength);
+        let gyro = stab.gyro.read();
+        format!(
+            "{ui:?} {strength} {} {:?} {:?} {:?} {} {} {:?}",
+            gyro.ignores_file_motion(),
+            gyro.optical_correction.as_ref().map(|c| (c.enabled, c.settings.strength)),
+            gyro.optical_translation.as_ref().map(|t| (t.enabled, t.applies, t.settings)),
+            gyro.optical_stab.as_ref().map(|s| (s.enabled, s.applies)),
+            gyro.optical_context,
+            gyro.optical_uncorrected_checksum,
+            gyro.get_offsets()
+        )
+    }
+
+    fn with_translation() -> StabilizationManager {
+        let stab = manager(false);
+        stab.set_optical_correction_enabled(false);
+        stab.set_translation_stabilization_enabled(true);
+        install_translation(&stab);
+        stab
+    }
+
+    struct Fixture {
+        name: &'static str,
+        build: fn() -> StabilizationManager,
+        settings: serde_json::Value,
+        /// `needs_analysis`
+        needs: bool,
+        /// `run_queue_optical` calls the analysis
+        analyzes: bool,
+    }
+
+    fn fixtures() -> Vec<Fixture> {
+        use serde_json::json;
+        vec![
+            Fixture { name: "no result", build: || manager(false), settings: json!({ "translation": true }), needs: true, analyzes: true },
+            Fixture { name: "result applies", build: with_translation, settings: json!({ "translation": true }), needs: false, analyzes: false },
+            Fixture {
+                name: "result applies, switched off on the manager",
+                build: || { let stab = with_translation(); stab.set_translation_stabilization_enabled(false); stab },
+                settings: json!({ "translation": true }), needs: false, analyzes: false,
+            },
+            Fixture {
+                name: "a sync point moved after the analysis",
+                build: || { let stab = with_translation(); stab.gyro.write().set_offset(0, 25.0); stab },
+                settings: json!({ "translation": true }), needs: true, analyzes: true,
+            },
+            Fixture {
+                name: "correction fitted with its strength",
+                build: || { let stab = manager(false); stab.set_optical_correction_enabled(true); install_correction(&stab); stab },
+                settings: json!({ "correction": true }), needs: false, analyzes: false,
+            },
+            Fixture {
+                name: "correction fitted with another strength",
+                build: || { let stab = manager(false); stab.set_optical_correction_enabled(true); install_correction(&stab); stab },
+                settings: json!({ "correction": true, "strength": 0.9 }), needs: true, analyzes: true,
+            },
+            Fixture {
+                name: "reconstruction wins over the other two, and applies",
+                build: || { let stab = manager(false); stab.set_stab_reconstruction_enabled(true); install_reconstruction(&stab); stab },
+                settings: json!({ "translation": true, "correction": true, "reconstruction": true }), needs: false, analyzes: false,
+            },
+            Fixture {
+                name: "reconstruction wins over a translation that applies",
+                build: with_translation,
+                settings: json!({ "translation": true, "reconstruction": true }), needs: true, analyzes: true,
+            },
+            Fixture {
+                name: "needs motion data the clip lacks",
+                build: || { let stab = manager(false); stab.gyro.write().file_metadata.write().quaternions.clear(); stab.recompute_gyro(); stab },
+                settings: json!({ "translation": true }), needs: true, analyzes: false,
+            },
+            Fixture { name: "nothing ticked", build: with_translation, settings: json!({}), needs: false, analyzes: false },
+            Fixture {
+                name: "the correction sets the motion data aside",
+                build: || manager(false),
+                settings: json!({ "correction": true, "ignore_file_motion": true }), needs: true, analyzes: true,
+            },
+        ]
+    }
+
+    #[test]
+    fn needs_analysis_agrees_with_the_analysis_step() {
+        for f in fixtures() {
+            let s = settings(f.settings.clone());
+            let stab = (f.build)();
+            let before = manager_state(&stab);
+            assert_eq!(needs_analysis(&stab, &s), f.needs, "{}", f.name);
+            let differ = settings_differ(&stab, &s);
+            stabilize_pass_needed(&stab, &s);
+            assert_eq!(manager_state(&stab), before, "{}: the predicates leave the manager as it is", f.name);
+            assert_eq!(apply_settings(1, &stab, &s), differ, "{}: settings_differ is what applying them changes", f.name);
+
+            let stab = (f.build)();
+            let calls = Cell::new(0);
+            let outcome = run_queue_optical(1, &stab, &s, false, |_| { calls.set(calls.get() + 1); Err("x".into()) });
+            assert_eq!(calls.get() > 0, f.analyzes, "{}: {outcome:?}", f.name);
+            if !needs_analysis(&(f.build)(), &s) {
+                assert_eq!(calls.get(), 0, "{}: nothing to analyze", f.name);
+                assert_eq!(outcome, QueueOpticalOutcome::Applied { analyzed: false }, "{}", f.name);
+            }
+        }
+    }
+
+    #[test]
+    fn a_stabilize_pass_is_needed_for_a_missing_result_or_other_settings() {
+        let translation = settings(serde_json::json!({ "translation": true }));
+        assert!(stabilize_pass_needed(&manager(false), &translation), "no result yet");
+
+        // Applied once (what an earlier pass leaves): the same settings need nothing
+        let stab = with_translation();
+        apply_settings(1, &stab, &translation);
+        assert!(!needs_analysis(&stab, &translation) && !settings_differ(&stab, &translation));
+        assert!(!stabilize_pass_needed(&stab, &translation), "the result applies and the settings are the same");
+
+        // Another smoothness: no analysis, but the project must carry the new setting
+        let smoother = settings(serde_json::json!({ "translation": true, "translation_smoothness": 2.5 }));
+        assert!(!needs_analysis(&stab, &smoother));
+        assert!(settings_differ(&stab, &smoother));
+        assert!(stabilize_pass_needed(&stab, &smoother));
+
+        // Nothing ticked: never, even though applying the settings would switch the translation off
+        let none = QueueOpticalSettings::default();
+        assert!(settings_differ(&stab, &none));
+        assert!(!stabilize_pass_needed(&stab, &none));
+
+        // A value the setter clamps counts as the clamped one
+        apply_settings(1, &stab, &settings(serde_json::json!({ "translation": true, "translation_smoothness": 0.1, "strength": 1.0 })));
+        let below = settings(serde_json::json!({ "translation": true, "translation_smoothness": 0.01, "strength": 3.0 }));
+        assert!(!settings_differ(&stab, &below));
     }
 
     #[test]

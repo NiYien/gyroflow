@@ -429,6 +429,10 @@ struct Job {
     // with. None: the panel was never edited, the job renders as before. Applied
     // to the manager only in the render worker, see queue_optical.
     optical: Option<QueueOpticalSettings>,
+    // stabilize-flow-optical-analysis: the job still owes this Stabilize run an
+    // analysis pass (analysis + project write, no sync) now that its batch sync
+    // is final. In memory only, see schedule_stabilize_optical_passes.
+    optical_pass: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -2890,6 +2894,11 @@ impl RenderQueue {
             update_model!(self, job_id, itm {
                 itm.sync_status = QString::default();
             });
+            // stabilize-flow-optical-analysis: a pass the old batch still owed
+            // belongs to offsets the new batch sync replaces
+            if let Some(job) = self.jobs.get_mut(&job_id) {
+                job.optical_pass = false;
+            }
         }
         self.batch_sync_status_changed();
     }
@@ -4559,6 +4568,7 @@ impl RenderQueue {
         }
 
         self.batch_sync_repair_prompt_pending = false;
+        let mut repair_round_queued = false;
         self.batch_sync_prompt_kind = match result.batch_status {
             BatchSyncBatchStatus::Empty | BatchSyncBatchStatus::AllGreen => BatchSyncPromptKind::None,
             BatchSyncBatchStatus::AllYellow => BatchSyncPromptKind::AllYellow,
@@ -4568,6 +4578,7 @@ impl RenderQueue {
                         BatchSyncPromptKind::FinishedWithYellow
                     } else {
                         if self.queue_yellow_batch_sync_repair_jobs(&result.videos) {
+                            repair_round_queued = true;
                             BatchSyncPromptKind::None
                         } else {
                             BatchSyncPromptKind::FinishedWithYellow
@@ -4580,6 +4591,15 @@ impl RenderQueue {
             }
         };
         self.batch_sync_status_changed();
+        // stabilize-flow-optical-analysis: the analysis is bound to the sync
+        // offsets, so it waits until no repair can move them any more.
+        if self.batch_sync_prompt_kind == BatchSyncPromptKind::Repair {
+            self.log_deferred_stabilize_passes("repair prompt pending");
+        } else if repair_round_queued {
+            self.log_deferred_stabilize_passes("repair round running");
+        } else {
+            self.schedule_stabilize_optical_passes("final confirmation");
+        }
     }
 
     fn apply_batch_sync_points_to_stab(
@@ -4776,6 +4796,7 @@ impl RenderQueue {
         if yellow_jobs.is_empty() {
             self.batch_sync_prompt_kind = BatchSyncPromptKind::FinishedWithYellow;
             self.batch_sync_status_changed();
+            self.schedule_stabilize_optical_passes("nothing to repair");
             return;
         }
         self.batch_sync_repair_round += 1;
@@ -4786,9 +4807,108 @@ impl RenderQueue {
     }
 
     pub fn skip_batch_sync_repair(&mut self) {
+        // A stale dialog answered after the batch moved on decides nothing
+        let answers_the_prompt = self.batch_sync_repair_prompt_pending;
         self.batch_sync_repair_prompt_pending = false;
         self.batch_sync_prompt_kind = BatchSyncPromptKind::None;
         self.batch_sync_status_changed();
+        if answers_the_prompt {
+            self.schedule_stabilize_optical_passes("repair skipped");
+        }
+    }
+
+    /// stabilize-flow-optical-analysis: once the batch sync is final (no repair
+    /// round running, no repair prompt waiting), every green job whose panel
+    /// settings still need it goes back to the queue for an analysis pass: the
+    /// analysis and the project write, without a sync (`optical_pass` in
+    /// `render_job`). Yellow jobs are left to the export's analysis.
+    fn schedule_stabilize_optical_passes(&mut self, why: &str) {
+        if !self.batch_uses_queue_optical_settings() {
+            return;
+        }
+        let mut job_ids: Vec<u32> = self.batch_sync_job_ids.iter().copied().collect();
+        job_ids.sort_unstable();
+        let rows: HashMap<u32, (JobStatus, String)> = self
+            .queue
+            .borrow()
+            .iter()
+            .map(|item| {
+                let color = serde_json::from_str::<serde_json::Value>(&item.sync_status.to_string())
+                    .ok()
+                    .and_then(|v| v.get("color").and_then(|c| c.as_str()).map(str::to_owned))
+                    .unwrap_or_default();
+                (item.job_id, (item.status.clone(), color))
+            })
+            .collect();
+        let (mut scheduled, mut applies, mut green, mut yellow) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for job_id in job_ids {
+            let Some((status, color)) = rows.get(&job_id) else { continue; };
+            match color.as_str() {
+                "green" => green.push(job_id),
+                "yellow" => yellow.push(job_id),
+                _ => {}
+            }
+            if *status != JobStatus::Finished || color != "green" || self.deep_match_pending.contains_key(&job_id) {
+                continue;
+            }
+            let Some(job) = self.jobs.get_mut(&job_id) else { continue; };
+            let Some(stab) = job.stab.clone() else { continue; };
+            // The row goes back to the queue: it takes the panel's current settings, as reset_job gives them
+            let Some(settings) = self.optical_settings.clone().or_else(|| job.optical.clone()) else { continue; };
+            if !settings.any_ticked() {
+                continue;
+            }
+            if !queue_optical::stabilize_pass_needed(&stab, &settings) {
+                applies.push(job_id);
+                continue;
+            }
+            job.optical = Some(settings);
+            job.optical_pass = true;
+            // Drops the trailing finished tick of the job whose completion
+            // confirmed the batch, as a re-cut does
+            job.render_epoch.fetch_add(1, SeqCst);
+            update_model!(self, job_id, itm {
+                itm.status = JobStatus::Queued;
+                itm.current_frame = 0;
+                itm.processing_phase = QString::default();
+            });
+            scheduled.push(job_id);
+        }
+        ::log::info!(
+            target: "queue.optical",
+            "[queue-optical] stabilize passes scheduled={} skipped_applies={} ({why}) green={green:?} yellow={yellow:?} jobs={scheduled:?}",
+            scheduled.len(),
+            applies.len()
+        );
+        if scheduled.is_empty() {
+            return;
+        }
+        self.batch_sync_status_changed();
+        self.queue_changed();
+        self.progress_changed();
+        // Paused: start() does nothing until the queue resumes
+        self.start();
+    }
+
+    /// stabilize-flow-optical-analysis: a job flagged by
+    /// `schedule_stabilize_optical_passes` runs as an analysis pass only in a
+    /// Stabilize run; in an export it renders as usual, and the export's own
+    /// analysis step does the analysis
+    fn runs_as_optical_pass(flagged: bool, export_project: u32) -> bool {
+        flagged && export_project == 2
+    }
+
+    fn log_deferred_stabilize_passes(&self, why: &str) {
+        if self.batch_uses_queue_optical_settings() {
+            ::log::info!(target: "queue.optical", "[queue-optical] stabilize passes deferred: {why}");
+        }
+    }
+
+    /// Whether the panel's settings reach this batch at all: never edited, the
+    /// Stabilize run stays as it was, logs included
+    fn batch_uses_queue_optical_settings(&self) -> bool {
+        self.optical_settings.is_some()
+            || self.batch_sync_job_ids.iter().any(|id| self.jobs.get(id).is_some_and(|job| job.optical.is_some()))
     }
 
     fn queue_yellow_batch_sync_repair_jobs(
@@ -5188,6 +5308,9 @@ impl RenderQueue {
                     .find(|i| i.job_id == job_id)
                     .map_or(false, |i| i.status == JobStatus::Finished)
             };
+        // stabilize-flow-optical-analysis: the sync results survive the edit, and
+        // so does the analysis pass the waiting job still owes
+        let keep_optical_pass = editing && self.jobs.get(&job_id).is_some_and(|job| job.optical_pass);
         let preserved_progress: Option<(u64, u64, f64)> = if keep_finished_project_export {
             let q = self.queue.borrow();
             q.iter()
@@ -5365,6 +5488,7 @@ impl RenderQueue {
                 original_video_rotation,
                 original_output_size,
                 optical: self.optical_settings.clone(),
+                optical_pass: keep_optical_pass,
             },
         );
         self.update_queue_indices();
@@ -5718,6 +5842,11 @@ impl RenderQueue {
             if item.total_frames == 0 || !self.batch_sync_job_ids.contains(&item.job_id) {
                 continue;
             }
+            // stabilize-flow-optical-analysis: an analysis pass no longer takes
+            // part in the sync; it neither waits for the barrier nor holds it
+            if self.jobs.get(&item.job_id).is_some_and(|job| job.optical_pass) {
+                continue;
+            }
             let created = self.jobs.get(&item.job_id).and_then(|job| {
                 job.stab
                     .as_ref()
@@ -6011,6 +6140,11 @@ impl RenderQueue {
             if let Some(job) = self.jobs.get_mut(&job_id) {
                 job.optical = Some(settings);
             }
+        }
+        // stabilize-flow-optical-analysis: a reset job is a new job; its sync
+        // status is cleared below, so it must not run as an analysis pass
+        if let Some(job) = self.jobs.get_mut(&job_id) {
+            job.optical_pass = false;
         }
         let recreating_released_stab = self.jobs.get(&job_id).is_some_and(|job| job.stab.is_none() && job.project_data.is_some());
         // Resetting progress does not make an excluded clip eligible to
@@ -6307,10 +6441,17 @@ impl RenderQueue {
     }
 
     pub fn prepare_finished_jobs_for_video_export(&mut self) {
+        // stabilize-flow-optical-analysis: a Stabilize analysis pass stopped
+        // before it finished waits in the queue with its final offsets and
+        // still marked for auto sync; the export renders it like a finished one
+        let stopped_pass = |job: &Job| job.optical_pass;
         let finished_job_ids = {
             let q = self.queue.borrow();
             q.iter()
-                .filter(|v| v.status == JobStatus::Finished)
+                .filter(|v| {
+                    v.status == JobStatus::Finished
+                        || (v.status == JobStatus::Queued && self.jobs.get(&v.job_id).is_some_and(stopped_pass))
+                })
                 .map(|v| v.job_id)
                 .collect::<Vec<_>>()
         };
@@ -6328,7 +6469,7 @@ impl RenderQueue {
                         // sync pass just produced, leaving a row that has neither
                         // baked offsets nor permission to compute new ones. The next
                         // stabilize then re-syncs from scratch and lands yellow.
-                        job.last_finished_export_project == Some(2) && !job.plugin_only
+                        (job.last_finished_export_project == Some(2) || stopped_pass(job)) && !job.plugin_only
                     })
                     .unwrap_or(false)
             })
@@ -7526,6 +7667,12 @@ impl RenderQueue {
             // A later real run of the same job captures false and rebuilds
             // project_data normally.
             let job_is_deep_match = self.deep_match_pending.contains_key(&job_id);
+            // stabilize-flow-optical-analysis: the batch sync of this job is
+            // final; this run only analyzes and rewrites the project
+            let optical_pass = Self::runs_as_optical_pass(job.optical_pass, finished_export_project);
+            if optical_pass {
+                ::log::info!(target: "queue.optical", "[queue-optical] job={job_id} stabilize pass: analysis and project write without a sync");
+            }
             let progress = util::qt_queued_callback_mut(
                 QPointer::from(self as &Self),
                 move |this,
@@ -7564,7 +7711,7 @@ impl RenderQueue {
                     // start() from launching the next sync worker (the "batch sync
                     // stalls after N parallel jobs" bug).
                     let defer_progress_to_confirm =
-                        job_is_batch_sync && finished_export_project == 2 && finished;
+                        job_is_batch_sync && finished_export_project == 2 && finished && !optical_pass;
                     update_model!(this, job_id, itm {
                         if !defer_progress_to_confirm {
                             itm.current_frame = current_frame as u64;
@@ -7619,6 +7766,9 @@ impl RenderQueue {
                                 }
                             }
                             job.last_finished_export_project = Some(finished_export_project);
+                            // stabilize-flow-optical-analysis: the pass is done; any
+                            // other render analyzed in its own analysis step
+                            job.optical_pass = false;
                         }
                         // Release StabilizationManager to reclaim GPU memory
                         if !keep_stab_for_batch_sync {
@@ -7786,6 +7936,7 @@ impl RenderQueue {
                     // Release StabilizationManager to reclaim GPU memory
                     if let Some(job) = this.jobs.get_mut(&job_id) {
                         job.stab = None;
+                        job.optical_pass = false;
                     }
 
                     if this.get_pending_count() > 0 {
@@ -7887,7 +8038,7 @@ impl RenderQueue {
 
             let sync_cancel_flag = cancel_flag.clone();
             let defer_batch_sync_confirmation =
-                self.expected_batch_sync_job_ids.contains(&job_id) && export_project == 2;
+                self.expected_batch_sync_job_ids.contains(&job_id) && export_project == 2 && !optical_pass;
             // Dynamic local-offset snapshot (batch-sync-dynamic-local-offset
             // §7): taken atomically here on the UI thread; the reslice itself
             // runs on the worker right before do_autosync.
@@ -8017,18 +8168,23 @@ impl RenderQueue {
                     }
                 }
                 let sync_start = std::time::Instant::now();
-                let sync_stats = Self::do_autosync(
-                    stab.clone(),
-                    processing,
-                    progress_latency_probe,
-                    &input_file,
-                    err2,
-                    proc_height,
-                    sync_cancel_flag,
-                    job_id,
-                    defer_batch_sync_confirmation,
-                    cfg!(target_os = "android") && job_is_deep_match,
-                );
+                let sync_stats = if optical_pass {
+                    // The offsets the batch confirmed stay as they are
+                    QueueAutosyncStats::default()
+                } else {
+                    Self::do_autosync(
+                        stab.clone(),
+                        processing,
+                        progress_latency_probe,
+                        &input_file,
+                        err2,
+                        proc_height,
+                        sync_cancel_flag,
+                        job_id,
+                        defer_batch_sync_confirmation,
+                        cfg!(target_os = "android") && job_is_deep_match,
+                    )
+                };
                 if sync_stats.completed && sync_stats.frames > 0 {
                     let mut sample = eta_sample.lock();
                     sample.sync_frames = sync_stats.frames;
@@ -8141,13 +8297,16 @@ impl RenderQueue {
                         result
                     });
                     let skip = matches!(outcome, QueueOpticalOutcome::Skip { .. });
+                    // A stopped or paused pass keeps the project T2 wrote rather
+                    // than one with the items on and no results; it runs again
+                    let cancelled_pass = optical_pass && outcome == QueueOpticalOutcome::Cancelled;
                     let notice = outcome.notice();
                     if !notice.is_empty() {
                         // The project written below records why an item is off
                         additional_data = queue_optical::with_notice(&additional_data, &notice);
                     }
                     optical_done(outcome);
-                    if skip {
+                    if skip || cancelled_pass {
                         return;
                     }
                 }
@@ -10752,6 +10911,10 @@ impl RenderQueue {
         // (reset_job) or the reconstruction is ticked again.
         if let Some(settings) = self.jobs.get_mut(&job_id).and_then(|job| job.optical.as_mut()) {
             settings.reconstruction = false;
+        }
+        // stabilize-flow-optical-analysis: a skip ends an analysis pass as well
+        if let Some(job) = self.jobs.get_mut(&job_id) {
+            job.optical_pass = false;
         }
         update_model!(self, job_id, itm {
             itm.status = JobStatus::Skipped;
@@ -20240,6 +20403,7 @@ mod tests {
                 plugin_only: false,
                 original_video_rotation: 0.0,
                 optical: None,
+                optical_pass: false,
             },
         );
         queue
@@ -20308,6 +20472,7 @@ mod tests {
             plugin_only: false,
             original_video_rotation: 0.0,
             optical: None,
+            optical_pass: false,
         }
     }
 
@@ -20858,6 +21023,7 @@ mod tests {
                 plugin_only: false,
                 original_video_rotation: 0.0,
                 optical: None,
+                optical_pass: false,
             },
         );
         queue
@@ -21012,6 +21178,7 @@ mod tests {
                 plugin_only: false,
                 original_video_rotation: 0.0,
                 optical: None,
+                optical_pass: false,
             },
         );
     }
@@ -25420,6 +25587,7 @@ mod tests {
                     plugin_only: *plugin_only,
                     original_video_rotation: 0.0,
                     optical: None,
+                    optical_pass: false,
                 },
             );
         }
@@ -26061,6 +26229,7 @@ mod tests {
                 plugin_only: false,
                 original_video_rotation: 0.0,
                 optical: None,
+                optical_pass: false,
             },
         );
         assert!(!queue.batch_motion_ready());
@@ -26196,6 +26365,7 @@ mod tests {
                 plugin_only: false,
                 original_video_rotation: 0.0,
                 optical: None,
+                optical_pass: false,
             },
         );
         assert!(!queue.batch_motion_ready());
@@ -26502,6 +26672,7 @@ mod tests {
                 plugin_only: false,
                 original_video_rotation: 0.0,
                 optical: None,
+                optical_pass: false,
             },
         );
 
@@ -27142,6 +27313,7 @@ mod tests {
             plugin_only: false,
             original_video_rotation: 0.0,
             optical: None,
+            optical_pass: false,
         };
 
         let effective = effective_lens_group_configs(&job, &global);
@@ -27252,6 +27424,7 @@ mod tests {
             plugin_only: false,
             original_video_rotation: 0.0,
             optical: None,
+            optical_pass: false,
             lens_index_override: None,
             focal_length_override: None,
         }
@@ -27455,6 +27628,7 @@ mod tests {
                 plugin_only: false,
                 original_video_rotation: 0.0,
                 optical: None,
+                optical_pass: false,
                 lens_index_override: None,
                 focal_length_override: None,
             };
@@ -27516,6 +27690,7 @@ mod tests {
                 plugin_only: false,
                 original_video_rotation: 0.0,
                 optical: None,
+                optical_pass: false,
             },
         );
 
@@ -27786,6 +27961,7 @@ mod tests {
                 plugin_only: false,
                 original_video_rotation: 0.0,
                 optical: None,
+                optical_pass: false,
                 original_output_size: (0, 0),
             },
         );
@@ -31448,6 +31624,7 @@ mod tests {
                 plugin_only: false,
                 original_video_rotation: 0.0,
                 optical: None,
+                optical_pass: false,
             },
         );
         queue
@@ -32347,5 +32524,403 @@ mod tests {
             assert!(pushes_before_next_id(id), "{id} pushes when it commits");
         }
         assert!(pushes_before_next_id("id: ignoreFileMotion;"), "ignoring the motion data pushes");
+    }
+
+    // ---- stabilize-flow-optical-analysis ----
+
+    fn translation_ticked() -> serde_json::Value {
+        serde_json::json!({ "translation": true })
+    }
+
+    /// `n` clips registered for a Stabilize batch sync with the panel's settings. Paused, so `start()` launches no worker
+    fn stabilize_batch(n: u32, settings: Option<serde_json::Value>) -> RenderQueue {
+        let mut queue = RenderQueue::default();
+        for id in 1..=n {
+            add_eta_job(&mut queue, id, (id - 1) as usize);
+        }
+        if let Some(settings) = settings {
+            queue.set_jobs_optical_settings(settings.to_string());
+        }
+        queue.pause_flag.store(true, SeqCst);
+        queue.register_batch_sync_jobs(1..=n);
+        queue
+    }
+
+    /// Jobs 1, 2 and 4 agree, job 3 does not: the repair prompt
+    fn record_mixed_batch(queue: &mut RenderQueue) {
+        queue.record_batch_sync_points(1, vec![sync_candidate(1, 1000.0, 1000.0, 0.9)]);
+        queue.record_batch_sync_points(2, vec![sync_candidate(2, 1000.0, 1100.0, 0.9)]);
+        queue.record_batch_sync_points(4, vec![sync_candidate(4, 1000.0, 1050.0, 0.9)]);
+        queue.record_batch_sync_points(3, vec![sync_candidate(3, 1000.0, 5000.0, 0.9)]);
+    }
+
+    fn record_green_batch(queue: &mut RenderQueue) {
+        queue.record_batch_sync_points(1, vec![sync_candidate(1, 1000.0, 1000.0, 0.9)]);
+        queue.record_batch_sync_points(2, vec![sync_candidate(2, 1000.0, 1100.0, 0.9)]);
+        queue.record_batch_sync_points(3, vec![sync_candidate(3, 1000.0, 1050.0, 0.9)]);
+    }
+
+    fn epochs(queue: &RenderQueue) -> BTreeMap<u32, u64> {
+        queue.jobs.iter().map(|(id, job)| (*id, job.render_epoch.load(SeqCst))).collect()
+    }
+
+    fn passes(queue: &RenderQueue) -> Vec<u32> {
+        let mut ids: Vec<u32> = queue.jobs.iter().filter(|(_, job)| job.optical_pass).map(|(id, _)| *id).collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    fn queue_row(queue: &RenderQueue, job_id: u32) -> RenderQueueItem {
+        queue.queue.borrow().iter().find(|i| i.job_id == job_id).expect("row exists").clone()
+    }
+
+    /// A picture size and motion data (still) for an `add_eta_job` clip
+    fn give_stabilize_pass_motion(stab: &StabilizationManager) {
+        use gyroflow_core::gyro_source::{Quat64, TimeQuat};
+        stab.set_size(1920, 1080);
+        stab.set_output_size(1920, 1080);
+        let mut gyro = stab.gyro.write();
+        gyro.duration_ms = 10_000.0;
+        let quats: TimeQuat = [0, 10_000_000].into_iter().map(|t| (t, Quat64::identity())).collect();
+        gyro.file_metadata.write().quaternions = quats;
+        gyro.integrate();
+    }
+
+    /// Motion data and a translation measured where the batch sync put the clip, switched on as `{"translation": true}`
+    /// leaves the manager
+    fn install_stabilize_pass_translation(stab: &StabilizationManager) {
+        give_stabilize_pass_motion(stab);
+        stab.set_optical_correction_enabled(false);
+        stab.set_translation_stabilization_enabled(true);
+        install_measured_translation(stab);
+        stab.refresh_optical_correction();
+        assert!(stab.gyro.read().optical_translation.as_ref().is_some_and(|t| t.is_active()), "the fixture's translation applies");
+    }
+
+    /// What an analysis leaves: a translation measured on the motion and in the context the clip has now
+    fn install_measured_translation(stab: &StabilizationManager) {
+        use gyroflow_core::gyro_source::{OpticalTranslation, TranslationSample};
+        let samples = (0..100).map(|i| TranslationSample {
+            timestamp_us: i as i64 * 100_000,
+            position: [0.01 * (i as f32 * 0.6).sin(), 0.0, 0.0],
+            ref_inv_depth: 1.0, confidence: 1.0, track_age_s: 2.0, segment: 0,
+            camera_to_world: [1.0, 0.0, 0.0, 0.0], focal_length_over_short_side: 1.0,
+            layer_motion: [0.001, 0.0], far_beta: 1.0, weight: 1.0, layer_scale_rate: 0.0,
+        }).collect();
+        let ui = *stab.optical_ui.read();
+        let mut translation = OpticalTranslation::new(samples, ui.translation_settings);
+        translation.enabled = ui.translation_enabled;
+        translation.quats_checksum = gyroflow_core::gyro_source::optical_correction::checksum(&stab.gyro.read().quaternions);
+        translation.context_checksum = gyroflow_core::synchronization::optical_analysis::context_checksum(
+            &gyroflow_core::synchronization::optical_analysis::measurement_params(stab),
+        );
+        translation.frames = 100;
+        translation.measured_frames = 100;
+        stab.gyro.write().optical_translation = Some(translation);
+        stab.recompute_gyro();
+    }
+
+    #[test]
+    fn a_stabilized_job_is_not_analyzed_again_for_its_export() {
+        let mut queue = stabilize_batch(3, Some(translation_ticked()));
+        let stab = queue.jobs[&1].stab.clone().unwrap();
+        give_stabilize_pass_motion(&stab);
+        record_green_batch(&mut queue);
+        assert_eq!(passes(&queue), vec![1, 2, 3]);
+
+        // Job 1's pass, as its worker runs it: the analysis step installs the translation, the finished tick keeps it
+        let settings = queue.jobs[&1].optical.clone().unwrap();
+        let outcome = queue_optical::run_queue_optical(1, &stab, &settings, false, |stab| { install_measured_translation(stab); Ok(()) });
+        assert_eq!(outcome, QueueOpticalOutcome::Applied { analyzed: true });
+        {
+            let job = queue.jobs.get_mut(&1).unwrap();
+            job.last_finished_export_project = Some(2);
+            job.optical_pass = false;
+        }
+        set_row_status(&queue, 1, JobStatus::Finished);
+
+        // Export stabilized video
+        queue.export_project = 4;
+        queue.prepare_finished_jobs_for_video_export();
+        assert_eq!(row_status(&queue, 1), (JobStatus::Queued, String::new()));
+        let job = &queue.jobs[&1];
+        assert!(Arc::ptr_eq(job.stab.as_ref().unwrap(), &stab), "the manager with the result is kept");
+        let analyses = std::cell::Cell::new(0);
+        let analyze = |_: &StabilizationManager| { analyses.set(analyses.get() + 1); Err("x".to_string()) };
+        let outcome = queue_optical::run_queue_optical(1, &stab, job.optical.as_ref().unwrap(), false, analyze);
+        assert_eq!((outcome, analyses.get()), (QueueOpticalOutcome::Applied { analyzed: false }, 0), "the export does not analyze again");
+
+        // Only the smoothness changed: still no analysis
+        queue.set_jobs_optical_settings(serde_json::json!({ "translation": true, "translation_smoothness": 2.5 }).to_string());
+        let outcome = queue_optical::run_queue_optical(1, &stab, queue.jobs[&1].optical.as_ref().unwrap(), false, analyze);
+        assert_eq!((outcome, analyses.get()), (QueueOpticalOutcome::Applied { analyzed: false }, 0));
+        assert_eq!(stab.optical_ui.read().translation_settings.smoothness_s, 2.5);
+
+        // A newly ticked correction is analyzed, once
+        queue.set_jobs_optical_settings(serde_json::json!({ "translation": true, "translation_smoothness": 2.5, "correction": true }).to_string());
+        queue_optical::run_queue_optical(1, &stab, queue.jobs[&1].optical.as_ref().unwrap(), false, analyze);
+        assert_eq!(analyses.get(), 1);
+    }
+
+    #[test]
+    fn a_stopped_stabilize_pass_exports_without_a_sync() {
+        let mut queue = stabilize_batch(3, Some(translation_ticked()));
+        record_green_batch(&mut queue);
+        // Stopped before the passes finished: their rows wait in the queue, flagged
+        queue.stop();
+        assert_eq!(passes(&queue), vec![1, 2, 3]);
+        for id in 1..=3 {
+            assert_eq!(row_status(&queue, id).0, JobStatus::Queued);
+            assert!(queue.jobs[&id].stab.as_ref().unwrap().lens.read().sync_settings.as_ref().unwrap().get("do_autosync").is_some());
+        }
+        queue.export_project = 4;
+        queue.prepare_finished_jobs_for_video_export();
+        assert!(passes(&queue).is_empty(), "the export renders them as usual");
+        for id in 1..=3 {
+            assert_eq!(row_status(&queue, id), (JobStatus::Queued, String::new()));
+            let sync_settings = queue.jobs[&id].stab.as_ref().unwrap().lens.read().sync_settings.clone().unwrap();
+            assert!(sync_settings.get("do_autosync").is_none(), "job {id}: its confirmed offsets are not synced again");
+        }
+    }
+
+    #[test]
+    fn stabilize_passes_follow_an_all_green_confirmation() {
+        let mut queue = stabilize_batch(3, Some(translation_ticked()));
+        let before = epochs(&queue);
+        queue.record_batch_sync_points(1, vec![sync_candidate(1, 1000.0, 1000.0, 0.9)]);
+        queue.record_batch_sync_points(2, vec![sync_candidate(2, 1000.0, 1100.0, 0.9)]);
+        assert!(passes(&queue).is_empty(), "nothing before the batch is confirmed");
+        queue.record_batch_sync_points(3, vec![sync_candidate(3, 1000.0, 1050.0, 0.9)]);
+        assert_eq!(queue.batch_sync_prompt_kind.to_string(), "none");
+        assert_eq!(passes(&queue), vec![1, 2, 3]);
+        for id in 1..=3 {
+            assert_eq!(row_status(&queue, id), (JobStatus::Queued, String::new()), "job {id}");
+            assert_eq!(queue_row(&queue, id).current_frame, 0, "job {id}");
+            assert_eq!(batch_status(&queue, id)["color"], "green", "job {id} keeps its sync status");
+            assert_eq!(queue.jobs[&id].render_epoch.load(SeqCst), before[&id] + 1, "job {id}: its trailing finished tick is dropped");
+            assert_eq!(queue.jobs[&id].optical, Some(optical(translation_ticked())));
+        }
+    }
+
+    #[test]
+    fn stabilize_passes_wait_for_the_answer_to_the_repair_prompt() {
+        let mut queue = stabilize_batch(4, Some(translation_ticked()));
+        record_mixed_batch(&mut queue);
+        assert_eq!(queue.batch_sync_prompt_kind.to_string(), "repair");
+        assert!(passes(&queue).is_empty(), "no analysis while the prompt waits");
+        for id in 1..=4 {
+            assert_eq!(row_status(&queue, id).0, JobStatus::Finished, "job {id}");
+        }
+        let before = epochs(&queue);
+        queue.skip_batch_sync_repair();
+        assert_eq!(passes(&queue), vec![1, 2, 4], "the green clips right away, the yellow one never");
+        assert_eq!(row_status(&queue, 3).0, JobStatus::Finished);
+        assert_eq!(queue.jobs[&3].render_epoch.load(SeqCst), before[&3], "the yellow row is left as it was");
+        assert_eq!(batch_status(&queue, 3)["color"], "yellow");
+        // A stale dialog answered again decides nothing
+        let after = epochs(&queue);
+        queue.skip_batch_sync_repair();
+        assert_eq!(epochs(&queue), after);
+    }
+
+    #[test]
+    fn stabilize_passes_wait_for_the_repair_rounds() {
+        let mut queue = stabilize_batch(4, Some(translation_ticked()));
+        seed_batch_sync_repair_rank(&queue, 3, 180_000.0);
+        record_mixed_batch(&mut queue);
+        queue.confirm_batch_sync_repair();
+        assert_eq!(queue.batch_sync_repair_round, 1);
+        assert!(passes(&queue).is_empty(), "the repair round runs first");
+        // The first round brings nothing: the confirmation itself queues the second round
+        let pattern = queue.jobs[&3].stab.as_ref().unwrap().lens.read().sync_settings.clone().unwrap()["custom_sync_pattern"][0]
+            .as_str().unwrap().to_owned();
+        let first_ts = pattern.trim_end_matches("ms").parse::<f64>().unwrap();
+        queue.record_batch_sync_result(3, Vec::new(), vec![first_ts]);
+        assert_eq!(queue.batch_sync_repair_round, 2);
+        assert!(passes(&queue).is_empty(), "a repair round is running again");
+        // The second round confirms the clip: final
+        queue.record_batch_sync_points(3, vec![sync_candidate(3, 60_000.0, 1050.0, 0.9)]);
+        assert_eq!(batch_status(&queue, 3)["color"], "green");
+        assert_eq!(queue.batch_sync_prompt_kind.to_string(), "none");
+        assert_eq!(passes(&queue), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn stabilize_passes_after_a_repair_with_nothing_to_repair() {
+        let mut queue = stabilize_batch(4, Some(translation_ticked()));
+        record_mixed_batch(&mut queue);
+        // Without its manager the yellow clip cannot be given a repair range
+        queue.jobs.get_mut(&3).unwrap().stab = None;
+        queue.confirm_batch_sync_repair();
+        assert_eq!(queue.batch_sync_repair_round, 0);
+        assert_eq!(queue.batch_sync_prompt_kind.to_string(), "finished_with_yellow");
+        assert_eq!(passes(&queue), vec![1, 2, 4]);
+    }
+
+    #[test]
+    fn stabilize_passes_after_the_last_repair_round_ends_yellow() {
+        let mut queue = stabilize_batch(4, Some(translation_ticked()));
+        seed_batch_sync_repair_rank(&queue, 3, 120_000.0);
+        record_mixed_batch(&mut queue);
+        queue.confirm_batch_sync_repair();
+        assert_eq!(queue.batch_sync_repair_round, 1);
+        // Every round finds the clip still off, until no round is left
+        let mut rounds = 0;
+        while row_status(&queue, 3).0 == JobStatus::Queued {
+            rounds += 1;
+            assert!(rounds <= 2, "at most two repair rounds");
+            assert!(passes(&queue).is_empty(), "round {} is running", queue.batch_sync_repair_round);
+            let pattern = queue.jobs[&3].stab.as_ref().unwrap().lens.read().sync_settings.clone().unwrap()["custom_sync_pattern"][0]
+                .as_str().unwrap().to_owned();
+            let ts = pattern.trim_end_matches("ms").parse::<f64>().unwrap();
+            queue.record_batch_sync_points(3, vec![sync_candidate(3, ts, 5000.0, 0.9)]);
+        }
+        assert_eq!(queue.batch_sync_prompt_kind.to_string(), "finished_with_yellow");
+        assert_eq!(passes(&queue), vec![1, 2, 4]);
+    }
+
+    #[test]
+    fn stabilize_passes_leave_jobs_that_need_none_as_before() {
+        // Never touched panel, and a panel with nothing ticked: the rows end exactly as before this change
+        for settings in [None, Some(serde_json::json!({})), Some(serde_json::json!({ "correction": false, "translation_smoothness": 3.0 }))] {
+            let mut queue = stabilize_batch(3, settings.clone());
+            let before = epochs(&queue);
+            record_green_batch(&mut queue);
+            assert!(passes(&queue).is_empty(), "{settings:?}");
+            assert_eq!(epochs(&queue), before, "{settings:?}");
+            for id in 1..=3 {
+                let row = queue_row(&queue, id);
+                assert_eq!(row.status, JobStatus::Finished, "{settings:?} job {id}");
+                assert_eq!(row.current_frame, row.total_frames, "{settings:?} job {id}");
+                assert_eq!(batch_status(&queue, id)["color"], "green");
+            }
+        }
+
+        // A clip whose translation already applies where the sync put it: no pass for it
+        let mut queue = stabilize_batch(3, None);
+        record_green_batch(&mut queue);
+        install_stabilize_pass_translation(queue.jobs[&1].stab.as_ref().unwrap());
+        queue.optical_settings = Some(optical(translation_ticked()));
+        let before = epochs(&queue);
+        queue.schedule_stabilize_optical_passes("final confirmation");
+        assert_eq!(passes(&queue), vec![2, 3], "the others have no result yet");
+        assert_eq!(row_status(&queue, 1).0, JobStatus::Finished);
+        assert_eq!(queue.jobs[&1].render_epoch.load(SeqCst), before[&1]);
+        // Its settings changed since: the project has to carry the new smoothness
+        queue.optical_settings = Some(optical(serde_json::json!({ "translation": true, "translation_smoothness": 2.5 })));
+        queue.schedule_stabilize_optical_passes("final confirmation");
+        assert_eq!(passes(&queue), vec![1, 2, 3]);
+        assert_eq!(row_status(&queue, 1).0, JobStatus::Queued);
+    }
+
+    #[test]
+    fn stabilize_pass_rows_are_not_held_by_the_direction_barrier() {
+        const H: i64 = 3_600_000;
+        let mut queue = RenderQueue::default();
+        add_eta_job(&mut queue, 1, 0); // pre side
+        add_eta_job(&mut queue, 2, 1); // post side
+        queue.register_batch_sync_jobs([1, 2]);
+        queue.export_project = 2;
+        set_created_at(&queue, 1, 0);
+        set_created_at(&queue, 2, 2 * H);
+        queue.batch_clock_center_ms = Some(1.0 * H as f64);
+
+        set_row_status(&queue, 1, JobStatus::Rendering);
+        assert_eq!(queue.select_next_queued_job(), (None, true), "a syncing pre side holds the post side");
+        // The post-side job only owes its analysis: its sync is final
+        queue.jobs.get_mut(&2).unwrap().optical_pass = true;
+        assert_eq!(queue.select_next_queued_job().0, Some(2));
+        let plan = queue.batch_sync_direction_plan().unwrap();
+        assert!(!plan.times.contains_key(&2), "neither the barrier nor a probe's hold applies to it");
+
+        // A pre-side analysis pass does not keep the post side waiting
+        queue.jobs.get_mut(&2).unwrap().optical_pass = false;
+        set_row_status(&queue, 1, JobStatus::Queued);
+        queue.jobs.get_mut(&1).unwrap().optical_pass = true;
+        let plan = queue.batch_sync_direction_plan().unwrap();
+        assert!(!plan.pre_side_pending);
+        assert!(!plan.times.contains_key(&1));
+    }
+
+    #[test]
+    fn only_a_project_export_runs_as_an_analysis_pass() {
+        assert!(RenderQueue::runs_as_optical_pass(true, 2));
+        for export_project in [0, 1, 3, 4] {
+            assert!(!RenderQueue::runs_as_optical_pass(true, export_project), "export_project {export_project}: a normal render");
+        }
+        assert!(!RenderQueue::runs_as_optical_pass(false, 2));
+    }
+
+    #[test]
+    fn stabilize_pass_analyzes_and_writes_without_a_sync() {
+        let source = include_str!("render_queue.rs");
+        let start = source.find("pub fn render_job(").unwrap();
+        let worker = &source[start..start + source[start..].find("fn get_output_folder(").unwrap()];
+        let at = |needle: &str| worker.find(needle).unwrap_or_else(|| panic!("render_job has {needle:?}"));
+        let pass = at("let optical_pass = Self::runs_as_optical_pass(job.optical_pass, finished_export_project);");
+        assert!(pass < at("let progress = util::qt_queued_callback_mut("), "decided at launch, for the callbacks too");
+        let statement = |needle: &str| { let from = at(needle); &worker[from..from + worker[from..].find(';').unwrap()] };
+        assert!(statement("let defer_progress_to_confirm =").contains("!optical_pass"), "its finish is not deferred to a confirmation");
+        assert!(statement("let defer_batch_sync_confirmation =").contains("!optical_pass"),
+            "no dynamic local offset, no batch point collection, no VQF finalize, no T1, no early return");
+        // No sync
+        let sync = at("let sync_stats = if optical_pass {");
+        let autosync = at("Self::do_autosync(");
+        assert!(sync < autosync && worker[sync..autosync].contains("QueueAutosyncStats::default()"));
+        assert!(worker.contains("stabilize pass: analysis and project write without a sync"));
+        // The analysis step, then the type 2 project next to the source
+        let call = at("queue_optical::run_queue_optical(");
+        let cancelled = at("let cancelled_pass = optical_pass && outcome == QueueOpticalOutcome::Cancelled;");
+        let leave = at("if skip || cancelled_pass {");
+        let project = at("if export_project > 0 {");
+        assert!(at("stab.recompute_blocking();") < call && call < cancelled && cancelled < leave && leave < project,
+            "a stopped analysis leaves the T2 project as it is");
+        // The finish: back to Finished with the results kept, flag cleared, also when it fails
+        let finished = at("if finished {");
+        let release = at("// Release StabilizationManager to reclaim GPU memory");
+        let clear = finished + worker[finished..].find("job.optical_pass = false;").expect("the finished tick clears the flag");
+        assert!(clear < release);
+        let err = at("let err = util::qt_queued_callback_mut(");
+        let convert = at("let convert_format = util::qt_queued_callback_mut(");
+        assert!(worker[err..convert].contains("job.optical_pass = false;"), "an error ends the pass too");
+    }
+
+    #[test]
+    fn a_waiting_stabilize_pass_survives_an_edit_writeback() {
+        // An edit keeps the job's sync results (queue-edit-writeback): the job still only owes its analysis
+        let mut queue = queue_with_autosync_project(JobStatus::Queued, true, None);
+        {
+            let mut q = queue.queue.borrow_mut();
+            let mut itm = q[0].clone();
+            itm.sync_status = QString::from(r#"{"color":"green"}"#);
+            q.change_line(0, itm);
+        }
+        queue.jobs.get_mut(&1).unwrap().optical_pass = true;
+        queue.editing_job_id = 1;
+        queue.add_internal(1, edited_preview_stab(), RenderOptions::default(), String::new(), QString::default(), None);
+        assert_eq!(row_status(&queue, 1).0, JobStatus::Queued);
+        assert_eq!(batch_status(&queue, 1)["color"], "green");
+        assert_eq!(passes(&queue), vec![1]);
+        // A new job owes nothing
+        queue.editing_job_id = 0;
+        queue.add_internal(2, edited_preview_stab(), RenderOptions::default(), String::new(), QString::default(), None);
+        assert_eq!(passes(&queue), vec![1]);
+    }
+
+    #[test]
+    fn stabilize_pass_flags_clear_on_reset_and_reregistration() {
+        let mut queue = stabilize_batch(3, Some(translation_ticked()));
+        record_green_batch(&mut queue);
+        assert_eq!(passes(&queue), vec![1, 2, 3]);
+        queue.reset_job(1);
+        assert_eq!(passes(&queue), vec![2, 3], "a reset job is a new job");
+        queue.register_batch_sync_jobs([1, 2, 3]);
+        assert!(passes(&queue).is_empty(), "Stabilize again: a new batch sync");
+        // A pass whose analysis skips the clip is over as well
+        queue.jobs.get_mut(&2).unwrap().optical_pass = true;
+        set_row_status(&queue, 2, JobStatus::Rendering);
+        queue.finish_queue_optical(2, QueueOpticalOutcome::Skip { reason: "NotConverged".into() });
+        assert_eq!(row_status(&queue, 2), (JobStatus::Skipped, "image_stabilization".into()));
+        assert!(passes(&queue).is_empty());
     }
 }

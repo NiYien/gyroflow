@@ -358,6 +358,22 @@ pub fn run(open_file: &mut String, open_preset: &mut String) -> bool {
             log::info!(target: "lifecycle", "queue_optical source=env settings={settings}");
             queue.set_jobs_optical_settings(settings);
         }
+        // stabilize-flow-optical-analysis: the simple mode's batch "Stabilize (for plugins)" for headless acceptance runs,
+        // optionally followed by "Export stabilized video". The repair prompt is answered with Skip
+        let simple_flow = match std::env::var("GYROFLOW_QUEUE_SIMPLE_FLOW").ok().as_deref() {
+            None => None,
+            Some("stabilize") => Some(false),
+            Some("stabilize+export") => Some(true),
+            Some(other) => {
+                log::warn!(target: "lifecycle", "queue_simple_flow ignoring unknown value {other:?} (stabilize or stabilize+export)");
+                None
+            }
+        };
+        if let Some(export) = simple_flow {
+            log::info!(target: "lifecycle", "queue_simple_flow source=env flow={}", if export { "stabilize+export" } else { "stabilize" });
+        }
+        let export_after_stabilize = std::cell::Cell::new(simple_flow == Some(true));
+        let repair_answer_pending = std::cell::Cell::new(false);
 
         let mut pbs = HashMap::<u32, ProgressBar>::new();
 
@@ -403,8 +419,38 @@ pub fn run(open_file: &mut String, open_preset: &mut String) -> bool {
                     && queue.get_pending_count() == 0
                     && queue.get_active_render_count() == 0
                 {
+                    // The batch sync waits for the answer to its repair prompt, given right after (see below)
+                    if simple_flow.is_some() && queue.get_batch_sync_prompt_kind().to_string() == "repair" {
+                        return;
+                    }
+                    if export_after_stabilize.replace(false) {
+                        log::info!(target: "lifecycle", "queue_simple_flow export start");
+                        queue.export_project = 4;
+                        queue.prepare_finished_jobs_for_video_export();
+                        qmetaobject::single_shot(std::time::Duration::from_millis(1), move || {
+                            queue.start();
+                        });
+                        return;
+                    }
                     cpp!(unsafe [] { qApp->quit(); });
                 }
+            });
+            connect!(queue_ptr, q, batch_sync_status_changed, || {
+                let queue = &mut *queue.as_ptr();
+                if simple_flow.is_none() || queue.get_batch_sync_prompt_kind().to_string() != "repair" {
+                    repair_answer_pending.set(false);
+                    return;
+                }
+                if repair_answer_pending.replace(true) {
+                    return;
+                }
+                log::info!(target: "lifecycle", "queue_simple_flow auto-answer repair=skip");
+                // The prompt kind is set at the end of the confirmation: answer from the event loop, not from inside it
+                qmetaobject::single_shot(std::time::Duration::from_millis(1), move || {
+                    queue.skip_batch_sync_repair();
+                    // Lets the handler above finish the run when skipping started nothing
+                    queue.update_status();
+                });
             });
             connect!(
                 queue_ptr,
@@ -638,10 +684,19 @@ pub fn run(open_file: &mut String, open_preset: &mut String) -> bool {
                         }
 
                         if !applying_preset {
+                            let stabilize = simple_flow.is_some();
                             qmetaobject::single_shot(
                                 std::time::Duration::from_millis(500),
                                 move || {
-                                    queue.start(); // Start the rendering queue
+                                    if stabilize {
+                                        queue.start_batch_autosync(); // The simple mode's Stabilize (for plugins)
+                                        if queue.status.to_string() != "active" {
+                                            // Nothing to sync or render: lets the status handler end the run
+                                            queue.update_status();
+                                        }
+                                    } else {
+                                        queue.start(); // Start the rendering queue
+                                    }
                                 },
                             );
                         }
