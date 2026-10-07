@@ -249,6 +249,25 @@ fn main() {
     let qt_version = env::var("DEP_QT_VERSION").unwrap();
 
     crm::build(&target_os);
+    if target_os == "macos" {
+        println!("cargo:rerun-if-changed=src/rendering/apple_analysis_decoder.cpp");
+        cc::Build::new()
+            .cpp(true).flag("-std=c++2b").flag("-fno-rtti").warnings(false)
+            .include("ext/crm/include/abi")
+            .file("src/rendering/apple_analysis_decoder.cpp")
+            .compile("apple_analysis_decoder");
+    } else if target_os == "ios" {
+        println!("cargo:rerun-if-changed=src/rendering/apple_analysis_decoder_ios.cpp");
+        println!("cargo:rerun-if-env-changed=MDK_SDK");
+        let sdk = env::var("MDK_SDK").unwrap_or_else(|_| "ext/mdk-sdk-ios".into());
+        let include = Path::new(&sdk).join("include");
+        assert!(include.join("mdk/Player.h").exists(), "Set MDK_SDK to the iOS SDK containing include/mdk/Player.h");
+        cc::Build::new()
+            .cpp(true).std("c++17").warnings(false)
+            .include(include)
+            .file("src/rendering/apple_analysis_decoder_ios.cpp")
+            .compile("apple_analysis_decoder");
+    }
 
     // Synthetic cfg `neuflow_burn_enabled`. Must mirror the same logic in
     // src/core/build.rs since cfg flags from build.rs are per-crate. See

@@ -3792,6 +3792,7 @@ impl StabilizationManager {
             lens_group_status: self.lens_group_status.clone(),
             lens_group_manual_edit: self.lens_group_manual_edit.clone(),
             lens_profile_db: self.lens_profile_db.clone(),
+            gpu_decoding: self.gpu_decoding.clone(),
             optical_settings: Arc::new(RwLock::new(*self.optical_settings.read())),
             optical_ui: Arc::new(RwLock::new(ui)),
 

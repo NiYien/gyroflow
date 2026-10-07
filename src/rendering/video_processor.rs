@@ -14,12 +14,29 @@ use std::{
 pub enum Processor<'a> {
     Ffmpeg(FfmpegProcessor<'a>),
     Mdk(MDKProcessor),
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    AppleAnalysis(super::apple_analysis_decoder::AppleAnalysisDecoder),
 }
 pub struct VideoProcessor<'a> {
     inner: Processor<'a>,
 }
 
 impl<'a> VideoProcessor<'a> {
+    pub fn for_optical_analysis(url: &str, gpu: bool, options: Option<Dictionary>, image_sequence: bool) -> Result<Self, FFmpegError> {
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        if gpu && !image_sequence && std::env::var("GYROFLOW_OPTICAL_ASYNC_VT").as_deref() != Ok("0") {
+            let filename = gyroflow_core::filesystem::get_filename(url).to_ascii_lowercase();
+            if (filename.ends_with(".mp4") || filename.ends_with(".mov"))
+                && Self::get_video_info(url).is_ok_and(|info| matches!(info.codec_id, ffmpeg_next::codec::Id::H264 | ffmpeg_next::codec::Id::HEVC))
+            {
+                return Ok(Self { inner: Processor::AppleAnalysis(super::apple_analysis_decoder::AppleAnalysisDecoder::new(url)?) });
+            }
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        let _ = image_sequence;
+        Self::from_file(url, gpu, 0, options)
+    }
+
     pub fn from_file(
         url: &str,
         gpu_decoding: bool,
@@ -162,6 +179,8 @@ impl<'a> VideoProcessor<'a> {
         match &mut self.inner {
             Processor::Ffmpeg(x) => x.on_frame(cb),
             Processor::Mdk(x) => x.on_frame(cb),
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            Processor::AppleAnalysis(x) => x.callback = Some(Box::new(cb)),
         }
     }
     /// Select source-frame indices before FFmpeg's hardware download. Callbacks repeat the same
@@ -170,6 +189,10 @@ impl<'a> VideoProcessor<'a> {
         let every_nth = every_nth.max(1);
         if let Processor::Ffmpeg(proc) = &mut self.inner {
             proc.video.decode_frame_step = Some(ffmpeg_video::DecodeFrameStep::at_source_fps(every_nth, source_fps));
+        }
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        if let Processor::AppleAnalysis(proc) = &mut self.inner {
+            proc.sampling = (every_nth, source_fps);
         }
     }
 
@@ -181,6 +204,10 @@ impl<'a> VideoProcessor<'a> {
         match &mut self.inner {
             Processor::Ffmpeg(x) => x.start_decoder_only(ranges, cancel_flag),
             Processor::Mdk(x) => x.start_decoder_only(ranges, cancel_flag),
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            Processor::AppleAnalysis(x) => x.start(ranges, cancel_flag).map_err(|error| {
+                if matches!(error, FFmpegError::GPUDecodingFailed) { FFmpegError::AsyncDecodingFailed } else { error }
+            }),
         }
     }
 
