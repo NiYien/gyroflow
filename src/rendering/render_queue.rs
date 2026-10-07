@@ -15697,6 +15697,7 @@ impl RenderQueue {
         // forward-armed chunk scans (never by verification probes or the
         // auto-probe).
         let forward = deep_match::take_forward();
+        let short_overlap = deep_match::take_short_overlap();
         let optical = deep_match::take_optical_judge();
         // How far this chunk's window loop got. MUST be read before take()
         // (which resets the counters) — reading it after yields zeroes and
@@ -15751,6 +15752,13 @@ impl RenderQueue {
                 }
             }
             use gyroflow_core::synchronization::optical_motion::judge::{JudgeMode, JudgeOutcome, JudgeVerdict};
+            if let Some(verdict) = short_overlap {
+                ::log::info!(target: "sync", "[deep-match] short-overlap finish: job={} verdict={:?}", job_id, verdict);
+                // A rejected scoped check must not be accepted again by the
+                // overlapping posterior, optical support or a rescue pass.
+                self.consume_deep_match_verdict(job_id, stab, verdict);
+                return;
+            }
             match optical {
                 Some(JudgeOutcome { mode: JudgeMode::On, verdict }) => {
                     let found = matches!(&verdict, JudgeVerdict::Found { .. });
@@ -24424,6 +24432,49 @@ mod tests {
         assert!(queue.deep_match_results.is_empty());
         // Probe continues: the live gyro is still the .bin, not the snapshot.
         assert_eq!(stab.gyro.read().file_url, "file:///pool.bin");
+    }
+
+    #[test]
+    fn deep_match_short_overlap_rejection_cannot_fall_back_to_an_acceptance() {
+        use gyroflow_core::synchronization::deep_match;
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = setup_deep_match_job(&mut queue, true);
+        simulate_deep_match_probe_chunks(&mut queue, &stab,
+            vec![(0.0, 7_200_000.0), (7_000_000.0, 14_200_000.0)], 0);
+        deep_match::arm(2);
+        deep_match::record(deep_match_stats(0.1));
+        deep_match::record(deep_match_stats(0.1));
+        deep_match::record_short_overlap(deep_match::DeepMatchVerdict::WeakValley { worst_ratio: 1.0 });
+        queue.record_batch_sync_result(1, vec![
+            sync_candidate(1, 1000.0, -5000.0, 0.9),
+            sync_candidate(1, 2000.0, -5001.0, 0.9),
+        ], vec![]);
+        let state = queue.deep_match_pending.get(&1).unwrap();
+        assert_eq!(state.current_chunk, 1);
+        assert!(state.verify.is_none());
+        assert!(queue.deep_match_results.is_empty());
+        assert_eq!(deep_match::take_short_overlap(), None);
+    }
+
+    #[test]
+    fn deep_match_short_overlap_acceptance_and_cancellation_use_existing_cleanup() {
+        use gyroflow_core::synchronization::deep_match;
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        for cancelled in [false, true] {
+            let mut queue = queue_with_eta_job(JobStatus::Queued);
+            let stab = setup_deep_match_job(&mut queue, true);
+            simulate_deep_match_probe_chunks(&mut queue, &stab,
+                vec![(0.0, 7_200_000.0), (7_000_000.0, 14_200_000.0)], 0);
+            queue.jobs[&1].cancel_flag.store(cancelled, SeqCst);
+            deep_match::arm(2);
+            deep_match::record_short_overlap(deep_match::DeepMatchVerdict::Accepted { offset_ms: -5000.0 });
+            queue.record_batch_sync_result(1, vec![], vec![]);
+            assert!(queue.deep_match_pending.is_empty());
+            assert_eq!(queue.deep_match_results.contains_key(&1), !cancelled);
+            assert_eq!(stab.gyro.read().file_url, "file:///builtin-source.mp4");
+            assert_eq!(deep_match::take_short_overlap(), None);
+        }
     }
 
     #[test]

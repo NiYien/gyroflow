@@ -45,6 +45,7 @@ static CURVE_COLLECTOR: Mutex<Option<Vec<DeepMatchWindowCurve>>> = Mutex::new(No
 static SCAN_K: Mutex<usize> = Mutex::new(0);
 static FORWARD_ARMED: Mutex<bool> = Mutex::new(false);
 static FORWARD_RESULT: Mutex<Option<ForwardOutcome>> = Mutex::new(None);
+static SHORT_OVERLAP_RESULT: Mutex<Option<DeepMatchVerdict>> = Mutex::new(None);
 static OPTICAL_JUDGE_ARMED: Mutex<Option<JudgeMode>> = Mutex::new(None);
 static OPTICAL_JUDGE_RESULT: Mutex<Option<JudgeOutcome>> = Mutex::new(None);
 // How far the essential scan's window loop got on this chunk. An empty
@@ -65,6 +66,7 @@ pub(crate) static TEST_MTX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// Forward re-scoring and the optical judge are disarmed here; the chunk-scan
 /// launch opts in separately (verification probes and the auto-probe never do).
 pub fn arm(scan_k: usize) {
+    *SHORT_OVERLAP_RESULT.lock() = None;
     *COLLECTOR.lock() = Some(Vec::new());
     *CURVE_COLLECTOR.lock() = Some(Vec::new());
     *SCAN_K.lock() = scan_k;
@@ -133,6 +135,7 @@ pub fn window_counts() -> (usize, usize) {
 /// `take_forward()`, `take_optical_judge()` and `window_counts()` BEFORE this
 /// if you need them — this resets everything.
 pub fn take() -> Vec<DeepMatchSegStats> {
+    *SHORT_OVERLAP_RESULT.lock() = None;
     *SCAN_K.lock() = 0;
     *CURVE_COLLECTOR.lock() = None;
     *FORWARD_ARMED.lock() = false;
@@ -150,6 +153,15 @@ pub fn take() -> Vec<DeepMatchSegStats> {
 /// legacy POSTERIOR=0 path.
 pub fn take_curves() -> Vec<DeepMatchWindowCurve> {
     CURVE_COLLECTOR.lock().take().unwrap_or_default()
+}
+
+/// A scoped short-overlap decision must be consumed before the collector reset.
+pub fn record_short_overlap(verdict: DeepMatchVerdict) {
+    if is_armed() { *SHORT_OVERLAP_RESULT.lock() = Some(verdict); }
+}
+
+pub fn take_short_overlap() -> Option<DeepMatchVerdict> {
+    SHORT_OVERLAP_RESULT.lock().take()
 }
 
 /// Read the collected curves WITHOUT draining them (the forward re-scoring
@@ -1195,8 +1207,19 @@ pub fn forward_candidates(
     nms_radius_ms: f64,
     top_n: usize,
 ) -> Vec<f64> {
+    if curves.len() < 2 { return Vec::new(); }
+    forward_candidates_for_unique_windows(curves, lattice_step_ms, nms_radius_ms, top_n)
+}
+
+/// Unlike the legacy collector, merged unique evidence can contain one window.
+pub(crate) fn forward_candidates_for_unique_windows(
+    curves: &[DeepMatchWindowCurve],
+    lattice_step_ms: f64,
+    nms_radius_ms: f64,
+    top_n: usize,
+) -> Vec<f64> {
     use crate::synchronization::posterior::approx_window_log_likelihood;
-    if curves.len() < 2
+    if curves.is_empty()
         || top_n == 0
         || !lattice_step_ms.is_finite()
         || lattice_step_ms <= 0.0
@@ -2076,6 +2099,24 @@ mod tests {
             assert!((w[0].1 - w[1].0 - overlap).abs() < 1e-6);
         }
         assert_eq!(plan.last().unwrap().1, total, "last chunk must end at total");
+    }
+
+    #[test]
+    fn short_overlap_result_is_drained_and_reset_with_the_chunk() {
+        let _guard = TEST_MTX.lock().unwrap();
+        arm(2);
+        let verdict = DeepMatchVerdict::WeakValley { worst_ratio: 1.0 };
+        record_short_overlap(verdict.clone());
+        assert_eq!(take_short_overlap(), Some(verdict.clone()));
+        assert_eq!(take_short_overlap(), None);
+        record_short_overlap(verdict.clone());
+        arm(2);
+        assert_eq!(take_short_overlap(), None);
+        record_short_overlap(verdict.clone());
+        take();
+        assert_eq!(take_short_overlap(), None);
+        record_short_overlap(verdict);
+        assert_eq!(take_short_overlap(), None);
     }
 
     #[test]

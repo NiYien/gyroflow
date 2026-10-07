@@ -14,6 +14,9 @@ use std::sync::{
 
 use crate::gyro_source::TimeIMU;
 
+#[path = "short_overlap.rs"]
+mod short_overlap;
+
 pub(crate) fn judge_progress_scale(armed: bool) -> f64 {
     if armed { 0.9 } else { 1.0 }
 }
@@ -383,6 +386,15 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
     // any rs-sync stage below re-acquires it (parking_lot read locks are not
     // recursion-safe when a writer is queued in between).
     drop(gyro);
+
+    // This branch owns only short, genuinely overlapping regular deep scans.
+    // All other callers proceed through the original decision chain below.
+    if let Some(verdict) = short_overlap::validate(estimator, ranges, sync_params, params, &cancel_flag) {
+        if !cancel_flag.load(Relaxed) {
+            deep_match::record_short_overlap(verdict);
+        }
+        return offsets;
+    }
 
     // Diagnostic: two-stage "essential proposes / rs-sync verifies" probe.
     // Enabled with GYROFLOW_RSSYNC_PROBE=<top_n>:<radius_ms>:<max_rssync>:

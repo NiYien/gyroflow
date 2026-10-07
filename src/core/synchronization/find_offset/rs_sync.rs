@@ -1233,6 +1233,14 @@ pub(super) fn decide_confidence(
     ((base + unanimous_bonus).clamp(0.05, 1.0), ConfPath::Normal)
 }
 
+pub(crate) fn covered_probe_radius(center: f64, bounds: (f64, f64), radius: f64) -> Option<f64> {
+    if !center.is_finite() || !bounds.0.is_finite() || !bounds.1.is_finite()
+        || !radius.is_finite() || radius <= 0.0 || center <= bounds.0 || center >= bounds.1 {
+        return None;
+    }
+    Some(radius.min(center - bounds.0).min(bounds.1 - center))
+}
+
 impl FindOffsetsRssync<'_> {
     pub fn new<'a>(
         ranges: &'a [(i64, i64)],
@@ -1398,6 +1406,50 @@ impl FindOffsetsRssync<'_> {
 
     pub fn full_sync(&mut self) -> Vec<(f64, f64, f64, f64)> {
         self.full_sync_with_range_indices().0
+    }
+
+    /// External offsets whose complete ray-row times lie inside the gyro spline.
+    /// Used only by short overlapping deep-match validation.
+    pub(crate) fn forward_coverage_ms(&self) -> Option<(f64, f64)> {
+        let gyro = self.gyro_source.read();
+        if gyro.quaternions.len() < 2 || self.sync_points.is_empty() { return None; }
+        let gyro_lo = *gyro.quaternions.first_key_value()?.0 as f64 / 1000.0;
+        let gyro_hi = *gyro.quaternions.last_key_value()?.0 as f64 / 1000.0;
+        let mut row_lo = f64::INFINITY;
+        let mut row_hi = f64::NEG_INFINITY;
+        for pair in self.track_data.iter().flatten() {
+            for &ts in pair.tss_a.iter().chain(pair.tss_b.iter()) {
+                if !ts.is_finite() { return None; }
+                row_lo = row_lo.min(ts * 1000.0);
+                row_hi = row_hi.max(ts * 1000.0);
+            }
+        }
+        let half = self.frame_readout_time * 500.0;
+        let lo = row_hi - gyro_hi - half;
+        let hi = row_lo - gyro_lo - half;
+        (lo.is_finite() && hi.is_finite() && lo <= hi).then_some((lo, hi))
+    }
+
+    /// The legacy forward probe permits partial overlap. This separate entry
+    /// point bounds every local search by the full ray coverage interval.
+    pub(crate) fn forward_probe_covered(
+        &mut self, centers: &[f64], radius_ms: f64, step_ms: f64,
+    ) -> Vec<Vec<(f64, f64)>> {
+        let Some(bounds) = self.forward_coverage_ms() else { return vec![Vec::new(); centers.len()]; };
+        {
+            let gyro = self.gyro_source.read();
+            set_quats(&mut self.sync, &gyro.quaternions);
+        }
+        let half = self.frame_readout_time * 500.0;
+        centers.iter().map(|&center| {
+            let Some(radius) = covered_probe_radius(center, bounds, radius_ms) else { return Vec::new(); };
+            if radius < step_ms { return Vec::new(); }
+            self.sync_points.iter().filter_map(|&(from, to)| {
+                self.sync.pre_sync(delay_s_from_ext_ms(center, half), from, to, step_ms / 1000.0, radius / 1000.0)
+                    .map(|(cost, delay)| (ext_ms_from_delay_s(delay, half), cost))
+                    .filter(|&(offset, cost)| offset >= bounds.0 && offset <= bounds.1 && cost.is_finite() && cost > 0.0)
+            }).collect()
+        }).collect()
     }
 
     fn full_sync_with_range_indices(&mut self) -> (Vec<(f64, f64, f64, f64)>, Vec<usize>) {
