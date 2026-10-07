@@ -2040,7 +2040,7 @@ Rectangle {
                         BasicText {
                             width: parent.width;
                             wrapMode: Text.WordWrap;
-                            text: qsTr("Applies to the video open in the preview.");
+                            text: qsTr("Applies to the video open in the preview and to the videos waiting in the render queue.");
                         }
                     }
                 }
@@ -3370,6 +3370,22 @@ Rectangle {
         // machine-readable markers; the full diagnostics are already in the log file.
         if (text.startsWith("render_failed:")) {
             return qsTr("Rendering failed: %1").arg(text.substring(14).trim());
+        }
+        // queue-optical-analysis notices: "optical_fallback:<items>:<reason>" / "optical_skipped:reconstruction:<reason>".
+        // The reason is the analysis' own text and may hold colons.
+        if (text.startsWith("optical_fallback:") || text.startsWith("optical_skipped:")) {
+            const rest = text.substring(text.indexOf(":") + 1);
+            const split = rest.indexOf(":");
+            const items = (split >= 0 ? rest.substring(0, split) : rest).split(",").filter(item => item.length > 0);
+            const reason = split >= 0 ? qsTranslate("MotionData", rest.substring(split + 1)) : "";
+            if (text.startsWith("optical_skipped:")) {
+                return qsTr("In-camera stabilization could not be reconstructed (%1).").arg(reason);
+            }
+            const simpleMode = typeof isSimpleMode !== "undefined" && isSimpleMode;
+            const names = items.map(item => item === "translation" ? qsTranslate("MotionData", "Translation stabilization")
+                : item === "reconstruction" ? qsTranslate("MotionData", "Reconstruct in-camera stabilization")
+                : qsTranslate("MotionData", simpleMode ? "Optical stabilization" : "Optical correction"));
+            return qsTr("%1 could not be applied (%2). Processed without it.").arg(names.join(qsTr(", "))).arg(reason);
         }
         switch (text) {
             case "gyro_export_failed":        return qsTr("Failed to export gyro data.");

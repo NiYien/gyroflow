@@ -1550,7 +1550,10 @@ Item {
             property bool isError: error_string.length > 0 && !isQuestion && !isInfo;
             property bool isInfo: error_string == "uses_cpu";
             property bool isQuestion: error_string.startsWith("convert_format:") || error_string.startsWith("file_exists:");
-            property bool isProcessing: processing_progress > 0.0 && processing_progress < 1.0;
+            // queue-optical-analysis: the render worker analyzes the job before the export
+            property bool isAnalyzing: processing_phase === "optical";
+            property bool isProcessing: (processing_progress > 0.0 && processing_progress < 1.0) || isAnalyzing;
+            property real shownProcessingProgress: isAnalyzing ? optical_progress : processing_progress;
             property bool isSkipped: skip_reason.length > 0;
             property string skipReason: skip_reason;
             // plugin-only-export-gate: static per-job flag (derived from the
@@ -2633,7 +2636,7 @@ Item {
                         property string remainingText: statusBg.shown? "---" : time.remaining;
                         property string eta: remainingText != "---"? (", " + qsTr("ETA %1").arg(remainingText)) : "";
                         text: syncDonePending ? qsTr("Sync complete: %1").arg("<b>100.00%</b>")
-                            : isProcessing? qsTr("Synchronizing: %1").arg(`<b>${(processing_progress*100).toFixed(2)}%</b>`)
+                            : isProcessing? (dlg.isAnalyzing ? qsTr("Analyzing: %1") : qsTr("Synchronizing: %1")).arg(`<b>${(dlg.shownProcessingProgress*100).toFixed(2)}%</b>`)
                                           : qsTr("Rendering: %1").arg(`<b>${(dlg.progress*100).toFixed(2)}%</b> <small>(${current_frame}/${total_frames}${time.fpsText}${eta})</small>`);
                     }
                     BasicText {
@@ -2796,6 +2799,15 @@ Item {
                         font.pixelSize: basicTextSize;
                         font.bold: true;
                     }
+                    // queue-optical-analysis: an experimental feature the job could not use. Stays after it finished
+                    BasicText {
+                        visible: optical_notice.length > 0;
+                        text: visible ? window.getReadableError(optical_notice) : "";
+                        color: root.skippedStatusColor;
+                        font.pixelSize: basicTextSize;
+                        width: parent.width;
+                        wrapMode: Text.WordWrap;
+                    }
                 }
 
                 Column {
@@ -2816,13 +2828,13 @@ Item {
                         horizontalAlignment: Text.AlignHCenter;
                         textFormat: Text.RichText;
                         text: syncDonePending ? "<b>100.00%</b>" :
-                                            isProcessing? `<b>${(processing_progress*100).toFixed(2)}%</b>` :
+                                            isProcessing? `<b>${(dlg.shownProcessingProgress*100).toFixed(2)}%</b>` :
                                             `<b>${(dlg.progress*100).toFixed(2)}%</b> <small>(${current_frame}/${total_frames}${time.fpsText})</small>`;
                     }
                     QQC.ProgressBar {
                         id: ipb;
                         width: 200 * dpiScale;
-                        value: syncDonePending ? 1.0 : isProcessing? processing_progress : current_frame / total_frames;
+                        value: syncDonePending ? 1.0 : isProcessing? dlg.shownProcessingProgress : current_frame / total_frames;
                     }
                     BasicText {
                         id: time;
@@ -2834,7 +2846,7 @@ Item {
                         anchors.horizontalCenter: parent.horizontalCenter;
                         horizontalAlignment: Text.AlignHCenter;
                         text: syncDonePending ? qsTr("Sync complete")
-                                          : isProcessing? qsTr("Synchronizing...")
+                                          : isProcessing? (dlg.isAnalyzing ? qsTr("Analyzing...") : qsTr("Synchronizing..."))
                                           : qsTr("Elapsed: %1. Remaining: %2").arg("<b>" + elapsed + "</b>").arg("<b>" + (statusBg.shown? "---" : remaining) + "</b>");
                     }
                 }

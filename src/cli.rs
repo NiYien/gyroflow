@@ -352,6 +352,13 @@ pub fn run(open_file: &mut String, open_preset: &mut String) -> bool {
             }
         }
 
+        // queue-optical-analysis: the experimental panel's settings for a headless batch (JSON, see
+        // QueueOpticalSettings). Set before any file is added so every job takes them
+        if let Ok(settings) = std::env::var("GYROFLOW_QUEUE_OPTICAL") {
+            log::info!(target: "lifecycle", "queue_optical source=env settings={settings}");
+            queue.set_jobs_optical_settings(settings);
+        }
+
         let mut pbs = HashMap::<u32, ProgressBar>::new();
 
         let queue = RefCell::new(queue);

@@ -18,6 +18,7 @@ use core::filesystem;
 use core::gyro_source::{FileMetadata, GyroSource};
 use core::niyien_lens_presets;
 use core::stabilization_params::ReadoutDirection;
+use super::queue_optical::{self, QueueOpticalOutcome, QueueOpticalSettings};
 use parking_lot::{Mutex as ParkingMutex, RwLock};
 use rayon::prelude::*;
 use regex::Regex;
@@ -128,6 +129,14 @@ pub struct RenderQueueItem {
     pub processing_progress: f64,
     pub skip_reason: QString,
     pub sync_status: QString,
+    // queue-optical-analysis: what the analysis step left to tell, see
+    // QueueOpticalOutcome::notice. Kept after the job finishes.
+    pub optical_notice: QString,
+    // "optical" while the render worker analyzes this job, empty otherwise.
+    pub processing_phase: QString,
+    // Analysis progress, 0..1. Separate from processing_progress, which the
+    // queue progress and ETA read as sync progress.
+    pub optical_progress: f64,
 
     frame_times: std::collections::VecDeque<(u64, u64)>,
 
@@ -416,6 +425,10 @@ struct Job {
     plugin_only: bool,
     original_video_rotation: f64,
     original_output_size: (usize, usize),
+    // queue-optical-analysis: the experimental panel's settings this job renders
+    // with. None: the panel was never edited, the job renders as before. Applied
+    // to the manager only in the render worker, see queue_optical.
+    optical: Option<QueueOpticalSettings>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1905,6 +1918,11 @@ pub struct RenderQueue {
     // so the log can tell "home is top" apart from "home never arrived".
     home_mounting_known: bool,
 
+    // queue-optical-analysis: the experimental panel's settings as last pushed by
+    // a user edit. None until the first edit of this run: the queue then behaves
+    // exactly as before. Never persisted.
+    optical_settings: Option<QueueOpticalSettings>,
+
     add: qt_method!(fn(&mut self, additional_data: String, thumbnail_url: QString) -> u32),
     remove: qt_method!(fn(&mut self, job_id: u32)),
     clear: qt_method!(fn(&mut self)),
@@ -2005,6 +2023,9 @@ pub struct RenderQueue {
     // (the add_file snapshot only covers jobs enqueued after the change).
     apply_mounting_rotation_to_all:
         qt_method!(fn(&mut self, pitch_deg: f64, roll_deg: f64, yaw_deg: f64)),
+    // queue-optical-analysis: MotionData.qml pushes the experimental panel's
+    // settings (QueueOpticalSettings JSON) on every user edit.
+    set_jobs_optical_settings: qt_method!(fn(&mut self, settings_json: String)),
 
     // Mirror the current "render queue output path" setting (mode + fixed path)
     // from QML into queue_output_mode / queue_fixed_output_path. Called on every
@@ -4911,6 +4932,13 @@ impl RenderQueue {
     }
 
     fn job_is_stabilization_blocked(&self, job_id: u32) -> bool {
+        // queue-optical-analysis: with queue settings, they decide. The render
+        // worker applies them before anything else, so an unticked reconstruction
+        // would switch off one the manager brought along, and a ticked one gets
+        // analyzed there (run_queue_optical skips the job if it doesn't apply).
+        if let Some(settings) = self.jobs.get(&job_id).and_then(|job| job.optical.as_ref()) {
+            return !settings.reconstruction && self.job_original_stabilization_requirement(job_id);
+        }
         let stab = self.jobs.get(&job_id).and_then(|job| job.stab.as_ref());
         if let Some(stab) = stab {
             return !Self::active_stab_reconstruction(stab) && self.job_original_stabilization_requirement(job_id);
@@ -4922,6 +4950,11 @@ impl RenderQueue {
     }
 
     fn incoming_stabilization_blocked(&self, job_id: u32, stab: &StabilizationManager) -> bool {
+        // An incoming job takes the queue's settings (add_internal), see job_is_stabilization_blocked
+        if let Some(settings) = &self.optical_settings {
+            return !settings.reconstruction
+                && (Self::original_stabilization_requirement(stab) || self.job_original_stabilization_requirement(job_id));
+        }
         if Self::active_stab_reconstruction(stab) { return false; }
         Self::original_stabilization_requirement(stab) || self.job_original_stabilization_requirement(job_id)
     }
@@ -5178,6 +5211,7 @@ impl RenderQueue {
                 itm.start_timestamp_frame = 0;
                 itm.end_timestamp = 0;
                 itm.error_string = QString::default();
+                itm.optical_notice = QString::default();
                 itm.sync_status = preserved_sync_status.clone().unwrap_or_default();
                 // in-camera-stabilization-gate: re-editing a job does not change
                 // the clip's stabilizer state, so a blocked job must not be
@@ -5230,6 +5264,9 @@ impl RenderQueue {
                     QString::default()
                 },
                 sync_status: QString::default(),
+                optical_notice: QString::default(),
+                processing_phase: QString::default(),
+                optical_progress: 0.0,
                 frame_times: Default::default(),
                 status: if stabilization_blocked {
                     JobStatus::Skipped
@@ -5327,6 +5364,7 @@ impl RenderQueue {
                 plugin_only: Self::is_plugin_only_source(&video_url),
                 original_video_rotation,
                 original_output_size,
+                optical: self.optical_settings.clone(),
             },
         );
         self.update_queue_indices();
@@ -5824,6 +5862,7 @@ impl RenderQueue {
         update_model!(self, job_id, itm {
             itm.skip_reason = QString::from("user_stopped");
             itm.status = JobStatus::Skipped;
+            itm.processing_phase = QString::default();
         });
 
         // The queue may still be "active" with other jobs rendering; leave its status
@@ -5847,6 +5886,8 @@ impl RenderQueue {
                 let mut v = q[i].clone();
                 if v.status == JobStatus::Rendering {
                     v.status = JobStatus::Queued;
+                    // The stopped analysis' last progress callback is dropped by the epoch guard
+                    v.processing_phase = QString::default();
                     q.change_line(i, v);
                 }
             }
@@ -5955,11 +5996,22 @@ impl RenderQueue {
             itm.start_timestamp_frame = 0;
             itm.end_timestamp = 0;
             itm.frame_times.clear();
+            itm.optical_notice = QString::default();
+            itm.processing_phase = QString::default();
+            itm.optical_progress = 0.0;
             itm.status = JobStatus::Queued;
         });
     }
 
     pub fn reset_job(&mut self, job_id: u32) {
+        // queue-optical-analysis: a job going back to the queue (an export after
+        // the sync, a retry, a re-render) renders with the panel's current
+        // settings. Before the gate below, which reads them.
+        if let Some(settings) = self.optical_settings.clone() {
+            if let Some(job) = self.jobs.get_mut(&job_id) {
+                job.optical = Some(settings);
+            }
+        }
         let recreating_released_stab = self.jobs.get(&job_id).is_some_and(|job| job.stab.is_none() && job.project_data.is_some());
         // Resetting progress does not make an excluded clip eligible to
         // generate a project on the next batch or direct render.
@@ -7905,6 +7957,34 @@ impl RenderQueue {
                     this.record_batch_sync_result(job_id, points, attempted_timestamps_ms);
                 },
             );
+            // queue-optical-analysis: the job's experimental settings and whether
+            // the clip needs its in-camera stabilization reconstructed, read here
+            // on the UI thread for the worker's analysis step.
+            let queue_optical_settings = job.optical.clone();
+            let requires_compensation = queue_optical_settings.is_some()
+                && self.job_original_stabilization_requirement(job_id);
+            let optical_phase = util::qt_queued_callback_mut(
+                QPointer::from(self as &Self),
+                move |this, (analyzing, progress): (bool, f64)| {
+                    if this.jobs.get(&job_id).map(|j| j.render_epoch.load(SeqCst)) != Some(capture_epoch) {
+                        return;
+                    }
+                    update_model!(this, job_id, itm {
+                        itm.processing_phase = QString::from(if analyzing { "optical" } else { "" });
+                        itm.optical_progress = progress;
+                    });
+                    this.progress_changed();
+                },
+            );
+            let optical_done = util::qt_queued_callback_mut(
+                QPointer::from(self as &Self),
+                move |this, outcome: QueueOpticalOutcome| {
+                    if this.jobs.get(&job_id).map(|j| j.render_epoch.load(SeqCst)) != Some(capture_epoch) {
+                        return;
+                    }
+                    this.finish_queue_optical(job_id, outcome);
+                },
+            );
             let in_flight_count = stab.in_flight_count.clone();
             core::run_threaded(move || {
                 // §4.10 OpGuard: render queue item worker runs autosync,
@@ -8039,6 +8119,37 @@ impl RenderQueue {
                     ));
                     progress((1.0, 1, 1, true, false));
                     return;
+                }
+
+                // queue-optical-analysis: analyze what the job's experimental
+                // settings ask for, after the sync and before anything is written.
+                // Deep match probes, metadata and STMap exports don't need it.
+                if let Some(settings) = queue_optical_settings
+                    .as_ref()
+                    .filter(|_| !job_is_deep_match && export_metadata.is_none() && export_stmap.is_none())
+                {
+                    let outcome = queue_optical::run_queue_optical(job_id, &stab, settings, requires_compensation, |stab| {
+                        optical_phase((true, 0.0));
+                        let phase = optical_phase.clone();
+                        let result = rendering::analyze_optically(
+                            stab,
+                            cancel_flag.clone(),
+                            Some(pause_flag.clone()),
+                            move |fraction, _, _| phase((true, fraction)),
+                        );
+                        optical_phase((false, 1.0));
+                        result
+                    });
+                    let skip = matches!(outcome, QueueOpticalOutcome::Skip { .. });
+                    let notice = outcome.notice();
+                    if !notice.is_empty() {
+                        // The project written below records why an item is off
+                        additional_data = queue_optical::with_notice(&additional_data, &notice);
+                    }
+                    optical_done(outcome);
+                    if skip {
+                        return;
+                    }
                 }
 
                 if let Some((opt, path, fields)) = export_metadata {
@@ -10578,6 +10689,90 @@ impl RenderQueue {
             }
         }
         ::log::info!(target: "sync", "[optical-toggle] rewrote {} job(s) to offset_method {}", rewritten, method);
+    }
+
+    /// queue-optical-analysis: the experimental panel's settings, pushed on every
+    /// user edit. They reach every waiting job and every job added or reset later;
+    /// rendering, finished, failed and user-stopped jobs keep theirs. Ticking the
+    /// reconstruction revives the clips the in-camera stabilization gate skipped
+    /// (they wait for their analysis), unticking it skips them again.
+    pub fn set_jobs_optical_settings(&mut self, settings_json: String) {
+        let settings = match QueueOpticalSettings::from_json(&settings_json) {
+            Ok(settings) => settings,
+            Err(e) => {
+                ::log::warn!(target: "queue.optical", "[queue-optical] ignoring invalid settings {settings_json:?}: {e}");
+                return;
+            }
+        };
+        let reconstruction_ticked =
+            settings.reconstruction && !self.optical_settings.as_ref().is_some_and(|old| old.reconstruction);
+        self.optical_settings = Some(settings.clone());
+        let rows: Vec<(u32, JobStatus, String)> = self
+            .queue
+            .borrow()
+            .iter()
+            .map(|item| (item.job_id, item.status.clone(), item.skip_reason.to_string()))
+            .collect();
+        let (mut written, mut revived, mut blocked) = (0, 0, 0);
+        for (job_id, status, skip_reason) in rows {
+            let revive = reconstruction_ticked && status == JobStatus::Skipped && skip_reason == "image_stabilization";
+            if status != JobStatus::Queued && !revive {
+                continue;
+            }
+            let Some(job) = self.jobs.get_mut(&job_id) else { continue; };
+            job.optical = Some(settings.clone());
+            written += 1;
+            if revive {
+                self.reset_job(job_id);
+                revived += 1;
+            } else if !settings.reconstruction && self.skip_stabilization_blocked_job(job_id) {
+                blocked += 1;
+            }
+        }
+        ::log::info!(
+            target: "queue.optical",
+            "[queue-optical] settings {} reach {written} waiting job(s), revived={revived} blocked={blocked}",
+            serde_json::to_string(&settings).unwrap_or_default()
+        );
+    }
+
+    /// queue-optical-analysis: the analysis step's outcome, on the UI thread. A
+    /// skip ends the job here: its worker returns without writing a project or
+    /// encoding, like the other in-camera stabilization skips.
+    fn finish_queue_optical(&mut self, job_id: u32, outcome: QueueOpticalOutcome) {
+        if outcome == QueueOpticalOutcome::Cancelled {
+            return;
+        }
+        let notice = QString::from(outcome.notice());
+        update_model!(self, job_id, itm {
+            itm.optical_notice = notice.clone();
+        });
+        let QueueOpticalOutcome::Skip { reason } = outcome else { return; };
+        // The gate agrees with the skip until the job goes back to the queue
+        // (reset_job) or the reconstruction is ticked again.
+        if let Some(settings) = self.jobs.get_mut(&job_id).and_then(|job| job.optical.as_mut()) {
+            settings.reconstruction = false;
+        }
+        update_model!(self, job_id, itm {
+            itm.status = JobStatus::Skipped;
+            itm.skip_reason = QString::from("image_stabilization");
+            itm.error_string = QString::default();
+            itm.processing_phase = QString::default();
+        });
+        ::log::info!(
+            target: "video.render",
+            "[queue-render-skip] job={job_id} reason=image_stabilization project_export=skipped cause=reconstruction: {reason}"
+        );
+        self.render_progress(job_id, 1.0, 0, 0, true, 0.0, false);
+        if self.get_pending_count() > 0 && self.status.to_string() == "active" {
+            self.start();
+        } else {
+            self.start_timestamp = 0;
+            self.start_frame = 0;
+            self.start_queue_work_units = 0.0;
+            self.update_status();
+        }
+        self.progress_changed();
     }
 
     pub fn set_pending_output_format(&mut self, options_json: String) {
@@ -20044,6 +20239,7 @@ mod tests {
                 video_created_at: None,
                 plugin_only: false,
                 original_video_rotation: 0.0,
+                optical: None,
             },
         );
         queue
@@ -20111,6 +20307,7 @@ mod tests {
             video_created_at: None,
             plugin_only: false,
             original_video_rotation: 0.0,
+            optical: None,
         }
     }
 
@@ -20660,6 +20857,7 @@ mod tests {
                 video_created_at: None,
                 plugin_only: false,
                 original_video_rotation: 0.0,
+                optical: None,
             },
         );
         queue
@@ -20813,6 +21011,7 @@ mod tests {
                 video_created_at: None,
                 plugin_only: false,
                 original_video_rotation: 0.0,
+                optical: None,
             },
         );
     }
@@ -25220,6 +25419,7 @@ mod tests {
                     video_created_at: None,
                     plugin_only: *plugin_only,
                     original_video_rotation: 0.0,
+                    optical: None,
                 },
             );
         }
@@ -25860,6 +26060,7 @@ mod tests {
                 video_created_at: None,
                 plugin_only: false,
                 original_video_rotation: 0.0,
+                optical: None,
             },
         );
         assert!(!queue.batch_motion_ready());
@@ -25994,6 +26195,7 @@ mod tests {
                 video_created_at: None,
                 plugin_only: false,
                 original_video_rotation: 0.0,
+                optical: None,
             },
         );
         assert!(!queue.batch_motion_ready());
@@ -26299,6 +26501,7 @@ mod tests {
                 video_created_at: None,
                 plugin_only: false,
                 original_video_rotation: 0.0,
+                optical: None,
             },
         );
 
@@ -26938,6 +27141,7 @@ mod tests {
             video_created_at: None,
             plugin_only: false,
             original_video_rotation: 0.0,
+            optical: None,
         };
 
         let effective = effective_lens_group_configs(&job, &global);
@@ -27047,6 +27251,7 @@ mod tests {
             video_created_at: None,
             plugin_only: false,
             original_video_rotation: 0.0,
+            optical: None,
             lens_index_override: None,
             focal_length_override: None,
         }
@@ -27249,6 +27454,7 @@ mod tests {
                 video_created_at: None,
                 plugin_only: false,
                 original_video_rotation: 0.0,
+                optical: None,
                 lens_index_override: None,
                 focal_length_override: None,
             };
@@ -27309,6 +27515,7 @@ mod tests {
                 video_created_at: None,
                 plugin_only: false,
                 original_video_rotation: 0.0,
+                optical: None,
             },
         );
 
@@ -27578,6 +27785,7 @@ mod tests {
                 video_created_at: None,
                 plugin_only: false,
                 original_video_rotation: 0.0,
+                optical: None,
                 original_output_size: (0, 0),
             },
         );
@@ -31239,6 +31447,7 @@ mod tests {
                 video_created_at: None,
                 plugin_only: false,
                 original_video_rotation: 0.0,
+                optical: None,
             },
         );
         queue
@@ -31871,5 +32080,272 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ---- queue-optical-analysis ----
+
+    fn optical(value: serde_json::Value) -> QueueOpticalSettings {
+        QueueOpticalSettings::from_json(&value.to_string()).unwrap()
+    }
+
+    fn stab_at(stab: Arc<StabilizationManager>, url: &str) -> Arc<StabilizationManager> {
+        stab.input_file.write().url = url.to_owned();
+        stab
+    }
+
+    /// A clip whose in-camera stabilization the gate never blocks: Sony with its IBIS/OIS data, Canon, stabilization off
+    fn unblocked_clip(url: &str, verdict: &str) -> Arc<StabilizationManager> {
+        let stab = stab_at(reconstructed_queue_manager(), url);
+        stab.gyro.read().file_metadata.write().additional_data = serde_json::json!({
+            "stabilization_verdict": verdict,
+            "stabilization_blocks_processing": false,
+        });
+        stab
+    }
+
+    fn notice(queue: &RenderQueue, job_id: u32) -> String {
+        let q = queue.queue.borrow();
+        q.iter().find(|i| i.job_id == job_id).expect("row exists").optical_notice.to_string()
+    }
+
+    #[test]
+    fn queue_optical_settings_reach_jobs_added_after_them() {
+        let mut q = recovery_queue(&[]);
+        q.add_internal(1, stab_at(edited_preview_stab(), "file:///C:/queue-optical/a.mp4"), RenderOptions::default(), "{}".into(), QString::default(), None);
+        assert_eq!(q.optical_settings, None);
+        assert_eq!(q.jobs[&1].optical, None, "an untouched panel attaches nothing");
+
+        let s = serde_json::json!({ "translation": true, "translation_reference": 0.8, "translation_smoothness": 2.0 });
+        q.set_jobs_optical_settings(s.to_string());
+        assert_eq!(q.optical_settings, Some(optical(s.clone())));
+        assert_eq!(q.jobs[&1].optical, Some(optical(s.clone())), "a waiting job follows the panel");
+
+        // add_file's path ends in add_internal
+        q.add_internal(2, stab_at(edited_preview_stab(), "file:///C:/queue-optical/b.mp4"), RenderOptions::default(), "{}".into(), QString::default(), None);
+        assert_eq!(q.jobs[&2].optical, Some(optical(s.clone())));
+
+        // The preview's "Add to queue"
+        q.stabilizer = stab_at(edited_preview_stab(), "file:///C:/queue-optical/c.mp4");
+        let id = q.add(serde_json::json!({ "output": RenderOptions::default() }).to_string(), QString::default());
+        assert!(q.jobs.contains_key(&id));
+        assert_eq!(q.jobs[&id].optical, Some(optical(s)));
+    }
+
+    #[test]
+    fn queue_optical_settings_skip_jobs_that_are_not_waiting() {
+        let mut q = recovery_queue(&[
+            (1, JobStatus::Queued, "", "", false),
+            (2, JobStatus::Rendering, "", "", false),
+            (3, JobStatus::Finished, "", "", false),
+            (4, JobStatus::Error, "", "render_failed:x", false),
+            (5, JobStatus::Skipped, "user_stopped", "", false),
+        ]);
+        let s = serde_json::json!({ "translation": true });
+        q.set_jobs_optical_settings(s.to_string());
+        assert_eq!(q.jobs[&1].optical, Some(optical(s.clone())));
+        for id in 2..=5 {
+            assert_eq!(q.jobs[&id].optical, None, "job {id} is not waiting");
+        }
+
+        q.set_jobs_optical_settings("{not json".into());
+        q.set_jobs_optical_settings("[1, 2]".into());
+        assert_eq!(q.optical_settings, Some(optical(s.clone())), "invalid JSON is ignored");
+        assert_eq!(q.jobs[&1].optical, Some(optical(s.clone())));
+
+        q.reset_job(1);
+        assert_eq!(row_status(&q, 1), (JobStatus::Queued, String::new()));
+        assert_eq!(q.jobs[&1].optical, Some(optical(s.clone())), "a reset keeps the settings");
+
+        // A finished job that comes back to the queue takes the current settings
+        q.reset_job(3);
+        assert_eq!(row_status(&q, 3), (JobStatus::Queued, String::new()));
+        assert_eq!(q.jobs[&3].optical, Some(optical(s)));
+        assert_eq!(q.jobs[&2].optical, None, "a rendering job keeps what it started with");
+    }
+
+    #[test]
+    fn queue_optical_settings_survive_a_released_manager() {
+        // Simple mode: sync (project export, manager released), then edit the panel, then export
+        let mut queue = queue_with_autosync_project(JobStatus::Finished, true, Some(2));
+        assert!(queue.jobs[&1].stab.is_none());
+        let s = serde_json::json!({ "translation": true });
+        queue.set_jobs_optical_settings(s.to_string());
+        assert_eq!(queue.jobs[&1].optical, None, "a finished row is not changed");
+        queue.prepare_finished_jobs_for_video_export();
+        assert_eq!(row_status(&queue, 1), (JobStatus::Queued, String::new()));
+        let job = &queue.jobs[&1];
+        assert!(job.stab.is_some(), "the manager is rebuilt from the snapshot");
+        assert_eq!(job.optical, Some(optical(s)), "the export renders with the current panel settings");
+    }
+
+    #[test]
+    fn ticked_reconstruction_lets_blocked_clips_wait_for_their_analysis() {
+        // Not ticked: blocked at enqueue, as before
+        for settings in [None, Some(serde_json::json!({ "translation": true }))] {
+            let mut q = recovery_queue(&[]);
+            if let Some(s) = &settings { q.set_jobs_optical_settings(s.to_string()); }
+            q.add_internal(1, reconstructed_queue_manager(), RenderOptions::default(), "{}".into(), QString::default(), None);
+            assert_eq!(row_status(&q, 1), (JobStatus::Skipped, "image_stabilization".into()), "{settings:?}");
+        }
+        // Ticked: it waits, joins the batch matching and sync, and the render worker decides
+        let mut q = recovery_queue(&[]);
+        q.set_jobs_optical_settings(serde_json::json!({ "reconstruction": true }).to_string());
+        q.add_internal(1, reconstructed_queue_manager(), RenderOptions::default(), "{}".into(), QString::default(), None);
+        assert_eq!(row_status(&q, 1), (JobStatus::Queued, String::new()));
+        assert!(!q.job_is_stabilization_blocked(1));
+        assert_eq!(q.prepare_batch_match_job_ids(), vec![1]);
+        q.reset_job(1);
+        assert_eq!(row_status(&q, 1), (JobStatus::Queued, String::new()));
+        // render_job's entry lets it through (the pending reset parks it instead of starting a worker)
+        q.jobs.get_mut(&1).unwrap().pending_reset_requeue = true;
+        q.render_job(1);
+        assert!(q.render_jobs_after_pending_reset.contains(&1), "render_job got past its gate");
+        assert_eq!(row_status(&q, 1), (JobStatus::Queued, String::new()));
+        // A job whose settings do not tick it is stopped at the same entry
+        q.render_jobs_after_pending_reset.clear();
+        q.jobs.get_mut(&1).unwrap().optical = Some(optical(serde_json::json!({ "translation": true })));
+        q.render_job(1);
+        assert!(!q.render_jobs_after_pending_reset.contains(&1));
+        assert_eq!(row_status(&q, 1), (JobStatus::Skipped, "image_stabilization".into()));
+    }
+
+    #[test]
+    fn queue_settings_decide_whether_a_preview_reconstruction_is_kept() {
+        // The render worker applies the settings first: unticked, it would switch the job's reconstruction off
+        let stab = reconstructed_queue_manager();
+        install_queue_reconstruction(&stab);
+        let mut q = recovery_queue(&[]);
+        q.add_internal(1, stab, RenderOptions::default(), "{}".into(), QString::default(), None);
+        assert_eq!(row_status(&q, 1), (JobStatus::Queued, String::new()), "never touched panel: the old rule");
+        q.set_jobs_optical_settings(serde_json::json!({ "translation": true }).to_string());
+        assert_eq!(row_status(&q, 1), (JobStatus::Skipped, "image_stabilization".into()));
+        q.set_jobs_optical_settings(serde_json::json!({ "reconstruction": true }).to_string());
+        assert_eq!(row_status(&q, 1), (JobStatus::Queued, String::new()));
+    }
+
+    #[test]
+    fn toggling_reconstruction_moves_only_clips_that_need_it() {
+        let mut q = recovery_queue(&[]);
+        q.add_internal(1, stab_at(reconstructed_queue_manager(), "file:///C:/queue-optical/sony-no-data.mp4"), RenderOptions::default(), "{}".into(), QString::default(), None);
+        q.add_internal(2, unblocked_clip("file:///C:/queue-optical/sony-ibis.mp4", "compensation_available"), RenderOptions::default(), "{}".into(), QString::default(), None);
+        q.add_internal(3, unblocked_clip("file:///C:/queue-optical/canon.mp4", "ignored_untrusted_signal"), RenderOptions::default(), "{}".into(), QString::default(), None);
+        q.add_internal(4, unblocked_clip("file:///C:/queue-optical/off.mp4", "not_stabilized"), RenderOptions::default(), "{}".into(), QString::default(), None);
+        let unblocked_stay_queued = |q: &RenderQueue, step: &str| {
+            for id in 2..=4 {
+                assert_eq!(row_status(q, id), (JobStatus::Queued, String::new()), "job {id} after {step}");
+            }
+        };
+        assert_eq!(row_status(&q, 1), (JobStatus::Skipped, "image_stabilization".into()));
+        unblocked_stay_queued(&q, "enqueue");
+
+        q.set_jobs_optical_settings(serde_json::json!({ "reconstruction": true }).to_string());
+        assert_eq!(row_status(&q, 1), (JobStatus::Queued, String::new()), "ticking revives the clip for its analysis");
+        assert_eq!(q.jobs[&1].optical, Some(optical(serde_json::json!({ "reconstruction": true }))));
+        unblocked_stay_queued(&q, "ticking");
+
+        q.set_jobs_optical_settings(serde_json::json!({ "translation": true }).to_string());
+        assert_eq!(row_status(&q, 1), (JobStatus::Skipped, "image_stabilization".into()), "unticking blocks it again");
+        unblocked_stay_queued(&q, "unticking");
+
+        q.set_jobs_optical_settings(serde_json::json!({ "reconstruction": true, "strength": 0.2 }).to_string());
+        assert_eq!(row_status(&q, 1), (JobStatus::Queued, String::new()));
+        unblocked_stay_queued(&q, "ticking again");
+    }
+
+    #[test]
+    fn analysis_outcomes_reach_the_queue_row() {
+        let mut q = recovery_queue(&[
+            (1, JobStatus::Rendering, "", "", false),
+            (2, JobStatus::Rendering, "", "", false),
+        ]);
+        q.jobs[&1].stab.as_ref().unwrap().gyro.read().file_metadata.write().additional_data =
+            serde_json::json!({ "stabilization_blocks_processing": true });
+        for id in [1, 2] {
+            q.jobs.get_mut(&id).unwrap().optical = Some(optical(serde_json::json!({ "reconstruction": true })));
+        }
+
+        // A clip that needs the reconstruction: skipped, with the reason
+        q.finish_queue_optical(1, QueueOpticalOutcome::Skip { reason: "NotConverged".into() });
+        assert_eq!(row_status(&q, 1), (JobStatus::Skipped, "image_stabilization".into()));
+        assert_eq!(notice(&q, 1), "optical_skipped:reconstruction:NotConverged");
+        assert!(!q.jobs[&1].optical.as_ref().unwrap().reconstruction, "the gate agrees with the skip");
+        assert!(q.job_is_stabilization_blocked(1));
+        q.prepare_batch_match_job_ids();
+        assert_eq!(row_status(&q, 1), (JobStatus::Skipped, "image_stabilization".into()), "batch flows leave it skipped");
+        assert_eq!(notice(&q, 1), "optical_skipped:reconstruction:NotConverged");
+        // An explicit reset puts it back with the queue's current settings: it is analyzed again
+        q.optical_settings = Some(optical(serde_json::json!({ "reconstruction": true })));
+        q.reset_job(1);
+        assert_eq!(row_status(&q, 1), (JobStatus::Queued, String::new()));
+        assert_eq!(notice(&q, 1), "");
+
+        // A clip that does not need it: rendered on, with a notice
+        q.finish_queue_optical(2, QueueOpticalOutcome::Fallback {
+            analyzed: true,
+            items: vec![queue_optical::RECONSTRUCTION],
+            reason: "NotConverged".into(),
+        });
+        assert_eq!(row_status(&q, 2), (JobStatus::Rendering, String::new()));
+        assert_eq!(notice(&q, 2), "optical_fallback:reconstruction:NotConverged");
+        q.finish_queue_optical(2, QueueOpticalOutcome::Cancelled);
+        assert_eq!(notice(&q, 2), "optical_fallback:reconstruction:NotConverged", "a cancelled run changes nothing");
+        q.finish_queue_optical(2, QueueOpticalOutcome::Applied { analyzed: true });
+        assert_eq!(notice(&q, 2), "", "a run that applies clears an old notice");
+        q.finish_queue_optical(2, QueueOpticalOutcome::Fallback { analyzed: true, items: vec![queue_optical::TRANSLATION], reason: "x".into() });
+        q.reset_job(2);
+        assert_eq!(notice(&q, 2), "", "a job back in the queue starts without the old notice");
+    }
+
+    #[test]
+    fn queue_optical_runs_between_the_sync_and_the_exports() {
+        let source = include_str!("render_queue.rs");
+        let start = source.find("pub fn render_job(").unwrap();
+        let worker = &source[start..start + source[start..].find("fn get_output_folder(").unwrap()];
+        let call = worker.find("queue_optical::run_queue_optical(").expect("the render worker runs the analysis step");
+        let recompute = worker.find("stab.recompute_blocking();").unwrap();
+        let first_phase_done = worker.find("batch_sync_done((").unwrap();
+        let metadata = worker.find("if let Some((opt, path, fields)) = export_metadata").unwrap();
+        let stmap = worker.find("if let Some((opt, path)) = export_stmap").unwrap();
+        let project = worker.find("if export_project > 0 {").unwrap();
+        let encode = worker.find("rendering::render(").unwrap();
+        assert!(recompute < call, "after the sync's recompute");
+        assert!(first_phase_done < call, "the batch sync's first phase returns before it");
+        assert!(call < metadata && call < stmap && call < project && call < encode);
+        let notice = worker.find("queue_optical::with_notice(").expect("the written project records the notice");
+        assert!(call < notice && notice < project);
+        let guard = &worker[worker[..call].rfind("if let Some(").unwrap()..call];
+        for condition in ["!job_is_deep_match", "export_metadata.is_none()", "export_stmap.is_none()"] {
+            assert!(guard.contains(condition), "the analysis step requires {condition}");
+        }
+        assert!(worker.contains("rendering::analyze_optically("), "production analyzes with the shared pipeline");
+    }
+
+    #[test]
+    fn motion_data_pushes_the_panel_on_user_edits_only() {
+        let qml = include_str!("../ui/menu/MotionData.qml").replace("\r\n", "\n");
+        let start = qml.find("function pushQueueOpticalSettings(): void").expect("push function");
+        let body = &qml[start..start + qml[start..].find("\n    }\n").unwrap()];
+        assert!(body.contains("if (root.updatingOpticalControls) return;"), "programmatic refreshes do not push");
+        assert!(body.contains("Qt.callLater(root.sendQueueOpticalSettings)"), "pushes of one edit are merged");
+        let send = &qml[qml.find("function sendQueueOpticalSettings(): void").expect("send function")..];
+        let send = &send[..send.find("\n    }\n").unwrap()];
+        assert!(send.contains("render_queue.set_jobs_optical_settings(JSON.stringify("));
+        for key in ["correction:", "strength:", "ignore_file_motion:", "translation:", "translation_reference:",
+            "translation_smoothness:", "translation_along_axis:", "reconstruction:"] {
+            assert!(send.contains(key), "the push carries {key}");
+        }
+        // Every commit point of a user edit pushes
+        let change = &qml[qml.find("function changeOpticalMode(").unwrap()..];
+        let change = &change[..change.find("function analyzeOpticalModes").unwrap()];
+        assert!(change.contains("root.pushQueueOpticalSettings();"), "the three checkboxes");
+        // Up to the next element id: the push belongs to this commit point
+        let pushes_before_next_id = |id: &str| {
+            let rest = &qml[qml.find(id).unwrap_or_else(|| panic!("{id} exists")) + id.len()..];
+            rest.find("root.pushQueueOpticalSettings()").is_some_and(|push| push < rest.find("id: ").unwrap_or(rest.len()))
+        };
+        for id in ["id: opticalStrengthTimer;", "id: translationReferenceTimer;", "id: translationSmoothnessTimer;", "id: translationAlongAxisTimer;"] {
+            assert!(pushes_before_next_id(id), "{id} pushes when it commits");
+        }
+        assert!(pushes_before_next_id("id: ignoreFileMotion;"), "ignoring the motion data pushes");
     }
 }

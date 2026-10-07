@@ -190,7 +190,19 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Applies to the video open in the preview.</source>
+        <source>Applies to the video open in the preview and to the videos waiting in the render queue.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 could not be applied (%2). Processed without it.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>In-camera stabilization could not be reconstructed (%1).</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>, </source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -3894,6 +3906,14 @@ Please check and try again.</source>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2487"/>
         <source>Synchronizing: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Analyzing: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Analyzing...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

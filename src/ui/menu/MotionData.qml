@@ -101,6 +101,24 @@ MenuItem {
         }
     }
     function restoreOpticalControls(restoreOpticalRequest: bool): void { root.refreshOpticalInfo(true, restoreOpticalRequest); }
+    // queue-optical-analysis: the render queue follows the panel. Only a user edit pushes; a programmatic refresh
+    // (loading a video or a project) leaves the queue's settings alone.
+    function pushQueueOpticalSettings(): void {
+        if (root.updatingOpticalControls) return;
+        Qt.callLater(root.sendQueueOpticalSettings);
+    }
+    function sendQueueOpticalSettings(): void {
+        render_queue.set_jobs_optical_settings(JSON.stringify({
+            correction: opticalcb.checked,
+            strength: opticalStrength.value / 100,
+            ignore_file_motion: ignoreFileMotion.checked,
+            translation: translationcb.checked,
+            translation_reference: (200 - translationReference.value) / 100,
+            translation_smoothness: Math.pow(10, translationSmoothness.value),
+            translation_along_axis: translationAlongAxis.checked,
+            reconstruction: stabcb.checked
+        }));
+    }
     function changeOpticalMode(mode: string, enabled: bool): void {
         if (!root.initialized || root.updatingOpticalControls) return;
         root.updatingOpticalControls = true;
@@ -126,6 +144,7 @@ MenuItem {
             root.updatingOpticalControls = false;
         }
         root.refreshOpticalInfo(false, false);
+        root.pushQueueOpticalSettings();
     }
     function analyzeOpticalModes(): void {
         const optical = opticalcb.checked;
@@ -457,7 +476,7 @@ MenuItem {
             id: ignoreFileMotion;
             text: qsTr("Ignore motion data from the file");
             tooltip: qsTr("Measure all of the camera motion from the video, like for a file without motion data, instead of correcting the motion data. For motion data too broken to correct, e.g. a gyro that glitches or saturates for seconds at a time.");
-            onCheckedChanged: if (root.initialized && !root.updatingOpticalControls) controller.set_ignore_file_motion(checked);
+            onCheckedChanged: if (root.initialized && !root.updatingOpticalControls) { controller.set_ignore_file_motion(checked); root.pushQueueOpticalSettings(); }
         }
 
         Label {
@@ -485,6 +504,7 @@ MenuItem {
                         if (controller.video_loading_in_progress || controller.loading_gyro_in_progress) return;
                         controller.set_optical_correction_strength(opticalStrength.value / 100);
                         root.refreshOpticalInfo(false, false);
+                        root.pushQueueOpticalSettings();
                     }
                 }
             }
@@ -566,17 +586,17 @@ MenuItem {
     Timer {
         id: translationReferenceTimer;
         interval: 150;
-        onTriggered: if (!controller.video_loading_in_progress && !controller.loading_gyro_in_progress) controller.set_translation_reference((200 - translationReference.value) / 100);
+        onTriggered: if (!controller.video_loading_in_progress && !controller.loading_gyro_in_progress) { controller.set_translation_reference((200 - translationReference.value) / 100); root.pushQueueOpticalSettings(); }
     }
     Timer {
         id: translationSmoothnessTimer;
         interval: 150;
-        onTriggered: if (!controller.video_loading_in_progress && !controller.loading_gyro_in_progress) controller.set_translation_smoothness(Math.pow(10, translationSmoothness.value));
+        onTriggered: if (!controller.video_loading_in_progress && !controller.loading_gyro_in_progress) { controller.set_translation_smoothness(Math.pow(10, translationSmoothness.value)); root.pushQueueOpticalSettings(); }
     }
     Timer {
         id: translationAlongAxisTimer;
         interval: 150;
-        onTriggered: if (!controller.video_loading_in_progress && !controller.loading_gyro_in_progress) controller.set_translation_along_axis(translationAlongAxis.checked);
+        onTriggered: if (!controller.video_loading_in_progress && !controller.loading_gyro_in_progress) { controller.set_translation_along_axis(translationAlongAxis.checked); root.pushQueueOpticalSettings(); }
     }
     CheckBoxWithContent {
         id: stabcb;

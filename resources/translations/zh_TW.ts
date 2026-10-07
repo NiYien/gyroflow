@@ -191,8 +191,20 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation>實驗性功能</translation>
     </message>
     <message>
-        <source>Applies to the video open in the preview.</source>
-        <translation>套用至目前預覽中的影片。</translation>
+        <source>Applies to the video open in the preview and to the videos waiting in the render queue.</source>
+        <translation>套用至目前預覽中的影片，以及渲染列中等待處理的影片。</translation>
+    </message>
+    <message>
+        <source>%1 could not be applied (%2). Processed without it.</source>
+        <translation>%1未能套用（%2），已改為不使用此功能處理。</translation>
+    </message>
+    <message>
+        <source>In-camera stabilization could not be reconstructed (%1).</source>
+        <translation>未能重建機內防抖（%1）。</translation>
+    </message>
+    <message>
+        <source>, </source>
+        <translation>、</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="2144"/>
@@ -4225,6 +4237,14 @@ Please check and try again.</source>
         <location filename="../../src/ui/RenderQueue.qml" line="2487"/>
         <source>Synchronizing: %1</source>
         <translation>正在同步: %1</translation>
+    </message>
+    <message>
+        <source>Analyzing: %1</source>
+        <translation>正在分析: %1</translation>
+    </message>
+    <message>
+        <source>Analyzing...</source>
+        <translation>正在分析...</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2488"/>
