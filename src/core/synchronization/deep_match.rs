@@ -1445,12 +1445,12 @@ fn env_f64_nonneg(name: &str, default: f64) -> f64 {
 
 pub fn parse_optical_mode(raw: Option<&str>) -> (Option<JudgeMode>, &'static str) {
     match raw.map(str::trim) {
-        None | Some("") => (Some(JudgeMode::On), "default"),
+        None | Some("") => (None, "default"),
         Some(s) => match s.to_ascii_lowercase().as_str() {
             "0" | "off" | "false" | "no" => (None, "env"),
             "shadow" => (Some(JudgeMode::Shadow), "env"),
             "1" | "on" | "true" | "yes" => (Some(JudgeMode::On), "env"),
-            _ => (Some(JudgeMode::On), "default"),
+            _ => (None, "default"),
         },
     }
 }
@@ -1462,7 +1462,7 @@ pub fn optical_env_mode() -> Option<JudgeMode> {
         let (mode, source) = parse_optical_mode(raw.as_deref());
         if let Some(s) = raw.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             if source == "default" {
-                log::warn!(target: "lifecycle", "GYROFLOW_DEEP_MATCH_OPTICAL={} invalid, falling back to default (on)", s);
+                log::warn!(target: "lifecycle", "GYROFLOW_DEEP_MATCH_OPTICAL={} invalid, falling back to default (off)", s);
             }
         }
         let mode_name = match mode {
@@ -1920,12 +1920,12 @@ mod tests {
     #[test]
     fn parse_optical_mode_values() {
         use crate::synchronization::optical_motion::judge::JudgeMode::*;
-        assert_eq!(parse_optical_mode(None), (Some(On), "default"));
-        assert_eq!(parse_optical_mode(Some(" ")), (Some(On), "default"));
+        assert_eq!(parse_optical_mode(None), (None, "default"));
+        assert_eq!(parse_optical_mode(Some(" ")), (None, "default"));
         for off in ["0", "off", "FALSE", "no"] { assert_eq!(parse_optical_mode(Some(off)), (None, "env")); }
         assert_eq!(parse_optical_mode(Some("Shadow")), (Some(Shadow), "env"));
         assert_eq!(parse_optical_mode(Some("on")), (Some(On), "env"));
-        assert_eq!(parse_optical_mode(Some("bogus")), (Some(On), "default"));
+        assert_eq!(parse_optical_mode(Some("bogus")), (None, "default"));
     }
 
     #[test]
