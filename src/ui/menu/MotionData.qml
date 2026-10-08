@@ -527,30 +527,42 @@ MenuItem {
         id: translationcb;
         text: qsTr("Translation stabilization");
         cb.tooltip: qsTr("Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis samples frames at an integer interval near 25 fps within the selected trim range. Can't be used together with in-camera stabilization reconstruction. The reported shift is sampled at frame centers; output cropping changes its apparent size.");
+        cb.rightPadding: translationAuto.visible ? translationAuto.width + 10 * dpiScale : 0;
+        cb.implicitHeight: Math.max(root.mobileStyle ? 44 * dpiScale : 30 * dpiScale, cb.contentItem.implicitHeight + 12 * dpiScale);
         property var info: ({ available: false });
         onCheckedChanged: root.changeOpticalMode("translation", checked);
+        Binding {
+            target: translationcb.cb.contentItem;
+            property: "wrapMode";
+            value: Text.WordWrap;
+        }
+        CheckBox {
+            id: translationAuto;
+            parent: translationcb.cb;
+            anchors.right: parent.right;
+            anchors.verticalCenter: parent.verticalCenter;
+            visible: translationcb.checked;
+            text: qsTr("Automatic parameters");
+            tooltip: qsTr("Choose the reference distance and the smoothness from the analysis: hold the distant scenery steady, or the subject once it fills most of the picture, and smooth as much as the shift range allows.");
+            checked: true;
+            onCheckedChanged: if (root.initialized && !root.updatingOpticalControls) translationAutoTimer.restart();
+        }
         BasicText {
             width: parent.width;
             wrapMode: Text.WordWrap;
             horizontalAlignment: Text.AlignHCenter;
-            text: !translationcb.info.has_motion || translationcb.info.ignore_file_motion ? qsTr("Needs motion data from the file") :
+            visible: text.length > 0;
+            text: !translationcb.info.has_motion || translationcb.info.ignore_file_motion ? "" :
                   !translationcb.info.available && translationcb.info.requested && translationcb.info.analyzed_without ? qsTr("Analyze again to measure the camera movement") :
                   !translationcb.info.available && translationcb.info.requested ? qsTr("Click Analyze to measure the camera movement") :
                   translationcb.info.stale ? qsTr("Settings changed, analyze again") :
                   !translationcb.info.available ? "" :
                   qsTr("Measured in %1 of %2 frames, applied shift up to %3% of the source frame's short side").arg(translationcb.info.measured_frames).arg(translationcb.info.frames).arg((+translationcb.info.max_shift_pct).toFixed(1));
         }
-        CheckBox {
-            id: translationAuto;
-            text: qsTr("Automatic parameters");
-            tooltip: qsTr("Choose the reference distance and the smoothness from the analysis: hold the distant scenery steady, or the subject once it fills most of the picture, and smooth as much as the shift range allows.");
-            checked: false;
-            onCheckedChanged: if (root.initialized && !root.updatingOpticalControls) translationAutoTimer.restart();
-        }
         Label {
             text: qsTr("Reference distance");
             width: parent.width;
-            enabled: !translationAuto.checked;
+            visible: !translationAuto.checked;
             tooltip: qsTr("Move toward Near to stabilize closer objects, or toward Far to stabilize more distant content. The middle position stabilizes the farther parts of the image (default).");
             Row {
                 width: parent.width;
@@ -578,7 +590,7 @@ MenuItem {
         Label {
             text: qsTr("Translation smoothness");
             width: parent.width;
-            enabled: !translationAuto.checked;
+            visible: !translationAuto.checked;
             tooltip: qsTr("Low values only remove fast shakes. High values also remove slow drifts and come close to locking the picture.");
             Row {
                 width: parent.width;
@@ -601,6 +613,7 @@ MenuItem {
         CheckBox {
             id: translationAlongAxis;
             text: qsTr("Compensate movement along the lens axis");
+            visible: !translationAuto.checked;
             checked: true;
             onCheckedChanged: if (root.initialized && !root.updatingOpticalControls) translationAlongAxisTimer.restart();
         }
@@ -635,7 +648,8 @@ MenuItem {
             width: parent.width;
             wrapMode: Text.WordWrap;
             horizontalAlignment: Text.AlignHCenter;
-            text: !stabcb.info.has_motion || stabcb.info.ignore_file_motion ? qsTr("Needs motion data from the file") :
+            visible: text.length > 0;
+            text: !stabcb.info.has_motion || stabcb.info.ignore_file_motion ? "" :
                   !stabcb.info.available && stabcb.info.requested && stabcb.info.analyzed_without ? qsTr("Analyze again to reconstruct the in-camera stabilization") :
                   !stabcb.info.available && stabcb.info.requested ? qsTr("Click Analyze to reconstruct the in-camera stabilization") :
                   stabcb.info.stale ? qsTr("Settings changed, analyze again") :

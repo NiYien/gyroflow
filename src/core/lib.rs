@@ -330,7 +330,9 @@ impl OpticalUi {
 
 impl Default for OpticalUi {
     fn default() -> Self {
-        Self { correction_enabled: true, translation_enabled: false, stab_enabled: false, translation_settings: Default::default() }
+        // New sessions use automatic parameters; older result payloads retain their manual defaults.
+        Self { correction_enabled: true, translation_enabled: false, stab_enabled: false,
+            translation_settings: gyro_source::OpticalTranslationSettings { auto: true, ..Default::default() } }
     }
 }
 
@@ -4733,6 +4735,10 @@ impl StabilizationManager {
                     if let Some(v) = obj.get("translation_smoothness").and_then(|x| x.as_f64()) { ui.translation_settings.smoothness_s = v.clamp(0.1, 10.0); }
                     if let Some(v) = obj.get("translation_along_axis").and_then(|x| x.as_bool()) { ui.translation_settings.along_axis = v; }
                     if let Some(v) = obj.get("translation_auto").and_then(|x| x.as_bool()) { ui.translation_settings.auto = v; }
+                    else if ["translation_stabilization_enabled", "translation_reference", "translation_smoothness", "translation_along_axis"].iter().any(|key| obj.contains_key(*key)) {
+                        // Projects and presets with manual controls predate the automatic option.
+                        ui.translation_settings.auto = false;
+                    }
                 }
                 if !*is_preset {
                     gyro.optical_stab = None;
@@ -5839,6 +5845,8 @@ mod tests {
 
     fn optical_project_manager() -> StabilizationManager {
         let manager = manager_with_synthetic_gyro();
+        // These fixtures exercise the saved manual settings; new sessions use automatic parameters.
+        manager.set_translation_auto(false);
         {
             let mut p = manager.params.write();
             p.duration_ms = 10_000.0;
@@ -6174,6 +6182,7 @@ mod tests {
 
     #[test]
     fn translation_auto_round_trips_and_older_projects_stay_manual() {
+        assert!(StabilizationManager::default().optical_ui.read().translation_settings.auto);
         let manager = optical_project_manager();
         assert!(!manager.optical_ui.read().translation_settings.auto);
         manager.set_translation_stabilization_enabled(true);

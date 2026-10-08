@@ -3011,7 +3011,7 @@ Do you want to submit your profile?</source>
     </message>
     <message>
         <source>Automatic parameters</source>
-        <translation>自动参数</translation>
+        <translation>自动</translation>
     </message>
     <message>
         <source>Choose the reference distance and the smoothness from the analysis: hold the distant scenery steady, or the subject once it fills most of the picture, and smooth as much as the shift range allows.</source>

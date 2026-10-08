@@ -11,7 +11,7 @@ pub const CORRECTION: &str = "correction";
 pub const TRANSLATION: &str = "translation";
 pub const RECONSTRUCTION: &str = "reconstruction";
 
-/// Why a translation or a reconstruction did not even get analyzed. The panel shows the same text in this situation
+/// Why a translation or a reconstruction did not even get analyzed.
 pub const NEEDS_MOTION: &str = "Needs motion data from the file";
 /// An analysis that finished without error but left a ticked item without a result that applies
 pub const NO_RESULT: &str = "The analysis gave no usable result";
@@ -44,7 +44,7 @@ impl Default for QueueOpticalSettings {
             translation_reference: 1.0,
             translation_smoothness: 1.0,
             translation_along_axis: true,
-            translation_auto: false,
+            translation_auto: gyroflow_core::OpticalUi::default().translation_settings.auto,
             reconstruction: false,
         }
     }
@@ -445,7 +445,7 @@ mod tests {
         let s = settings(serde_json::json!({ "translation": true }));
         assert_eq!(s, QueueOpticalSettings { translation: true, ..Default::default() });
         assert_eq!(s.strength, gyroflow_core::gyro_source::OpticalCorrectionSettings::default().strength);
-        let ui = gyroflow_core::gyro_source::OpticalTranslationSettings::default();
+        let ui = gyroflow_core::OpticalUi::default().translation_settings;
         assert_eq!((s.translation_reference, s.translation_smoothness, s.translation_along_axis, s.translation_auto), (ui.reference, ui.smoothness_s, ui.along_axis, ui.auto));
         assert!(QueueOpticalSettings::from_json("{not json").is_err());
         assert!(QueueOpticalSettings::from_json("[1]").is_err());
