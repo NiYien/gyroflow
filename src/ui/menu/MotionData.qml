@@ -107,9 +107,16 @@ MenuItem {
     function restoreOpticalControls(restoreOpticalRequest: bool): void { root.refreshOpticalInfo(true, restoreOpticalRequest); }
     // queue-optical-analysis: the render queue follows the panel. Only a user edit pushes; a programmatic refresh
     // (loading a video or a project) leaves the queue's settings alone.
+    property bool queueOpticalSettingsEdited: false;
     function pushQueueOpticalSettings(): void {
         if (root.updatingOpticalControls) return;
+        root.queueOpticalSettingsEdited = true;
         Qt.callLater(root.sendQueueOpticalSettings);
+    }
+    function syncQueueOpticalSettingsForProcessing(): void {
+        // Loading a preview can change the visible choices after the last queue edit. An explicit batch action uses them.
+        if (!root.queueOpticalSettingsEdited || !window.isSimpleMode || window.useMobileWorkspace) return;
+        root.sendQueueOpticalSettings();
     }
     function sendQueueOpticalSettings(): void {
         render_queue.set_jobs_optical_settings(JSON.stringify({

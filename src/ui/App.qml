@@ -2326,6 +2326,7 @@ Rectangle {
         return false;
     }
     function runSimpleBatchSync(): void {
+        if (window.motionData) window.motionData.syncQueueOpticalSettingsForProcessing();
         if (!lensDataGatePasses()) return;
         // queue-stuck-state-recovery: the batch-sync entry point returns without
         // a word when nothing is dispatchable. This is the single choke point for
@@ -2354,6 +2355,7 @@ Rectangle {
     // Simple-mode batch export dispatch (queue mode). Shared by simpleExportStabilizedBtn and
     // by RenderQueue's match-then-sync orchestration. Batch render auto-syncs not-yet-synced jobs.
     function runSimpleBatchExport(): void {
+        if (window.motionData) window.motionData.syncQueueOpticalSettingsForProcessing();
         if (!queueVideoOutputFolderGatePasses(false)) return;
         if (!lensDataGatePasses()) return;
         if (render_queue.has_crm_proxy_jobs()) {
@@ -2375,6 +2377,7 @@ Rectangle {
         messageBox(Modal.Question, qsTr("Already exported. Re-export?"), [
             { text: qsTr("Yes"), clicked: function() {
                 if (kind === "video") {
+                    if (window.motionData) window.motionData.syncQueueOpticalSettingsForProcessing();
                     if (!window.queueVideoOutputFolderGatePasses(true)) return;
                     // Mirror runSimpleBatchExport's lens-data gate + CRM-proxy guard
                     // + export_project, but requeue already-rendered video exports
@@ -2532,6 +2535,7 @@ Rectangle {
         // back into the queue before anything below reads it; the original
         // decision tree continues inside the callback (synchronous when clean).
         window.saveEditingJobIfDirty(function() {
+            if (window.motionData) window.motionData.syncQueueOpticalSettingsForProcessing();
             // queue-stuck-state-recovery: lift terminal states this dispatch could get
             // past, BEFORE anything below reads the queue. Keeping it first is what
             // lets every gate downstream see an ordinary queue instead of needing a
@@ -2587,6 +2591,7 @@ Rectangle {
         // back into the queue before anything below reads it; the original
         // decision tree continues inside the callback (synchronous when clean).
         window.saveEditingJobIfDirty(function() {
+            if (window.motionData) window.motionData.syncQueueOpticalSettingsForProcessing();
             // queue-stuck-state-recovery, "export" intent: unlike the stabilize flow
             // this deliberately leaves plugin-only skips in place (an encode can never
             // consume those sources), so the blocker below explains them instead.
