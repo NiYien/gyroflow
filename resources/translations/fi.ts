@@ -1161,6 +1161,16 @@ Kokeile toista lähtökoodekkia (H.265/HEVC tukee useampia tapauksia kuin H.264/
         <source>, </source>
         <translation>, </translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1368"/>
+        <source>Please confirm the output folder</source>
+        <translation>Vahvista tallennuskansio</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1370"/>
+        <source>Choose folder</source>
+        <translation>Valitse kansio</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4691,6 +4701,11 @@ Anna kuvanopeus:</translation>
         <location filename="../../src/ui/RenderQueue.qml" line="2849"/>
         <source>Analyzing...</source>
         <translation>Analysoidaan...</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
+        <source>Please confirm the output folder</source>
+        <translation>Vahvista tallennuskansio</translation>
     </message>
 </context>
 <context>

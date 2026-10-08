@@ -1162,6 +1162,16 @@ Prøv en annen utdatakodek (H.265/HEVC dekker flere tilfeller enn H.264/AVC), se
         <source>, </source>
         <translation>, </translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1368"/>
+        <source>Please confirm the output folder</source>
+        <translation>Bekreft utdatamappen</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1370"/>
+        <source>Choose folder</source>
+        <translation>Velg mappe</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4692,6 +4702,11 @@ Vennligst oppgi bildefrekvens:</translation>
         <location filename="../../src/ui/RenderQueue.qml" line="2849"/>
         <source>Analyzing...</source>
         <translation>Analyserer...</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
+        <source>Please confirm the output folder</source>
+        <translation>Bekreft utdatamappen</translation>
     </message>
 </context>
 <context>

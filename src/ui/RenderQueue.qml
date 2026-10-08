@@ -3111,8 +3111,10 @@ Item {
                 let remaining = foldersWithoutAccess.length;
                 for (const folder of foldersWithoutAccess) {
                     remaining--;
-                    let el = messageBox(Modal.Info, qsTr("Due to file access restrictions, you need to select the destination folder manually.\nClick Ok and select the destination folder."), [
-                        { text: qsTr("Ok"), clicked: () => {
+                    let el = messageBox(Modal.Info, Qt.platform.os === "ios"
+                        ? qsTr("Please confirm the output folder")
+                        : qsTr("Due to file access restrictions, you need to select the destination folder manually.\nClick Ok and select the destination folder."), [
+                        { text: Qt.platform.os === "ios" ? qsTr("Choose folder") : qsTr("Ok"), clicked: () => {
                             outputFile.selectFolder(folder, function(_) { if (!remaining) add(outFolder, urls, crmProxyGyroByProxy); });
                         }},
                     ], undefined, Text.AutoText, "file-access-restriction");

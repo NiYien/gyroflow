@@ -1162,6 +1162,16 @@ Prøv en anden output-codec (H.265/HEVC klarer flere tilfælde end H.264/AVC), s
         <source>, </source>
         <translation>, </translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1368"/>
+        <source>Please confirm the output folder</source>
+        <translation>Bekræft outputmappen</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1370"/>
+        <source>Choose folder</source>
+        <translation>Vælg mappe</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4692,6 +4702,11 @@ Angiv venligst billedhastighed: </translation>
         <location filename="../../src/ui/RenderQueue.qml" line="2849"/>
         <source>Analyzing...</source>
         <translation>Analyserer...</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
+        <source>Please confirm the output folder</source>
+        <translation>Bekræft outputmappen</translation>
     </message>
 </context>
 <context>

@@ -1160,6 +1160,16 @@ Coba codec keluaran lain (H.265/HEVC menangani lebih banyak kasus daripada H.264
         <source>, </source>
         <translation>, </translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1368"/>
+        <source>Please confirm the output folder</source>
+        <translation>Konfirmasikan folder keluaran</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1370"/>
+        <source>Choose folder</source>
+        <translation>Pilih folder</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4688,6 +4698,11 @@ Silakan masukan frame rate: </translation>
         <location filename="../../src/ui/RenderQueue.qml" line="2849"/>
         <source>Analyzing...</source>
         <translation>Menganalisis...</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
+        <source>Please confirm the output folder</source>
+        <translation>Konfirmasikan folder keluaran</translation>
     </message>
 </context>
 <context>

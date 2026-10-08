@@ -1158,6 +1158,16 @@ Farklı bir çıkış kodeki deneyin (H.265/HEVC, H.264/AVC&apos;den daha fazla 
         <source>, </source>
         <translation>, </translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1368"/>
+        <source>Please confirm the output folder</source>
+        <translation>Çıktı klasörünü onaylayın</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1370"/>
+        <source>Choose folder</source>
+        <translation>Klasör seç</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4685,6 +4695,11 @@ Lütfen frame rate'i belirtin: </translation>
         <location filename="../../src/ui/RenderQueue.qml" line="2849"/>
         <source>Analyzing...</source>
         <translation>Analiz ediliyor...</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
+        <source>Please confirm the output folder</source>
+        <translation>Çıktı klasörünü onaylayın</translation>
     </message>
 </context>
 <context>

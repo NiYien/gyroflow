@@ -1150,6 +1150,16 @@ Try a different output codec (H.265/HEVC handles more cases than H.264/AVC), low
         <source>This video is still loading.</source>
         <translation>这个视频仍在加载。</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1368"/>
+        <source>Please confirm the output folder</source>
+        <translation>请确认输出文件夹</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1370"/>
+        <source>Choose folder</source>
+        <translation>选择文件夹</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4642,6 +4652,11 @@ Please provide frame rate: </source>
     <message>
         <source>Search stage %1 of %2</source>
         <translation>搜索阶段 %1 / %2</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
+        <source>Please confirm the output folder</source>
+        <translation>请确认输出文件夹</translation>
     </message>
 </context>
 <context>

@@ -1161,6 +1161,16 @@ Versuchen Sie einen anderen Ausgabe-Codec (H.265/HEVC deckt mehr Fälle ab als H
         <source>, </source>
         <translation>, </translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1368"/>
+        <source>Please confirm the output folder</source>
+        <translation>Bitte bestätigen Sie den Ausgabeordner</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1370"/>
+        <source>Choose folder</source>
+        <translation>Ordner auswählen</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4691,6 +4701,11 @@ Bitte Bildrate in FPS angeben: </translation>
         <location filename="../../src/ui/RenderQueue.qml" line="2849"/>
         <source>Analyzing...</source>
         <translation>Analyse läuft...</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
+        <source>Please confirm the output folder</source>
+        <translation>Bitte bestätigen Sie den Ausgabeordner</translation>
     </message>
 </context>
 <context>

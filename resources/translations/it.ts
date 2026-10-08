@@ -1160,6 +1160,16 @@ Prova un altro codec di output (H.265/HEVC copre più casi di H.264/AVC), riduci
         <source>, </source>
         <translation>, </translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1368"/>
+        <source>Please confirm the output folder</source>
+        <translation>Conferma la cartella di output</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1370"/>
+        <source>Choose folder</source>
+        <translation>Scegli cartella</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4689,6 +4699,11 @@ Scegliere il frame rate: </translation>
         <location filename="../../src/ui/RenderQueue.qml" line="2849"/>
         <source>Analyzing...</source>
         <translation>Analisi in corso...</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
+        <source>Please confirm the output folder</source>
+        <translation>Conferma la cartella di output</translation>
     </message>
 </context>
 <context>

@@ -1160,6 +1160,16 @@ Prueba otro códec de salida (H.265/HEVC admite más casos que H.264/AVC), reduc
         <source>, </source>
         <translation>, </translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1368"/>
+        <source>Please confirm the output folder</source>
+        <translation>Confirma la carpeta de salida</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1370"/>
+        <source>Choose folder</source>
+        <translation>Elegir carpeta</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4690,6 +4700,11 @@ Por favor, indique la velocidad del fotograma: </translation>
         <location filename="../../src/ui/RenderQueue.qml" line="2849"/>
         <source>Analyzing...</source>
         <translation>Analizando...</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
+        <source>Please confirm the output folder</source>
+        <translation>Confirma la carpeta de salida</translation>
     </message>
 </context>
 <context>

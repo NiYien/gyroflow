@@ -1150,6 +1150,16 @@ Try a different output codec (H.265/HEVC handles more cases than H.264/AVC), low
         <source>This video is still loading.</source>
         <translation>這部影片仍在載入。</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1368"/>
+        <source>Please confirm the output folder</source>
+        <translation>請確認輸出資料夾</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1370"/>
+        <source>Choose folder</source>
+        <translation>選擇資料夾</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4648,6 +4658,11 @@ Please provide frame rate: </source>
         <location filename="../../src/ui/RenderQueue.qml" line="764"/>
         <source>No usable video frames were found in the deep-match analysis windows. Please try another video.</source>
         <translation>深度比對的分析區間中找不到可用影片幀，請嘗試其他影片。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
+        <source>Please confirm the output folder</source>
+        <translation>請確認輸出資料夾</translation>
     </message>
 </context>
 <context>

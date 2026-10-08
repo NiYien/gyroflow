@@ -1364,8 +1364,10 @@ Rectangle {
 
                             videoArea.vid.grabToImage(function(result) {
                                 if (isSandboxed && (!outputFile.folderUrl.toString() || !filesystem.can_create_file(outputFile.folderUrl, outputFile.filename))) {
-                                    let el = messageBox(Modal.Info, qsTr("Due to file access restrictions, you need to select the destination folder manually.\nClick Ok and select the destination folder."), [
-                                        { text: qsTr("Ok"), clicked: () => {
+                                    let el = messageBox(Modal.Info, Qt.platform.os === "ios"
+                                        ? qsTr("Please confirm the output folder")
+                                        : qsTr("Due to file access restrictions, you need to select the destination folder manually.\nClick Ok and select the destination folder."), [
+                                        { text: Qt.platform.os === "ios" ? qsTr("Choose folder") : qsTr("Ok"), clicked: () => {
                                             outputFile.selectFolder(outputFile.folderUrl, function(_) { renderBtn.btn.clicked(); });
                                         }},
                                     ], undefined, Text.AutoText, "file-access-restriction");

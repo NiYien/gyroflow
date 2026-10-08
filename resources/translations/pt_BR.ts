@@ -1161,6 +1161,16 @@ Tente outro codec de saída (H.265/HEVC cobre mais casos que H.264/AVC), reduza 
         <source>, </source>
         <translation>, </translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1368"/>
+        <source>Please confirm the output folder</source>
+        <translation>Confirme a pasta de saída</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1370"/>
+        <source>Choose folder</source>
+        <translation>Escolher pasta</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4691,6 +4701,11 @@ Forneça a taxa de quadros:</translation>
         <location filename="../../src/ui/RenderQueue.qml" line="2849"/>
         <source>Analyzing...</source>
         <translation>Analisando...</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
+        <source>Please confirm the output folder</source>
+        <translation>Confirme a pasta de saída</translation>
     </message>
 </context>
 <context>

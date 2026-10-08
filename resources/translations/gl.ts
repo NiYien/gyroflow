@@ -1160,6 +1160,16 @@ Proba outro códec de saída (H.265/HEVC admite máis casos que H.264/AVC), redu
         <source>, </source>
         <translation>, </translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1368"/>
+        <source>Please confirm the output folder</source>
+        <translation>Confirma o cartafol de saída</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1370"/>
+        <source>Choose folder</source>
+        <translation>Escoller cartafol</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4690,6 +4700,11 @@ Proporcione taxa de fotogramas: </translation>
         <location filename="../../src/ui/RenderQueue.qml" line="2849"/>
         <source>Analyzing...</source>
         <translation>Analizando...</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
+        <source>Please confirm the output folder</source>
+        <translation>Confirma o cartafol de saída</translation>
     </message>
 </context>
 <context>

@@ -1161,6 +1161,16 @@ Try a different output codec (H.265/HEVC handles more cases than H.264/AVC), low
         <source>, </source>
         <translation>, </translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1368"/>
+        <source>Please confirm the output folder</source>
+        <translation>출력 폴더를 확인해 주세요</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1370"/>
+        <source>Choose folder</source>
+        <translation>폴더 선택</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4691,6 +4701,11 @@ Please provide frame rate: </source>
         <location filename="../../src/ui/RenderQueue.qml" line="2849"/>
         <source>Analyzing...</source>
         <translation>분석 중...</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
+        <source>Please confirm the output folder</source>
+        <translation>출력 폴더를 확인해 주세요</translation>
     </message>
 </context>
 <context>

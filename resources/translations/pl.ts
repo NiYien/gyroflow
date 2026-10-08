@@ -1162,6 +1162,16 @@ Spróbuj innego kodeka wyjściowego (H.265/HEVC obsługuje więcej przypadków n
         <source>, </source>
         <translation>, </translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1368"/>
+        <source>Please confirm the output folder</source>
+        <translation>Potwierdź folder wyjściowy</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1370"/>
+        <source>Choose folder</source>
+        <translation>Wybierz folder</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4692,6 +4702,11 @@ Podaj ilość klatek na sekundę: </translation>
         <location filename="../../src/ui/RenderQueue.qml" line="2849"/>
         <source>Analyzing...</source>
         <translation>Analizowanie...</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
+        <source>Please confirm the output folder</source>
+        <translation>Potwierdź folder wyjściowy</translation>
     </message>
 </context>
 <context>

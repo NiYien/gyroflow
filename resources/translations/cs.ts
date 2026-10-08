@@ -1162,6 +1162,16 @@ Zkuste jiný výstupní kodek (H.265/HEVC zvládne více případů než H.264/A
         <source>, </source>
         <translation>, </translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1368"/>
+        <source>Please confirm the output folder</source>
+        <translation>Potvrďte prosím výstupní složku</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1370"/>
+        <source>Choose folder</source>
+        <translation>Vybrat složku</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4692,6 +4702,11 @@ Zadejte prosím frekvenci snímku: </translation>
         <location filename="../../src/ui/RenderQueue.qml" line="2849"/>
         <source>Analyzing...</source>
         <translation>Analyzuje se...</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
+        <source>Please confirm the output folder</source>
+        <translation>Potvrďte prosím výstupní složku</translation>
     </message>
 </context>
 <context>

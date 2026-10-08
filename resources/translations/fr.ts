@@ -1161,6 +1161,16 @@ Essayez un autre codec de sortie (H.265/HEVC gère plus de cas que H.264/AVC), r
         <source>, </source>
         <translation>, </translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1368"/>
+        <source>Please confirm the output folder</source>
+        <translation>Veuillez confirmer le dossier de sortie</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1370"/>
+        <source>Choose folder</source>
+        <translation>Choisir un dossier</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4691,6 +4701,11 @@ S'il vous plait, indiquez le nombre d'images par seconde :</translation>
         <location filename="../../src/ui/RenderQueue.qml" line="2849"/>
         <source>Analyzing...</source>
         <translation>Analyse en cours...</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
+        <source>Please confirm the output folder</source>
+        <translation>Veuillez confirmer le dossier de sortie</translation>
     </message>
 </context>
 <context>
