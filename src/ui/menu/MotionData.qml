@@ -467,6 +467,7 @@ MenuItem {
         spacing: 5 * dpiScale;
     CheckBoxWithContent {
         id: opticalcb;
+        visible: !window.isSimpleMode;
         text: window.isSimpleMode ? qsTr("Optical stabilization") : qsTr("Optical correction");
         cb.tooltip: qsTr("Measure the camera rotation from the video itself and correct the motion data where they disagree. Useful when vibrations corrupt the gyro data, e.g. on a hard-mounted FPV camera. The analysis samples frames at an integer interval near 25 fps within the selected trim range.");
         property var info: ({ available: false });
