@@ -504,6 +504,8 @@ fn max_movement(
     Ok(maximum)
 }
 
+const MAX_ITERATIONS: usize = 80;
+
 fn converged(predicted_px: f64, accepted_px: f64, relative_cost: f64) -> bool {
     predicted_px <= 1e-4 && accepted_px <= 1e-4 && relative_cost <= 1e-8
 }
@@ -586,7 +588,7 @@ pub(super) fn solve_sensor<'a>(
     let mut max_step_px = f64::INFINITY;
     let mut previous_scales: Option<Vec<f64>> = None;
     let mut previous_weights: Option<Vec<f64>> = None;
-    for iteration in 0..20 {
+    for iteration in 0..MAX_ITERATIONS {
         cancelled(cancel)?;
         let errors = residuals(pairs, &support, &endpoints, &solution.coeffs, cancel)?;
         let scales = scales(&support, &errors);
@@ -745,7 +747,7 @@ pub(super) fn solve_sensor<'a>(
         previous_scales = Some(scales);
         previous_weights = Some(weights);
     }
-    log::warn!("Sensor GN NotConverged iterations=20 initial_cost={initial_cost} final_cost={final_cost} max_step_px={max_step_px}");
+    log::warn!("Sensor GN NotConverged iterations={MAX_ITERATIONS} initial_cost={initial_cost} final_cost={final_cost} max_step_px={max_step_px}");
     Err(SensorSolveError::NotConverged)
 }
 

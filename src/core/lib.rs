@@ -3006,6 +3006,9 @@ impl StabilizationManager {
             if m.stab_requested { ::log::info!("No usable in-camera stabilization measurements, no reconstruction installed"); }
             None
         };
+        if m.stab_requested && reconstruction.is_none() {
+            return Err(stab_error.unwrap_or_else(|| "Not enough of the image could be tracked".into()));
+        }
         loop {
             let settings = *self.optical_settings.read();
             let mut correction = if !m.stab_requested || !m.bands.is_empty() {
@@ -6001,6 +6004,50 @@ mod tests {
             measurements.stab_pairs.push(pair);
         }
         measurements
+    }
+    fn failing_stab_measurements(m: &StabilizationManager, failure: &str) -> synchronization::optical_analysis::OpticalMeasurements {
+        let mut measurements = stab_install_measurements(m);
+        measurements.bands = optical_fixture_measurements(m, measurements.generation).bands;
+        match failure {
+            "missing_bands" => measurements.stab_bands.clear(),
+            "changed_motion" => measurements.quats_checksum ^= 1,
+            "missing_points" => measurements.stab_pairs.clear(),
+            _ => panic!("Unknown reconstruction failure fixture"),
+        }
+        assert!(synchronization::optical_analysis::solve(&measurements, &m.optical_settings.read()).is_ok());
+        measurements
+    }
+    #[test]
+    fn optical_stab_failure_reports_error_instead_of_disabled_correction() {
+        for failure in ["missing_bands", "changed_motion", "missing_points"] {
+            let m = optical_project_manager();
+            m.set_stab_reconstruction_enabled(true);
+            let error = m.set_optical_measurements(failing_stab_measurements(&m, failure)).unwrap_err();
+            assert_eq!(error, if failure == "changed_motion" {
+                "Motion data changed after analysis; analyze again"
+            } else { "Not enough of the image could be tracked" });
+            let gyro = m.gyro.read();
+            assert!(gyro.optical_stab.is_none());
+            assert!(gyro.optical_correction.is_none());
+            assert!(gyro.optical_translation.is_none());
+            assert!(m.optical_measurements.read().is_none());
+        }
+    }
+    #[test]
+    fn optical_stab_failure_keeps_previous_results_and_measurements() {
+        for failure in ["missing_bands", "changed_motion", "missing_points"] {
+            let m = optical_project_manager();
+            install_translation(&m);
+            install_stab(&m);
+            let before = optical_export(&m)["gyro_source"].clone();
+            let before_quats = m.gyro.read().quaternions.clone();
+            let kept = m.optical_measurements.read().clone().unwrap();
+            assert!(m.set_optical_measurements(failing_stab_measurements(&m, failure)).is_err());
+            assert_eq!(optical_export(&m)["gyro_source"], before);
+            assert_eq!(m.gyro.read().quaternions, before_quats);
+            assert!(m.gyro.read().optical_stab.as_ref().unwrap().is_active());
+            assert!(Arc::ptr_eq(m.optical_measurements.read().as_ref().unwrap(), &kept));
+        }
     }
     #[test]
     fn optical_stab_install_is_independent_and_keeps_measurement_fingerprints() {
