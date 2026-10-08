@@ -6,7 +6,7 @@ use nalgebra::{Matrix3, Vector3};
 use parking_lot::RwLock;
 
 use super::{GyroSource, Quat64, TimeQuat};
-use crate::stabilization::{ComputeParams, FrameTransform, undistort_points};
+use crate::stabilization::{ComputeParams, FrameTransform, is_valid_point, undistort_points};
 
 /// Keep smoothing on the recorded view. The renderer still needs the original
 /// body orientation to undo IBIS/OIS/EIS and to correct rolling shutter.
@@ -76,7 +76,7 @@ pub(super) fn smoothing_quaternions(
         );
         if rays
             .iter()
-            .any(|p| !p.0.is_finite() || !p.1.is_finite() || p.0.abs() > 1e10 || p.1.abs() > 1e10)
+            .any(|p| !is_valid_point(*p) || p.0.abs() > 1e10 || p.1.abs() > 1e10)
         {
             return body_quaternions.clone();
         }
@@ -615,6 +615,66 @@ mod tests {
         for q in view.values() {
             assert!(q.angle() < 1e-6);
         }
+    }
+
+    #[test]
+    fn anamorphic_poly5_view_stays_continuous_when_sensor_shift_crosses_zero() {
+        let manager = compensated_fixture();
+        manager.lens.write().load_from_json_value(&serde_json::json!({
+            "calib_dimension": {"w":1920,"h":1620},
+            "input_vertical_stretch":1.5,
+            "distortion_model":"poly5",
+            "fisheye_params": {
+                "camera_matrix":[[1000.0,0.0,960.0],[0.0,1000.0,810.0],[0.0,0.0,1.0]],
+                "distortion_coeffs":[-0.2,0.0,0.0,0.0]
+            }
+        }));
+        {
+            let mut gyro = manager.gyro.write();
+            for quat in gyro.quaternions.values_mut() { *quat = Quat64::identity(); }
+            for (frame, stab) in gyro.file_metadata.write().camera_stab_data.iter_mut().enumerate() {
+                let shift = [0.0, 0.1, 0.0, -0.1, 0.0, 0.1][frame];
+                stab.ibis_spline = CatmullRom::new();
+                for row in [0.0, 1080.0] {
+                    stab.ibis_spline.add_point(row, Vector3::new(shift, 0.0, 0.0));
+                }
+            }
+        }
+        let params = ComputeParams::from_manager(&manager);
+        let gyro = manager.gyro.read();
+        let view = smoothing_quaternions(&gyro, &gyro.quaternions, &params);
+        for (&time, quat) in &view {
+            assert!(quat.angle() < 0.001, "subpixel shift produced a large view rotation at {time}");
+        }
+        for frame in [0, 2, 4] {
+            assert!(view[&(frame * 100_000)].angle() < 1e-12);
+        }
+        assert!(view[&100_000].angle() > 1e-6, "valid sensor compensation was discarded");
+    }
+
+    #[test]
+    fn invalid_point_sentinel_falls_back_to_body_quaternions() {
+        let manager = compensated_fixture();
+        {
+            let mut lens = manager.lens.write();
+            lens.distortion_model = Some("poly5".into());
+            lens.fisheye_params.distortion_coeffs = vec![-0.2, 0.0, 0.0, 0.0];
+            lens.fisheye_params.camera_matrix[0][0] = 1.0;
+            lens.fisheye_params.camera_matrix[1][1] = 1.0;
+            lens.init();
+        }
+        for stab in &mut manager.gyro.read().file_metadata.write().camera_stab_data {
+            stab.ibis_spline = CatmullRom::new();
+            for row in [0.0, 1080.0] {
+                stab.ibis_spline.add_point(row, Vector3::new(0.5, 0.0, 0.0));
+            }
+        }
+        let params = ComputeParams::from_manager(&manager);
+        let gyro = manager.gyro.read();
+        assert_eq!(
+            smoothing_quaternions(&gyro, &gyro.quaternions, &params),
+            gyro.quaternions
+        );
     }
 
     #[test]

@@ -14,7 +14,7 @@ impl Poly5 {
     pub fn undistort_point(&self, point: (f32, f32), params: &KernelParams) -> Option<(f32, f32)> {
         let rd = (point.0 * point.0 + point.1 * point.1).sqrt();
         if rd == 0.0 {
-            return None;
+            return Some((0.0, 0.0));
         }
 
         let mut ru = rd;
