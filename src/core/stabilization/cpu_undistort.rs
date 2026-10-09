@@ -4,7 +4,7 @@
 use crate::gpu::{BufferSource, Buffers, PostAffine};
 
 use super::{
-    ComputeParams, FrameTransform, KernelParams, PixelType, Stabilization,
+    ComputeParams, FrameTransform, KernelParams, KernelParamsFlags, PixelType, Stabilization,
     distortion_models::DistortionModel,
 };
 use crate::util::map_coord;
@@ -226,12 +226,13 @@ impl Stabilization {
         mesh_data: &[f64],
     ) -> Option<(f32, f32)> {
         let matrices = matrices[idx];
+        let warp = output_warp(pos, params, mesh_data);
         let _x =
-            (pos.0 * matrices[0]) + (pos.1 * matrices[1]) + matrices[2] + params.translation3d[0];
+            (pos.0 * matrices[0]) + (pos.1 * matrices[1]) + matrices[2] + params.translation3d[0] + warp[0];
         let _y =
-            (pos.0 * matrices[3]) + (pos.1 * matrices[4]) + matrices[5] + params.translation3d[1];
+            (pos.0 * matrices[3]) + (pos.1 * matrices[4]) + matrices[5] + params.translation3d[1] + warp[1];
         let mut _w =
-            (pos.0 * matrices[6]) + (pos.1 * matrices[7]) + matrices[8] + params.translation3d[2];
+            (pos.0 * matrices[6]) + (pos.1 * matrices[7]) + matrices[8] + params.translation3d[2] + warp[2];
         if _w > 0.0 {
             if params.r_limit > 0.0 && (_x.powi(2) + _y.powi(2)) > r_limit_sq * (_w * _w) {
                 return None;
@@ -1128,11 +1129,37 @@ impl Stabilization {
     }
 }
 
+/// The depth warp's translation at a kernel position, bilinear from the grid `FrameTransform` appends to the mesh
+/// data at `reserved1`; zero without `HAS_OUTPUT_WARP`. Mirrored in every GPU kernel.
+#[inline]
+pub(crate) fn output_warp(pos: (f32, f32), params: &KernelParams, mesh_data: &[f64]) -> [f32; 3] {
+    if params.flags & KernelParamsFlags::HAS_OUTPUT_WARP.bits() == 0 || params.output_width <= 0 || params.output_height <= 0 { return [0.0; 3]; }
+    let o = params.reserved1 as usize;
+    if o + 2 > mesh_data.len() { return [0.0; 3]; }
+    let (cols, rows) = (mesh_data[o] as usize, mesh_data[o + 1] as usize);
+    if cols < 2 || rows < 2 || o + 2 + cols * rows * 3 > mesh_data.len() { return [0.0; 3]; }
+    let gx = (pos.0 / params.output_width as f32 * (cols - 1) as f32).clamp(0.0, (cols - 1) as f32);
+    let gy = (pos.1 / params.output_height as f32 * (rows - 1) as f32).clamp(0.0, (rows - 1) as f32);
+    let (x0, y0) = ((gx.floor() as usize).min(cols - 2), (gy.floor() as usize).min(rows - 2));
+    let (fx, fy) = (gx - x0 as f32, gy - y0 as f32);
+    let at = |c: usize, r: usize, k: usize| mesh_data[o + 2 + (r * cols + c) * 3 + k] as f32;
+    let mut out = [0.0f32; 3];
+    for (k, value) in out.iter_mut().enumerate() {
+        *value = at(x0, y0, k) * (1.0 - fx) * (1.0 - fy) + at(x0 + 1, y0, k) * fx * (1.0 - fy)
+            + at(x0, y0 + 1, k) * (1.0 - fx) * fy + at(x0 + 1, y0 + 1, k) * fx * fy;
+    }
+    out
+}
+
 pub fn undistort_points_with_rolling_shutter(distorted: &[(f32, f32)], timestamp_ms: f64, frame: Option<usize>, params: &ComputeParams, lens_correction_amount: f64, use_fovs: bool, clamp_to_image_circle: bool) -> Vec<(f32, f32)> {
     if distorted.is_empty() { return Vec::new(); }
     let (camera_matrix, distortion_coeffs, _p, rotations, is, mesh, fov, r_limit) = FrameTransform::at_timestamp_for_points(params, distorted, timestamp_ms, frame, use_fovs);
+    // The depth warp is defined over the source image, where each of these points is known: no inversion needed
+    let warp = if params.apply_optical_translation && !params.suppress_rotation {
+        params.gyro.read().optical_translation.as_ref().filter(|t| t.is_active() && t.has_depth_warp()).and_then(|t| t.warp_cells_at(timestamp_ms))
+    } else { None };
 
-    undistort_points(distorted, camera_matrix, &distortion_coeffs, rotations[0], Some(Matrix3::identity()), Some(rotations), params, lens_correction_amount, fov, timestamp_ms, is, mesh, if clamp_to_image_circle { r_limit } else { 0.0 })
+    undistort_points_warped(distorted, camera_matrix, &distortion_coeffs, rotations[0], Some(Matrix3::identity()), Some(rotations), params, lens_correction_amount, fov, timestamp_ms, is, mesh, if clamp_to_image_circle { r_limit } else { 0.0 }, warp.as_ref())
 }
 pub fn undistort_points_for_optical_flow(
     distorted: &[(f32, f32)],
@@ -1415,6 +1442,12 @@ fn point_to_sensor(pi: &(f32, f32), index: usize, c: (f32, f32), params: &Comput
 
 // Ported from OpenCV: https://github.com/opencv/opencv/blob/4.x/modules/calib3d/src/fisheye.cpp#L321
 pub fn undistort_points(distorted: &[(f32, f32)], camera_matrix: Matrix3<f64>, distortion_coeffs: &[f64; 24], rotation: Matrix3<f64>, p: Option<Matrix3<f64>>, rot_per_point: Option<Vec<Matrix3<f64>>>, params: &ComputeParams, lens_correction_amount: f64, fov: f64, timestamp_ms: f64, shift_per_point: Option<Vec<(f32, f32, f32, f32, f32)>>, mesh: Option<Vec<f64>>, r_limit: f64) -> Vec<(f32, f32)> {
+    undistort_points_warped(distorted, camera_matrix, distortion_coeffs, rotation, p, rot_per_point, params, lens_correction_amount, fov, timestamp_ms, shift_per_point, mesh, r_limit, None)
+}
+
+/// `undistort_points`, with the depth warp at the points' source positions added to their projection like the
+/// rigid shift (a rank-one update of the forward matrix, as `FrameTransform::at_timestamp_for_points` does).
+fn undistort_points_warped(distorted: &[(f32, f32)], camera_matrix: Matrix3<f64>, distortion_coeffs: &[f64; 24], rotation: Matrix3<f64>, p: Option<Matrix3<f64>>, rot_per_point: Option<Vec<Matrix3<f64>>>, params: &ComputeParams, lens_correction_amount: f64, fov: f64, timestamp_ms: f64, shift_per_point: Option<Vec<(f32, f32, f32, f32, f32)>>, mesh: Option<Vec<f64>>, r_limit: f64, warp: Option<&crate::gyro_source::optical_translation::depth_warp::WarpCells>) -> Vec<(f32, f32)> {
     // The render samples stretch from the timestamp-selected calibration.
     // Its inverse must use that same sample, including the host conversion;
     // the base profile can have a different stretch at an interpolation knot.
@@ -1492,6 +1525,16 @@ pub fn undistort_points(distorted: &[(f32, f32)], camera_matrix: Matrix3<f64>, d
         };
 
         if let Some(ray) = ray {
+            let mut rot = rot;
+            if let Some(warp) = warp {
+                let d = warp.at(ray.0 as f64, ray.1 as f64);
+                if d.x != 0.0 || d.y != 0.0 {
+                    let p64: Matrix3<f64> = nalgebra::convert(rot);
+                    let s = p64 * Vector3::new(d.x, d.y, 0.0);
+                    let denominator = 1.0 + s.z;
+                    if denominator > 0.5 { rot = nalgebra::convert(p64 - s * p64.row(2) / denominator); }
+                }
+            }
             // reproject
             let pr = rot * nalgebra::Vector3::new(ray.0, ray.1, 1.0); // rotated point optionally multiplied by new camera matrix
             if !(pr[2] > 0.0) {

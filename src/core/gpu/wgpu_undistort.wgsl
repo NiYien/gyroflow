@@ -370,10 +370,33 @@ fn interpolate_mesh(base: i32, width: f32, height: f32, pos: vec2<f32>) -> vec2<
     );
 }
 
+// Depth warp: bilinear translation from the grid appended to the mesh data at `reserved1` (cpu_undistort::output_warp)
+fn output_warp(pos: vec2<f32>) -> vec3<f32> {
+    if (!bool(flags & 16384) || params.output_width <= 0 || params.output_height <= 0) { return vec3<f32>(0.0, 0.0, 0.0); }
+    let o = i32(params.reserved1);
+    let cols = i32(mesh_data[o]);
+    let rows = i32(mesh_data[o + 1]);
+    if (cols < 2 || rows < 2) { return vec3<f32>(0.0, 0.0, 0.0); }
+    let gx = clamp(pos.x / f32(params.output_width) * f32(cols - 1), 0.0, f32(cols - 1));
+    let gy = clamp(pos.y / f32(params.output_height) * f32(rows - 1), 0.0, f32(rows - 1));
+    let x0 = min(i32(floor(gx)), cols - 2);
+    let y0 = min(i32(floor(gy)), rows - 2);
+    let fx = gx - f32(x0);
+    let fy = gy - f32(y0);
+    let i00 = o + 2 + (y0 * cols + x0) * 3;
+    let i01 = o + 2 + ((y0 + 1) * cols + x0) * 3;
+    let v00 = vec3<f32>(mesh_data[i00], mesh_data[i00 + 1], mesh_data[i00 + 2]);
+    let v10 = vec3<f32>(mesh_data[i00 + 3], mesh_data[i00 + 4], mesh_data[i00 + 5]);
+    let v01 = vec3<f32>(mesh_data[i01], mesh_data[i01 + 1], mesh_data[i01 + 2]);
+    let v11 = vec3<f32>(mesh_data[i01 + 3], mesh_data[i01 + 4], mesh_data[i01 + 5]);
+    return v00 * ((1.0 - fx) * (1.0 - fy)) + v10 * (fx * (1.0 - fy)) + v01 * ((1.0 - fx) * fy) + v11 * (fx * fy);
+}
+
 fn rotate_and_distort(pos: vec2<f32>, idx: u32, f: vec2<f32>, c: vec2<f32>, k1: vec4<f32>, k2: vec4<f32>, k3: vec4<f32>) -> vec2<f32> {
-    let _x = (pos.x * matrices[idx + 0u]) + (pos.y * matrices[idx + 1u]) + matrices[idx + 2u] + params.translation3d.x;
-    let _y = (pos.x * matrices[idx + 3u]) + (pos.y * matrices[idx + 4u]) + matrices[idx + 5u] + params.translation3d.y;
-    var _w = (pos.x * matrices[idx + 6u]) + (pos.y * matrices[idx + 7u]) + matrices[idx + 8u] + params.translation3d.z;
+    let warp = output_warp(pos);
+    let _x = (pos.x * matrices[idx + 0u]) + (pos.y * matrices[idx + 1u]) + matrices[idx + 2u] + params.translation3d.x + warp.x;
+    let _y = (pos.x * matrices[idx + 3u]) + (pos.y * matrices[idx + 4u]) + matrices[idx + 5u] + params.translation3d.y + warp.y;
+    var _w = (pos.x * matrices[idx + 6u]) + (pos.y * matrices[idx + 7u]) + matrices[idx + 8u] + params.translation3d.z + warp.z;
 
     if (_w > 0.0) {
         if (params.r_limit > 0.0 && length(vec2<f32>(_x, _y) / _w) > params.r_limit) {

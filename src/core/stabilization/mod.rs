@@ -19,7 +19,7 @@ mod pixel_formats;
 pub mod distortion_models;
 pub use compute_params::ComputeParams;
 pub use cpu_undistort::*;
-pub use frame_transform::FrameTransform;
+pub use frame_transform::{FrameTransform, WARP_COLS, WARP_ROWS};
 pub use pixel_formats::*;
 
 #[derive(Default, Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
@@ -140,6 +140,9 @@ bitflags::bitflags! {
         // bits clear) is byte-equivalent to the prior kernel.
         const FLIP_H               = 1 << 12; // 4096
         const FLIP_V               = 1 << 13; // 8192
+        // Depth warp: a per-region translation from a grid over the output, appended to the mesh data at
+        // `reserved1` (see `FrameTransform::depth_warp_grid`). Without it the kernels are unchanged.
+        const HAS_OUTPUT_WARP      = 1 << 14; // 16384
     }
 }
 
@@ -582,6 +585,9 @@ impl Stabilization {
         transform.kernel_params.pix_element_count = T::COUNT as i32;
         transform.kernel_params.canvas_scale = self.drawing.scale as f32;
         transform.kernel_params.flags = self.get_kernel_flags(frame, buffers).bits();
+        if transform.kernel_params.reserved1 > 0.0 {
+            transform.kernel_params.flags |= KernelParamsFlags::HAS_OUTPUT_WARP.bits();
+        }
 
         transform.kernel_params.stride = buffers.input.size.2 as i32;
         transform.kernel_params.output_stride = buffers.output.size.2 as i32;

@@ -2,8 +2,10 @@
 
 //! Fit translation and uniform expansion of a relative depth layer, before removing parallax.
 
-use nalgebra::{Matrix3, Vector2, Vector3};
+use nalgebra::{DMatrix, DVector, Matrix3, Vector2, Vector3};
 use super::translation::{PairPoint, PairTranslation};
+use crate::gyro_source::PairDepthGrid;
+use crate::gyro_source::optical_translation::depth_warp::{CELLS, COLS, ROWS, EMPTY_VISIBILITY};
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct LayerMotion {
@@ -13,7 +15,84 @@ pub(super) struct LayerMotion {
     /// Numerator and denominator of the dominant layer's depth gain, for the analysis to pool over neighbouring pairs:
     /// the weighted median of the content's parallax projected on the unit-depth layer's motion, and its squared norm
     pub dominant: [f32; 2],
+    /// Depth grid over the source image for the depth warp, when asked for
+    pub depth: Option<PairDepthGrid>,
     pub weight: f32,
+}
+
+/// Scatter of log inverse depth within one grid cell (relief inside it)
+const GRID_SCATTER: f64 = 0.15;
+/// Scale of the robust smoothness between neighbouring cells, in log inverse depth: steps much larger than this
+/// (occlusion edges) are kept instead of being smoothed out
+const GRID_EDGE_SCALE: f64 = 0.3;
+/// Floor of the prior's spread around the pair's median depth
+const GRID_SPREAD_FLOOR: f64 = 0.1;
+const GRID_IRLS: usize = 4;
+
+/// Grid cell coordinates of a point of the normalized image plane, clamped to the cell centres' range
+fn grid_position(x: &Vector2<f64>, half_extent: [f64; 2]) -> (f64, f64) {
+    ((x.x + half_extent[0]) / (2.0 * half_extent[0]) * COLS as f64 - 0.5, (x.y + half_extent[1]) / (2.0 * half_extent[1]) * ROWS as f64 - 0.5)
+}
+
+/// Log inverse depth (relative to the pair's median) on a COLS x ROWS grid over the source image, and how reliable
+/// each cell is: the points' depths with their own uncertainty, a robust smoothness between neighbouring cells, and a prior
+/// at the median layer that a cell without points falls back to. `points` holds each point's plane position, log
+/// inverse depth, variance of that log and visibility.
+pub(super) fn depth_grid(points: &[(Vector2<f64>, f64, f64, f64)], half_extent: [f64; 2]) -> Option<PairDepthGrid> {
+    if points.len() < 12 || !half_extent.iter().all(|h| h.is_finite() && *h > 0.0) { return None; }
+    let mut logs: Vec<f64> = points.iter().map(|p| p.1).collect();
+    logs.sort_by(f64::total_cmp);
+    let centre = logs[logs.len() / 2];
+    let mut deviations: Vec<f64> = logs.iter().map(|z| (z - centre).abs()).collect();
+    deviations.sort_by(f64::total_cmp);
+    let spread = (1.4826 * deviations[deviations.len() / 2]).max(GRID_SPREAD_FLOOR);
+    let mut data = DMatrix::<f64>::identity(CELLS, CELLS) / (spread * spread);
+    let mut g = DVector::<f64>::zeros(CELLS);
+    let (mut visibility, mut counts) = (vec![0.0f64; CELLS], vec![0usize; CELLS]);
+    // Precision each cell gets from its own measurements, not through its neighbours
+    let mut direct = vec![0.0f64; CELLS];
+    for (x, z, variance, vis) in points {
+        let (gx, gy) = grid_position(x, half_extent);
+        let (gx, gy) = (gx.clamp(0.0, (COLS - 1) as f64), gy.clamp(0.0, (ROWS - 1) as f64));
+        let (x0, y0) = ((gx.floor() as usize).min(COLS - 2), (gy.floor() as usize).min(ROWS - 2));
+        let (fx, fy) = (gx - x0 as f64, gy - y0 as f64);
+        let basis = [(x0 + y0 * COLS, (1.0 - fx) * (1.0 - fy)), (x0 + 1 + y0 * COLS, fx * (1.0 - fy)),
+            (x0 + (y0 + 1) * COLS, (1.0 - fx) * fy), (x0 + 1 + (y0 + 1) * COLS, fx * fy)];
+        let w = 1.0 / (variance.max(0.0) + GRID_SCATTER * GRID_SCATTER);
+        for &(a, wa) in &basis {
+            g[a] += w * wa * z;
+            direct[a] += w * wa;
+            for &(b, wb) in &basis { data[(a, b)] += w * wa * wb; }
+        }
+        let nearest = gx.round() as usize + gy.round() as usize * COLS;
+        visibility[nearest] += vis;
+        counts[nearest] += 1;
+    }
+    let edges: Vec<(usize, usize)> = (0..CELLS).flat_map(|c| [(c % COLS + 1 < COLS).then_some((c, c + 1)), (c / COLS + 1 < ROWS).then_some((c, c + COLS))])
+        .flatten().collect();
+    let mut edge_weights = vec![1.0; edges.len()];
+    let mut z = DVector::<f64>::zeros(CELLS);
+    for _ in 0..GRID_IRLS {
+        let mut h = data.clone();
+        for (&(i, j), w) in edges.iter().zip(&edge_weights) {
+            let w = w / (GRID_EDGE_SCALE * GRID_EDGE_SCALE);
+            h[(i, i)] += w; h[(j, j)] += w; h[(i, j)] -= w; h[(j, i)] -= w;
+        }
+        z = h.clone().cholesky()?.solve(&g);
+        for (&(i, j), w) in edges.iter().zip(edge_weights.iter_mut()) {
+            let r = (z[i] - z[j]) / GRID_EDGE_SCALE;
+            *w = 1.0 / (1.0 + r * r);
+        }
+    }
+    if !z.iter().all(|v| v.is_finite()) { return None; }
+    // Reliability: the share of the prior's variance the cell's own measurements remove. The smoothness fills a cell
+    // without points from its neighbours, but on a 2D grid it would also make far, unmeasured cells look certain.
+    let prior_precision = 1.0 / (spread * spread);
+    Some(PairDepthGrid {
+        z: z.iter().map(|v| *v as f32).collect(),
+        r: (0..CELLS).map(|c| (direct[c] / (direct[c] + prior_precision)) as f32).collect(),
+        vis: (0..CELLS).map(|c| if counts[c] > 0 { (visibility[c] / counts[c] as f64) as f32 } else { EMPTY_VISIBILITY }).collect(),
+    })
 }
 
 /// How much of a point's motion a viewer can see: its texture against the picture's typical tracked texture. Flat or
@@ -41,13 +120,20 @@ fn plane(ray: Vector3<f64>) -> Option<Vector2<f64>> {
 }
 
 /// `projection` maps upright source camera rays to the analysis output, including its crop.
+#[cfg(test)]
 pub(super) fn fit(points: &[PairPoint], pair: &PairTranslation, projection: &Matrix3<f64>, size: (usize, usize)) -> LayerMotion {
+    fit_with_depth(points, pair, projection, size, None)
+}
+
+/// `fit`, plus the depth grid over a source image of normalized half size `grid` when given.
+pub(super) fn fit_with_depth(points: &[PairPoint], pair: &PairTranslation, projection: &Matrix3<f64>, size: (usize, usize), grid: Option<[f64; 2]>) -> LayerMotion {
     if pair.new_segment || !pair.confidence.is_finite() || pair.confidence <= 0.0 || size.0 == 0 || size.1 == 0 {
         return LayerMotion::default();
     }
     let mut cells = [0usize; 16 * 9];
-    // Texture of each kept point, for the dominant layer
+    // Texture of each kept point, for the dominant layer, and the variance of its log inverse depth for the grid
     let mut texture = Vec::new();
+    let mut log_variance = Vec::new();
     let data: Vec<_> = points.iter().filter_map(|point| {
         if !pair.carried_depth.contains(&point.id) { return None; }
         let rho = *pair.inv_depth.get(&point.id)?;
@@ -61,6 +147,7 @@ pub(super) fn fit(points: &[PairPoint], pair: &PairTranslation, projection: &Mat
         let cell = (u * 16.0) as usize + 16 * (v * 9.0) as usize;
         cells[cell] += 1;
         texture.push(point.texture);
+        log_variance.push(pair.inv_depth_var.get(&point.id).map_or(1e6, |var| (var.max(0.0) / (rho * rho)).min(1e6)));
         Some((x, delta, rho, cell))
     }).collect();
     if data.len() < 12 { return LayerMotion::default(); }
@@ -107,9 +194,15 @@ pub(super) fn fit(points: &[PairPoint], pair: &PairTranslation, projection: &Mat
     let median_of = |axis: usize| quantile(&data.iter().zip(&weights).map(|(d, w)| (d.1[axis], *w)).collect::<Vec<_>>(), 0.5);
     let parallax = Vector2::new(median_of(0), median_of(1));
     let unit = solution.xy();
+    let depth = grid.and_then(|half_extent| {
+        let entries: Vec<_> = data.iter().zip(&texture).zip(&log_variance)
+            .map(|(((x, _, rho, _), e), variance)| (*x, (rho / median).ln(), *variance, visibility(*e, typical))).collect();
+        depth_grid(&entries, half_extent)
+    });
     LayerMotion { motion: [solution.x as f32, solution.y as f32], scale_rate: solution.z as f32,
         far_beta: (quantile(&depths, 0.2) / median) as f32,
         dominant: [parallax.dot(&unit) as f32, unit.norm_squared() as f32],
+        depth,
         weight: pair.confidence.clamp(0.0, 1.0) as f32 }
 }
 
@@ -243,5 +336,40 @@ mod tests {
         let (points, mut pair, projection) = layered(5, 1.0, None);
         pair.confidence = 0.0;
         assert_eq!(fit(&points, &pair, &projection, (800, 450)).dominant, [0.0, 0.0]);
+    }
+
+    /// Four points per grid cell over a 1.6 x 0.9 plane, at log inverse depth `z(column)`, for the columns `columns`
+    fn grid_points(z: impl Fn(usize) -> f64, columns: std::ops::Range<usize>) -> Vec<(Vector2<f64>, f64, f64, f64)> {
+        let mut points = Vec::new();
+        for row in 0..ROWS {
+            for column in columns.clone() {
+                for (dx, dy) in [(0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)] {
+                    let x = Vector2::new(-0.8 + (column as f64 + dx) * 1.6 / COLS as f64, -0.45 + (row as f64 + dy) * 0.9 / ROWS as f64);
+                    points.push((x, z(column), 1e-4, 1.0));
+                }
+            }
+        }
+        points
+    }
+
+    #[test]
+    fn translation_depth_grid_follows_layers_and_keeps_their_edge() {
+        let flat = depth_grid(&grid_points(|_| 0.0, 0..COLS), [0.8, 0.45]).unwrap();
+        assert!(flat.z.iter().all(|z| z.abs() < 0.05), "{:?}", flat.z);
+        // An occlusion edge: inverse depth four times larger on the right half
+        let step = depth_grid(&grid_points(|c| if c < COLS / 2 { -0.69 } else { 0.69 }, 0..COLS), [0.8, 0.45]).unwrap();
+        for c in 0..CELLS {
+            let column = c % COLS;
+            if column <= COLS / 2 - 2 { assert!((step.z[c] + 0.69).abs() < 0.1, "{column}: {}", step.z[c]); }
+            if column >= COLS / 2 + 1 { assert!((step.z[c] - 0.69).abs() < 0.1, "{column}: {}", step.z[c]); }
+            assert!(step.r[c] > 0.9, "{}", step.r[c]);
+        }
+        // Nothing measured on the right: those cells fall back to the prior and are known to be unknown
+        let half = depth_grid(&grid_points(|c| if c < 3 { -0.5 } else { 0.5 }, 0..6), [0.8, 0.45]).unwrap();
+        for c in (0..CELLS).filter(|c| c % COLS >= 12) {
+            assert!(half.r[c] < 0.2, "{}", half.r[c]);
+            assert!((half.vis[c] - EMPTY_VISIBILITY).abs() < 1e-6);
+        }
+        assert!(depth_grid(&grid_points(|_| 0.0, 0..1)[..11], [0.8, 0.45]).is_none());
     }
 }

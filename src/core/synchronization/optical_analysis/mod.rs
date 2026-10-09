@@ -179,6 +179,8 @@ pub struct OpticalMeasurements {
     pub(crate) stab_bands: Vec<sensor::SensorBand>,
     pub translation_requested: bool,
     pub translation_samples: Vec<TranslationSample>,
+    /// Depth grids of the translation samples, for the depth warp
+    pub translation_depth: Option<crate::gyro_source::DepthGrids>,
     /// Actual analysis cadence in motion-data time, after integer frame sampling.
     pub scaled_fps: f64,
     /// Of the quaternions they were measured against, see `OpticalCorrection::quats_checksum`
@@ -367,6 +369,8 @@ struct TranslationState {
     samples: Vec<TranslationSample>,
     /// Numerator and denominator of each sample's dominant layer gain, see `finish`
     dominant: Vec<[f32; 2]>,
+    /// Each sample's depth grid, see `depth_warp`
+    depth: Vec<Option<crate::gyro_source::PairDepthGrid>>,
 }
 
 /// Time scale (Gaussian sigma) over which the automatic reference pools the dominant layer of neighbouring samples:
@@ -379,8 +383,8 @@ const AUTO_DOMINANT_RANGE: (f64, f64) = (0.02, 50.0);
 impl TranslationState {
     /// Each sample's automatic layer: the dominant layer gain of the samples around it in its segment, numerators and
     /// denominators added up weighted by time and confidence, so that what a stretch of video shows decides.
-    fn finish(self) -> Vec<TranslationSample> {
-        let TranslationState { mut samples, dominant, .. } = self;
+    fn finish(self, half_extent: [f64; 2]) -> (Vec<TranslationSample>, Option<crate::gyro_source::DepthGrids>) {
+        let TranslationState { mut samples, dominant, depth, .. } = self;
         let seconds = |a: &TranslationSample, b: &TranslationSample| (a.timestamp_us - b.timestamp_us) as f64 / 1e6;
         let chosen: Vec<_> = (0..samples.len()).map(|i| {
             let (mut numerator, mut denominator) = (0.0, 0.0);
@@ -403,7 +407,8 @@ impl TranslationState {
         for (sample, chosen) in samples.iter_mut().zip(chosen) {
             sample.auto_beta = chosen.unwrap_or(0.0);
         }
-        samples
+        let depth = crate::gyro_source::DepthGrids::pool(half_extent, &samples, &depth);
+        (samples, depth)
     }
 }
 
@@ -495,7 +500,7 @@ impl OpticalMotionAnalysis {
                 scaled_fps / every_nth_frame as f64);
             let translation = (vision.is_none() && ui.translation_enabled).then(|| TranslationState {
                 solver: TranslationSolver::new(TranslationSolverConfig::resolved()),
-                next_seq: 0, pairs: HashMap::new(), position: Vector3::zeros(), segment: 0, samples: Vec::new(), dominant: Vec::new(),
+                next_seq: 0, pairs: HashMap::new(), position: Vector3::zeros(), segment: 0, samples: Vec::new(), dominant: Vec::new(), depth: Vec::new(),
             });
             Ok(Self {
                 params, fps_scale, scaled_fps, quats_checksum, context_checksum, horizontal_readout,
@@ -635,13 +640,17 @@ impl OpticalMotionAnalysis {
             },
             None => (self.quats_checksum, Vec::new()),
         };
+        let half_extent = self.grid_half_extent();
+        let translation_requested = self.translation.is_some();
+        let (translation_samples, translation_depth) = self.translation.map(|t| t.finish(half_extent)).unwrap_or_default();
         Ok(OpticalMeasurements {
             bands: self.measurements,
             stab_requested: self.stab_requested,
             stab_pairs: self.stab_pairs,
             stab_bands: self.stab_bands,
-            translation_requested: self.translation.is_some(),
-            translation_samples: self.translation.map(TranslationState::finish).unwrap_or_default(),
+            translation_requested,
+            translation_samples,
+            translation_depth,
             scaled_fps: self.scaled_fps / self.every_nth_frame as f64,
             quats_checksum,
             context_checksum: self.context_checksum,
@@ -796,8 +805,15 @@ impl OpticalMotionAnalysis {
         self.stab_next_seq = self.next_seq;
     }
 
+    /// Half width and height of the source image in the normalized image plane, for the depth warp's grid
+    fn grid_half_extent(&self) -> [f64; 2] {
+        let focal = self.focal_px.max(1e-9);
+        [self.track_size.0 as f64 / 2.0 / focal, self.track_size.1 as f64 / 2.0 / focal]
+    }
+
     /// Solve each pair once, then reuse its parallax while the high-pass still needs it.
     fn measure_translation(&mut self, derived: &mut [Derived]) {
+        let grid_half_extent = self.grid_half_extent();
         let Some(state) = &mut self.translation else { return };
         // Lens queries take the gyro lock themselves. Complete them before reading poses.
         let mut focal_ratios = HashMap::new();
@@ -828,6 +844,7 @@ impl OpticalMotionAnalysis {
                 state.solver.reset();
                 state.position = Vector3::zeros();
                 state.dominant.push([0.0; 2]);
+                state.depth.push(None);
                 state.samples.push(TranslationSample {
                     timestamp_us: start_us,
                     segment: state.segment,
@@ -837,8 +854,8 @@ impl OpticalMotionAnalysis {
                 });
             }
             let result = state.solver.step(&points, 1.0 / self.focal_px, pair.b.mid_ms / 1000.0);
-            let layer = image_space::fit(&points, &result, &output_projections[&pair.b.index],
-                (self.params.output_width, self.params.output_height));
+            let layer = image_space::fit_with_depth(&points, &result, &output_projections[&pair.b.index],
+                (self.params.output_width, self.params.output_height), Some(grid_half_extent));
             if result.new_segment { state.position = Vector3::zeros(); }
             if result.confidence > 0.0 {
                 state.position += gyro.org_quat_at_timestamp(pair.b.mid_ms) * result.c_segment;
@@ -860,6 +877,7 @@ impl OpticalMotionAnalysis {
                 ..Default::default()
             });
             state.dominant.push(layer.dominant);
+            state.depth.push(layer.depth);
         }
         state.next_seq = self.next_seq;
         for d in derived {
@@ -1013,7 +1031,7 @@ mod tests {
     #[test]
     fn translation_auto_layer_is_the_pooled_dominant_gain() {
         let mut state = TranslationState { solver: TranslationSolver::new(TranslationSolverConfig::DEFAULT), next_seq: 0,
-            pairs: HashMap::new(), position: Vector3::zeros(), segment: 0, samples: Vec::new(), dominant: Vec::new() };
+            pairs: HashMap::new(), position: Vector3::zeros(), segment: 0, samples: Vec::new(), dominant: Vec::new(), depth: Vec::new() };
         state.samples.push(TranslationSample { timestamp_us: 0, ..Default::default() });
         state.dominant.push([0.0; 2]);
         // Single pairs alternate between two layers: the pooled gain is steady in between
@@ -1028,7 +1046,7 @@ mod tests {
         state.dominant.push([9e-6, 1e-6]);
         state.samples.push(TranslationSample { timestamp_us: 61 * 40_000, segment: 2, weight: 1.0, ..Default::default() });
         state.dominant.push([0.0, 0.0]);
-        let samples = state.finish();
+        let (samples, _) = state.finish([0.8, 0.45]);
         for s in &samples[5..55] { assert!((s.auto_beta - 1.25).abs() < 0.05, "{}", s.auto_beta); }
         for w in samples[5..55].windows(2) { assert!((w[1].auto_beta / w[0].auto_beta - 1.0).abs() < 0.02); }
         assert!(samples[0].auto_beta > 0.0, "the segment start takes its neighbours' layer");
@@ -1839,7 +1857,7 @@ mod sensor_solve_tests {
             }
         }
         OpticalMeasurements { bands: vec![], stab_requested: true, stab_pairs: pairs, stab_bands: bands,
-            translation_requested: false, translation_samples: vec![], scaled_fps: fps,
+            translation_requested: false, translation_samples: vec![], translation_depth: None, scaled_fps: fps,
             quats_checksum: optical_correction::checksum(quats), context_checksum: 9, video_base: vec![],
             frames: 300, measured_frames: 0, generation: 0 }
     }

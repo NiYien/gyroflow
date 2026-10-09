@@ -35,6 +35,33 @@ fn optical_translation_for(
     if t.norm() == 0.0 { None } else { Some(t) }
 }
 
+/// Vertices of the depth warp's grid over the output
+pub const WARP_COLS: usize = 33;
+pub const WARP_ROWS: usize = 19;
+
+/// The depth warp's grid for the kernels: its size, then per vertex (row by row) the translation added to the
+/// sampling ray, like the rigid shift in the matrices' last column. `matrix` is the frame's centre row.
+fn depth_warp_grid(translation: &crate::gyro_source::OpticalTranslation, matrix: &[f32; 14], frame_time_ms: f64,
+    output: (usize, usize), inverted: bool) -> Vec<f32> {
+    let mut out = Vec::with_capacity(2 + WARP_COLS * WARP_ROWS * 3);
+    out.push(WARP_COLS as f32);
+    out.push(WARP_ROWS as f32);
+    let m: Vec<f64> = matrix[..9].iter().map(|v| *v as f64).collect();
+    let warp = translation.warp_cells_at(frame_time_ms);
+    for row in 0..WARP_ROWS {
+        for col in 0..WARP_COLS {
+            let u = col as f64 / (WARP_COLS - 1) as f64 * output.0 as f64;
+            let v = row as f64 / (WARP_ROWS - 1) as f64 * output.1 as f64;
+            let (x, y, w) = (u * m[0] + v * m[1] + m[2], u * m[3] + v * m[4] + m[5], u * m[6] + v * m[7] + m[8]);
+            // The analysis' image plane has y down; an inverted framebuffer flips it, as for the rigid shift
+            let sign = if inverted { -1.0 } else { 1.0 };
+            let d = match &warp { Some(warp) if w > 1e-9 => warp.at(x / w, sign * y / w), _ => nalgebra::Vector2::zeros() };
+            out.extend([d.x as f32, (sign * d.y) as f32, 0.0]);
+        }
+    }
+    out
+}
+
 #[derive(Default, Clone)]
 pub struct FrameTransform {
     pub matrices: Vec<[f32; 14]>,
@@ -513,7 +540,7 @@ impl FrameTransform {
         let file_metadata = gyro.file_metadata.read();
 
         // Undistorting mesh of the frame, empty when it has none (the kernel flags say so, the buffer is then not uploaded)
-        let mesh_data = file_metadata.mesh_correction.kernel_buffer(frame);
+        let mut mesh_data = file_metadata.mesh_correction.kernel_buffer(frame);
 
         // ----------- Rolling shutter correction -----------
         let frame_readout_time =
@@ -725,6 +752,18 @@ impl FrameTransform {
                 ]
             })
             .collect::<Vec<[f32; 14]>>();
+        // Depth warp, appended after the mesh data; a leading zero keeps the mesh flags' checks off when there is none
+        let mut warp_offset = 0.0f32;
+        if params.apply_optical_translation && !params.suppress_rotation {
+            if let Some(translation) = gyro.optical_translation.as_ref().filter(|t| t.is_active() && t.has_depth_warp()) {
+                if let Some(matrix) = matrices.get(matrices.len() / 2) {
+                    let grid = depth_warp_grid(translation, matrix, timestamp_ms, (params.output_width, params.output_height), params.framebuffer_inverted);
+                    if mesh_data.is_empty() { mesh_data.push(0.0); }
+                    warp_offset = mesh_data.len() as f32;
+                    mesh_data.extend(grid);
+                }
+            }
+        }
         drop(file_metadata);
         drop(gyro);
 
@@ -761,6 +800,7 @@ impl FrameTransform {
                 (adaptive_zoom_center_y * params.height as f64 / fov) as f32,
             ],
             translation3d: [0.0, 0.0, 0.0, 0.0], // currently unused
+            reserved1: warp_offset,
             digital_lens_params,
             light_refraction_coefficient: light_refraction_coefficient as f32,
             ..Default::default()
@@ -1499,6 +1539,76 @@ mod tests {
             let back = Stabilization::rotate_and_distort(out, (pt.1 as usize).min(t.matrices.len() - 1), &kp, &t.matrices, &p.distortion_model, None, kp.r_limit * kp.r_limit, &[]).unwrap();
             assert!((back.0 - pt.0).abs() < 0.05 && (back.1 - pt.1).abs() < 0.05, "{pt:?} -> {out:?} -> {back:?}");
         }
+    }
+
+    /// The output a source point maps to through the zoom's forward path, which includes the depth warp
+    fn to_output_warped(p: &ComputeParams, pt: (f32, f32)) -> (f32, f32) {
+        crate::stabilization::undistort_points_with_rolling_shutter(&[pt], 0.0, Some(0), p, 1.0, true, true)[0]
+    }
+
+    /// The source point an output position samples, through the kernel with the frame's depth warp block
+    fn to_source_warped(p: &ComputeParams, pt: (f32, f32), row: usize) -> Option<(f32, f32)> {
+        let t = FrameTransform::at_timestamp(p, 0.0, 0);
+        let mut kp = t.kernel_params;
+        (kp.width, kp.height, kp.output_width, kp.output_height) = (W as i32, H as i32, W as i32, H as i32);
+        if kp.reserved1 > 0.0 { kp.flags |= super::super::KernelParamsFlags::HAS_OUTPUT_WARP.bits(); }
+        let mesh: Vec<f64> = t.mesh_data.iter().map(|v| *v as f64).collect();
+        Stabilization::rotate_and_distort(pt, row.min(t.matrices.len() - 1), &kp, &t.matrices, &p.distortion_model, None, kp.r_limit * kp.r_limit, &mesh)
+    }
+
+    fn warped(cells: impl Fn(usize) -> [f32; 2]) -> ComputeParams {
+        let mut p = translated(0.0, Quat64::from_euler_angles(0.05, -0.08, 0.3), [0.0; 3], false);
+        let cells = (0..crate::gyro_source::optical_translation::depth_warp::CELLS).map(cells).collect();
+        p.gyro.write().optical_translation = Some(OpticalTranslation::with_curve(vec![(0, [0.0; 3]), (1_000_000, [0.0; 3])]).with_warp(cells));
+        p
+    }
+
+    #[test]
+    fn depth_warp_of_one_value_is_the_rigid_shift() {
+        // The same translation everywhere must move the picture exactly like the rigid shift does
+        let warp = warped(|_| [0.004, -0.003]);
+        let mut rigid = translated(0.0, Quat64::from_euler_angles(0.05, -0.08, 0.3), [0.0; 3], false);
+        rigid.gyro.write().optical_translation = Some(OpticalTranslation::with_curve(vec![(0, [0.004, -0.003, 0.0]), (1_000_000, [0.004, -0.003, 0.0])]));
+        for &pt in &POINTS {
+            let (a, b) = (to_output(&rigid, pt), to_output_warped(&warp, pt));
+            assert!((a.0 - b.0).abs() < 0.05 && (a.1 - b.1).abs() < 0.05, "forward {pt:?}: rigid {a:?} warp {b:?}");
+            let (a, b) = (to_source(&rigid, pt, 0).unwrap(), to_source_warped(&warp, pt, 0).unwrap());
+            assert!((a.0 - b.0).abs() < 0.05 && (a.1 - b.1).abs() < 0.05, "kernel {pt:?}: rigid {a:?} warp {b:?}");
+            assert!((b.0 - pt.0).hypot(b.1 - pt.1) > 1.0);
+        }
+    }
+
+    #[test]
+    fn depth_warp_round_trips_and_is_absent_when_off() {
+        use crate::gyro_source::optical_translation::depth_warp::{COLS, ROWS};
+        // A field that changes across the picture, as between two depth layers
+        let p = warped(|c| [0.004 * ((c % COLS) as f32 / (COLS - 1) as f32), -0.003 * ((c / COLS) as f32 / (ROWS - 1) as f32)]);
+        // The kernel's grid covers the output; a source point that lands outside it is never rendered
+        let mut inside = 0;
+        let grid: Vec<(f32, f32)> = (0..25).map(|i| ((0.1 + 0.2 * (i % 5) as f32) * W as f32, (0.1 + 0.2 * (i / 5) as f32) * H as f32)).collect();
+        for &pt in &grid {
+            let out = to_output_warped(&p, pt);
+            if !(0.0..=W as f32).contains(&out.0) || !(0.0..=H as f32).contains(&out.1) { continue; }
+            inside += 1;
+            let back = to_source_warped(&p, out, 0).unwrap();
+            assert!((back.0 - pt.0).hypot(back.1 - pt.1) < 0.05, "{pt:?} -> {out:?} -> {back:?}");
+        }
+        assert!(inside >= 9, "{inside}");
+        // Switched off, the frame transform is the one without any warp, bit for bit
+        let off = with_gyro(&p, |gyro| gyro.optical_translation.as_mut().unwrap().settings.depth_warp = false);
+        let plain = translated(0.0, Quat64::from_euler_angles(0.05, -0.08, 0.3), [0.0; 3], false);
+        let (a, b) = (FrameTransform::at_timestamp(&off, 0.0, 0), FrameTransform::at_timestamp(&plain, 0.0, 0));
+        assert_eq!(bytemuck::bytes_of(&a.kernel_params), bytemuck::bytes_of(&b.kernel_params));
+        assert_eq!(a.mesh_data, b.mesh_data);
+        assert_eq!(a.matrices.iter().flatten().map(|v| v.to_bits()).collect::<Vec<_>>(), b.matrices.iter().flatten().map(|v| v.to_bits()).collect::<Vec<_>>());
+        for &pt in &POINTS { assert_eq!(to_output_warped(&off, pt), to_output(&plain, pt)); }
+        // And on, the block is there behind its offset
+        let on = FrameTransform::at_timestamp(&p, 0.0, 0);
+        assert!(on.kernel_params.reserved1 >= 1.0 && on.mesh_data[on.kernel_params.reserved1 as usize] == super::WARP_COLS as f32);
+        // The STMap's suppressed rotation leaves it out
+        let mut stmap = p.clone();
+        stmap.suppress_rotation = true;
+        assert_eq!(FrameTransform::at_timestamp(&stmap, 0.0, 0).kernel_params.reserved1, 0.0);
     }
 
     #[test]

@@ -388,11 +388,34 @@ DATA_TYPEF sample_input_at(float2 uv, float4 jac, __global const uchar *srcptr, 
     return sum;
 }
 
+// Depth warp: bilinear translation from the grid appended to the mesh data at `reserved1` (cpu_undistort::output_warp)
+float3 output_warp(float2 pos, __global KernelParams *params, __global const float *mesh_data) {
+    if (!(params->flags & 16384) || params->output_width <= 0 || params->output_height <= 0) return (float3)(0.0f, 0.0f, 0.0f);
+    int o = (int)params->reserved1;
+    int cols = (int)mesh_data[o];
+    int rows = (int)mesh_data[o + 1];
+    if (cols < 2 || rows < 2) return (float3)(0.0f, 0.0f, 0.0f);
+    float gx = clamp(pos.x / (float)params->output_width * (float)(cols - 1), 0.0f, (float)(cols - 1));
+    float gy = clamp(pos.y / (float)params->output_height * (float)(rows - 1), 0.0f, (float)(rows - 1));
+    int x0 = min((int)floor(gx), cols - 2);
+    int y0 = min((int)floor(gy), rows - 2);
+    float fx = gx - (float)x0;
+    float fy = gy - (float)y0;
+    int i00 = o + 2 + (y0 * cols + x0) * 3;
+    int i01 = o + 2 + ((y0 + 1) * cols + x0) * 3;
+    float3 v00 = (float3)(mesh_data[i00], mesh_data[i00 + 1], mesh_data[i00 + 2]);
+    float3 v10 = (float3)(mesh_data[i00 + 3], mesh_data[i00 + 4], mesh_data[i00 + 5]);
+    float3 v01 = (float3)(mesh_data[i01], mesh_data[i01 + 1], mesh_data[i01 + 2]);
+    float3 v11 = (float3)(mesh_data[i01 + 3], mesh_data[i01 + 4], mesh_data[i01 + 5]);
+    return v00 * ((1.0f - fx) * (1.0f - fy)) + v10 * (fx * (1.0f - fy)) + v01 * ((1.0f - fx) * fy) + v11 * (fx * fy);
+}
+
 float2 rotate_and_distort(float2 pos, uint idx, __global KernelParams *params, __global const float *matrices, __global const float *mesh_data) {
     __global const float *matrix = &matrices[idx];
-    float _x = (pos.x * matrix[0]) + (pos.y * matrix[1]) + matrix[2] + params->translation3d.x;
-    float _y = (pos.x * matrix[3]) + (pos.y * matrix[4]) + matrix[5] + params->translation3d.y;
-    float _w = (pos.x * matrix[6]) + (pos.y * matrix[7]) + matrix[8] + params->translation3d.z;
+    float3 warp = output_warp(pos, params, mesh_data);
+    float _x = (pos.x * matrix[0]) + (pos.y * matrix[1]) + matrix[2] + params->translation3d.x + warp.x;
+    float _y = (pos.x * matrix[3]) + (pos.y * matrix[4]) + matrix[5] + params->translation3d.y + warp.y;
+    float _w = (pos.x * matrix[6]) + (pos.y * matrix[7]) + matrix[8] + params->translation3d.z + warp.z;
     if (_w > 0.0f) {
         if (params->r_limit > 0.0f && length((float2)(_x, _y) / _w) > params->r_limit) {
             return (float2)(-99999.0f, -99999.0f);

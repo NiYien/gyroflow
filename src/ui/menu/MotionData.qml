@@ -31,7 +31,7 @@ MenuItem {
     property alias extensions: fileDialog.extensions;
     property alias experimentalControls: experimentalControls;
     readonly property bool opticalEditsPending: opticalStrengthTimer.running || translationReferenceTimer.running
-        || translationSmoothnessTimer.running || translationAlongAxisTimer.running || translationAutoTimer.running
+        || translationSmoothnessTimer.running || translationAlongAxisTimer.running || translationAutoTimer.running || translationDepthWarpTimer.running
         || (opticalcb.checked && opticalcb.info.available && opticalcb.info.outdated);
 
     function moveExperimentalControls(target: var): void {
@@ -69,6 +69,7 @@ MenuItem {
         translationSmoothnessTimer.stop();
         translationAlongAxisTimer.stop();
         translationAutoTimer.stop();
+        translationDepthWarpTimer.stop();
     }
     function refreshOpticalInfo(restoreParameters: bool, restoreOpticalRequest: bool): void {
         if (root.updatingOpticalControls) return;
@@ -98,6 +99,8 @@ MenuItem {
                 translationAlongAxis.checked = !!translationcb.info.along_axis;
             if (restoreParameters || !translationAutoTimer.running)
                 translationAuto.checked = !!translationcb.info.auto;
+            if (restoreParameters || !translationDepthWarpTimer.running)
+                translationDepthWarp.checked = !!translationcb.info.depth_warp;
             // The core reports a strength only with a correction fitted; without one the slider keeps its value
             if (restoreParameters && typeof opticalcb.info.strength === "number") opticalStrength.value = opticalcb.info.strength * 100;
         } finally {
@@ -128,6 +131,7 @@ MenuItem {
             translation_smoothness: Math.pow(10, translationSmoothness.value),
             translation_along_axis: translationAlongAxis.checked,
             translation_auto: translationAuto.checked,
+            translation_depth_warp: translationDepthWarp.checked,
             reconstruction: stabcb.checked
         }));
     }
@@ -216,6 +220,7 @@ MenuItem {
                 if (typeof gyro.translation_smoothness === "number") translationSmoothness.value = Math.log(gyro.translation_smoothness) / Math.LN10;
                 if (typeof gyro.translation_along_axis === "boolean") translationAlongAxis.checked = gyro.translation_along_axis;
                 if (typeof gyro.translation_auto === "boolean") translationAuto.checked = gyro.translation_auto;
+                if (typeof gyro.translation_depth_warp === "boolean") translationDepthWarp.checked = gyro.translation_depth_warp;
                 if (typeof gyro.stab_reconstruction_enabled === "boolean") stabcb.checked = gyro.stab_reconstruction_enabled;
             } finally {
                 root.updatingOpticalControls = false;
@@ -618,6 +623,12 @@ MenuItem {
             checked: true;
             onCheckedChanged: if (root.initialized && !root.updatingOpticalControls) translationAlongAxisTimer.restart();
         }
+        CheckBox {
+            id: translationDepthWarp;
+            text: qsTr("Depth warp");
+            checked: false;
+            onCheckedChanged: if (root.initialized && !root.updatingOpticalControls) translationDepthWarpTimer.restart();
+        }
     }
     Timer {
         id: translationReferenceTimer;
@@ -638,6 +649,11 @@ MenuItem {
         id: translationAutoTimer;
         interval: 150;
         onTriggered: if (!controller.video_loading_in_progress && !controller.loading_gyro_in_progress) { controller.set_translation_auto(translationAuto.checked); root.pushQueueOpticalSettings(); }
+    }
+    Timer {
+        id: translationDepthWarpTimer;
+        interval: 150;
+        onTriggered: if (!controller.video_loading_in_progress && !controller.loading_gyro_in_progress) { controller.set_translation_depth_warp(translationDepthWarp.checked); root.pushQueueOpticalSettings(); }
     }
     CheckBoxWithContent {
         id: stabcb;
