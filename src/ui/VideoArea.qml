@@ -408,6 +408,8 @@ Item {
         function onTelemetry_loaded(is_main_video: bool, filename: string, camera: string, additional_data: var): void {
             if (!is_main_video && controller.gyro_loaded) root.defaultPreviewPending = true;
             if (is_main_video) {
+                // Kinefinity SAR is a display hint. Keep source pixels intact for lens processing.
+                vid.setSourceAspectRatio(camera === "Kinefinity" || camera.startsWith("Kinefinity "));
                 root.detectedCamera = camera;
                 vidInfo.updateEntry("Detected camera", camera || "---");
 

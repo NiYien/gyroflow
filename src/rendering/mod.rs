@@ -479,6 +479,16 @@ where
     proc.video.encoder_params.hw_device_type = encoder.2;
     proc.video.encoder_params.options.set("threads", "auto");
     proc.video.encoder_params.metadata = render_options.get_metadata_dict();
+    let kinefinity_source = stab.camera_id.read().as_ref().map_or_else(
+        // Older projects retain the camera identity only in their lens profile.
+        || stab.lens.read().camera_brand == "Kinefinity",
+        |camera| camera.brand == "Kinefinity",
+    );
+    if kinefinity_source {
+        // The lens profile already determines desqueeze and output geometry.
+        // Keeping the source display SAR would stretch the rendered pixels again.
+        proc.video.encoder_params.sample_aspect_ratio = Some(ffmpeg_next::Rational(1, 1));
+    }
     proc.video.processing_order = order;
     log::debug!(
         "video_codec: {:?}, processing_order: {:?}",

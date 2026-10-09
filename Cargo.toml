@@ -72,7 +72,7 @@ filetime_creation = "0.2"
 
 qmetaobject = { version = "0.2.10", default-features = false, features = ["log"] }
 qttypes     = { version = "0.2.12", default-features = false, features = ["required", "qtquick", "qtquickcontrols2"]}
-qml-video-rs = { git = "https://github.com/NiYien/qml-video-rs", rev = "549431d824b6993e33029b80e998c84d150c4ed5" }
+qml-video-rs = { git = "https://github.com/NiYien/qml-video-rs", rev = "4b1729d236a0b2f563e6bb3f618abefb91936b63" }
 
 ffmpeg-next = { version = "8.1.0", default-features = false, features = ["codec", "filter", "format", "software-resampling", "software-scaling"] }
 lazy_static = "1.5.0"

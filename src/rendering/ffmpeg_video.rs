@@ -167,6 +167,7 @@ pub struct EncoderParams<'a> {
     pub options: Dictionary<'a>,
     pub metadata: Dictionary<'a>,
     pub pixel_format: Option<format::Pixel>,
+    pub sample_aspect_ratio: Option<Rational>,
     pub frame_rate: Option<Rational>,
     pub time_base: Option<Rational>,
     pub keyframe_distance_s: f64,
@@ -718,6 +719,11 @@ impl<'a> VideoTranscoder<'a> {
 
                                 final_frame = self.buffers.output_frame_post.as_mut().unwrap();
                             }
+                        }
+
+                        // Apply after conversion so the encoder and submitted frames agree.
+                        if let Some(aspect) = self.encoder_params.sample_aspect_ratio {
+                            unsafe { (*final_frame.as_mut_ptr()).sample_aspect_ratio = aspect.into(); }
                         }
 
                         if self.encoder.is_none() {

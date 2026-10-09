@@ -1143,6 +1143,60 @@ mod decode_fallback_tests {
         assert!(matches!(error, FFmpegError::InternalError(Error::InvalidData)));
         assert_eq!(next_decoder_attempt(-1, 3, &error), None);
     }
+
+    #[test]
+    fn rendered_sample_aspect_ratio_override_preserves_pixels_and_timestamps() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = fixture(dir.path());
+        let path = dir.path().join("source.y4m");
+        let data = std::fs::read(&path).unwrap();
+        let header_end = data.iter().position(|&x| x == b'\n').unwrap();
+        let mut anamorphic = b"YUV4MPEG2 W32 H24 F25:1 Ip A133:100 C420\n".to_vec();
+        anamorphic.extend_from_slice(&data[header_end + 1..]);
+        std::fs::write(path, anamorphic).unwrap();
+        let folder = filesystem::path_to_url(dir.path().to_str().unwrap());
+
+        for order in [ProcessingOrder::PreConversion, ProcessingOrder::PostConversion] {
+            for aspect in [None, Some(Rational(1, 1))] {
+                let expected = aspect.unwrap_or(Rational(133, 100));
+                {
+                    let mut proc = FfmpegProcessor::from_file(&input, false, 0, None).unwrap();
+                    proc.video_codec = Some("libx264".into());
+                    proc.video.gpu_encoding = false;
+                    proc.video.processing_order = if order == ProcessingOrder::PreConversion {
+                        ProcessingOrder::PreConversion
+                    } else { ProcessingOrder::PostConversion };
+                    proc.video.encoder_params.sample_aspect_ratio = aspect;
+                    proc.video.encoder_params.options.set("crf", "0");
+                    proc.video.encoder_params.options.set("preset", "ultrafast");
+                    proc.audio_codec = codec::Id::None;
+                    proc.on_frame(|_, input, output, _, _| {
+                        // The raw Y4M decoder omits frame SAR; model the tagged camera frame.
+                        unsafe { (*input.as_mut_ptr()).sample_aspect_ratio = Rational(133, 100).into(); }
+                        *output.unwrap() = input.clone();
+                        Ok(())
+                    });
+                    proc.render(&folder, "aspect.mov", (32, 24), None,
+                        Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false))).unwrap();
+                }
+                let output = filesystem::get_file_url(&folder, "aspect.mov", false);
+                let mut frames = Vec::new();
+                {
+                    let mut proc = FfmpegProcessor::from_file(&output, false, 0, None).unwrap();
+                    let stream = proc.input_context.streams().best(media::Type::Video).unwrap();
+                    let stored_aspect = unsafe { Rational::from((*stream.parameters().as_ptr()).sample_aspect_ratio) };
+                    assert_eq!(stored_aspect, expected);
+                    proc.on_frame(|ts, frame, _, _, _| {
+                        assert_eq!((frame.width(), frame.height()), (32, 24));
+                        frames.push((ts, frame.data(0)[0]));
+                        Ok(())
+                    });
+                    proc.start_decoder_only(Vec::new(), Arc::new(AtomicBool::new(false))).unwrap();
+                }
+                assert_eq!(frames, (0..8).map(|i| (i * 40_000, 16 + i as u8)).collect::<Vec<_>>());
+            }
+        }
+    }
 }
 
 /* unsafe extern "C" fn get_hw_format(ctx: *mut ffi::AVCodecContext, pix_fmts: *const ffi::AVPixelFormat) -> ffi::AVPixelFormat {

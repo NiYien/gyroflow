@@ -953,6 +953,8 @@ impl Controller {
                     .unwrap_or_else(|| encoded_url.clone());
                     let dng_curve = core::dng_tone_curve::DngToneCurve::from_url(&curve_url);
                     crate::crm::configure_player(vid, &encoded_url);
+                    // Do not carry the previous camera's preview aspect override into this clip.
+                    vid.setSourceAspectRatio(false);
                     vid.setUrl(
                         QUrl::from(QString::from(encoded_url)),
                         QString::from(custom_decoder),
@@ -6465,7 +6467,8 @@ mod tests {
         // filter the preview collapses into ~10 distinct levels once MDK
         // renders into its RGBA8 texture. Reverting past it takes the DNG
         // preview back to a near-black picture.
-        const PINNED_REV: &str = "ef7c419fde0922c96014b5f5ada0fe0c11ebbefc";
+        // Kinefinity processing also requires the source-pixel aspect override.
+        const PINNED_REV: &str = "4b1729d236a0b2f563e6bb3f618abefb91936b63";
         let lock_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock");
         let lock = std::fs::read_to_string(&lock_path).expect("read Cargo.lock");
         let expected = format!(
