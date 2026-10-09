@@ -37,6 +37,23 @@ $RequiredFiles = @(
     '.gyroflow-hevc-tile-patch.json'
 )
 
+function Get-Sha256Hex {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    # Hash directly with .NET so verification does not depend on PowerShell modules.
+    $Stream = [IO.File]::OpenRead($Path)
+    try {
+        $Hasher = [Security.Cryptography.SHA256]::Create()
+        try {
+            return [BitConverter]::ToString($Hasher.ComputeHash($Stream)).Replace('-', '').ToLowerInvariant()
+        } finally {
+            $Hasher.Dispose()
+        }
+    } finally {
+        $Stream.Dispose()
+    }
+}
+
 function Test-SdkFiles {
     foreach ($RelativePath in $RequiredFiles) {
         if (-not (Test-Path -LiteralPath (Join-Path $SdkDir $RelativePath) -PathType Leaf)) { return $false }
@@ -44,8 +61,8 @@ function Test-SdkFiles {
     try {
         $Info = [IO.File]::ReadAllText($PatchInfo) | ConvertFrom-Json
         if ($Info.avcodec_major -ne 62 -or -not $Info.tile_interleave_available) { return $false }
-        $DllHash = (Get-FileHash -LiteralPath (Join-Path $SdkDir 'bin/avcodec-62.dll') -Algorithm SHA256).Hash
-        return $DllHash.ToLowerInvariant() -eq $Info.dll_sha256
+        $DllHash = Get-Sha256Hex (Join-Path $SdkDir 'bin/avcodec-62.dll')
+        return $DllHash -eq $Info.dll_sha256
     } catch {
         return $false
     }
@@ -57,12 +74,12 @@ if ((Test-Path -LiteralPath $Marker) -and ([IO.File]::ReadAllText($Marker).Trim(
 }
 
 New-Item -ItemType Directory -Path $Root -Force | Out-Null
-$ArchiveValid = (Test-Path -LiteralPath $Archive) -and ((Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash.ToLowerInvariant() -eq $ExpectedHash)
+$ArchiveValid = (Test-Path -LiteralPath $Archive) -and ((Get-Sha256Hex $Archive) -eq $ExpectedHash)
 if (-not $ArchiveValid) {
     $Download = "$Archive.download"
     & curl.exe -fL --retry 3 --connect-timeout 30 -o $Download $Url
     if ($LASTEXITCODE -ne 0) { throw "Failed to download $PackageName" }
-    if ((Get-FileHash -LiteralPath $Download -Algorithm SHA256).Hash.ToLowerInvariant() -ne $ExpectedHash) {
+    if ((Get-Sha256Hex $Download) -ne $ExpectedHash) {
         throw "SHA-256 mismatch for $PackageName"
     }
     Move-Item -LiteralPath $Download -Destination $Archive -Force
