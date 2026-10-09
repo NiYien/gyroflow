@@ -1150,6 +1150,8 @@ Rectangle {
                                 return;
                             }
                             window.videoArea.vid.pause();
+                            renderBtn.isAddToQueue = false;
+                            renderBtn.tempIsAddToQueue = false;
                             renderBtn.allowFile = false;
                             renderBtn.allowLens = false;
                             // Already auto-synced (or sync not applicable) — skip the Full-mode
@@ -1383,6 +1385,9 @@ Rectangle {
                                 }
 
                                 const job_id = render_queue.add(window.getAdditionalProjectDataJson(), controller.image_to_b64(result.image));
+                                // Saving preserves a completed stabilization; exporting must requeue this job.
+                                if (!renderBtn.isAddToQueue && !renderBtn.tempIsAddToQueue)
+                                    render_queue.reset_job(job_id);
                                 if (renderBtn.isAddToQueue || renderBtn.tempIsAddToQueue || render_queue.get_active_render_count() >= render_queue.parallel_renders) {
                                     // Add to queue
                                     renderBtn.addQueueDelayed = true;
