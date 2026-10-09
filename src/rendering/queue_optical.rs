@@ -31,8 +31,6 @@ pub struct QueueOpticalSettings {
     pub translation_along_axis: bool,
     /// Reference layer and smoothness chosen from the analysis; the two values above are kept but unused
     pub translation_auto: bool,
-    /// Per-region depth warp on top of the rigid shift
-    pub translation_depth_warp: bool,
     pub reconstruction: bool,
 }
 
@@ -47,7 +45,6 @@ impl Default for QueueOpticalSettings {
             translation_smoothness: 1.0,
             translation_along_axis: true,
             translation_auto: gyroflow_core::OpticalUi::default().translation_settings.auto,
-            translation_depth_warp: false,
             reconstruction: false,
         }
     }
@@ -227,9 +224,6 @@ fn apply_settings(job_id: u32, stab: &StabilizationManager, s: &QueueOpticalSett
     if t.auto != s.translation_auto {
         stab.set_translation_auto(s.translation_auto);
     }
-    if t.depth_warp != s.translation_depth_warp {
-        stab.set_translation_depth_warp(s.translation_depth_warp);
-    }
     if stab.optical_ui.read().translation_enabled != s.translation {
         stab.set_translation_stabilization_enabled(s.translation);
     }
@@ -300,7 +294,6 @@ pub fn settings_differ(stab: &StabilizationManager, s: &QueueOpticalSettings) ->
         || t.smoothness_s != s.translation_smoothness.clamp(0.1, 10.0)
         || t.along_axis != s.translation_along_axis
         || t.auto != s.translation_auto
-        || t.depth_warp != s.translation_depth_warp
 }
 
 /// stabilize-flow-optical-analysis: whether a job whose batch sync is final needs an analysis pass for the project it
@@ -508,10 +501,6 @@ mod tests {
         assert!(stab.optical_ui.read().translation_settings.auto);
         assert!(!settings_differ(&stab, &s));
         assert!(settings_differ(&stab, &QueueOpticalSettings { translation_auto: false, ..s.clone() }));
-        // The depth warp is a setting of its own as well
-        assert!(settings_differ(&stab, &QueueOpticalSettings { translation_depth_warp: true, ..s.clone() }));
-        apply_settings(1, &stab, &QueueOpticalSettings { translation_depth_warp: true, ..s.clone() });
-        assert!(stab.optical_ui.read().translation_settings.depth_warp);
     }
 
     #[test]

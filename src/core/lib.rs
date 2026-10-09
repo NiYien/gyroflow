@@ -3022,10 +3022,6 @@ impl StabilizationManager {
                 let settings = self.optical_ui.read().translation_settings;
                 let mut t = gyro_source::OpticalTranslation::new_with_cancel(m.translation_samples.clone(), settings, &cancelled)
                     .ok_or_else(|| "Cancelled".to_string())?;
-                if m.translation_depth.is_some() {
-                    t.depth = m.translation_depth.clone();
-                    if !t.rebuild_with_cancel(gyro_source::TranslationConfig::resolved().track_age_k, &cancelled) { return Err("Cancelled".into()); }
-                }
                 t.quats_checksum = m.quats_checksum; t.context_checksum = m.context_checksum;
                 t.frames = m.frames; t.measured_frames = m.translation_samples.iter().filter(|s| s.confidence > 0.0).count();
                 Some(t)
@@ -3156,11 +3152,6 @@ impl StabilizationManager {
     }
     pub fn set_translation_auto(&self, auto: bool) {
         self.optical_ui.write().translation_settings.auto = auto;
-        self.sync_optical_translation_from_ui();
-        self.invalidate_zooming();
-    }
-    pub fn set_translation_depth_warp(&self, depth_warp: bool) {
-        self.optical_ui.write().translation_settings.depth_warp = depth_warp;
         self.sync_optical_translation_from_ui();
         self.invalidate_zooming();
     }
@@ -4092,7 +4083,6 @@ impl StabilizationManager {
                 "translation_smoothness": optical_ui.translation_settings.smoothness_s,
                 "translation_along_axis": optical_ui.translation_settings.along_axis,
                 "translation_auto": optical_ui.translation_settings.auto,
-                "translation_depth_warp": optical_ui.translation_settings.depth_warp,
                 "ignore_file_motion": gyro.ignores_file_motion(),
             },
 
@@ -4752,7 +4742,6 @@ impl StabilizationManager {
                         // Projects and presets with manual controls predate the automatic option.
                         ui.translation_settings.auto = false;
                     }
-                    if let Some(v) = obj.get("translation_depth_warp").and_then(|x| x.as_bool()) { ui.translation_settings.depth_warp = v; }
                 }
                 if !*is_preset {
                     gyro.optical_stab = None;
@@ -4774,7 +4763,6 @@ impl StabilizationManager {
                                     if obj.get("translation_smoothness").and_then(|x| x.as_f64()).is_none() { ui.translation_settings.smoothness_s = translation.settings.smoothness_s; }
                                     if obj.get("translation_along_axis").and_then(|x| x.as_bool()).is_none() { ui.translation_settings.along_axis = translation.settings.along_axis; }
                                     if obj.get("translation_auto").and_then(|x| x.as_bool()).is_none() { ui.translation_settings.auto = translation.settings.auto; }
-                                    if obj.get("translation_depth_warp").and_then(|x| x.as_bool()).is_none() { ui.translation_settings.depth_warp = translation.settings.depth_warp; }
                                     translation.settings = ui.translation_settings;
                                 }
                                 translation.validate_geometry();
@@ -5911,7 +5899,6 @@ mod tests {
         assert_eq!(fields.remove("translation_smoothness"), Some(serde_json::json!(1.0)));
         assert_eq!(fields.remove("translation_along_axis"), Some(serde_json::json!(false)));
         assert_eq!(fields.remove("translation_auto"), Some(serde_json::json!(false)));
-        assert_eq!(fields.remove("translation_depth_warp"), Some(serde_json::json!(false)));
         project.as_object_mut().unwrap().remove("date");
         let mut hash = std::collections::hash_map::DefaultHasher::new();
         project.to_string().hash(&mut hash);
@@ -5958,7 +5945,7 @@ mod tests {
                     info: nalgebra::Matrix3::identity(), m: nalgebra::Matrix3::identity() });
             }
         }
-        OpticalMeasurements { bands, stab_requested: false, stab_pairs: Vec::new(), stab_bands: Vec::new(), translation_requested: false, translation_samples: Vec::new(), translation_depth: None, scaled_fps: 30.0,
+        OpticalMeasurements { bands, stab_requested: false, stab_pairs: Vec::new(), stab_bands: Vec::new(), translation_requested: false, translation_samples: Vec::new(), scaled_fps: 30.0,
             quats_checksum: gyro_source::optical_correction::checksum(&manager.gyro.read().quaternions),
             context_checksum: context_checksum(&measurement_params(manager)),
             video_base: Vec::new(), frames: 31, measured_frames: 30, generation }
@@ -6263,26 +6250,6 @@ mod tests {
         let mut without = optical_export(&manual);
         without["gyro_source"].as_object_mut().unwrap().remove("translation_auto");
         assert!(!optical_import(&without).optical_ui.read().translation_settings.auto);
-    }
-
-    #[test]
-    fn translation_depth_warp_round_trips_and_defaults_off() {
-        assert!(!StabilizationManager::default().optical_ui.read().translation_settings.depth_warp);
-        let manager = optical_project_manager();
-        manager.set_translation_stabilization_enabled(true);
-        manager.set_translation_depth_warp(true);
-        install_translation(&manager);
-        let project = optical_export(&manager);
-        assert_eq!(project["gyro_source"]["translation_depth_warp"], true);
-        let restored = optical_import(&project);
-        assert!(restored.optical_ui.read().translation_settings.depth_warp);
-        assert!(restored.gyro.read().optical_translation.as_ref().unwrap().settings.depth_warp);
-        // Without the key the payload's setting holds; an explicit key wins
-        let mut older = project.clone();
-        older["gyro_source"].as_object_mut().unwrap().remove("translation_depth_warp");
-        assert!(optical_import(&older).optical_ui.read().translation_settings.depth_warp);
-        older["gyro_source"]["translation_depth_warp"] = false.into();
-        assert!(!optical_import(&older).optical_ui.read().translation_settings.depth_warp);
     }
 
     #[test]

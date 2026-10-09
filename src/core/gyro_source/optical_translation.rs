@@ -8,9 +8,6 @@ use std::sync::OnceLock;
 
 #[path = "optical_translation/smoothing.rs"]
 mod smoothing;
-#[path = "optical_translation/depth_warp.rs"]
-pub mod depth_warp;
-pub use depth_warp::{DepthGrids, PairDepthGrid};
 #[cfg(all(test, feature = "use-opencv"))]
 #[path = "optical_translation/acceptance.rs"]
 mod acceptance;
@@ -24,13 +21,11 @@ pub struct OpticalTranslationSettings {
     pub along_axis: bool,
     /// Choose the reference layer and the smoothness from the analysis; `reference` and `smoothness_s` are kept but unused
     pub auto: bool,
-    /// Add the per-region depth warp on top of the rigid shift, see `depth_warp`
-    pub depth_warp: bool,
 }
 
 impl Default for OpticalTranslationSettings {
     fn default() -> Self {
-        Self { reference: 1.0, smoothness_s: 1.0, along_axis: true, auto: false, depth_warp: false }
+        Self { reference: 1.0, smoothness_s: 1.0, along_axis: true, auto: false }
     }
 }
 
@@ -137,12 +132,8 @@ pub struct OpticalTranslation {
     pub frames: usize,
     pub measured_frames: usize,
     pub geometry_version: u32,
-    /// Per-sample depth grids of the analysis, for the depth warp; absent in analyses made before it existed
-    pub depth: Option<DepthGrids>,
     #[serde(skip)]
     pub applies: bool,
-    #[serde(skip)]
-    warp: Vec<depth_warp::WarpPoint>,
     #[serde(skip)]
     curve: Vec<TranslationCurvePoint>,
     #[serde(skip)]
@@ -421,8 +412,6 @@ impl OpticalTranslation {
         let began = std::time::Instant::now();
         if cancelled() { return false; }
         let mut curve = Vec::new();
-        let mut warp = Vec::new();
-        let warp_depth = self.depth.as_ref().filter(|_| self.settings.depth_warp);
         let mut samples = self.samples.clone();
         samples.sort_by_key(|sample| sample.timestamp_us);
         samples.dedup_by_key(|sample| sample.timestamp_us);
@@ -430,7 +419,6 @@ impl OpticalTranslation {
         if cancelled() { return false; }
         let Some(geometry) = geometry.filter(|_| self.geometry_version == GEOMETRY_VERSION) else {
             self.curve.clear();
-            self.warp.clear();
             self.effective_smoothness_s = 0.0;
             self.geometry_valid = false;
             self.output_path_checksum = path_checksum;
@@ -496,11 +484,6 @@ impl OpticalTranslation {
                 age_cap.map_or(requested_sigma, |cap| requested_sigma.min(cap))
             }.max(0.001);
             smoothness.push(sigma);
-            if let Some(depth) = warp_depth {
-                let references: Vec<_> = depths.iter().map(|d| reference * d).collect();
-                let Some(points) = depth_warp::segment_warp(segment, &times, &references, sigma, self.settings.along_axis, depth, cancelled) else { return false; };
-                warp.extend(points);
-            }
             let last = segment.len() - 1;
             let fixed: Vec<_> = (0..segment.len()).map(|i| i == 0 || i == last).collect();
             let curve_start = curve.len();
@@ -528,10 +511,6 @@ impl OpticalTranslation {
         }
         if cancelled() { return false; }
         self.curve = curve;
-        self.warp = warp;
-        if self.settings.depth_warp && self.depth.is_none() {
-            log::info!(target: "stab.translation", "depth warp needs a new analysis");
-        }
         self.geometry_valid = !samples.is_empty();
         self.output_path_checksum = path_checksum;
         #[cfg(test)]
@@ -559,33 +538,6 @@ impl OpticalTranslation {
         if left.segment != next.segment { return nalgebra::Vector3::zeros(); }
         let fraction = (timestamp_us - left.timestamp_us as f64) / (next.timestamp_us as i128 - left.timestamp_us as i128) as f64;
         left.shift * (1.0 - fraction) + next.shift * fraction
-    }
-
-    /// Whether the depth warp has anything to apply
-    pub fn has_depth_warp(&self) -> bool {
-        self.settings.depth_warp && !self.warp.is_empty() && self.depth.is_some()
-    }
-
-    /// The depth warp at one moment: each cell's displacement in the convention of `shift_at`, over the source's
-    /// normalized undistorted image plane. `None` outside the analysed ranges, in their gaps, and without a warp.
-    pub fn warp_cells_at(&self, timestamp_ms: f64) -> Option<depth_warp::WarpCells> {
-        let depth = self.depth.as_ref().filter(|_| self.settings.depth_warp)?;
-        let timestamp_us = timestamp_ms * 1000.0;
-        if !timestamp_us.is_finite() { return None; }
-        let right = self.warp.partition_point(|point| point.timestamp_us as f64 <= timestamp_us);
-        if right == 0 { return None; }
-        let left = &self.warp[right - 1];
-        let cells = if timestamp_us == left.timestamp_us as f64 { left.cells.clone() } else {
-            let next = self.warp.get(right).filter(|next| next.segment == left.segment)?;
-            let fraction = ((timestamp_us - left.timestamp_us as f64) / (next.timestamp_us as i128 - left.timestamp_us as i128) as f64) as f32;
-            left.cells.iter().zip(&next.cells).map(|(a, b)| [a[0] * (1.0 - fraction) + b[0] * fraction, a[1] * (1.0 - fraction) + b[1] * fraction]).collect()
-        };
-        Some(depth_warp::WarpCells { cells, half_extent: depth.half_extent })
-    }
-
-    /// The depth warp at a point of the source's normalized undistorted image plane, see `warp_cells_at`
-    pub fn warp_at(&self, timestamp_ms: f64, x: f64, y: f64) -> nalgebra::Vector2<f64> {
-        self.warp_cells_at(timestamp_ms).map_or(nalgebra::Vector2::zeros(), |w| w.at(x, y))
     }
 
     pub fn effective_smoothness_s(&self) -> f64 {
@@ -623,15 +575,6 @@ impl OpticalTranslation {
         Self { enabled: true, applies: true, samples, curve, geometry_valid: true, geometry_version: GEOMETRY_VERSION, ..Default::default() }
     }
 
-    /// A depth warp that holds `cells` from 0 to 1 s, over a grid of half size 2 x 2 in the normalized image plane
-    #[cfg(test)]
-    pub(crate) fn with_warp(mut self, cells: Vec<[f32; 2]>) -> Self {
-        self.settings.depth_warp = true;
-        self.depth = Some(DepthGrids { half_extent: [2.0, 2.0], ..Default::default() });
-        self.warp = [0, 1_000_000].into_iter().map(|timestamp_us| depth_warp::WarpPoint { timestamp_us, segment: 0, cells: cells.clone() }).collect();
-        self
-    }
-
     pub fn has_valid_geometry(&self) -> bool { self.geometry_valid }
 
     pub(crate) fn validate_geometry(&mut self) {
@@ -650,11 +593,6 @@ impl OpticalTranslation {
         self.settings.along_axis.hash(hasher);
         // Hashed only when set, so results without it keep their checksum.
         if self.settings.auto { true.hash(hasher); }
-        // Hashed only when set, so results without the depth warp keep their checksum.
-        if self.settings.depth_warp {
-            true.hash(hasher);
-            if let Some(depth) = &self.depth { depth.hash_into(hasher); }
-        }
         self.quats_checksum.hash(hasher);
         self.context_checksum.hash(hasher);
         self.geometry_version.hash(hasher);
@@ -709,7 +647,7 @@ mod tests {
 
     #[test]
     fn settings_default_to_the_spec_values() {
-        assert_eq!(OpticalTranslationSettings::default(), OpticalTranslationSettings { reference: 1.0, smoothness_s: 1.0, along_axis: true, auto: false, depth_warp: false });
+        assert_eq!(OpticalTranslationSettings::default(), OpticalTranslationSettings { reference: 1.0, smoothness_s: 1.0, along_axis: true, auto: false });
         assert_eq!(TranslationConfig::DEFAULT, TranslationConfig { track_age_k: 2.0, max_shift: 0.08, per_row: true });
     }
 
@@ -1174,34 +1112,6 @@ mod tests {
         assert_eq!(t.checksum(), before, "unset automatic depths hash like before");
         t.settings.auto = true;
         assert_ne!(t.checksum(), before);
-    }
-
-    #[test]
-    fn translation_depth_warp_off_keeps_the_checksum_and_on_applies_it() {
-        // A shake of a fraction of a grid cell, as on real footage
-        let samples = walk(1.0, 100.0).into_iter().map(|mut s| { s.layer_motion[0] *= 0.05; s }).collect();
-        let mut t = OpticalTranslation::new(samples, Default::default());
-        t.applies = true;
-        let before = t.checksum();
-        let grid = PairDepthGrid { z: (0..depth_warp::CELLS).map(|c| if c % depth_warp::COLS < 8 { 2f32.ln() } else { 2f32.ln() + 1.4 }).collect(),
-            r: vec![0.99; depth_warp::CELLS], vis: vec![1.0; depth_warp::CELLS] };
-        let grids = vec![Some(grid); t.samples.len()];
-        t.depth = DepthGrids::pool([0.8, 0.45], &t.samples, &grids);
-        t.rebuild();
-        assert_eq!(t.checksum(), before, "a stored grid alone changes nothing");
-        assert!(!t.has_depth_warp() && t.warp_at(1000.0, 0.7, 0.0) == nalgebra::Vector2::zeros());
-        t.settings.depth_warp = true;
-        t.rebuild();
-        assert_ne!(t.checksum(), before);
-        assert!(t.has_depth_warp());
-        // The near right side moves with the unit layer's shake; the left, at the reference depth, only by what the
-        // stretch limit spreads over to it
-        let largest = |x: f64| (0..250).map(|i| t.warp_at(i as f64 * 40.0, x, 0.0).norm()).fold(0.0, f64::max);
-        assert!(largest(0.7) > 1e-6 && largest(0.7) > 3.0 * largest(-0.7), "{} {}", largest(0.7), largest(-0.7));
-        // Projects keep the grid
-        let text = crate::util::compress_to_base91_cbor(&t).unwrap();
-        let back: OpticalTranslation = crate::util::decompress_from_base91_cbor(&text).unwrap();
-        assert_eq!(back.depth, t.depth);
     }
 
     /// One minute at 25 fps: a 0.2 Hz sway whose request outgrows the budget as the smoothing gets stronger

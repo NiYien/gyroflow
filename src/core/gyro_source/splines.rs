@@ -100,8 +100,7 @@ pub const MAX_GRID_SIZE: usize = 9;
 pub const MESH_BLOCK_SIZE: usize =
     9 + MAX_GRID_SIZE * MAX_GRID_SIZE * 2 + (MAX_GRID_SIZE * MAX_GRID_SIZE * 4 * 2);
 /// Inverse mesh block + focal plane data + forward mesh block (used to refine the inverse lookup)
-pub const MAX_BUFFER_SIZE: usize = MESH_BLOCK_SIZE * 2 + /*focal plane data*/20
-    + /*depth warp: placeholder, size, grid*/ 1 + 2 + crate::stabilization::WARP_COLS * crate::stabilization::WARP_ROWS * 3;
+pub const MAX_BUFFER_SIZE: usize = MESH_BLOCK_SIZE * 2 + /*focal plane data*/20;
 pub struct BivariateSpline {
     grid_size: (usize, usize),
 }

@@ -61,7 +61,6 @@ LENS_MODEL_FUNCTIONS;
 layout(binding = 3) uniform sampler2D texParams;
 layout(binding = 4) uniform sampler2D texCanvas;
 layout(binding = 5) uniform sampler2D texMeshData;
-float get_mesh_data(int idx) { return texture(texMeshData, vec2(0.0, (float(idx) + 0.5) / 4096.0)).r; }
 
 const vec4 colors[9] = vec4[9](
     vec4(0.0,   0.0,   0.0,     0.0), // None
@@ -121,33 +120,10 @@ float map_coord(float x, float in_min, float in_max, float out_min, float out_ma
     return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
 
-// Depth warp: bilinear translation from the grid appended to the mesh data at `reserved1` (cpu_undistort::output_warp)
-vec3 output_warp(vec2 pos) {
-    if (!bool(params.flags & 16384) || params.output_width <= 0 || params.output_height <= 0) return vec3(0.0);
-    int o = int(params.reserved1);
-    int cols = int(get_mesh_data(o));
-    int rows = int(get_mesh_data(o + 1));
-    if (cols < 2 || rows < 2) return vec3(0.0);
-    float gx = clamp(pos.x / float(params.output_width) * float(cols - 1), 0.0, float(cols - 1));
-    float gy = clamp(pos.y / float(params.output_height) * float(rows - 1), 0.0, float(rows - 1));
-    int x0 = min(int(floor(gx)), cols - 2);
-    int y0 = min(int(floor(gy)), rows - 2);
-    float fx = gx - float(x0);
-    float fy = gy - float(y0);
-    int i00 = o + 2 + (y0 * cols + x0) * 3;
-    int i01 = o + 2 + ((y0 + 1) * cols + x0) * 3;
-    vec3 v00 = vec3(get_mesh_data(i00), get_mesh_data(i00 + 1), get_mesh_data(i00 + 2));
-    vec3 v10 = vec3(get_mesh_data(i00 + 3), get_mesh_data(i00 + 4), get_mesh_data(i00 + 5));
-    vec3 v01 = vec3(get_mesh_data(i01), get_mesh_data(i01 + 1), get_mesh_data(i01 + 2));
-    vec3 v11 = vec3(get_mesh_data(i01 + 3), get_mesh_data(i01 + 4), get_mesh_data(i01 + 5));
-    return v00 * ((1.0 - fx) * (1.0 - fy)) + v10 * (fx * (1.0 - fy)) + v01 * ((1.0 - fx) * fy) + v11 * (fx * fy);
-}
-
 vec2 rotate_and_distort(vec2 pos, float idx) {
-    vec3 warp = output_warp(pos);
-    float _x = (float(pos.x) * get_param(idx, 0)) + (float(pos.y) * get_param(idx, 1)) + get_param(idx, 2) + params.translation3d.x + warp.x;
-    float _y = (float(pos.x) * get_param(idx, 3)) + (float(pos.y) * get_param(idx, 4)) + get_param(idx, 5) + params.translation3d.y + warp.y;
-    float _w = (float(pos.x) * get_param(idx, 6)) + (float(pos.y) * get_param(idx, 7)) + get_param(idx, 8) + params.translation3d.z + warp.z;
+    float _x = (float(pos.x) * get_param(idx, 0)) + (float(pos.y) * get_param(idx, 1)) + get_param(idx, 2) + params.translation3d.x;
+    float _y = (float(pos.x) * get_param(idx, 3)) + (float(pos.y) * get_param(idx, 4)) + get_param(idx, 5) + params.translation3d.y;
+    float _w = (float(pos.x) * get_param(idx, 6)) + (float(pos.y) * get_param(idx, 7)) + get_param(idx, 8) + params.translation3d.z;
 
     if (_w > 0.0) {
         if (params.r_limit > 0.0 && length(vec2(_x, _y) / _w) > params.r_limit) {

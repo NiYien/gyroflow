@@ -3028,10 +3028,6 @@ Do you want to submit your profile?</source>
         <translation>根據分析結果自動選擇參考距離和平滑度：通常穩住遠處的景物，主體佔滿大半畫面時改為穩住主體，並在位移範圍允許的前提下盡量平滑。</translation>
     </message>
     <message>
-        <source>Depth warp</source>
-        <translation>深度變形</translation>
-    </message>
-    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="475"/>
         <source>Click Analyze to measure the camera movement</source>
         <translation>點擊「分析」測量相機位移</translation>

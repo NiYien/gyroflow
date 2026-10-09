@@ -15,7 +15,7 @@ pub mod optical_translation;
 pub mod optical_stab;
 pub use optical_stab::{ OpticalStabReconstruction, StabReconConfig };
 pub use optical_correction::{ OpticalCorrection, OpticalCorrectionSettings };
-pub use optical_translation::{ OpticalTranslation, OpticalTranslationSettings, TranslationSample, TranslationConfig, DepthGrids, PairDepthGrid };
+pub use optical_translation::{ OpticalTranslation, OpticalTranslationSettings, TranslationSample, TranslationConfig };
 pub use file_metadata::*;
 pub use imu_transforms::*;
 pub use sony::{MESH_REFINE_SKIP_PX, MESH_REFINE_THRESHOLD_PX,interpolate_mesh};

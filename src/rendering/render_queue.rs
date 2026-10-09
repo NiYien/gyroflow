@@ -32646,7 +32646,7 @@ mod tests {
         let send = &send[..send.find("\n    }\n").unwrap()];
         assert!(send.contains("render_queue.set_jobs_optical_settings(JSON.stringify("));
         for key in ["correction:", "strength:", "ignore_file_motion:", "translation:", "translation_reference:",
-            "translation_smoothness:", "translation_along_axis:", "translation_auto:", "translation_depth_warp:", "reconstruction:"] {
+            "translation_smoothness:", "translation_along_axis:", "translation_auto:", "reconstruction:"] {
             assert!(send.contains(key), "the push carries {key}");
         }
         // Every commit point of a user edit pushes
@@ -32659,7 +32659,7 @@ mod tests {
             rest.find("root.pushQueueOpticalSettings()").is_some_and(|push| push < rest.find("id: ").unwrap_or(rest.len()))
         };
         for id in ["id: opticalStrengthTimer;", "id: translationReferenceTimer;", "id: translationSmoothnessTimer;", "id: translationAlongAxisTimer;",
-            "id: translationAutoTimer;", "id: translationDepthWarpTimer;"] {
+            "id: translationAutoTimer;"] {
             assert!(pushes_before_next_id(id), "{id} pushes when it commits");
         }
         assert!(pushes_before_next_id("id: ignoreFileMotion;"), "ignoring the motion data pushes");

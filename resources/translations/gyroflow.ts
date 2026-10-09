@@ -2821,10 +2821,6 @@ Do you want to submit your profile?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Depth warp</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="475"/>
         <source>Click Analyze to measure the camera movement</source>
         <translation type="unfinished"></translation>
