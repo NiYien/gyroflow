@@ -2711,6 +2711,7 @@ impl Controller {
                 stab.kernel_flags
                     .set(KernelParamsFlags::DRAWING_ENABLED, true);
                 stab.cache_frame_transform = true;
+                stab.frame_transform_cache_capacity = Some(128);
             }
             let request_recompute =
                 util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, _: ()| {

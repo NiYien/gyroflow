@@ -66,20 +66,12 @@ pub fn configure_player(player: &mut qml_video_rs::video_item::MDKVideoItem, url
             "0+4000"
         };
         player.setDefaultProperty("buffer".into(), buffer.into());
-        // The pinned qml-video-rs setUrl only logs customDecoder for preview.
-        // Apply it through MDK's property interface, restoring initPlayer's
-        // decoder list when returning to another format.
-        let default_decoders = std::env::var("MDK_DECODERS").ok().map(|v| v.trim().to_owned()).filter(|v| !v.is_empty())
-            .unwrap_or_else(|| {
-                if cfg!(target_os="macos") {
-                    "VT:duration=0,BRAW:gpu=auto:copy=1:scale=1920x1080,R3D:gpu=auto:scale=3840x2160,FFmpeg".into()
-                } else {
-                    "D3D11:sw_fallback=1,DXVA,BRAW:gpu=auto:copy=1:scale=1920x1080,R3D:gpu=auto:scale=1920x1080,FFmpeg".into()
-                }
-            });
+        // Restore the player's own defaults, including explicit decoder overrides.
+        let decoders = decoder.map(qmetaobject::QString::from)
+            .unwrap_or_else(|| player.defaultVideoDecoders());
         player.setDefaultProperty(
             "video.decoders".into(),
-            decoder.unwrap_or(default_decoders).into(),
+            decoders,
         );
     }
 }

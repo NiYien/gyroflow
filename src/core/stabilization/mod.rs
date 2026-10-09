@@ -374,6 +374,7 @@ pub struct Stabilization {
 
     pub share_wgpu_instances: bool,
     pub cache_frame_transform: bool,
+    pub frame_transform_cache_capacity: Option<usize>,
     next_backend: Option<&'static str>,
 
     // GPU wrappers moved out by `init_size()` (which can run on the QML/main
@@ -739,6 +740,15 @@ impl Stabilization {
                 transform.kernel_params.pixel_value_limit = 1.0;
             }
             self.stab_data.insert(timestamp_us, transform);
+            if let Some(capacity) = self.frame_transform_cache_capacity {
+                // Keep nearby preview frames; a seek regenerates evicted transforms unchanged.
+                while self.stab_data.len() > capacity.max(1) {
+                    let first = *self.stab_data.first_key_value().unwrap().0;
+                    let last = *self.stab_data.last_key_value().unwrap().0;
+                    let evicted = if first.abs_diff(timestamp_us) >= last.abs_diff(timestamp_us) { first } else { last };
+                    self.stab_data.remove(&evicted);
+                }
+            }
             stab_data_ms = t0.elapsed().as_millis() as u64;
         }
         ((), stab_data_ms)

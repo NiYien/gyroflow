@@ -1663,6 +1663,47 @@ mod tests {
         h.finish()
     }
 
+    #[test]
+    fn bounded_preview_cache_preserves_transforms_after_seeks() {
+        use crate::gpu::{BufferDescription, Buffers};
+        use crate::stabilization::RGBA8;
+        let setup = |capacity| {
+            let mut stab = Stabilization::default();
+            stab.size = (W, H);
+            stab.output_size = (W, H);
+            stab.cache_frame_transform = true;
+            stab.frame_transform_cache_capacity = capacity;
+            stab.set_compute_params(stabilized_params(12.0));
+            stab
+        };
+        let mut bounded = setup(Some(8));
+        let mut reference = setup(None);
+        let mut buffers = Buffers {
+            input: BufferDescription { size: (W, H, W * 4), ..Default::default() },
+            output: BufferDescription { size: (W, H, W * 4), ..Default::default() },
+        };
+        for frame in 0..40 {
+            let timestamp = frame as i64 * 25_000;
+            bounded.ensure_stab_data_at_timestamp::<RGBA8>(timestamp, Some(frame), &mut buffers, true);
+            reference.ensure_stab_data_at_timestamp::<RGBA8>(timestamp, Some(frame), &mut buffers, true);
+            assert!(bounded.stab_data.len() <= 8);
+            assert!(bounded.get_undistortion_data(timestamp).is_some());
+        }
+        assert_eq!(reference.stab_data.len(), 40);
+        assert!(bounded.get_undistortion_data(0).is_none());
+        for frame in [0, 30, 5, 38, 1] {
+            let timestamp = frame as i64 * 25_000;
+            bounded.ensure_stab_data_at_timestamp::<RGBA8>(timestamp, Some(frame), &mut buffers, true);
+            let actual = bounded.get_undistortion_data(timestamp).unwrap();
+            let expected = reference.get_undistortion_data(timestamp).unwrap();
+            assert_eq!(bytemuck::bytes_of(&actual.kernel_params), bytemuck::bytes_of(&expected.kernel_params));
+            assert_eq!(actual.matrices.iter().flatten().map(|v| v.to_bits()).collect::<Vec<_>>(), expected.matrices.iter().flatten().map(|v| v.to_bits()).collect::<Vec<_>>());
+            assert_eq!(actual.mesh_data.iter().map(|v| v.to_bits()).collect::<Vec<_>>(), expected.mesh_data.iter().map(|v| v.to_bits()).collect::<Vec<_>>());
+            assert_eq!(actual.fov.to_bits(), expected.fov.to_bits());
+            assert_eq!(actual.minimal_fov.to_bits(), expected.minimal_fov.to_bits());
+        }
+    }
+
     // Taken on the code before the translation work, by running this test with zeros here and copying the values it
     // prints. Depends on the toolchain's float library and DefaultHasher: take them again the same way after changing either
     const GOLDEN: (u64, u64, u64) = (18069766615594339656, 2781745888030282519, 11631596161409366322);
