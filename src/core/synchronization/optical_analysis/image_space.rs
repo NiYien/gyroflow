@@ -10,130 +10,10 @@ pub(super) struct LayerMotion {
     pub motion: [f32; 2],
     pub scale_rate: f32,
     pub far_beta: f32,
-    /// Relative inverse depth of the layer the automatic parameters hold steady, from this pair alone
-    pub auto_beta: f32,
-    /// The scores behind `auto_beta`, for the analysis to pool over neighbouring pairs before it chooses
-    pub scores: Option<LayerScores>,
+    /// Numerator and denominator of the dominant layer's depth gain, for the analysis to pool over neighbouring pairs:
+    /// the weighted median of the content's parallax projected on the unit-depth layer's motion, and its squared norm
+    pub dominant: [f32; 2],
     pub weight: f32,
-}
-
-/// Half width, in log inverse depth, of what counts as one layer for the automatic reference (about +-28% in depth).
-const AUTO_LAYER_LOG: f64 = 0.25;
-
-/// The reference depths scored, in log inverse depth relative to the pair's median: from 1/55 to 6.9 times it.
-const AUTO_GRID_START: f64 = -4.0;
-const AUTO_GRID_STEP: f64 = AUTO_LAYER_LOG / 4.0;
-const AUTO_GRID_LEN: usize = 96;
-
-/// Beyond this many standard deviations a depth is taken as surely in front of or behind a layer edge.
-const AUTO_SURE_SD: f64 = 6.0;
-
-/// Standard normal cumulative distribution (Abramowitz and Stegun 7.1.26, absolute error below 1.5e-7).
-fn normal_cdf(x: f64) -> f64 {
-    let z = x.abs() / std::f64::consts::SQRT_2;
-    let t = 1.0 / (1.0 + 0.3275911 * z);
-    let erf = 1.0 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * (-z * z).exp();
-    if x >= 0.0 { 0.5 * (1.0 + erf) } else { 0.5 * (1.0 - erf) }
-}
-
-fn grid_depth(index: usize) -> f64 { AUTO_GRID_START + index as f64 * AUTO_GRID_STEP }
-
-/// The automatic reference's scores at each depth of the grid, normalized by the total weight, and the depths the
-/// measured content spans. Pairs close in time add up: the layer is then chosen from what a stretch of video shows,
-/// instead of flipping between two layers whose scores are close and averaging the flips into a depth that is neither.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub(super) struct LayerScores {
-    /// Each piece scores 2 on the layer, 1 in front of it and 0 behind it; stored minus the constant 1
-    score: Vec<f32>,
-    /// Weight of the content on the layer, and the same weighted by where it is expected to lie (log depth)
-    mass: Vec<f32>,
-    position: Vec<f32>,
-    low: usize,
-    high: usize,
-}
-
-impl LayerScores {
-    /// `depths` holds (inverse depth relative to the median, weight, standard deviation of its log). A depth the
-    /// parallax has not pinned down yet (near the direction of travel, or early in a segment) counts with the
-    /// probability of each outcome, so it spreads over the layers instead of making up a far one.
-    pub(super) fn new(depths: &[(f64, f64, f64)]) -> Option<Self> {
-        let values: Vec<_> = depths.iter()
-            .filter(|(rho, weight, sd)| rho.is_finite() && *rho > 0.0 && weight.is_finite() && *weight > 0.0 && !sd.is_nan())
-            .map(|(rho, weight, sd)| (rho.ln(), *weight, sd.max(1e-9))).collect();
-        let total: f64 = values.iter().map(|v| v.1).sum();
-        if values.is_empty() || total <= 0.0 { return None; }
-        // Search the depths the well measured content spans; a wildly uncertain one must not stretch the search.
-        let mut by_depth: Vec<_> = values.iter().map(|v| (v.0, v.1 / (1.0 + (v.2 / AUTO_LAYER_LOG).powi(2)))).collect();
-        by_depth.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let measured: f64 = by_depth.iter().map(|v| v.1).sum();
-        let quantile = |fraction: f64| {
-            let mut sum = 0.0;
-            by_depth.iter().find(|v| { sum += v.1; sum >= fraction * measured }).map_or(by_depth[by_depth.len() - 1].0, |v| v.0)
-        };
-        let index = |x: f64| ((x - AUTO_GRID_START) / AUTO_GRID_STEP).clamp(0.0, (AUTO_GRID_LEN - 1) as f64);
-        let low = index(quantile(0.01) - AUTO_LAYER_LOG).floor() as usize;
-        let high = index(quantile(0.99) + AUTO_LAYER_LOG).ceil() as usize;
-        let (mut score, mut mass, mut position) = (vec![0.0f64; AUTO_GRID_LEN], vec![0.0f64; AUTO_GRID_LEN], vec![0.0f64; AUTO_GRID_LEN]);
-        // From its last uncertain grid depth on, a depth lies surely behind the layer: added once as a step
-        let mut behind_from = vec![0.0f64; AUTO_GRID_LEN + 1];
-        let pdf = |x: f64| (-0.5 * x * x).exp() / (2.0 * std::f64::consts::PI).sqrt();
-        for &(value, weight, sd) in &values {
-            let first = index(value - AUTO_LAYER_LOG - AUTO_SURE_SD * sd).floor() as usize;
-            let past = (((value + AUTO_LAYER_LOG + AUTO_SURE_SD * sd - AUTO_GRID_START) / AUTO_GRID_STEP).ceil().max(0.0) as usize).min(AUTO_GRID_LEN);
-            for g in first..past {
-                let b = grid_depth(g);
-                let (lower, upper) = ((b - AUTO_LAYER_LOG - value) / sd, (b + AUTO_LAYER_LOG - value) / sd);
-                let behind = normal_cdf(lower);
-                let same = normal_cdf(upper) - behind;
-                score[g] += weight * (same - behind);
-                if same > 1e-12 {
-                    let expected = (value + sd * (pdf(lower) - pdf(upper)) / same).clamp(b - AUTO_LAYER_LOG, b + AUTO_LAYER_LOG);
-                    mass[g] += weight * same;
-                    position[g] += weight * same * expected;
-                }
-            }
-            behind_from[past] += weight;
-        }
-        let mut behind = 0.0;
-        for g in 0..AUTO_GRID_LEN {
-            behind += behind_from[g];
-            score[g] -= behind;
-        }
-        let normalized = |v: Vec<f64>| v.into_iter().map(|x| (x / total) as f32).collect();
-        Some(Self { score: normalized(score), mass: normalized(mass), position: normalized(position), low, high: high.max(low) })
-    }
-
-    /// Adds `other` weighted by `k`, over both ranges.
-    pub(super) fn add(&mut self, other: &Self, k: f64) {
-        if self.score.is_empty() {
-            *self = Self { score: vec![0.0; AUTO_GRID_LEN], mass: vec![0.0; AUTO_GRID_LEN], position: vec![0.0; AUTO_GRID_LEN], low: other.low, high: other.high };
-        }
-        for g in 0..AUTO_GRID_LEN {
-            self.score[g] += (k * other.score[g] as f64) as f32;
-            self.mass[g] += (k * other.mass[g] as f64) as f32;
-            self.position[g] += (k * other.position[g] as f64) as f32;
-        }
-        self.low = self.low.min(other.low);
-        self.high = self.high.max(other.high);
-    }
-
-    /// The best scoring depth, the farther one on a tie, refined to where its content lies on average. Relative to
-    /// the median inverse depth; zero without scores.
-    pub(super) fn choose(&self) -> f64 {
-        if self.score.is_empty() { return 0.0; }
-        let mut best = self.low;
-        for g in self.low..=self.high.min(AUTO_GRID_LEN - 1) {
-            if self.score[g] > self.score[best] + 1e-7 { best = g; }
-        }
-        (if self.mass[best] > 0.0 { (self.position[best] / self.mass[best]) as f64 } else { grid_depth(best) }).exp()
-    }
-}
-
-/// Inverse depth, relative to the median, of the layer a viewer reads as standing still. Each visible piece scores 2
-/// when it lies on the layer and is held still, 1 when it lies in front of it and slides as parallax, and 0 when it
-/// lies behind it and moves. Open scenes pick the far layer; a near layer wins once it covers most of the picture.
-fn auto_reference(depths: &[(f64, f64, f64)]) -> f64 {
-    LayerScores::new(depths).map_or(0.0, |scores| scores.choose())
 }
 
 /// How much of a point's motion a viewer can see: its texture against the picture's typical tracked texture. Flat or
@@ -166,8 +46,7 @@ pub(super) fn fit(points: &[PairPoint], pair: &PairTranslation, projection: &Mat
         return LayerMotion::default();
     }
     let mut cells = [0usize; 16 * 9];
-    // Standard deviation of each kept point's log inverse depth and its texture, for the automatic reference
-    let mut log_sd = Vec::new();
+    // Texture of each kept point, for the dominant layer
     let mut texture = Vec::new();
     let data: Vec<_> = points.iter().filter_map(|point| {
         if !pair.carried_depth.contains(&point.id) { return None; }
@@ -181,7 +60,6 @@ pub(super) fn fit(points: &[PairPoint], pair: &PairTranslation, projection: &Mat
         if !(0.0..1.0).contains(&u) || !(0.0..1.0).contains(&v) { return None; }
         let cell = (u * 16.0) as usize + 16 * (v * 9.0) as usize;
         cells[cell] += 1;
-        log_sd.push(pair.inv_depth_var.get(&point.id).map_or(f64::INFINITY, |var| var.max(0.0).sqrt() / rho));
         texture.push(point.texture);
         Some((x, delta, rho, cell))
     }).collect();
@@ -222,12 +100,16 @@ pub(super) fn fit(points: &[PairPoint], pair: &PairTranslation, projection: &Mat
     let mut textures: Vec<_> = texture.iter().map(|e| *e as f64).filter(|e| e.is_finite() && *e >= 0.0).collect();
     textures.sort_by(f64::total_cmp);
     let typical = textures.get(textures.len() / 2).copied().unwrap_or(0.0);
-    let auto_depths: Vec<_> = depths.iter().zip(&log_sd).zip(&texture)
-        .map(|((d, sd), e)| (d.0 / median, d.1 * visibility(*e, typical), *sd)).collect();
-    let scores = LayerScores::new(&auto_depths);
+    // Dominant layer: the content that most of the visible, textured picture follows. Content at depth beta moves by
+    // beta times the unit layer's motion, so the weighted median parallax projected on that motion gives its depth.
+    // A median rather than a mean, so that a minority far in front or behind does not pull it.
+    let weights: Vec<_> = data.iter().zip(&texture).map(|(d, e)| visibility(*e, typical) / cells[d.3] as f64).collect();
+    let median_of = |axis: usize| quantile(&data.iter().zip(&weights).map(|(d, w)| (d.1[axis], *w)).collect::<Vec<_>>(), 0.5);
+    let parallax = Vector2::new(median_of(0), median_of(1));
+    let unit = solution.xy();
     LayerMotion { motion: [solution.x as f32, solution.y as f32], scale_rate: solution.z as f32,
         far_beta: (quantile(&depths, 0.2) / median) as f32,
-        auto_beta: scores.as_ref().map_or(0.0, |scores| scores.choose()) as f32, scores,
+        dominant: [parallax.dot(&unit) as f32, unit.norm_squared() as f32],
         weight: pair.confidence.clamp(0.0, 1.0) as f32 }
 }
 
@@ -299,74 +181,67 @@ mod tests {
         assert_eq!(fit(&points, &pair, &projection, (800, 450)).weight, 0.0);
     }
 
-    /// Visible area split by column: the left `far_columns` of 16 at inverse depth 0.5, the rest at 2.0.
-    fn split_depths(far_columns: usize) -> Vec<(f64, f64, f64)> {
-        (0..16 * 9).map(|cell| (if cell % 16 < far_columns { 0.5 } else { 2.0 }, 1.0, 0.0)).collect()
+    /// One point per cell, the right `near_columns` of 16 at inverse depth 2.0 with texture `near_texture`, the rest
+    /// at 0.5 with texture 1.0 (or every cell at `single` when given), the camera moving sideways.
+    fn layered(near_columns: usize, near_texture: f32, single: Option<f64>) -> (Vec<PairPoint>, PairTranslation, Matrix3<f64>) {
+        let (mut points, mut pair, projection) = scene(Vector3::zeros(), false);
+        let motion = Vector2::new(0.002, 0.001);
+        for point in &mut points {
+            let x = point.p.x / -point.p.z;
+            let y = -point.p.y / -point.p.z;
+            let column = ((x * 500.0 + 400.0) / 50.0) as usize;
+            let near = column >= 16 - near_columns;
+            let rho = single.unwrap_or(if near { 2.0 } else { 0.5 });
+            let moved = Vector2::new(x, y) + motion * rho;
+            point.r = Vector3::new(moved.x, -moved.y, -1.0).normalize() - point.p;
+            point.texture = if near && single.is_none() { near_texture } else { 1.0 };
+            pair.inv_depth.insert(point.id, rho);
+        }
+        (points, pair, projection)
+    }
+
+    /// The dominant layer's inverse depth in the scene's own units, from a single pair (far_beta is 0.5 there)
+    fn dominant_depth(points: &[PairPoint], pair: &PairTranslation, projection: &Matrix3<f64>) -> f64 {
+        let got = fit(points, pair, projection, (800, 450));
+        assert!(got.dominant[1] > 0.0, "{got:?}");
+        (got.dominant[0] / got.dominant[1]) as f64 / got.far_beta as f64 * 0.5
     }
 
     #[test]
-    fn translation_auto_reference_holds_the_far_layer_until_a_near_one_dominates() {
-        // Equal areas, and a near layer on 60% of the picture: the far layer stays the reference
-        assert!((auto_reference(&split_depths(8)) - 0.5).abs() < 0.2, "{}", auto_reference(&split_depths(8)));
-        assert!((auto_reference(&split_depths(7)) - 0.5).abs() < 0.2);
-        // A near layer on 75% of the picture takes over
-        assert!((auto_reference(&split_depths(4)) - 2.0).abs() < 0.6, "{}", auto_reference(&split_depths(4)));
-        // A continuous spread of depths (a ground plane) keeps the far end
-        let spread: Vec<_> = (0..100).map(|i| ((0.01 * i as f64 * 3.0_f64.ln()).exp() * 0.4, 1.0, 0.0)).collect();
-        assert!(auto_reference(&spread) < 0.4 * 1.35, "{}", auto_reference(&spread));
-        assert_eq!(auto_reference(&[]), 0.0);
-        assert_eq!(auto_reference(&[(f64::NAN, 1.0, 0.0), (-1.0, 1.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, f64::NAN)]), 0.0);
+    fn translation_dominant_layer_of_a_single_depth() {
+        let (points, pair, projection) = layered(0, 1.0, Some(1.3));
+        let got = fit(&points, &pair, &projection, (800, 450));
+        let ratio = (got.dominant[0] / got.dominant[1]) as f64;
+        assert!((ratio - 1.0).abs() < 0.02, "{got:?}");
     }
 
     #[test]
-    fn translation_auto_reference_counts_what_shows_motion() {
+    fn translation_dominant_layer_follows_what_covers_most_of_the_picture() {
+        // Far on about 70% of the picture: a near minority must not pull it
+        let (points, pair, projection) = layered(5, 1.0, None);
+        let far = dominant_depth(&points, &pair, &projection);
+        assert!((far - 0.5).abs() / 0.5 < 0.05, "{far}");
+        // Near on about 70%: the subject that fills the frame wins
+        let (points, pair, projection) = layered(11, 1.0, None);
+        let near = dominant_depth(&points, &pair, &projection);
+        assert!((near - 2.0).abs() / 2.0 < 0.15, "{near}");
+    }
+
+    #[test]
+    fn translation_dominant_layer_counts_what_shows_motion() {
         assert_eq!(visibility(f32::NAN, 2.0), 1.0);
         assert_eq!(visibility(1.0, 0.0), 1.0);
         assert!((visibility(2.0, 2.0) - 0.5).abs() < 1e-12 && visibility(20.0, 2.0) > 0.9 && visibility(0.1, 2.0) < 0.05);
-        // A flat dark wall on 70% of the picture, textured far content on the rest
-        let mut depths: Vec<_> = (0..70).map(|_| (2.0, 1.0 * visibility(0.05, 1.0), 0.05)).collect();
-        depths.extend((0..30).map(|_| (0.5, 1.0 * visibility(4.0, 1.0), 0.05)));
-        assert!((auto_reference(&depths) - 0.5).abs() < 0.1, "{}", auto_reference(&depths));
-        // Textured like the rest, the same wall dominates
-        for d in &mut depths[..70] { d.1 = visibility(4.0, 1.0); }
-        assert!((auto_reference(&depths) - 2.0).abs() < 0.3, "{}", auto_reference(&depths));
+        // A flat dark wall on half the picture, near; textured far content on the rest
+        let (points, pair, projection) = layered(8, 0.05, None);
+        let depth = dominant_depth(&points, &pair, &projection);
+        assert!((depth - 0.5).abs() / 0.5 < 0.15, "{depth}");
     }
 
     #[test]
-    fn translation_auto_scores_add_up_over_pairs() {
-        let near = |share: usize| {
-            let mut depths: Vec<_> = (0..share).map(|_| (2.0, 1.0, 0.05)).collect();
-            depths.extend((share..100).map(|_| (0.5, 1.0, 0.05)));
-            LayerScores::new(&depths).unwrap()
-        };
-        // Near on 68% of the picture wins, on 64% it doesn't; together the far layer does
-        let (a, b) = (near(68), near(64));
-        assert!((a.choose() - 2.0).abs() < 0.3 && (b.choose() - 0.5).abs() < 0.1);
-        let mut pooled = LayerScores::default();
-        pooled.add(&a, 1.0);
-        pooled.add(&b, 1.0);
-        assert!((pooled.choose() - 0.5).abs() < 0.1, "{}", pooled.choose());
-        assert_eq!(LayerScores::default().choose(), 0.0);
-        assert!(LayerScores::new(&[]).is_none());
-    }
-
-    #[test]
-    fn translation_auto_reference_does_not_take_unmeasured_depths_for_a_far_layer() {
-        // A third of the picture still near its starting guess of almost no inverse depth, the rest measured
-        let mut depths: Vec<_> = (0..48).map(|_| (0.02, 1.0, 3.0)).collect();
-        depths.extend((0..48).map(|_| (0.5, 1.0, 0.05)));
-        depths.extend((0..48).map(|_| (2.0, 1.0, 0.05)));
-        assert!((auto_reference(&depths) - 0.5).abs() < 0.1, "{}", auto_reference(&depths));
-        // Measured just as well, the same third is a real far layer
-        for d in &mut depths[..48] { d.2 = 0.05; }
-        assert!(auto_reference(&depths) < 0.03, "{}", auto_reference(&depths));
-    }
-
-    #[test]
-    fn translation_auto_reference_reaches_the_samples_relative_to_the_median() {
-        let (points, pair, projection) = scene(Vector3::new(0.002, 0.0, 0.0), false);
-        let got = fit(&points, &pair, &projection, (800, 450));
-        // Equal-area far and near halves: both references are the far layer, in units of the median depth
-        assert!(got.auto_beta > 0.0 && (got.auto_beta - got.far_beta).abs() < 0.05, "{got:?}");
+    fn translation_dominant_layer_is_empty_without_a_fit() {
+        let (points, mut pair, projection) = layered(5, 1.0, None);
+        pair.confidence = 0.0;
+        assert_eq!(fit(&points, &pair, &projection, (800, 450)).dominant, [0.0, 0.0]);
     }
 }

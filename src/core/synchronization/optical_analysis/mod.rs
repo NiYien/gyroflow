@@ -365,40 +365,43 @@ struct TranslationState {
     position: Vector3<f64>,
     segment: u32,
     samples: Vec<TranslationSample>,
-    /// The automatic reference's scores of each sample, see `finish`
-    scores: Vec<Option<image_space::LayerScores>>,
+    /// Numerator and denominator of each sample's dominant layer gain, see `finish`
+    dominant: Vec<[f32; 2]>,
 }
 
-/// Time scale (Gaussian sigma) over which the automatic reference pools the scores of neighbouring samples; the same
-/// as the one that smooths the reference depth afterwards
-const AUTO_POOL_SIGMA_S: f64 = 0.25;
+/// Time scale (Gaussian sigma) over which the automatic reference pools the dominant layer of neighbouring samples:
+/// the window of the offline estimate it was validated with (target/translation-e0, 2026-10-09)
+const AUTO_DOMINANT_SIGMA_S: f64 = 1.0;
+
+/// Range of the automatic reference, in multiples of the median inverse depth
+const AUTO_DOMINANT_RANGE: (f64, f64) = (0.02, 50.0);
 
 impl TranslationState {
-    /// Chooses each sample's automatic layer from its own scores and those of the samples around it in its segment,
-    /// weighted by time and confidence: what a stretch of video shows rather than what one pair of frames does.
+    /// Each sample's automatic layer: the dominant layer gain of the samples around it in its segment, numerators and
+    /// denominators added up weighted by time and confidence, so that what a stretch of video shows decides.
     fn finish(self) -> Vec<TranslationSample> {
-        let TranslationState { mut samples, scores, .. } = self;
+        let TranslationState { mut samples, dominant, .. } = self;
         let seconds = |a: &TranslationSample, b: &TranslationSample| (a.timestamp_us - b.timestamp_us) as f64 / 1e6;
         let chosen: Vec<_> = (0..samples.len()).map(|i| {
-            scores[i].as_ref()?;
-            let mut pooled = image_space::LayerScores::default();
-            let mut total = 0.0;
+            let (mut numerator, mut denominator) = (0.0, 0.0);
             let mut add = |j: usize| -> bool {
                 let dt = seconds(&samples[j], &samples[i]);
-                if samples[j].segment != samples[i].segment || dt.abs() > 3.0 * AUTO_POOL_SIGMA_S { return false; }
-                if let Some(other) = &scores[j] {
-                    let k = (-0.5 * (dt / AUTO_POOL_SIGMA_S).powi(2)).exp() * samples[j].weight.clamp(0.0, 1.0) as f64;
-                    if k > 0.0 { pooled.add(other, k); total += k; }
+                if samples[j].segment != samples[i].segment || dt.abs() > 3.0 * AUTO_DOMINANT_SIGMA_S { return false; }
+                let [n, d] = dominant[j];
+                if n.is_finite() && d.is_finite() && d > 0.0 {
+                    let k = (-0.5 * (dt / AUTO_DOMINANT_SIGMA_S).powi(2)).exp() * samples[j].weight.clamp(0.0, 1.0) as f64;
+                    numerator += k * n as f64;
+                    denominator += k * d as f64;
                 }
                 true
             };
             add(i);
             for j in (0..i).rev() { if !add(j) { break; } }
             for j in i + 1..samples.len() { if !add(j) { break; } }
-            (total > 0.0).then(|| pooled.choose() as f32)
+            (denominator > 0.0).then(|| (numerator / denominator).clamp(AUTO_DOMINANT_RANGE.0, AUTO_DOMINANT_RANGE.1) as f32)
         }).collect();
         for (sample, chosen) in samples.iter_mut().zip(chosen) {
-            if let Some(beta) = chosen { sample.auto_beta = beta; }
+            sample.auto_beta = chosen.unwrap_or(0.0);
         }
         samples
     }
@@ -492,7 +495,7 @@ impl OpticalMotionAnalysis {
                 scaled_fps / every_nth_frame as f64);
             let translation = (vision.is_none() && ui.translation_enabled).then(|| TranslationState {
                 solver: TranslationSolver::new(TranslationSolverConfig::resolved()),
-                next_seq: 0, pairs: HashMap::new(), position: Vector3::zeros(), segment: 0, samples: Vec::new(), scores: Vec::new(),
+                next_seq: 0, pairs: HashMap::new(), position: Vector3::zeros(), segment: 0, samples: Vec::new(), dominant: Vec::new(),
             });
             Ok(Self {
                 params, fps_scale, scaled_fps, quats_checksum, context_checksum, horizontal_readout,
@@ -824,7 +827,7 @@ impl OpticalMotionAnalysis {
                 if !state.samples.is_empty() { state.segment += 1; }
                 state.solver.reset();
                 state.position = Vector3::zeros();
-                state.scores.push(None);
+                state.dominant.push([0.0; 2]);
                 state.samples.push(TranslationSample {
                     timestamp_us: start_us,
                     segment: state.segment,
@@ -853,10 +856,10 @@ impl OpticalMotionAnalysis {
                 layer_motion: layer.motion,
                 layer_scale_rate: layer.scale_rate,
                 far_beta: layer.far_beta,
-                auto_beta: layer.auto_beta,
                 weight: layer.weight,
+                ..Default::default()
             });
-            state.scores.push(layer.scores);
+            state.dominant.push(layer.dominant);
         }
         state.next_seq = self.next_seq;
         for d in derived {
@@ -1008,31 +1011,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn translation_auto_layer_is_chosen_from_pooled_scores() {
-        let near = |share: usize| {
-            let mut depths: Vec<_> = (0..share).map(|_| (2.0, 1.0, 0.05)).collect();
-            depths.extend((share..100).map(|_| (0.5, 1.0, 0.05)));
-            image_space::LayerScores::new(&depths).unwrap()
-        };
-        let (a, b) = (near(68), near(64));
+    fn translation_auto_layer_is_the_pooled_dominant_gain() {
         let mut state = TranslationState { solver: TranslationSolver::new(TranslationSolverConfig::DEFAULT), next_seq: 0,
-            pairs: HashMap::new(), position: Vector3::zeros(), segment: 0, samples: Vec::new(), scores: Vec::new() };
+            pairs: HashMap::new(), position: Vector3::zeros(), segment: 0, samples: Vec::new(), dominant: Vec::new() };
         state.samples.push(TranslationSample { timestamp_us: 0, ..Default::default() });
-        state.scores.push(None);
+        state.dominant.push([0.0; 2]);
+        // Single pairs alternate between two layers: the pooled gain is steady in between
         for i in 1..60 {
-            let scores = if i % 2 == 0 { a.clone() } else { b.clone() };
-            state.samples.push(TranslationSample { timestamp_us: i * 40_000, auto_beta: scores.choose() as f32, weight: 1.0, ..Default::default() });
-            state.scores.push(Some(scores));
+            let gain = if i % 2 == 0 { 2.0 } else { 0.5 };
+            state.samples.push(TranslationSample { timestamp_us: i * 40_000, weight: 1.0, ..Default::default() });
+            state.dominant.push([gain * 1e-6, 1e-6]);
         }
-        // A sample of another segment does not join the pool
-        state.samples.push(TranslationSample { timestamp_us: 60 * 40_000, segment: 1, auto_beta: 9.0, weight: 1.0, ..Default::default() });
-        state.scores.push(Some(near(100)));
-        let per_pair: Vec<_> = state.samples.iter().map(|s| s.auto_beta).collect();
-        assert!(per_pair[1..60].iter().any(|b| (b - 2.0).abs() < 0.3) && per_pair[1..60].iter().any(|b| (b - 0.5).abs() < 0.1));
+        // A sample of another segment neither joins nor takes from the pool, and a segment without any measurement
+        // stays unmeasured
+        state.samples.push(TranslationSample { timestamp_us: 60 * 40_000, segment: 1, weight: 1.0, ..Default::default() });
+        state.dominant.push([9e-6, 1e-6]);
+        state.samples.push(TranslationSample { timestamp_us: 61 * 40_000, segment: 2, weight: 1.0, ..Default::default() });
+        state.dominant.push([0.0, 0.0]);
         let samples = state.finish();
-        assert_eq!(samples[0].auto_beta, 0.0, "nothing measured at the segment start");
-        for s in &samples[5..55] { assert!((s.auto_beta - 0.5).abs() < 0.1, "{}", s.auto_beta); }
-        assert!((samples[60].auto_beta - 2.0).abs() < 0.3, "{}", samples[60].auto_beta);
+        for s in &samples[5..55] { assert!((s.auto_beta - 1.25).abs() < 0.05, "{}", s.auto_beta); }
+        for w in samples[5..55].windows(2) { assert!((w[1].auto_beta / w[0].auto_beta - 1.0).abs() < 0.02); }
+        assert!(samples[0].auto_beta > 0.0, "the segment start takes its neighbours' layer");
+        assert!((samples[60].auto_beta - 9.0).abs() < 1e-5, "{}", samples[60].auto_beta);
+        assert_eq!(samples[61].auto_beta, 0.0);
     }
 
     #[test]
