@@ -1,5 +1,8 @@
 import 'common.just'
 
+WindowsFFmpegUrl := "https://github.com/NiYien/avbuild/releases/download/gyroflow-ffmpeg-8.1-windows-hevc-tiles-v1/ffmpeg-8.1-windows-x64-hevc-tiles-v1.7z"
+WindowsFFmpegSha256 := "ea80858d1f5b06219fdab268a29903f84d10b0d940b52ad239df9dcf1d52dab8"
+
 NameSuffix := if Arch == "aarch64" { "windows-arm64" } else { "windows64" }
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -114,21 +117,26 @@ install-deps:
     # that dies half way leaves the top-level directory behind, and a bare
     # directory check would then skip the download and fail much later with a
     # missing header.
-    $FFmpegHeader = "{{FFmpeg}}/include/libavutil/avutil.h"
-    $FFmpegLib    = "{{FFmpeg}}/lib/avutil.lib"
-    if (-not ((Test-Path -Path $FFmpegHeader) -and (Test-Path -Path $FFmpegLib))) {
-        echo "Downloading {{FFmpeg}}"
-        # Must be curl.exe, never `wget`/`curl`: in Windows PowerShell both are
-        # aliases for Invoke-WebRequest, whose default Mozilla/5.0 user agent makes
-        # SourceForge answer with its HTML "download will start shortly" page under
-        # HTTP 200 instead of the archive. macos.just and linux.just already curl.
-        curl.exe -fsSL --retry 3 --retry-delay 5 -o "{{FFmpeg}}.7z" "https://master.dl.sourceforge.net/project/avbuild/windows-desktop/{{FFmpeg}}.7z?viasf=1"
-        if ($LASTEXITCODE -ne 0) { throw "Failed to download {{FFmpeg}} (curl exit code $LASTEXITCODE)" }
-        7z x -y {{FFmpeg}}.7z
-        if ($LASTEXITCODE -ne 0) { throw "Failed to extract {{FFmpeg}}.7z - the downloaded file is not a 7z archive" }
-        del {{FFmpeg}}.7z
+    if ("{{Arch}}" -eq "x86_64") {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{{ProjectDir}}/_scripts/install_windows_ffmpeg.ps1" -ExtDir "{{ExtDir}}" -PackageName "{{FFmpeg}}" -Url "{{WindowsFFmpegUrl}}" -Sha256 "{{WindowsFFmpegSha256}}"
+        if ($LASTEXITCODE -ne 0) { throw "Failed to install the verified Windows FFmpeg SDK" }
+    } else {
+        $FFmpegHeader = "{{FFmpeg}}/include/libavutil/avutil.h"
+        $FFmpegLib    = "{{FFmpeg}}/lib/avutil.lib"
         if (-not ((Test-Path -Path $FFmpegHeader) -and (Test-Path -Path $FFmpegLib))) {
-            throw "{{FFmpeg}} extracted but is incomplete: expected $FFmpegHeader and $FFmpegLib"
+            echo "Downloading {{FFmpeg}}"
+            # Must be curl.exe, never `wget`/`curl`: in Windows PowerShell both are
+            # aliases for Invoke-WebRequest, whose default Mozilla/5.0 user agent makes
+            # SourceForge answer with its HTML "download will start shortly" page under
+            # HTTP 200 instead of the archive. macos.just and linux.just already curl.
+            curl.exe -fsSL --retry 3 --retry-delay 5 -o "{{FFmpeg}}.7z" "https://master.dl.sourceforge.net/project/avbuild/windows-desktop/{{FFmpeg}}.7z?viasf=1"
+            if ($LASTEXITCODE -ne 0) { throw "Failed to download {{FFmpeg}} (curl exit code $LASTEXITCODE)" }
+            7z x -y {{FFmpeg}}.7z
+            if ($LASTEXITCODE -ne 0) { throw "Failed to extract {{FFmpeg}}.7z - the downloaded file is not a 7z archive" }
+            del {{FFmpeg}}.7z
+            if (-not ((Test-Path -Path $FFmpegHeader) -and (Test-Path -Path $FFmpegLib))) {
+                throw "{{FFmpeg}} extracted but is incomplete: expected $FFmpegHeader and $FFmpegLib"
+            }
         }
     }
     # ---- FFmpeg ----
