@@ -40,6 +40,7 @@ use parking_lot::RwLock;
 use std::ops::DerefMut;
 
 pub struct OclWrapper {
+    device_name: String,
     kernel: Kernel,
     src: Buffer<u8>,
     dst: Buffer<u8>,
@@ -594,6 +595,7 @@ impl OclWrapper {
             buf_drawing.write(&vec![0u8; buf_drawing.len()]).enq()?;
 
             Ok(Self {
+                device_name: ctx.device.name().unwrap_or_default(),
                 kernel,
                 queue: ocl_queue,
                 src: source_buffer,
@@ -616,6 +618,7 @@ impl OclWrapper {
         itm: &crate::stabilization::FrameTransform,
         drawing_buffer: &[u8],
     ) -> ocl::Result<()> {
+        super::timing::record_device("opencl", &self.device_name);
         let matrices = unsafe {
             std::slice::from_raw_parts(itm.matrices.as_ptr() as *const f32, itm.matrices.len() * 14)
         };
@@ -655,6 +658,7 @@ impl OclWrapper {
             }
         }
 
+        let upload_timer = super::timing::StageTimer::new(super::timing::Stage::Upload);
         if !drawing_buffer.is_empty() {
             if self.buf_drawing.len() != drawing_buffer.len() {
                 log::error!(
@@ -757,6 +761,7 @@ impl OclWrapper {
             }
             _ => panic!("Unsupported input buffer {:?}", buffers.input.data),
         }
+        drop(upload_timer);
         match buffers.output.data {
             BufferSource::OpenCL { texture, .. } => unsafe {
                 let siz = std::mem::size_of::<ocl::ffi::cl_mem>() as usize;
@@ -772,11 +777,14 @@ impl OclWrapper {
             _ => {}
         }
 
+        let upload_timer = super::timing::StageTimer::new(super::timing::Stage::Upload);
         self.buf_params
             .write(bytemuck::bytes_of(&itm.kernel_params))
             .enq()?;
         self.buf_matrices.write(matrices).enq()?;
+        drop(upload_timer);
 
+        let wait_timer = super::timing::StageTimer::new(super::timing::Stage::Wait);
         unsafe {
             self.kernel.enq()?;
         }
@@ -785,6 +793,7 @@ impl OclWrapper {
             BufferSource::None => {}
             BufferSource::Cpu { buffer, .. } => {
                 self.dst.read(&mut **buffer).enq()?;
+                drop(wait_timer);
             }
             BufferSource::OpenGL { texture, .. } => {
                 if let Some(ref tex) = self.image_dst {

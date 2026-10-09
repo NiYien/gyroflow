@@ -62,6 +62,8 @@ fn shared_init_enabled() -> bool {
 
 pub struct WgpuWrapper {
     staging_buffer: Option<wgpu::Buffer>,
+    timestamps: Option<PassTimestamps>,
+    device_name: String,
     buf_matrices: Option<wgpu::Buffer>,
     buf_params: Option<wgpu::Buffer>,
     buf_mesh_data: Option<wgpu::Buffer>,
@@ -83,10 +85,39 @@ pub struct WgpuWrapper {
     params_size: u64,
     drawing_size: u64,
 }
+
+struct PassTimestamps {
+    samples: super::timing::PassSamples,
+    queries: wgpu::QuerySet,
+    resolved: wgpu::Buffer,
+    mapped: wgpu::Buffer,
+}
+
+impl PassTimestamps {
+    fn new(device: &wgpu::Device) -> Self {
+        Self {
+            samples: super::timing::PassSamples::default(),
+            queries: device.create_query_set(&wgpu::QuerySetDescriptor {
+                label: Some("stabilization pass timing"), ty: wgpu::QueryType::Timestamp, count: 2,
+            }),
+            resolved: device.create_buffer(&wgpu::BufferDescriptor {
+                label: None, size: 16,
+                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            }),
+            mapped: device.create_buffer(&wgpu::BufferDescriptor {
+                label: None, size: 16,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+        }
+    }
+}
 impl Drop for WgpuWrapper {
     fn drop(&mut self) {
         // We need to delete all texture references and then call device.poll() to actually release them properly
         self.staging_buffer = None;
+        self.timestamps = None;
         self.buf_matrices = None;
         self.buf_params = None;
         self.buf_mesh_data = None;
@@ -265,6 +296,7 @@ impl WgpuWrapper {
         }
 
         if let Some(adapter) = lock.get(adapter_id) {
+            let timing_features = adapter.features() & wgpu::Features::TIMESTAMP_QUERY;
             log::debug!(
                 "WGPU initializing adapter #{adapter_id}: {:?}",
                 adapter.get_info()
@@ -331,7 +363,7 @@ impl WgpuWrapper {
                             wgpu::hal::OpenDevice::<Metal> {
                                 device: <Metal as wgpu::hal::Api>::Device::device_from_raw(
                                     mtl_dev,
-                                    wgpu::Features::empty(),
+                                    timing_features,
                                 ),
                                 queue: <Metal as wgpu::hal::Api>::Queue::queue_from_raw(
                                     mtl_cq, 1.0,
@@ -339,7 +371,7 @@ impl WgpuWrapper {
                             },
                             &wgpu::DeviceDescriptor {
                                 label: None,
-                                required_features: wgpu::Features::empty(),
+                                required_features: timing_features,
                                 required_limits: limits,
                                 memory_hints: wgpu::MemoryHints::Performance,
                                 trace: wgpu::Trace::Off,
@@ -380,7 +412,7 @@ impl WgpuWrapper {
                         let device =
                             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                                 label: None,
-                                required_features: wgpu::Features::empty(),
+                                required_features: timing_features,
                                 required_limits: limits.clone(),
                                 memory_hints: wgpu::MemoryHints::Performance,
                                 trace: wgpu::Trace::Off,
@@ -874,10 +906,15 @@ impl WgpuWrapper {
                 "wgpu_init device_ms={device_ms} shared_device={device_shared} compile_ms={compile_ms} pipeline_cached={pipeline_cached} alloc_ms={alloc_ms}",
             );
 
+            let timestamps = (device.features().contains(wgpu::Features::TIMESTAMP_QUERY)
+                && matches!(buffers.output.data, BufferSource::Cpu { .. }))
+                .then(|| PassTimestamps::new(&device));
             Ok(Self {
                 device,
                 queue,
                 staging_buffer: Some(staging_buffer),
+                timestamps,
+                device_name: format!("{} ({:?})", adapter.get_info().name, adapter.get_info().backend),
                 out_texture,
                 in_texture,
                 buf_matrices: Some(buf_matrices),
@@ -904,6 +941,7 @@ impl WgpuWrapper {
         itm: &crate::stabilization::FrameTransform,
         drawing_buffer: &[u8],
     ) -> bool {
+        super::timing::record_device("wgpu", &self.device_name);
         let matrices = bytemuck::cast_slice(&itm.matrices);
 
         let in_size = (buffers.input.size.2 * buffers.input.size.1) as u64;
@@ -921,6 +959,7 @@ impl WgpuWrapper {
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
+        let upload_timer = super::timing::StageTimer::new(super::timing::Stage::Upload);
         let _temp_texture = handle_input_texture(
             &self.device,
             &buffers.input,
@@ -930,6 +969,7 @@ impl WgpuWrapper {
             self.pixel_format,
             self.padded_out_stride,
         );
+        drop(upload_timer);
 
         if self.params_size < matrices.len() as u64 {
             log::error!(
@@ -940,6 +980,7 @@ impl WgpuWrapper {
             return false;
         }
 
+        let upload_timer = super::timing::StageTimer::new(super::timing::Stage::Upload);
         self.queue
             .write_buffer(self.buf_matrices.as_ref().unwrap(), 0, matrices);
         self.queue.write_buffer(
@@ -977,12 +1018,18 @@ impl WgpuWrapper {
             );
         }
 
+        drop(upload_timer);
+        let timestamp_state = self.timestamps.as_ref().filter(|_| matches!(buffers.output.data, BufferSource::Cpu { .. }));
+        let plane = (itm.kernel_params.plane_index as usize).min(3);
+        let timestamps = timestamp_state.filter(|t| t.samples.should_sample(plane));
         match &self.pipeline {
             PipelineType::None => {}
             PipelineType::Compute(p) => {
                 let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: None,
-                    timestamp_writes: None,
+                    timestamp_writes: timestamps.map(|t| wgpu::ComputePassTimestampWrites {
+                        query_set: &t.queries, beginning_of_pass_write_index: Some(0), end_of_pass_write_index: Some(1),
+                    }),
                 });
                 cpass.set_pipeline(p);
                 cpass.set_bind_group(0, self.bind_group.as_ref(), &[]);
@@ -1001,7 +1048,9 @@ impl WgpuWrapper {
                     .create_view(&wgpu::TextureViewDescriptor::default());
                 let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: None,
-                    timestamp_writes: None,
+                    timestamp_writes: timestamps.map(|t| wgpu::RenderPassTimestampWrites {
+                        query_set: &t.queries, beginning_of_pass_write_index: Some(0), end_of_pass_write_index: Some(1),
+                    }),
                     occlusion_query_set: None,
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: &view,
@@ -1032,6 +1081,11 @@ impl WgpuWrapper {
             self.padded_out_stride,
         );
 
+        if let Some(t) = timestamps {
+            encoder.resolve_query_set(&t.queries, 0..2, &t.resolved, 0);
+            encoder.copy_buffer_to_buffer(&t.resolved, 0, &t.mapped, 0, 16);
+        }
+        let wait_timer = super::timing::StageTimer::new(super::timing::Stage::Wait);
         let sub_index = self.queue.submit(Some(encoder.finish()));
 
         match &mut buffers.output.data {
@@ -1040,12 +1094,44 @@ impl WgpuWrapper {
                 let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
                 buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
 
+                // Map both results before the existing wait; timestamp collection never adds a wait.
+                let timestamp_receiver = timestamps.map(|t| {
+                    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+                    t.mapped.slice(..).map_async(wgpu::MapMode::Read, move |result| { let _ = sender.send(result); });
+                    receiver
+                });
+
                 let _ = self.device.poll(wgpu::PollType::Wait {
                     submission_index: None,
                     timeout: None,
                 });
 
-                if let Some(Ok(())) = pollster::block_on(receiver.receive()) {
+                let result = pollster::block_on(receiver.receive());
+                drop(wait_timer);
+                let mut sampled = false;
+                if let (Some(t), Some(receiver)) = (timestamps, timestamp_receiver) {
+                    if matches!(receiver.try_recv(), Ok(Ok(()))) {
+                        let data = t.mapped.slice(..).get_mapped_range();
+                        let begin = u64::from_ne_bytes(data[0..8].try_into().unwrap());
+                        let end = u64::from_ne_bytes(data[8..16].try_into().unwrap());
+                        let us = (end.wrapping_sub(begin) as f64 * self.queue.get_timestamp_period() as f64 / 1000.0) as u64;
+                        t.samples.record(plane, Some(us));
+                        sampled = true;
+                        drop(data);
+                    } else {
+                        t.samples.record(plane, None);
+                    }
+                    t.mapped.unmap();
+                }
+                // Reuse this plane's last measured pass for unsampled frames, including the final partial interval.
+                if let Some(us) = timestamp_state.and_then(|t| t.samples.estimate(plane)) {
+                    super::timing::add(super::timing::GpuStageTimes {
+                        gpu_pass_us: us, gpu_pass_available: true, gpu_pass_samples: sampled as u64,
+                        gpu_pass_count: 1, ..Default::default()
+                    });
+                }
+                if let Some(Ok(())) = result {
+                    let _readback_timer = super::timing::StageTimer::new(super::timing::Stage::Readback);
                     let data = buffer_slice.get_mapped_range();
                     if self.padded_out_stride == buffers.output.size.2 as u32 {
                         // Fast path

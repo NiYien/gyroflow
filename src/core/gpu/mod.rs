@@ -4,6 +4,7 @@
 #[cfg(feature = "use-opencl")]
 pub mod opencl;
 pub mod wgpu;
+pub mod timing;
 
 pub mod wgpu_interop;
 #[cfg(any(target_os = "windows", target_os = "linux"))]

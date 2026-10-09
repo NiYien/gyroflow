@@ -419,6 +419,8 @@ impl<'a> FfmpegProcessor<'a> {
         pause_flag: Arc<AtomicBool>,
     ) -> Result<(), FFmpegError> {
         // Logging context for the encode pipeline.
+        use super::export_timing::{Stage, WallTimer, measure};
+        let timing = self.video.timing.clone();
         let _log_ctx = gyroflow_core::log_context::LogContext::enter(
             gyroflow_core::log_context::LogContextUpdate::default().op("encode"),
         );
@@ -548,7 +550,7 @@ impl<'a> FfmpegProcessor<'a> {
                             &stream,
                             &mut octx,
                             output_index as _,
-                        )?,
+                        ).map(|mut audio| { audio.timing = timing.clone(); audio })?,
                     );
                 }
                 output_index += 1;
@@ -603,7 +605,7 @@ impl<'a> FfmpegProcessor<'a> {
             match atranscoders.get_mut(&ist_index) {
                 Some(atranscoder) => {
                     packet.rescale_ts(stream.time_base(), atranscoder.decoder.time_base());
-                    atranscoder.decoder.send_packet(&packet)?;
+                    measure(&timing, Stage::Decode, || atranscoder.decoder.send_packet(&packet))?;
                     let status = atranscoder.receive_and_process_decoded_frames(
                         octx,
                         ost_time_base,
@@ -628,19 +630,21 @@ impl<'a> FfmpegProcessor<'a> {
                     packet.set_stream(ost_index as _);
                     // packet.set_pts(packet.pts().map(|x| x - copied_stream_first_pts.unwrap_or_default()));
                     // packet.set_dts(packet.dts().map(|x| x - copied_stream_first_dts.unwrap_or_default()));
-                    packet.write_interleaved(octx)?;
+                    measure(&timing, Stage::Mux, || packet.write_interleaved(octx))?;
                 }
             }
             Ok(false)
         };
 
+        let _wall_timer = WallTimer::new(&timing);
         loop {
             let mut pending_packets: Vec<(Stream, ffmpeg_next::Packet, usize, isize)> = Vec::new();
 
             let mut encoding_video = true;
             let mut encoding_audio = self.audio_codec != codec::Id::None;
 
-            for (stream, mut packet) in self.input_context.packets() {
+            let mut packets = self.input_context.packets();
+            for (stream, mut packet) in std::iter::from_fn(|| measure(&timing, Stage::Demux, || packets.next())) {
                 let ist_index = stream.index();
                 let ost_index = stream_mapping[ist_index];
                 if ost_index < 0 {
@@ -653,7 +657,7 @@ impl<'a> FfmpegProcessor<'a> {
                             let decoder =
                                 self.video.decoder.as_mut().ok_or(Error::DecoderNotFound)?;
                             packet.rescale_ts(stream.time_base(), (1, 1000000)); // rescale to microseconds
-                            decoder.send_packet(&packet)
+                            measure(&timing, Stage::Decode, || decoder.send_packet(&packet))
                                 .map_err(|e| decoder_error(self.gpu_decoding, "send_packet", e))?;
                         }
 
@@ -751,11 +755,11 @@ impl<'a> FfmpegProcessor<'a> {
         // Flush encoders and decoders.
         {
             let ost_time_base = self.ost_time_bases[self.video.output_index.unwrap_or_default()];
-            self.video
+            let decoder = self.video
                 .decoder
                 .as_mut()
-                .ok_or(Error::DecoderNotFound)?
-                .send_eof()
+                .ok_or(Error::DecoderNotFound)?;
+            measure(&timing, Stage::Decode, || decoder.send_eof())
                 .map_err(|e| decoder_error(self.gpu_decoding, "send_eof", e))?;
             // self.video.decoder.as_mut().ok_or(Error::DecoderNotFound)?.flush();
             self.video.receive_and_process_video_frames(
@@ -767,11 +771,11 @@ impl<'a> FfmpegProcessor<'a> {
                 end_ms,
                 &mut self.frame_ts,
             ).map_err(|e| frame_processing_error(self.gpu_decoding, e))?;
-            self.video
+            let encoder = self.video
                 .encoder
                 .as_mut()
-                .ok_or(Error::EncoderNotFound)?
-                .send_eof()?;
+                .ok_or(Error::EncoderNotFound)?;
+            measure(&timing, Stage::Encode, || encoder.send_eof())?;
             if let Err(e) = self
                 .video
                 .receive_and_process_encoded_packets(&mut octx, ost_time_base)
@@ -792,7 +796,7 @@ impl<'a> FfmpegProcessor<'a> {
             }
         }
 
-        octx.write_trailer()?;
+        measure(&timing, Stage::Mux, || octx.write_trailer())?;
 
         Ok(())
     }

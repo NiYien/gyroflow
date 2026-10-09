@@ -173,6 +173,7 @@ pub struct EncoderParams<'a> {
 }
 #[derive(Default)]
 pub struct VideoTranscoder<'a> {
+    pub timing: Option<super::export_timing::Timing>,
     pub input_index: usize,
     pub output_index: Option<usize>,
     pub decoder: Option<decoder::Video>,
@@ -400,6 +401,7 @@ impl<'a> VideoTranscoder<'a> {
         end_ms: Option<f64>,
         frame_ts: &mut FrameTimestamps,
     ) -> Result<Status, FFmpegError> {
+        use super::export_timing::{Stage, StageTimer, measure};
         let mut status = Status::Continue;
 
         let decoder = self.decoder.as_mut().ok_or(FFmpegError::DecoderNotFound)?;
@@ -408,7 +410,7 @@ impl<'a> VideoTranscoder<'a> {
         let mut sw_frame = &mut self.buffers.sw_frame;
 
         loop {
-            if let Err(e) = decoder.receive_frame(&mut frame) {
+            if let Err(e) = measure(&self.timing, Stage::Decode, || decoder.receive_frame(&mut frame)) {
                 if e != ffmpeg_next::Error::Eof
                     && e != (ffmpeg_next::Error::Other { errno: ffmpeg_next::util::error::EAGAIN })
                     && (self.gpu_decoding || self.strict_decode_errors || !self.decode_only)
@@ -451,6 +453,7 @@ impl<'a> VideoTranscoder<'a> {
 
                     let mut hw_formats = None;
                     let input_frame = if unsafe { !(*frame.as_mut_ptr()).hw_frames_ctx.is_null() } {
+                        let _timer = StageTimer::new(&self.timing, Stage::Download);
                         hw_formats = Some(unsafe {
                             super::ffmpeg_hw::get_transfer_formats_from_gpu(frame.as_mut_ptr())
                         });
@@ -460,6 +463,7 @@ impl<'a> VideoTranscoder<'a> {
                         ffmpeg!(ffi::av_frame_copy_props(sw_frame.as_mut_ptr(), frame.as_mut_ptr()); FromHWTransferError);
                         &mut sw_frame
                     } else {
+                        if let Some(timing) = &self.timing { timing.0.borrow_mut().decoder = "sw".into(); }
                         &mut frame
                     };
 
@@ -686,7 +690,7 @@ impl<'a> VideoTranscoder<'a> {
                                 .as_mut()
                                 .ok_or(FFmpegError::EncoderConverterEmpty)?;
                             let buff = &mut self.buffers.converted_frame;
-                            conv.run(final_frame, buff)?;
+                            measure(&self.timing, Stage::Convert, || conv.run(final_frame, buff))?;
                             final_frame = buff;
                         }
 
@@ -820,7 +824,7 @@ impl<'a> VideoTranscoder<'a> {
                             };
                             self.encoder = Some(encoder);
 
-                            octx.write_header()?;
+                            measure(&self.timing, Stage::Mux, || octx.write_header())?;
                             // format::context::output::dump(&octx, 0, Some(&output_path));
 
                             for (ost_index, _) in octx.streams().enumerate() {
@@ -844,6 +848,7 @@ impl<'a> VideoTranscoder<'a> {
                         let mut output_hw_frame;
 
                         if let Some(hw_upload_format) = hw_upload_format {
+                            let _timer = StageTimer::new(&self.timing, Stage::Upload);
                             log::debug!(
                                 "Uploading frame to the device, hw_upload_format {:?}, final_frame.format: {:?}",
                                 hw_upload_format,
@@ -883,16 +888,21 @@ impl<'a> VideoTranscoder<'a> {
                                 output_hw_frame.as_mut().ok_or(FFmpegError::FrameEmpty)?;
                         }
 
-                        for _ in 0..rate_control.repeat_times {
+                        for repeat_index in 0..rate_control.repeat_times {
                             let timestamp = Some(ts.rescale((1, 1000000), time_base));
                             final_frame.set_pts(timestamp);
                             final_frame.set_kind(picture::Type::None);
 
                             if self.clone_frames {
                                 // TODO: ideally this should be a buffer pool per thread, but we need to figure out which thread ffmpeg actually used for that frame
-                                encoder.send_frame(&final_frame.clone())?;
+                                measure(&self.timing, Stage::Encode, || encoder.send_frame(&final_frame.clone()))?;
                             } else {
-                                encoder.send_frame(final_frame)?;
+                                measure(&self.timing, Stage::Encode, || encoder.send_frame(final_frame))?;
+                            }
+                            if let Some(timing) = &self.timing {
+                                let mut t = timing.0.borrow_mut();
+                                if repeat_index == 0 { t.frames += 1; }
+                                if t.out_fmt.is_empty() { t.out_fmt = format!("{:?}", final_frame.format()).to_ascii_lowercase(); }
                             }
                             ts += rate_control.repeat_interval;
 
@@ -902,13 +912,13 @@ impl<'a> VideoTranscoder<'a> {
                             let octx = octx.as_mut().unwrap();
                             let time_base = self.encoder_params.time_base.unwrap(); //self.decoder.as_ref().ok_or(FFmpegError::DecoderNotFound)?.time_base();
                             let mut encoded = Packet::empty();
-                            while encoder.receive_packet(&mut encoded).is_ok() {
+                            while measure(&self.timing, Stage::Encode, || encoder.receive_packet(&mut encoded)).is_ok() {
                                 encoded.set_stream(self.output_index.unwrap_or_default());
                                 encoded.rescale_ts(time_base, ost_time_base);
                                 if octx.format().name().contains("image") {
-                                    encoded.write(octx)?;
+                                    measure(&self.timing, Stage::Mux, || encoded.write(octx))?;
                                 } else {
-                                    encoded.write_interleaved(octx)?;
+                                    measure(&self.timing, Stage::Mux, || encoded.write_interleaved(octx))?;
                                 }
                             }
                         }
@@ -939,22 +949,22 @@ impl<'a> VideoTranscoder<'a> {
         octx: &mut format::context::Output,
         ost_time_base: Rational,
     ) -> Result<(), FFmpegError> {
+        use super::export_timing::{Stage, measure};
         if !self.decode_only {
             let time_base = self.encoder_params.time_base.unwrap(); //self.decoder.as_ref().ok_or(FFmpegError::DecoderNotFound)?.time_base();
             let mut encoded = Packet::empty();
-            while self
-                .encoder
-                .as_mut()
-                .ok_or(FFmpegError::EncoderNotFound)?
-                .receive_packet(&mut encoded)
+            while {
+                let encoder = self.encoder.as_mut().ok_or(FFmpegError::EncoderNotFound)?;
+                measure(&self.timing, Stage::Encode, || encoder.receive_packet(&mut encoded))
+            }
                 .is_ok()
             {
                 encoded.set_stream(self.output_index.unwrap_or_default());
                 encoded.rescale_ts(time_base, ost_time_base);
                 if octx.format().name().contains("image") {
-                    encoded.write(octx)?;
+                    measure(&self.timing, Stage::Mux, || encoded.write(octx))?;
                 } else {
-                    encoded.write_interleaved(octx)?;
+                    measure(&self.timing, Stage::Mux, || encoded.write_interleaved(octx))?;
                 }
             }
         }

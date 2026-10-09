@@ -3,9 +3,11 @@
 
 use crate::rendering::FFmpegError;
 use ffmpeg_next::{ffi, format, frame, software};
+use super::export_timing::{Timing, Stage, measure};
 
 #[derive(Default)]
 pub struct Converter {
+    pub timing: Option<Timing>,
     pub convert_to: Option<software::scaling::Context>,
     pub convert_from: Option<software::scaling::Context>,
     pub sw_frame_converted: Option<frame::Video>,
@@ -118,11 +120,11 @@ impl<'a> Converter {
                 .as_mut()
                 .ok_or(FFmpegError::ConverterEmpty)?;
 
-            convert_from.run(frame, sw_frame_converted)?;
+            measure(&self.timing, Stage::Convert, || convert_from.run(frame, sw_frame_converted))?;
 
             cb(sw_frame_converted, sw_frame_converted_out);
 
-            convert_to.run(sw_frame_converted_out, out_frame)?;
+            measure(&self.timing, Stage::Convert, || convert_to.run(sw_frame_converted_out, out_frame))?;
         } else {
             cb(frame, out_frame);
         }

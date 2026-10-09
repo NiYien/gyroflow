@@ -4,12 +4,14 @@
 use super::audio_resampler::AudioResampler;
 use super::ffmpeg_processor::FrameTimestamps;
 use super::ffmpeg_processor::Status;
+use super::export_timing::{Timing, Stage, measure};
 use ffmpeg_next::{
     Error, Packet, Rational, Rescale, channel_layout::ChannelLayout, codec, decoder, encoder, ffi,
     format, format::context::Output, frame,
 };
 
 pub struct AudioTranscoder {
+    pub timing: Option<Timing>,
     pub ost_index: usize,
     pub decoder: decoder::Audio,
     pub encoder: encoder::Audio,
@@ -80,6 +82,7 @@ impl AudioTranscoder {
         )?;
 
         Ok(Self {
+            timing: None,
             ost_index,
             decoder,
             encoder,
@@ -98,7 +101,7 @@ impl AudioTranscoder {
         let mut status = Status::Continue;
         let mut frame = frame::Audio::empty();
 
-        while self.decoder.receive_frame(&mut frame).is_ok() {
+        while measure(&self.timing, Stage::Decode, || self.decoder.receive_frame(&mut frame)).is_ok() {
             if let Some(ts) = frame.timestamp() {
                 let timestamp_us = ts.rescale(self.decoder.time_base(), (1, 1000000));
                 let timestamp_ms = timestamp_us as f64 / 1000.0;
@@ -113,7 +116,7 @@ impl AudioTranscoder {
 
                         self.resampler.new_frame(&mut frame)?;
                         while let Some(out_frame) = self.resampler.run() {
-                            self.encoder.send_frame(out_frame)?;
+                            measure(&self.timing, Stage::Encode, || self.encoder.send_frame(out_frame))?;
                             self.receive_and_process_encoded_packets(octx, ost_time_base)?;
                         }
                         if let Some(last_ts) = frame_ts.last_audio {
@@ -137,10 +140,10 @@ impl AudioTranscoder {
         ost_time_base: Rational,
     ) -> Result<(), Error> {
         let mut encoded = Packet::empty();
-        while self.encoder.receive_packet(&mut encoded).is_ok() {
+        while measure(&self.timing, Stage::Encode, || self.encoder.receive_packet(&mut encoded)).is_ok() {
             encoded.set_stream(self.ost_index);
             encoded.rescale_ts(self.decoder.time_base(), ost_time_base);
-            encoded.write_interleaved(octx)?;
+            measure(&self.timing, Stage::Mux, || encoded.write_interleaved(octx))?;
         }
         Ok(())
     }
@@ -153,14 +156,14 @@ impl AudioTranscoder {
         end_ms: Option<f64>,
         frame_ts: &mut FrameTimestamps,
     ) -> Result<(), Error> {
-        self.decoder.send_eof()?;
+        measure(&self.timing, Stage::Decode, || self.decoder.send_eof())?;
         self.receive_and_process_decoded_frames(octx, ost_time_base, start_ms, end_ms, frame_ts)?;
 
         if let Some(out_frame) = self.resampler.flush() {
-            self.encoder.send_frame(out_frame)?;
+            measure(&self.timing, Stage::Encode, || self.encoder.send_frame(out_frame))?;
         }
 
-        self.encoder.send_eof()?;
+        measure(&self.timing, Stage::Encode, || self.encoder.send_eof())?;
         self.receive_and_process_encoded_packets(octx, ost_time_base)?;
         Ok(())
     }

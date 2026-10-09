@@ -749,7 +749,12 @@ impl Stabilization {
                     self.stab_data.remove(&evicted);
                 }
             }
-            stab_data_ms = t0.elapsed().as_millis() as u64;
+            let elapsed = t0.elapsed();
+            stab_data_ms = elapsed.as_millis() as u64;
+            crate::gpu::timing::add(crate::gpu::timing::GpuStageTimes {
+                stab_data_us: elapsed.as_micros() as u64,
+                ..Default::default()
+            });
         }
         ((), stab_data_ms)
     }

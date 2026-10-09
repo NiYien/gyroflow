@@ -6,6 +6,7 @@ mod audio_resampler;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod apple_analysis_decoder;
 mod encoder_error;
+mod export_timing;
 mod ffmpeg_audio;
 pub mod ffmpeg_hw;
 pub mod ffmpeg_processor;
@@ -365,12 +366,18 @@ where
     F2: Fn(String) + Send + Sync + Clone,
 {
     encoder_error::clear();
+    let mut timing_attempt = export_timing::Attempt::new(cancel_flag.clone());
     log::debug!(
         "ffmpeg_hw::supported_gpu_backends: {:?}",
         ffmpeg_hw::supported_gpu_backends()
     );
 
     let params = stab.params.read();
+    {
+        let mut timing = timing_attempt.timing.0.borrow_mut();
+        timing.in_size = params.size;
+        timing.out_size = (render_options.output_width, render_options.output_height);
+    }
     let org_trim_ranges = params.trim_ranges.clone();
     let trim_ranges = trim_range_ind
         .map(|x| vec![params.trim_ranges[x]])
@@ -436,6 +443,9 @@ where
         gpu_decoder_index as usize,
         Some(decoder_options),
     )?;
+    proc.video.timing = Some(timing_attempt.timing.clone());
+    proc.video.converter.timing = proc.video.timing.clone();
+    timing_attempt.timing.0.borrow_mut().decoder = proc.gpu_device.clone().unwrap_or_else(|| "sw".into());
 
     let render_options_dict = render_options.get_encoder_options_dict();
     let hwaccel_device = render_options_dict.get("hwaccel_device");
@@ -463,6 +473,7 @@ where
         hwaccel_device,
     );
     proc.video_codec = Some(encoder.0.to_owned());
+    timing_attempt.timing.0.borrow_mut().encoder = encoder.0.to_owned();
     proc.video.gpu_encoding = encoder.1;
     proc.video.ffmpeg_interpolation = ffmpeg_interpolation.bits();
     proc.video.encoder_params.hw_device_type = encoder.2;
@@ -733,7 +744,9 @@ where
 
     let render_globals = Rc::new(RefCell::new(zero_copy::RenderGlobals::default()));
 
+    let timing = timing_attempt.timing.clone();
     proc.on_frame(move |mut timestamp_us, input_frame, output_frame, converter, rate_control| {
+        let _frame_timer = export_timing::FrameTimer::new(&timing);
         let fill_with_background = render_options.pad_with_black && !trim_ranges.is_empty() &&
             !trim_ranges.iter().any(|x| timestamp_us >= (x.0 * duration_ms * 1000.0).round() as i64 &&
                                         timestamp_us <= (x.1 * duration_ms * 1000.0).round() as i64);
@@ -799,7 +812,11 @@ where
                     plane.init_size(org_sizes.0, org_sizes.1);
                     plane.set_compute_params(compute_params);
                     let render_globals = render_globals.clone();
+                    let timing = timing.clone();
                     $planes.push(Box::new(move |timestamp_us: i64, in_frame_data: &mut Video, out_frame_data: &mut Video, plane_index: usize, fill_with_background: bool| {
+                        if timing.0.borrow().in_fmt.is_empty() {
+                            timing.0.borrow_mut().in_fmt = format!("{:?}", in_frame_data.format()).to_ascii_lowercase();
+                        }
                         let mut g = render_globals.borrow_mut();
                         let wgpu_format = $t::wgpu_format().map(|x| x.0);
                         let timestamp_us = timestamp_us + offset_us;
@@ -813,7 +830,9 @@ where
                             plane.ensure_ready_for_processing::<$t>(timestamp_us, None, &mut buffers);
                             plane.stab_data.clear();
                         }
+                        let transform_start = std::time::Instant::now();
                         let mut transform = plane.get_frame_transform_at::<$t>(timestamp_us, None, &mut buffers);
+                        timing.add_stab_data(transform_start.elapsed());
                         transform.kernel_params.pixel_value_limit = $max_val;
                         transform.kernel_params.max_pixel_value = $max_val;
                         if plane.initialized_backend.is_wgpu() && $t::wgpu_format().map(|x| x.2).unwrap_or_default() {
@@ -824,8 +843,9 @@ where
                         if fill_with_background {
                             transform.kernel_params.flags |= KernelParamsFlags::FILL_WITH_BACKGROUND.bits();
                         }
-                        if let Err(e) = plane.process_pixels::<$t>(timestamp_us, None, &mut buffers, Some(&transform)) {
-                            ::log::error!("Failed to process pixels: {e:?}");
+                        match plane.process_pixels::<$t>(timestamp_us, None, &mut buffers, Some(&transform)) {
+                            Ok(info) => timing.set_backend(info.backend),
+                            Err(e) => ::log::error!("Failed to process pixels: {e:?}"),
                         }
                     }));
                 })*
@@ -1041,6 +1061,7 @@ where
 
     crate::util::report_lens_profile_usage(lens_checksum);
 
+    timing_attempt.completed = true;
     Ok(())
 }
 
