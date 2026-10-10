@@ -32,6 +32,7 @@ def _vendor(models):
 def _full_vendor_set(sony_models=("ILCE-1", "ZV1")):
     data = {stem: _vendor([f"{stem.upper()}-CAM"]) for stem, _ in sc.BRANDS}
     data["sony"] = _vendor(sony_models)
+    data["apple"] = {"readout": {"data": {"iPhone 16 Pro Max 24mm": [-2.4]}}}
     return data
 
 
@@ -41,9 +42,10 @@ class DisplayNamesTests(unittest.TestCase):
         self.assertEqual(len(sc.DISPLAY_NAMES["lumix"]), 7)
         self.assertEqual(len(sc.DISPLAY_NAMES["leica"]), 1)
 
-    def test_brand_registry_covers_twelve_vendors(self):
-        self.assertEqual(len(sc.BRANDS), 12)
+    def test_brand_registry_includes_apple(self):
+        self.assertEqual(len(sc.BRANDS), 13)
         self.assertEqual(sc.BRANDS[0], ("sony", "Sony"))
+        self.assertIn(("apple", "Apple"), sc.BRANDS)
 
 
 class BuildPayloadTests(unittest.TestCase):
@@ -76,6 +78,55 @@ class BuildPayloadTests(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             sc.build_cameras_payload(data, "2026-07-15")
         self.assertIn("zcam", str(ctx.exception))
+
+    def test_apple_readout_labels_become_unique_models_in_order(self):
+        data = _full_vendor_set()
+        data["apple"] = {"readout": {"data": {
+            "iPhone 16 Pro Max 24mm": [-2.4],
+            "iPhone 16 Pro Max 13mm": [-5.8],
+            "iPhone 16 Pro 24mm": [None],
+            "iPhone Air 26mm": [None],
+            "iPhone 16 Pro Max 120mm": [-5.5],
+        }}}
+        doc = sc.build_cameras_payload(data, "2026-10-09")
+        self.assertEqual(doc["brands"][-1], {
+            "id": "apple", "name": "Apple",
+            "models": ["iPhone 16 Pro Max", "iPhone 16 Pro", "iPhone Air"],
+        })
+
+    def test_older_tag_without_apple_still_builds(self):
+        data = _full_vendor_set()
+        del data["apple"]
+        doc = sc.build_cameras_payload(data, "2026-10-09")
+        self.assertEqual(len(doc["brands"]), 12)
+        self.assertNotIn("apple", [b["id"] for b in doc["brands"]])
+
+    def test_empty_or_invalid_apple_readout_rejected(self):
+        for vendor in ({}, {"readout": None}, {"readout": {}},
+                       {"readout": {"data": {}}}, {"readout": {"data": []}}):
+            with self.subTest(vendor=vendor):
+                data = _full_vendor_set()
+                data["apple"] = vendor
+                with self.assertRaisesRegex(ValueError, "apple.json.*readout.data"):
+                    sc.build_cameras_payload(data, "2026-10-09")
+
+    def test_invalid_apple_lens_label_rejected(self):
+        data = _full_vendor_set()
+        data["apple"] = {"readout": {"data": {"iPhone 16 Pro Max": [None]}}}
+        with self.assertRaisesRegex(ValueError, "invalid model/lens label"):
+            sc.build_cameras_payload(data, "2026-10-09")
+
+    def test_bundled_camera_db_builds_with_apple(self):
+        camera_db = Path(__file__).resolve().parents[3] / "resources" / "camera_db"
+        data = {
+            p.stem: json.loads(p.read_text(encoding="utf-8"))
+            for p in sorted(camera_db.glob("*.json"))
+        }
+        doc = sc.build_cameras_payload(data, "2026-10-09")
+        apple = next(b for b in doc["brands"] if b["id"] == "apple")
+        self.assertIn("iPhone 16 Pro Max", apple["models"])
+        self.assertEqual(len(apple["models"]), len(set(apple["models"])))
+        self.assertTrue(all(not model.endswith("mm") for model in apple["models"]))
 
 
 class EquivalenceAndFormatTests(unittest.TestCase):
@@ -161,12 +212,14 @@ class SyncTests(unittest.TestCase):
         docs = FakeDocsClient(existing_bytes=None)
         result = _run_sync(lens, docs)
         self.assertTrue(result["changed"])
-        self.assertEqual(result["brands"], 12)
+        self.assertEqual(result["brands"], 13)
         self.assertEqual(result["tag"], "data-v20260715.1")
         self.assertEqual(len(docs.put_calls), 1)
         self.assertEqual(docs.put_calls[0]["sha"], "")
         self.assertEqual(docs.put_calls[0]["branch"], "main")
         self.assertIn("data-v20260715.1", lens.requested_refs)
+        written = json.loads(docs.put_calls[0]["bytes"].decode("utf-8"))
+        self.assertEqual(written["brands"][-1]["models"], ["iPhone 16 Pro Max"])
 
     def test_unchanged_content_skips_put(self):
         data = _full_vendor_set()

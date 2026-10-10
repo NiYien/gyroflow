@@ -22,6 +22,7 @@ from __future__ import annotations
 import base64
 import datetime
 import json
+import re
 
 # Brand order defines the display order on the /cameras/ page.
 # (file stem, display name) — every camera_db/*.json must be listed here.
@@ -38,7 +39,11 @@ BRANDS: list[tuple[str, str]] = [
     ("sigma", "Sigma"),
     ("ricoh", "Ricoh"),
     ("zcam", "Z CAM"),
+    ("apple", "Apple"),
 ]
+
+# Older lens-data tags predate the Apple database.
+OPTIONAL_BRANDS = {"apple"}
 
 # camera_db key -> market display name. Unlisted keys pass through as-is.
 DISPLAY_NAMES: dict[str, dict[str, str]] = {
@@ -96,17 +101,35 @@ DISPLAY_NAMES: dict[str, dict[str, str]] = {
 }
 
 
+def _apple_model_names(vendor: dict) -> list[str]:
+    """Apple stores model + lens labels in readout.data, without models."""
+    readout = vendor.get("readout")
+    rows = readout.get("data") if isinstance(readout, dict) else None
+    if not isinstance(rows, dict) or not rows:
+        raise ValueError("apple.json has an empty or invalid readout.data section")
+    models = []
+    for label in rows:
+        match = re.fullmatch(r"(iPhone .+) [0-9]+(?:\.[0-9]+)?mm", label)
+        if not match:
+            raise ValueError(f"apple.json has an invalid model/lens label: {label}")
+        model = match.group(1)
+        if model not in models:
+            models.append(model)
+    return models
+
+
 def build_cameras_payload(vendor_jsons: dict[str, dict], generated_at: str) -> dict:
     """Build the cameras.json document from parsed vendor JSONs.
 
     `vendor_jsons` maps file stem (e.g. "sony") to the parsed camera_db JSON.
     Raises ValueError when the stems and the BRANDS registry disagree in
-    either direction, or when a registered vendor has an empty models section.
+    either direction (except optional vendors absent from older tags), or
+    when a registered vendor has no model entries.
     """
     stems = set(vendor_jsons.keys())
     brand_stems = {stem for stem, _ in BRANDS}
     unregistered = sorted(stems - brand_stems)
-    missing = sorted(brand_stems - stems)
+    missing = sorted(brand_stems - stems - OPTIONAL_BRANDS)
     if unregistered or missing:
         parts = []
         if unregistered:
@@ -117,8 +140,13 @@ def build_cameras_payload(vendor_jsons: dict[str, dict], generated_at: str) -> d
 
     brands_out = []
     for stem, display in BRANDS:
-        models_obj = vendor_jsons[stem].get("models")
-        keys = list(models_obj.keys()) if isinstance(models_obj, dict) else []
+        if stem not in vendor_jsons:
+            continue
+        if stem == "apple":
+            keys = _apple_model_names(vendor_jsons[stem])
+        else:
+            models_obj = vendor_jsons[stem].get("models")
+            keys = list(models_obj.keys()) if isinstance(models_obj, dict) else []
         if not keys:
             raise ValueError(f"{stem}.json has an empty models section")
         mapping = DISPLAY_NAMES.get(stem, {})
