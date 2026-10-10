@@ -4,6 +4,13 @@ use super::*;
 use crate::{StabilizationManager, stabilization::{ComputeParams, FrameTransform, Stabilization}};
 use std::{fs::File, io::{BufWriter, Write}, sync::{Arc, atomic::AtomicBool}};
 
+/// The rebuild's per-range layer motion for time-sorted samples that may span several analysis ranges.
+fn blended_by_range(samples: &[TranslationSample]) -> Vec<nalgebra::Vector3<f64>> {
+    let mut cleaned = samples.to_vec();
+    cleaned.iter_mut().for_each(clean_layer_fit);
+    cleaned.chunk_by(|a, b| a.segment == b.segment).flat_map(blended_layer_motion).collect()
+}
+
 fn preview_export_grid(params: &ComputeParams, transform: &FrameTransform) -> Vec<Option<(f64, f64)>> {
     let kernel = &transform.kernel_params;
     let mesh: Vec<f64> = transform.mesh_data.iter().map(|value| *value as f64).collect();
@@ -334,6 +341,8 @@ fn translation_auto_parameters_report() {
     assert!(result.settings.auto && result.is_active(), "{:?}", result.settings);
     let mut samples = result.samples.clone();
     samples.sort_by_key(|s| s.timestamp_us);
+    samples.iter_mut().for_each(clean_layer_fit);
+    let motion = blended_by_range(&samples);
     let mut rows = Vec::new();
     let mut start = 0;
     while start < samples.len() {
@@ -356,8 +365,8 @@ fn translation_auto_parameters_report() {
         let positions: Vec<_> = samples.iter().enumerate().map(|(i, s)| {
             if i > 0 {
                 let rotation = retained_rotation(&path[&samples[i - 1].timestamp_us], &path[&s.timestamp_us]);
-                let gain = depths[i] * s.weight.clamp(0.0, 1.0) as f64;
-                position += nalgebra::Vector3::new(rotation.x + gain * s.layer_motion[0] as f64, rotation.y + gain * s.layer_motion[1] as f64, gain * s.layer_scale_rate as f64);
+                let gain = depths[i];
+                position += nalgebra::Vector3::new(rotation.x + gain * motion[i].x, rotation.y + gain * motion[i].y, gain * motion[i].z);
             }
             position
         }).collect();
@@ -377,8 +386,8 @@ fn translation_auto_parameters_report() {
         let positions: Vec<_> = samples.iter().enumerate().map(|(i, s)| {
             if i > 0 {
                 let rotation = retained_rotation(&path[&samples[i - 1].timestamp_us], &path[&s.timestamp_us]);
-                let gain = depths[i] * s.weight.clamp(0.0, 1.0) as f64;
-                position += nalgebra::Vector3::new(rotation.x + gain * s.layer_motion[0] as f64, rotation.y + gain * s.layer_motion[1] as f64, gain * s.layer_scale_rate as f64);
+                let gain = depths[i];
+                position += nalgebra::Vector3::new(rotation.x + gain * motion[i].x, rotation.y + gain * motion[i].y, gain * motion[i].z);
             }
             position
         }).collect();
@@ -418,13 +427,14 @@ fn translation_smoothing_study_dump() {
             let mut end = start + 1;
             while end < samples.len() && samples[end].segment == samples[start].segment { end += 1; }
             let segment = &samples[start..end];
+            let motion = blended_by_range(segment);
             for (i, (s, (far, auto))) in segment.iter().zip(filtered_far_beta(segment).into_iter().zip(filtered_auto_beta(segment))).enumerate() {
                 let rotation = if i > 0 { retained_rotation(&path[&segment[i - 1].timestamp_us], &path[&s.timestamp_us]) } else { nalgebra::Vector2::zeros() };
                 let shift = result.shift_at(s.timestamp_us as f64 / 1000.0);
                 let q = path[&s.timestamp_us];
                 rows.push(serde_json::json!([s.timestamp_us, s.segment, rotation.x, rotation.y, s.layer_motion[0], s.layer_motion[1],
                     s.layer_scale_rate, s.far_beta, s.auto_beta, far, auto, s.weight, s.track_age_s, s.focal_length_over_short_side,
-                    shift.x, shift.y, shift.z, q.w, q.i, q.j, q.k]));
+                    shift.x, shift.y, shift.z, q.w, q.i, q.j, q.k, motion[i].x, motion[i].y, motion[i].z]));
             }
             start = end;
         }
@@ -438,7 +448,8 @@ fn translation_smoothing_study_dump() {
             "config": {"track_age_k": TranslationConfig::resolved().track_age_k, "max_shift": TranslationConfig::resolved().max_shift,
                 "max_axial_shift": TranslationConfig::resolved().max_axial_shift()},
             "columns": ["timestamp_us", "segment", "rotation_x", "rotation_y", "layer_x", "layer_y", "layer_scale_rate", "far_beta",
-                "auto_beta", "far_filtered", "auto_filtered", "weight", "track_age_s", "focal_over_short", "shift_x", "shift_y", "shift_z", "output_w", "output_x", "output_y", "output_z"],
+                "auto_beta", "far_filtered", "auto_filtered", "weight", "track_age_s", "focal_over_short", "shift_x", "shift_y", "shift_z", "output_w", "output_x", "output_y", "output_z",
+                "blend_x", "blend_y", "blend_z"],
             "samples": rows});
         let output = format!("{project}.samples.json");
         std::fs::write(&output, serde_json::to_string(&report).unwrap()).unwrap();
@@ -452,20 +463,33 @@ fn translation_projection_maps_dump() {
     // GYROFLOW_TRANSLATION_STUDY_PROJECTS: analyzed projects separated by ';'. For each, <project>.maps-off.bin and
     // <project>.maps-prod.bin: per frame a 37 x 65 grid over a 960x540 output, the source point in 960x540 tracking
     // coordinates (f32 x, y; -1e4 where unmapped), without and with the translation applied.
+    // GYROFLOW_TRANSLATION_MAPS_RANGE=<from>..<to> writes only frames from..to (end excluded); all frames when unset.
     let projects = std::env::var("GYROFLOW_TRANSLATION_STUDY_PROJECTS").expect("set GYROFLOW_TRANSLATION_STUDY_PROJECTS");
+    let range = std::env::var("GYROFLOW_TRANSLATION_MAPS_RANGE").ok().filter(|r| !r.is_empty()).map(|r| {
+        let (from, to) = r.split_once("..").expect("GYROFLOW_TRANSLATION_MAPS_RANGE is <from>..<to>");
+        (from.trim().parse::<usize>().unwrap(), to.trim().parse::<usize>().unwrap())
+    });
     for project in projects.split(';').filter(|p| !p.is_empty()) {
         let manager = StabilizationManager::default();
         manager.import_gyroflow_file(&crate::filesystem::path_to_url(project), true, |_| {}, Arc::new(AtomicBool::new(false)), false).unwrap();
-        manager.recompute_blocking();
-        let prod = ComputeParams::from_manager(&manager);
-        manager.set_translation_stabilization_enabled(false);
-        manager.recompute_blocking();
-        let off = ComputeParams::from_manager(&manager);
-        for (name, mut params) in [("off", off), ("prod", prod)] {
+        let enabled = manager.gyro.read().optical_translation.as_ref().is_some_and(|t| t.enabled);
+        // ComputeParams shares the gyro source with the manager, so each variant is written while its own setting
+        // is in effect; taking both first would write the "prod" maps with the translation already switched off.
+        for (name, translation) in [("prod", enabled), ("off", false)] {
+            manager.set_translation_stabilization_enabled(translation);
+            manager.recompute_blocking();
+            let mut params = ComputeParams::from_manager(&manager);
+            {
+                let gyro = params.gyro.read();
+                println!("{project} {name}: translation active {} correction active {}",
+                    gyro.optical_translation.as_ref().is_some_and(|t| t.is_active()),
+                    gyro.optical_correction_applies());
+            }
             params.output_width = 960;
             params.output_height = 540;
+            let frames = range.map_or(0..params.frame_count, |(from, to)| from.min(params.frame_count)..to.min(params.frame_count));
             let mut output = BufWriter::new(File::create(format!("{project}.maps-{name}.bin")).unwrap());
-            for frame in 0..params.frame_count {
+            for frame in frames {
                 let transform = FrameTransform::at_timestamp(&params, frame as f64 * 1000.0 / params.scaled_fps, frame);
                 let mut kernel = transform.kernel_params;
                 kernel.width = params.width as i32; kernel.height = params.height as i32;
@@ -507,6 +531,8 @@ fn translation_joint_target_study() {
         let result = manager.gyro.read().optical_translation.clone().expect("the project carries a translation result");
         let mut samples = result.samples.clone();
         samples.sort_by_key(|s| s.timestamp_us);
+        samples.iter_mut().for_each(clean_layer_fit);
+        let motion = blended_by_range(&samples);
         let gyro = manager.gyro.read().clone();
         let (path, _) = result.output_path(&gyro);
         let n = samples.len();
@@ -517,8 +543,8 @@ fn translation_joint_target_study() {
         let mut p = vec![nalgebra::Vector2::zeros(); n];
         for i in 1..n {
             let s = &samples[i];
-            let gain = reference * depths[i] * s.weight.clamp(0.0, 1.0) as f64;
-            let step = nalgebra::Vector2::new(gain * s.layer_motion[0] as f64, gain * s.layer_motion[1] as f64);
+            let gain = reference * depths[i];
+            let step = nalgebra::Vector2::new(gain * motion[i].x, gain * motion[i].y);
             tref[i] = tref[i - 1] + step;
             p[i] = p[i - 1] + retained_rotation(&path[&samples[i - 1].timestamp_us], &path[&s.timestamp_us]) + step;
         }

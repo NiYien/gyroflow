@@ -256,6 +256,12 @@ fn filtered_auto_beta(segment: &[TranslationSample]) -> Vec<f64> {
     filtered_beta(segment, |s| s.auto_beta, true)
 }
 
+/// Time a sample stands for: half the span to its neighbours, or one for a lone sample.
+fn sample_duration(times: &[f64], j: usize) -> f64 {
+    let n = times.len();
+    if n == 1 { 1.0 } else { (times[(j + 1).min(n - 1)] - times[j.saturating_sub(1)]) * 0.5 }
+}
+
 fn filtered_beta(segment: &[TranslationSample], beta: impl Fn(&TranslationSample) -> f32, log: bool) -> Vec<f64> {
     let n = segment.len();
     let times: Vec<_> = segment.iter().map(|s| time_difference_s(s.timestamp_us, segment[0].timestamp_us)).collect();
@@ -268,9 +274,7 @@ fn filtered_beta(segment: &[TranslationSample], beta: impl Fn(&TranslationSample
             let s = &segment[j];
             let value = beta(s);
             if !value.is_finite() || value <= 0.0 || !s.weight.is_finite() || s.weight <= 0.0 { continue; }
-            let duration = if n == 1 { 1.0 } else {
-                (times[(j + 1).min(n - 1)] - times[j.saturating_sub(1)]) * 0.5
-            };
+            let duration = sample_duration(&times, j);
             let weight = (-0.5 * ((times[j] - times[i]) / 0.25).powi(2)).exp() * s.weight.clamp(0.0, 1.0) as f64 * duration;
             sum += weight * if log { (value as f64).ln() } else { value as f64 };
             weights += weight;
@@ -278,6 +282,53 @@ fn filtered_beta(segment: &[TranslationSample], beta: impl Fn(&TranslationSample
         if weights > 0.0 { output[i] = if log { (sum / weights).exp() } else { sum / weights }; }
     }
     output
+}
+
+/// Unusable layer fits carry no motion and no confidence; the rest keep a confidence within [0, 1].
+fn clean_layer_fit(sample: &mut TranslationSample) {
+    if sample.layer_motion.iter().all(|value| value.is_finite()) && sample.layer_scale_rate.is_finite()
+        && sample.far_beta.is_finite() && sample.far_beta > 0.0 && sample.weight.is_finite() {
+        sample.weight = sample.weight.clamp(0.0, 1.0);
+    } else {
+        sample.layer_motion = [0.0; 2];
+        sample.layer_scale_rate = 0.0;
+        sample.far_beta = 0.0;
+        sample.weight = 0.0;
+    }
+}
+
+// The neighbour estimate uses the time scale of the reference-layer filter (`filtered_beta`).
+const NEIGHBOUR_SIGMA_S: f64 = 0.25;
+const NEIGHBOUR_RADIUS_S: f64 = 0.75;
+
+/// Layer motion (x, y, scale rate) each pair adds within one analysis range of cleaned samples. Confidence says how far
+/// the pair's own measurement can be trusted, not how much the layer moved: a trusted pair keeps its measurement, an
+/// untrusted one takes the confidence-weighted estimate of its neighbours in the range, and confidence mixes the two in
+/// between. The estimate is pulled toward no motion by a prior that weighs like a fully trusted pair of the same
+/// duration at two sigma, so where no trusted pair is near, the motion fades to zero instead of carrying a distant
+/// velocity.
+fn blended_layer_motion(segment: &[TranslationSample]) -> Vec<nalgebra::Vector3<f64>> {
+    let times: Vec<_> = segment.iter().map(|s| time_difference_s(s.timestamp_us, segment[0].timestamp_us)).collect();
+    let durations: Vec<_> = (0..segment.len()).map(|j| sample_duration(&times, j)).collect();
+    let measured = |s: &TranslationSample| nalgebra::Vector3::new(s.layer_motion[0] as f64, s.layer_motion[1] as f64, s.layer_scale_rate as f64);
+    let prior = (-2.0_f64).exp();
+    segment.iter().enumerate().map(|(i, sample)| {
+        let confidence = sample.weight as f64;
+        // Exactly the measurement, so fully trusted analyses build the same curve as before.
+        if confidence == 1.0 { return measured(sample); }
+        let left = times.partition_point(|t| *t < times[i] - NEIGHBOUR_RADIUS_S);
+        let right = times.partition_point(|t| *t <= times[i] + NEIGHBOUR_RADIUS_S);
+        let (mut sum, mut weights) = (nalgebra::Vector3::zeros(), 0.0);
+        for j in (left..right).filter(|j| *j != i) {
+            let weight = (-0.5 * ((times[j] - times[i]) / NEIGHBOUR_SIGMA_S).powi(2)).exp() * segment[j].weight as f64 * durations[j];
+            if weight > 0.0 {
+                sum += measured(&segment[j]) * weight;
+                weights += weight;
+            }
+        }
+        let estimate = sum / (weights + prior * durations[i]);
+        measured(sample) * confidence + estimate * (1.0 - confidence)
+    }).collect()
 }
 
 /// Position minus its Gaussian average, with time and position reflected at both ends so that a constant velocity
@@ -424,17 +475,7 @@ impl OpticalTranslation {
             self.output_path_checksum = path_checksum;
             return true;
         };
-        for sample in &mut samples {
-            if sample.layer_motion.iter().all(|value| value.is_finite()) && sample.layer_scale_rate.is_finite()
-                && sample.far_beta.is_finite() && sample.far_beta > 0.0 && sample.weight.is_finite() {
-                sample.weight = sample.weight.clamp(0.0, 1.0);
-            } else {
-                sample.layer_motion = [0.0; 2];
-                sample.layer_scale_rate = 0.0;
-                sample.far_beta = 0.0;
-                sample.weight = 0.0;
-            }
-        }
+        samples.iter_mut().for_each(clean_layer_fit);
         let requested_sigma = if self.settings.smoothness_s.is_finite() { self.settings.smoothness_s } else { OpticalTranslationSettings::default().smoothness_s };
         let auto = self.settings.auto;
         let reference = if auto { 1.0 } else if self.settings.reference.is_finite() { self.settings.reference } else { 0.0 };
@@ -462,16 +503,18 @@ impl OpticalTranslation {
             // Analysed before the automatic reference existed: hold the far layer until analysed again
             if far_fallback { far_fallback_segments += 1; }
             let depths = if auto && !far_fallback { filtered_auto_beta(segment) } else { filtered_far_beta(segment) };
+            let motion = blended_layer_motion(segment);
+            if cancelled() { return false; }
+            // One position sequence for both the automatic smoothness and the high pass
             let mut position = nalgebra::Vector3::zeros();
             let positions: Vec<_> = segment.iter().enumerate().map(|(i, sample)| {
                 if i > 0 {
                     let previous = output_path.get(&segment[i - 1].timestamp_us).copied().unwrap_or_default();
                     let current = output_path.get(&sample.timestamp_us).copied().unwrap_or_default();
                     let rotation = retained_rotation(&previous, &current);
-                    let gain = reference * depths[i] * sample.weight as f64;
-                    position += nalgebra::Vector3::new(rotation.x + gain * sample.layer_motion[0] as f64,
-                        rotation.y + gain * sample.layer_motion[1] as f64,
-                        if self.settings.along_axis { gain * sample.layer_scale_rate as f64 } else { 0.0 });
+                    let gain = reference * depths[i];
+                    position += nalgebra::Vector3::new(rotation.x + gain * motion[i].x, rotation.y + gain * motion[i].y,
+                        if self.settings.along_axis { gain * motion[i].z } else { 0.0 });
                 }
                 position
             }).collect();
@@ -818,15 +861,185 @@ mod tests {
         assert_eq!(both.shift_at(3500.0).norm(), 0.0, "between the segments");
     }
 
+    /// 10 s at 30 fps of a 0.2 Hz sway with a constant velocity, smooth on the scale of the neighbour estimate
+    fn slow_walk(confidence: f32) -> Vec<TranslationSample> {
+        let position = |t: f64| 0.05 * (std::f64::consts::TAU * 0.2 * t).sin() + 0.5 * t;
+        walk(confidence, 100.0).into_iter().map(|s| {
+            let t = s.timestamp_us as f64 / 1e6;
+            TranslationSample { layer_motion: [(position(t) - position(t - 1.0 / 30.0)) as f32, 0.0], ..s }
+        }).collect()
+    }
+
     #[test]
-    fn confidence_and_reference_scale_the_shift() {
-        let full = built(walk(1.0, 100.0), Default::default(), 2.0).shift_at(5010.0);
-        let half = built(walk(0.5, 100.0), Default::default(), 2.0).shift_at(5010.0);
-        let none = built(walk(0.0, 100.0), Default::default(), 2.0).shift_at(5010.0);
-        let double = built(walk(1.0, 100.0), OpticalTranslationSettings { reference: 2.0, ..Default::default() }, 2.0).shift_at(5010.0);
-        assert!(full.x.abs() > 1e-3);
-        assert!((half.x - 0.5 * full.x).abs() < 1e-9 && (double.x - 2.0 * full.x).abs() < 1e-9);
-        assert_eq!(none.norm(), 0.0);
+    fn translation_uniform_confidence_keeps_the_curve_and_reference_scales_it() {
+        let shift = |samples: Vec<TranslationSample>, reference: f64| {
+            let t = built(samples, OpticalTranslationSettings { reference, ..Default::default() }, 2.0);
+            (90..210).map(|i| t.shift_at(i as f64 / 30.0 * 1000.0)).collect::<Vec<_>>()
+        };
+        let full = shift(slow_walk(1.0), 1.0);
+        let half = shift(slow_walk(0.5), 1.0);
+        let double = shift(slow_walk(1.0), 2.0);
+        let peak = full.iter().map(|s| s.x.abs()).fold(0.0, f64::max);
+        assert!(peak > 1e-3);
+        // Equal confidence everywhere leaves nothing to prefer over the measurement: the neighbour estimate only
+        // averages it over +-0.75 s and the prior shrinks it by about 1.5 %, so a 0.2 Hz sway keeps about 97 % of its
+        // amplitude. Multiplying the velocity by the confidence, as before, gave exactly half.
+        let worst = full.iter().zip(&half).map(|(f, h)| (h - f).norm()).fold(0.0, f64::max);
+        assert!(worst < 0.05 * peak, "{worst} vs {peak}");
+        for (f, d) in full.iter().zip(&double) { assert!((d - 2.0 * f).norm() < 1e-9); }
+        assert!(shift(slow_walk(0.0), 1.0).iter().all(|s| s.norm() == 0.0), "no trusted pair, no layer motion");
+    }
+
+    /// Lateral and axial layer motion of varying depth under a retained rotation, every pair fully trusted
+    fn trusted_sway() -> (Vec<TranslationSample>, BTreeMap<i64, super::super::Quat64>) {
+        let tau = std::f64::consts::TAU;
+        let position = |t: f64| [0.02 * (tau * 1.2 * t).sin(), 0.01 * (tau * 0.7 * t).cos(), 0.002 * (tau * 1.3 * t).sin()];
+        let samples: Vec<TranslationSample> = (0..300).map(|i| {
+            let t = i as f64 / 30.0;
+            let (now, before) = (position(t), position(t - 1.0 / 30.0));
+            TranslationSample { timestamp_us: (t * 1e6) as i64, track_age_s: 100.0, weight: 1.0,
+                layer_motion: [(now[0] - before[0]) as f32, (now[1] - before[1]) as f32], layer_scale_rate: (now[2] - before[2]) as f32,
+                far_beta: (2.0 + 0.3 * (tau * 0.1 * t).sin()) as f32, auto_beta: (0.5 + 0.1 * (tau * 0.15 * t).cos()) as f32, ..geometry_sample() }
+        }).collect();
+        let path = samples.iter().map(|s| {
+            let t = s.timestamp_us as f64 / 1e6;
+            (s.timestamp_us, super::super::Quat64::from_euler_angles(0.001 * (tau * 1.5 * t).sin(), 0.0005 * (tau * 0.8 * t).cos(), 0.0))
+        }).collect();
+        (samples, path)
+    }
+
+    #[test]
+    fn translation_full_confidence_builds_the_curve_of_the_velocity_weighted_formula() {
+        let (samples, path) = trusted_sway();
+        for (u, s) in blended_layer_motion(&samples).iter().zip(&samples) {
+            assert_eq!(*u, nalgebra::Vector3::new(s.layer_motion[0] as f64, s.layer_motion[1] as f64, s.layer_scale_rate as f64));
+        }
+        let times: Vec<_> = samples.iter().map(|s| time_difference_s(s.timestamp_us, samples[0].timestamp_us)).collect();
+        let geometry: Vec<_> = samples.iter().map(|s| s.geometry().unwrap()).collect();
+        for auto in [false, true] {
+            let mut t = built(samples.clone(), OpticalTranslationSettings { auto, ..Default::default() }, 0.0);
+            assert!(t.rebuild_with_output_path(0.0, &path, 7, &|| false));
+            // The accumulation before this change: gain = reference x depth x confidence
+            let depths = if auto { filtered_auto_beta(&samples) } else { filtered_far_beta(&samples) };
+            let mut position = nalgebra::Vector3::zeros();
+            let positions: Vec<_> = samples.iter().enumerate().map(|(i, s)| {
+                if i > 0 {
+                    let rotation = retained_rotation(&path[&samples[i - 1].timestamp_us], &path[&s.timestamp_us]);
+                    let gain = 1.0 * depths[i] * s.weight as f64;
+                    position += nalgebra::Vector3::new(rotation.x + gain * s.layer_motion[0] as f64,
+                        rotation.y + gain * s.layer_motion[1] as f64, gain * s.layer_scale_rate as f64);
+                }
+                position
+            }).collect();
+            let sigma = if auto {
+                auto_sigma(&times, &positions, &geometry, None, &TranslationConfig::resolved(), true, &|| false).unwrap().0.max(0.001)
+            } else { 1.0 };
+            assert_eq!(t.effective_smoothness_s(), sigma);
+            let request = high_pass(&times, &positions, sigma, &|| false).unwrap();
+            assert!(request.iter().any(|r| r.xy().norm() > 1e-3 && r.z.abs() > 1e-4), "lateral and axial motion are both exercised");
+            // The stored curve points, since shift_at takes milliseconds and may interpolate in the last bit
+            assert_eq!(t.curve.len(), request.len());
+            for (point, want) in t.curve.iter().zip(&request) {
+                assert_eq!(point.shift, *want, "auto={auto} at {}", point.timestamp_us);
+            }
+        }
+    }
+
+    #[test]
+    fn translation_untrusted_pairs_in_a_steady_drift_keep_the_trusted_curve() {
+        // The 500 mm clip of the diagnosis: the layer drifts about 4 px per pair at a focal length of 60572 px, with a
+        // quarter of the pairs untrusted and a sixth partly trusted. 1e-6 is 0.06 px there.
+        let focal_ratio = 60572.0 / 2160.0;
+        let drift: [f32; 3] = [4.0 / 60572.0, -1.5 / 60572.0, 1e-6];
+        let make = |confidence: &dyn Fn(usize) -> f32, scale_by_confidence: bool| -> Vec<TranslationSample> {
+            (0..300).map(|i| {
+                // The first sample starts the analysis range and has no pair
+                let c = if i == 0 { 0.0 } else { confidence(i) };
+                let k = if i == 0 { 0.0 } else if scale_by_confidence { c } else { 1.0 };
+                TranslationSample { timestamp_us: (i as f64 / 29.97 * 1e6).round() as i64, track_age_s: 100.0, far_beta: 1.0,
+                    weight: if scale_by_confidence && i > 0 { 1.0 } else { c },
+                    layer_motion: [drift[0] * k, drift[1] * k], layer_scale_rate: drift[2] * k,
+                    camera_to_world: [1.0, 0.0, 0.0, 0.0], focal_length_over_short_side: focal_ratio, ..Default::default() }
+            }).collect()
+        };
+        let pattern = |i: usize| -> f32 { match i % 7 { 2 | 5 => 0.0, 4 => 0.4, _ => 1.0 } };
+        let trusted = built(make(&|_| 1.0, false), Default::default(), 0.0);
+        let mixed = built(make(&pattern, false), Default::default(), 0.0);
+        // The previous formula, gain x confidence x motion, is a fully trusted pair with motion scaled by the confidence
+        let previous = built(make(&pattern, true), Default::default(), 0.0);
+        let end = trusted.samples.last().unwrap().timestamp_us as f64 / 1e6;
+        // Largest difference from the trusted curve within 1 s of either end of the range, and further inside
+        let difference = |a: &OpticalTranslation| a.samples.iter().fold((0.0f64, 0.0f64), |(near_ends, inside), s| {
+            let (t, time) = (s.timestamp_us as f64 / 1e6, s.timestamp_us as f64 / 1000.0);
+            let d = (a.shift_at(time) - trusted.shift_at(time)).norm();
+            if t < 1.0 || t > end - 1.0 { (near_ends.max(d), inside) } else { (near_ends, inside.max(d)) }
+        });
+        let (blended, scaled) = (difference(&mixed), difference(&previous));
+        println!("steady drift: largest difference from the trusted curve near the ends {:e}, inside {:e} (previous formula {:e}, {:e})",
+            blended.0, blended.1, scaled.0, scaled.1);
+        assert!(scaled.1 > 1e-5, "the pattern does disturb the previous formula: {}", scaled.1);
+        // Near an end only one side has neighbours, so the prior pulls the estimate about twice as hard (about 2 %
+        // instead of 1 %), and the high pass carries that some way inside. Bounds accepted by the user on 2026-10-10
+        // after the pre-registered 1e-6 for the whole range measured 1.69e-6 at the ends.
+        assert!(blended.1 < 1e-6, "inside: {}", blended.1);
+        assert!(blended.0 < 2e-6, "near the ends: {}", blended.0);
+    }
+
+    #[test]
+    fn translation_long_untrusted_stretch_fades_to_the_retained_rotation() {
+        // 10 s with no trusted pair from 3 s to 6 s
+        let samples: Vec<_> = walk(1.0, 100.0).into_iter().map(|s| {
+            let t = s.timestamp_us as f64 / 1e6;
+            TranslationSample { weight: if (3.0..6.0).contains(&t) { 0.0 } else { 1.0 }, ..s }
+        }).collect();
+        let motion = blended_layer_motion(&samples);
+        let drift = 0.5 / 30.0;
+        // Next to trusted pairs the estimate carries their drift; beyond the 0.75 s reach of every trusted pair it is
+        // exactly zero rather than an extrapolated velocity.
+        assert!(motion[90].x > 0.8 * drift, "{}", motion[90].x);
+        for (s, u) in samples.iter().zip(&motion) {
+            let t = s.timestamp_us as f64 / 1e6;
+            if t > 2.99 + 0.75 && t < 6.0 - 0.75 { assert_eq!(u.norm(), 0.0, "{t}"); }
+        }
+        let path: BTreeMap<_, _> = samples.iter().map(|s| {
+            let t = s.timestamp_us as f64 / 1e6;
+            (s.timestamp_us, super::super::Quat64::from_euler_angles(0.001 * (std::f64::consts::TAU * 1.5 * t).sin(), 0.0, 0.0))
+        }).collect();
+        // At the shortest smoothness the high pass of the middle second reaches only pairs without layer motion
+        let curve = |reference: f64| {
+            let mut t = built(samples.clone(), OpticalTranslationSettings { reference, smoothness_s: 0.1, ..Default::default() }, 0.0);
+            assert!(t.rebuild_with_output_path(0.0, &path, 7, &|| false));
+            t
+        };
+        let (stretch, rotation_only) = (curve(1.0), curve(0.0));
+        let mut compared = 0;
+        for s in &samples {
+            let (t, time) = (s.timestamp_us as f64 / 1e6, s.timestamp_us as f64 / 1000.0);
+            if t >= 4.05 && t <= 4.95 {
+                assert!((stretch.shift_at(time) - rotation_only.shift_at(time)).norm() < 1e-4, "{t}");
+                compared += 1;
+            }
+        }
+        assert!(compared > 20 && rotation_only.shift_at(4500.0).norm() > 1e-5);
+    }
+
+    #[test]
+    fn translation_neighbour_estimate_stays_within_its_analysis_range() {
+        // Range 0 ends in a fast trusted drift; range 1 starts right after with untrusted pairs, then drifts the other way
+        let sample = |i: i64, segment: u32, x: f32, weight: f32| TranslationSample { timestamp_us: i * 33_333, track_age_s: 100.0,
+            segment, layer_motion: [x, 0.0], far_beta: 1.0, weight, ..geometry_sample() };
+        let first: Vec<_> = (0..90).map(|i| sample(i, 0, if i == 0 { 0.0 } else { 0.05 }, if i == 0 { 0.0 } else { 1.0 })).collect();
+        // Its first sample starts the range and has no pair; the next nine pairs are untrusted
+        let second: Vec<_> = (90..180).map(|i| if i - 90 < 10 { sample(i, 1, 0.0, 0.0) } else { sample(i, 1, -0.01, 1.0) }).collect();
+        let motion = blended_layer_motion(&second);
+        assert!(motion[1..10].iter().all(|u| u.x < 0.0 && u.x > -0.01), "taken from range 1's own pairs");
+        let alone = built(second.clone(), Default::default(), 0.0);
+        let both = built(first.iter().chain(&second).copied().collect(), Default::default(), 0.0);
+        for s in &second {
+            let time = s.timestamp_us as f64 / 1000.0;
+            assert_eq!(both.shift_at(time), alone.shift_at(time));
+        }
+        assert!(alone.shift_at(3500.0).norm() > 1e-6);
     }
 
     #[test]
