@@ -913,6 +913,8 @@ MenuItem {
                                 }
                                 if (!config.squeeze_direction)
                                     config.squeeze_direction = "horizontal"
+                                if (!config.preset_id && !(config.squeeze_ratio > 0))
+                                    config.squeeze_ratio = 1.33
                                 // First-time enable defaults to 0% — keeps the original
                                 // anamorphic look untouched. User edits during the enabled
                                 // session are preserved until the toggle is turned off.
