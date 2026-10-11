@@ -38,6 +38,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Test iOS build helpers
+        run: python3 -B -m unittest discover -s _scripts/tests -p 'test_ios*.py'
+
       - name: Check iOS configuration
         id: config
         env:
@@ -86,12 +89,12 @@ jobs:
       - uses: extractions/setup-just@v2
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ios-niyien-${{ hashFiles('_scripts/ios.just', '_scripts/common.just') }}
+          key: ios-niyien-${{ hashFiles('_scripts/ios.just', '_scripts/common.just', '_scripts/ios_native_deps.py') }}
       - name: Cache iOS dependencies
         uses: actions/cache@v4
         with:
           path: ext/
-          key: ios-niyien-ext-${{ hashFiles('_scripts/ios.just', '_scripts/common.just') }}
+          key: ios-niyien-ext-${{ hashFiles('_scripts/ios.just', '_scripts/common.just', '_scripts/ios_native_deps.py') }}
 
       - name: Build IPA
         env:

@@ -13,6 +13,7 @@ import subprocess
 import zipfile
 
 from ios_metadata import ROOT, load_metadata
+from ios_native_deps import copy_runtime_frameworks, runtime_frameworks
 
 
 def run(*args, **kwargs):
@@ -91,6 +92,7 @@ def make_icons(stage, app, metadata):
 def package(profile, signing):
     metadata = load_metadata()
     signing_info = signing_settings(signing, metadata)
+    runtime_frameworks(ROOT)
     target = ROOT / "target/aarch64-apple-ios"
     executable = target / profile / "gyroflow"
     if not executable.is_file():
@@ -113,11 +115,7 @@ def package(profile, signing):
     app = stage / "Payload/NiYien.app"
     app.mkdir(parents=True)
     shutil.copy2(executable, app / "gyroflow")
-    frameworks = target / "Frameworks"
-    if not (frameworks / "mdk.framework/mdk").is_file():
-        raise ValueError("The device MDK framework is missing from the build output")
-    shutil.copytree(frameworks, app / "Frameworks", symlinks=True,
-                    ignore=shutil.ignore_patterns("Headers", "Modules", "_CodeSignature"))
+    copy_runtime_frameworks(app / "Frameworks", ROOT)
     for filename in ("PkgInfo", "PrivacyInfo.xcprivacy"):
         shutil.copy2(ROOT / "_deployment/ios" / filename, app / filename)
     for language in (ROOT / "_deployment/ios/Resources").glob("*.lproj"):

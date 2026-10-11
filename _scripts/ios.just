@@ -83,6 +83,8 @@ install-deps:
         rm ffmpeg.tar ffmpeg.tar.xz
     fi
 
+    python3 "{{ProjectDir}}/_scripts/ios_native_deps.py" install
+
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Development ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -117,9 +119,8 @@ build-and-package profile is_dist:
     export FFMPEG_DIR="{{ProjectDir}}/ext/ffmpeg-8.1-iOS-gpl-lite"
     export PATH="{{ProjectDir}}/ext/{{QtVersionIOS}}/ios/bin:/usr/libexec/:$PATH"
     export QMAKE="{{ProjectDir}}/ext/{{QtVersionIOS}}/ios/bin/qmake"
-    if [ -d "{{ProjectDir}}/ext/mdk-sdk-ios" ]; then
-        export MDK_SDK="{{ProjectDir}}/ext/mdk-sdk-ios/"
-    fi
+    NiyienIOSMDKSdk="$(python3 "{{ProjectDir}}/_scripts/ios_native_deps.py" mdk-path)"
+    export MDK_SDK="$NiyienIOSMDKSdk"
 
     export OPENCV_LINK_LIBS="opencv_core4,opencv_calib3d4,opencv_features2d4,opencv_imgproc4,opencv_video4,opencv_flann4,opencv_stitching4"
     export OPENCV_LINK_PATHS={{ProjectDir}}/ext/vcpkg/installed/arm64-ios/lib
