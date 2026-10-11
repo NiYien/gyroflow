@@ -424,6 +424,7 @@ Rectangle {
         } else if (errorKind !== "cancelled") {
             summary = errorKind === "low_motion" || errorKind === "not_in_range"
                 ? qsTr("No match found. Try a video with more camera motion, and check the gyro recording, in-camera stabilization and mounting position.")
+                : errorKind === "image_stabilization" ? skipDetailText("image_stabilization")
                 : errorKind === "video_open_failed" ? qsTranslate("RenderQueue", "Unable to open the video for deep matching. Please select the video again.")
                 : errorKind === "video_decode_failed" || errorKind === "video_frame_conversion_failed" || errorKind === "video_no_frames"
                     ? qsTranslate("RenderQueue", "Unable to decode the video for deep matching. Please try another video.")

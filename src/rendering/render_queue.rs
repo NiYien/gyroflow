@@ -7555,6 +7555,7 @@ impl RenderQueue {
             self.reset_job(job_id);
         }
         if self.skip_stabilization_blocked_job(job_id) {
+            self.finish_deep_match_start_failure(job_id, "image_stabilization");
             return;
         }
         if self
@@ -15018,6 +15019,11 @@ impl RenderQueue {
         probe_lens_index: i32,
         pool_run: bool,
     ) -> QString {
+        // Refuse before registering a probe or replacing its motion data.
+        if self.job_is_stabilization_blocked(job_id) {
+            ::log::warn!(target: "sync", "[deep-match] refused: reason=image_stabilization job={job_id}");
+            return QString::from("image_stabilization");
+        }
         let Some(job) = self.jobs.get(&job_id) else {
             return QString::from("job_missing");
         };
@@ -15283,6 +15289,11 @@ impl RenderQueue {
             self.finish_deep_match_run(job_id, false, QString::from("gyro_load_failed"), 0.0);
             return;
         }
+        // The queue's reconstruction settings may change while the file loads.
+        if self.skip_stabilization_blocked_job(job_id) {
+            self.finish_deep_match_start_failure(job_id, "image_stabilization");
+            return;
+        }
         let gyro_span = {
             let gyro = stab.gyro.read();
             let md = gyro.file_metadata.read();
@@ -15543,6 +15554,9 @@ impl RenderQueue {
         // Launch this job only — start() would pick up every Queued job in
         // the queue, but deep match must act on the clicked job alone.
         self.render_job(job_id);
+        if !self.deep_match_pending.contains_key(&job_id) {
+            return;
+        }
         // Headless auto-probe: the modal signals stay silent (a stale modal
         // jobId could coincide with the probe clip); progress lives in logs.
         if !is_auto_probe {
@@ -15598,6 +15612,35 @@ impl RenderQueue {
                 job.cancel_flag.store(true, SeqCst);
             }
         }
+    }
+
+    // A rejected launch has no worker to deliver completion or cancellation.
+    fn finish_deep_match_start_failure(&mut self, job_id: u32, reason: &str) {
+        let Some(state) = self.deep_match_pending.remove(&job_id) else {
+            return;
+        };
+        gyroflow_core::synchronization::deep_match::take();
+        if let Some(job) = self.jobs.get_mut(&job_id) {
+            // A previous chunk may still have its final progress callback queued.
+            job.render_epoch.fetch_add(1, SeqCst);
+            job.additional_data = state.original_additional_data.clone();
+            if let Some(stab) = &job.stab {
+                {
+                    let mut lens = stab.lens.write();
+                    *lens = (*state.original_lens).clone();
+                    lens.sync_settings = state.original_sync_settings.clone();
+                }
+                Self::restore_deep_match_gyro(stab, &state);
+            }
+        }
+        // An automatic probe belongs to a live batch; only manual probes own these entries.
+        if !self.is_auto_probe_run(job_id) {
+            self.expected_batch_sync_job_ids.remove(&job_id);
+            self.completed_batch_sync_job_ids.remove(&job_id);
+            self.batch_sync_job_ids.remove(&job_id);
+        }
+        ::log::warn!(target: "sync", "[deep-match] launch failed: job={job_id} reason={reason}");
+        self.finish_deep_match_run(job_id, false, QString::from(reason), 0.0);
     }
 
     // Builds the pre-probe snapshot bundle for a deep match run: the four
@@ -22966,6 +23009,100 @@ mod tests {
     // The deep-match collector is a single global slot; serialize the tests
     // that arm/take it.
     static DEEP_MATCH_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn deep_match_stabilization_refusal_does_not_register_or_load_a_probe() {
+        with_finished_deep_match_loads(0, || {
+            for pool in [false, true] {
+                for already_skipped in [false, true] {
+                    let mut queue = queue_with_eta_job(JobStatus::Queued);
+                    let stab = setup_deep_match_job(&mut queue, false);
+                    if already_skipped {
+                        let job_id = 1;
+                        update_model!(queue, job_id, itm {
+                            itm.status = JobStatus::Skipped;
+                            itm.skip_reason = QString::from("image_stabilization");
+                        });
+                    } else {
+                        stab.gyro.read().file_metadata.write().additional_data = serde_json::json!({
+                            "image_stabilizer": true,
+                            "stabilization_blocks_processing": true,
+                        });
+                    }
+                    queue.gyro_files.push(GyroFileInfo {
+                        path: "file:///pool.bin".into(),
+                        filename: "pool.bin".into(),
+                        duration_ms: Some(20_000.0),
+                        parsed: true,
+                        ..Default::default()
+                    });
+                    queue.export_project = 3;
+                    let original_settings = stab.lens.read().sync_settings.clone();
+                    let result = if pool {
+                        queue.start_deep_gyro_match_all(1, -1)
+                    } else {
+                        queue.start_deep_gyro_match(1, 0, -1)
+                    };
+                    assert_eq!(result.to_string(), "image_stabilization");
+                    assert!(queue.deep_match_pending.is_empty());
+                    assert!(queue.expected_batch_sync_job_ids.is_empty());
+                    assert_eq!(queue.export_project, 3);
+                    assert_eq!(queue.jobs[&1].additional_data, r#"{"original":true}"#);
+                    assert_eq!(stab.lens.read().sync_settings, original_settings);
+                    assert_eq!(stab.gyro.read().file_url, "file:///builtin-source.mp4");
+                    assert_eq!(queue.jobs[&1].render_epoch.load(SeqCst), 0);
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn deep_match_stabilization_launch_failure_restores_and_finishes_without_a_worker() {
+        use gyroflow_core::synchronization::deep_match;
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        for direct_render in [false, true] {
+            let mut queue = queue_with_eta_job(JobStatus::Queued);
+            let stab = setup_deep_match_job(&mut queue, true);
+            let original_settings = stab.lens.read().sync_settings.clone();
+            simulate_deep_match_probe(&mut queue, &stab);
+            queue.jobs.get_mut(&1).unwrap().additional_data = r#"{"probe":true}"#.into();
+            queue.batch_sync_job_ids = [1, 2].into_iter().collect();
+            queue.expected_batch_sync_job_ids = [1, 2].into_iter().collect();
+            queue.completed_batch_sync_job_ids = [1, 2].into_iter().collect();
+            // The requirement can reappear after the asynchronous gyro load.
+            let job_id = 1;
+            update_model!(queue, job_id, itm {
+                itm.skip_reason = QString::from("image_stabilization");
+            });
+            deep_match::arm(2);
+            deep_match::arm_forward();
+            if direct_render {
+                queue.render_job(1);
+            } else {
+                queue.continue_deep_gyro_match(1, true);
+            }
+            assert!(queue.deep_match_pending.is_empty());
+            assert!(!deep_match::is_armed());
+            assert!(!deep_match::forward_armed());
+            assert_eq!(queue.jobs[&1].render_epoch.load(SeqCst), 1, "old callbacks are invalidated");
+            assert_eq!(row_status(&queue, 1), (JobStatus::Skipped, "image_stabilization".into()));
+            assert_eq!(queue.jobs[&1].additional_data, r#"{"original":true}"#);
+            assert_eq!(stab.lens.read().name, "");
+            assert_eq!(stab.lens.read().sync_settings, original_settings);
+            assert_eq!(stab.gyro.read().file_url, "file:///builtin-source.mp4");
+            assert!(stab.gyro.read().file_metadata.read().keep_video_gyro);
+            assert_eq!(stab.gyro.read().file_metadata.read().raw_imu.len(), 1);
+            assert_eq!(queue.batch_sync_job_ids, [2].into_iter().collect());
+            assert_eq!(queue.expected_batch_sync_job_ids, [2].into_iter().collect());
+            assert_eq!(queue.completed_batch_sync_job_ids, [2].into_iter().collect());
+            // A stale callback or cancellation cannot replace the restored data.
+            queue.cancel_deep_gyro_match(1);
+            queue.finish_deep_match_start_failure(1, "image_stabilization");
+            queue.continue_deep_gyro_match(1, true);
+            assert!(!queue.jobs[&1].cancel_flag.load(SeqCst));
+            assert_eq!(stab.gyro.read().file_url, "file:///builtin-source.mp4");
+        }
+    }
 
     #[test]
     fn deep_match_decode_retry_clears_partial_results_and_preserves_scan_mode() {

@@ -457,6 +457,8 @@ Item {
                 msg = qsTr("The gyro data is still being parsed. Please try again shortly.");
             else if (res === "job_missing")
                 msg = qsTr("This job is no longer in the render queue.");
+            else if (res === "image_stabilization")
+                msg = qsTranslate("App", "In-camera stabilization was on when these videos were recorded, so they cannot be stabilized. Turn off stabilization in the camera and on the lens, then record again.");
             messageBox(Modal.Warning, msg, [{ text: qsTr("Ok") }]);
             return;
         }
@@ -752,6 +754,8 @@ Item {
                         // branch can prove which recording/setup issue caused
                         // the miss. Keep one stable troubleshooting order.
                         messageBox(Modal.Warning, qsTr("No match found. Possible reasons:\n1. Not enough camera motion in the video; try another video.\n2. The gyro data does not cover the video's recording time.\n3. In-camera or lens stabilization was not turned off.\n4. The mounting position is incorrect.\n\nPlease check and try again."), [{ text: qsTr("Ok") }]);
+                    } else if (error_kind === "image_stabilization") {
+                        messageBox(Modal.Warning, qsTranslate("App", "In-camera stabilization was on when these videos were recorded, so they cannot be stabilized. Turn off stabilization in the camera and on the lens, then record again."), [{ text: qsTr("Ok") }]);
                     } else if (error_kind === "probe_not_run") {
                         messageBox(Modal.Warning, qsTr("Deep match could not run."), [{ text: qsTr("Ok") }]);
                     } else if (error_kind === "video_open_failed") {
