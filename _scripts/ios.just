@@ -23,6 +23,8 @@ IPHONESDK := `xcode-select -p` + "/Platforms/iPhoneOS.platform/Developer/SDKs/iP
 export BINDGEN_EXTRA_CLANG_ARGS_aarch64_apple_ios := "--target=arm64-apple-ios -arch arm64 -miphoneos-version-min=15 -isysroot " + IPHONESDK
 export CFLAGS_aarch64_apple_darwin := "-mmacosx-version-min=10.15"
 export IPHONEOS_DEPLOYMENT_TARGET := "15.0"
+# Qt 6.7's ARM yield intrinsic needs its declaration with recent Apple Clang.
+export CXXFLAGS_aarch64_apple_ios := env_var_or_default("CXXFLAGS_aarch64_apple_ios", "") + " -include arm_acle.h"
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Dependencies ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -121,6 +123,13 @@ build-and-package profile is_dist:
     export QMAKE="{{ProjectDir}}/ext/{{QtVersionIOS}}/ios/bin/qmake"
     NiyienIOSMDKSdk="$(python3 "{{ProjectDir}}/_scripts/ios_native_deps.py" mdk-path)"
     export MDK_SDK="$NiyienIOSMDKSdk"
+
+    # Check the Qt headers even when Cargo restores qttypes from cache.
+    read -r -a NiyienIOSCxxFlags <<< "$CXXFLAGS_aarch64_apple_ios"
+    printf '#include <QtCore/QByteArray>\n' | xcrun --sdk iphoneos clang++ \
+        --target=arm64-apple-ios -miphoneos-version-min="$IPHONEOS_DEPLOYMENT_TARGET" \
+        -isysroot "{{IPHONESDK}}" -I "{{ExtDir}}/{{QtVersionIOS}}/ios/include" \
+        "${NiyienIOSCxxFlags[@]}" -std=c++17 -fsyntax-only -x c++ -
 
     export OPENCV_LINK_LIBS="opencv_core4,opencv_calib3d4,opencv_features2d4,opencv_imgproc4,opencv_video4,opencv_flann4,opencv_stitching4"
     export OPENCV_LINK_PATHS={{ProjectDir}}/ext/vcpkg/installed/arm64-ios/lib
