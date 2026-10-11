@@ -45,7 +45,6 @@ pub type TimeQuat = BTreeMap<i64, Quat64>; // key is timestamp_us
 pub type TimeVec = BTreeMap<i64, Vector3<f64>>; // key is timestamp_us
 
 const SENSEFLOW_NIYIEN_INIT_QUAT_WINDOW_MS: f64 = 1200.0;
-const SENSEFLOW_NIYIEN_RAD_GYRO_2000DPS: f32 = 0.001_065_264_4;
 const SENSEFLOW_NIYIEN_RAD2DEG: f32 = 57.295_78;
 
 fn scale_sony_frame_readout_time(
@@ -90,7 +89,7 @@ fn senseflow_gyro_range(additional_data: Option<&serde_json::Value>) -> f32 {
         .and_then(|x| x.get("gyro_range"))
         .and_then(|x| x.as_f64())
         .map(|x| x as f32)
-        .filter(|x| *x > f32::EPSILON)
+        .filter(|x| x.is_finite() && *x > f32::EPSILON)
         .unwrap_or(1000.0)
 }
 
@@ -270,11 +269,12 @@ impl SenseFlowAutoRotationState {
         self.q3q3 = self.q[3] * self.q[3];
     }
 
-    fn gyro_update(&mut self, gyro_raw_counts: [f32; 3]) {
+    fn gyro_update(&mut self, gyro_raw_counts: [f32; 3], gyro_range: f32) {
         let half_t = 0.001_f32 * 0.5;
-        let mut gx = gyro_raw_counts[0] * SENSEFLOW_NIYIEN_RAD_GYRO_2000DPS;
-        let mut gy = gyro_raw_counts[1] * SENSEFLOW_NIYIEN_RAD_GYRO_2000DPS;
-        let mut gz = gyro_raw_counts[2] * SENSEFLOW_NIYIEN_RAD_GYRO_2000DPS;
+        let gyro_scale = gyro_range.to_radians() / 32768.0;
+        let mut gx = gyro_raw_counts[0] * gyro_scale;
+        let mut gy = gyro_raw_counts[1] * gyro_scale;
+        let mut gz = gyro_raw_counts[2] * gyro_scale;
 
         if self.ex != 0.0 && self.ey != 0.0 && self.ez != 0.0 {
             gx += self.two_kp * self.ex;
@@ -448,7 +448,8 @@ pub fn compute_auto_rotation_for_segment_with_state(
 
     state.reset_like_niyien();
 
-    let gyro_raw_scale = 32768.0_f32 / senseflow_gyro_range(additional_data);
+    let gyro_range = senseflow_gyro_range(additional_data);
+    let gyro_raw_scale = 32768.0_f32 / gyro_range;
     let first_ts = raw_imu.first().map(|x| x.timestamp_ms).unwrap_or_default();
     let end_ts = first_ts + SENSEFLOW_NIYIEN_INIT_QUAT_WINDOW_MS;
     let resolved_install_angles =
@@ -462,11 +463,14 @@ pub fn compute_auto_rotation_for_segment_with_state(
         let (Some(gyro), Some(accl)) = (sample.gyro, sample.accl) else {
             continue;
         };
-        state.gyro_update([
-            (gyro[0] as f32) * gyro_raw_scale,
-            (gyro[1] as f32) * gyro_raw_scale,
-            (gyro[2] as f32) * gyro_raw_scale,
-        ]);
+        state.gyro_update(
+            [
+                (gyro[0] as f32) * gyro_raw_scale,
+                (gyro[1] as f32) * gyro_raw_scale,
+                (gyro[2] as f32) * gyro_raw_scale,
+            ],
+            gyro_range,
+        );
         state.acc_update([accl[0] as f32, accl[1] as f32, accl[2] as f32]);
         used_samples += 1;
     }
@@ -3381,6 +3385,99 @@ mod tests {
     fn compute_auto_rotation_without_init_quaternion_returns_none() {
         let raw_imu = vec![imu_sample(0.0, [0.0, 0.0, 9.80665])];
         assert_eq!(compute_auto_rotation(None, &raw_imu, 1.0, false), None);
+    }
+
+    #[test]
+    fn senseflow_segment_auto_rotation_follows_header_gyro_range() {
+        for range in [500u32, 1000, 2000] {
+            for axis in 0..3 {
+                for sign in [-1i16, 1] {
+                    let mut data = vec![0u8; 512];
+                    data[..9].copy_from_slice(b"SenseFlow");
+                    data[12..16].copy_from_slice(b"0001");
+                    data[60..64].copy_from_slice(b"XYZ ");
+                    data[64..67].copy_from_slice(&[26, 1, 1]);
+                    data[76..80].copy_from_slice(&1.0f32.to_le_bytes());
+                    data[92..96].copy_from_slice(&1000u32.to_le_bytes());
+                    data[152..156].copy_from_slice(&16u32.to_le_bytes());
+                    data[164..168].copy_from_slice(&range.to_le_bytes());
+
+                    // All three ranges represent exactly 62.5 deg/s with integer counts.
+                    let counts = (2_048_000 / range) as i16 * sign;
+                    let mut frame = [0u8; 16];
+                    frame[..3].copy_from_slice(&[0xaa, 0x55, 0b11]);
+                    let offset = 9 + axis * 2;
+                    frame[offset..offset + 2].copy_from_slice(&counts.to_le_bytes());
+                    frame[15] = frame[3..15].iter().fold(0u8, |sum, x| sum.wrapping_add(*x));
+                    // Zero acceleration isolates gyro integration from gravity correction.
+                    for _ in 0..1000 {
+                        data.extend_from_slice(&frame);
+                    }
+                    let size = data.len();
+                    let input = Input::from_stream_with_options(
+                        &mut std::io::Cursor::new(data),
+                        size,
+                        "range.bin",
+                        |_| {},
+                        Arc::new(AtomicBool::new(false)),
+                        InputOptions::default(),
+                    ).unwrap();
+                    let raw_imu = util::normalized_imu_interpolated(&input, Some("XYZ".into())).unwrap();
+                    let map = input.samples.as_ref().unwrap()[0].tag_map.as_ref().unwrap();
+                    let metadata: &serde_json::Value = map.get(&GroupId::Default).unwrap()
+                        .get_t(TagId::Metadata).unwrap();
+                    assert_eq!(metadata["gyro_range"].as_f64(), Some(range as f64));
+                    assert_eq!(raw_imu.len(), 1000);
+                    assert!((raw_imu[0].gyro.unwrap()[axis] - 62.5 * sign as f64).abs() < 1e-9);
+
+                    let mut state = SenseFlowAutoRotationState::default();
+                    let rotation = compute_auto_rotation_for_segment_with_state(
+                        &mut state, &raw_imu, Some(metadata), None, "header-range",
+                    );
+                    let mut angle = Vector3::zeros();
+                    angle[axis] = (62.5 * sign as f64).to_radians();
+                    let expected = UnitQuaternion::from_scaled_axis(angle);
+                    let [w, x, y, z] = state.quaternion();
+                    let actual = UnitQuaternion::new_normalize(nalgebra::Quaternion::new(
+                        w as f64, x as f64, y as f64, z as f64,
+                    ));
+                    assert!(actual.angle_to(&expected) < 1e-5,
+                        "range={range} axis={axis} sign={sign} actual={actual:?}");
+                    let expected_rotation = senseflow_auto_rotation_info_from_quat(
+                        [expected.w as f32, expected.i as f32, expected.j as f32, expected.k as f32],
+                        (0, 0, 0),
+                    ).unwrap().output_rotation;
+                    assert_eq!(rotation, Some(expected_rotation), "range={range} axis={axis} sign={sign}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn senseflow_segment_auto_rotation_handles_missing_or_invalid_gyro_range() {
+        let raw_imu = (0..1000).map(|timestamp_ms| motion_sample(
+            timestamp_ms as f64, [62.5, 0.0, 0.0], Some([0.0; 3]), None,
+        )).collect::<Vec<_>>();
+        let expected = UnitQuaternion::from_scaled_axis(Vector3::new(62.5f64.to_radians(), 0.0, 0.0));
+        for metadata in [
+            None,
+            Some(serde_json::json!({})),
+            Some(serde_json::json!({ "gyro_range": 0 })),
+            Some(serde_json::json!({ "gyro_range": -500 })),
+            Some(serde_json::json!({ "gyro_range": "500" })),
+            Some(serde_json::json!({ "gyro_range": 1e308 })),
+        ] {
+            let mut state = SenseFlowAutoRotationState::default();
+            let rotation = compute_auto_rotation_for_segment_with_state(
+                &mut state, &raw_imu, metadata.as_ref(), None, "invalid-range",
+            );
+            let [w, x, y, z] = state.quaternion();
+            let actual = UnitQuaternion::new_normalize(nalgebra::Quaternion::new(
+                w as f64, x as f64, y as f64, z as f64,
+            ));
+            assert!(actual.angle_to(&expected) < 1e-5, "metadata={metadata:?} actual={actual:?}");
+            assert_eq!(rotation, Some(270), "metadata={metadata:?}");
+        }
     }
 
     #[test]
