@@ -35,10 +35,10 @@ class IosConnectDispatchTests(unittest.TestCase):
             self.github.reset_mock()
             result = self.api.trigger_action_build('test build', selected)
             self.assertTrue(result['ok'], result)
-            calls = self.github.dispatch_workflow.call_args_list
-            self.assertEqual(calls[0].args, ('release.yml', 'niyien'))
-            self.assertEqual(calls[1].args, ('ios-release.yml', 'niyien'))
-            self.assertEqual(calls[1].kwargs['inputs']['upload_to_connect'], str(selected).lower())
+            self.github.dispatch_workflow.assert_called_once_with(
+                'release.yml', 'niyien',
+                inputs={'build_label': 'test build', 'upload_to_connect': str(selected).lower()},
+            )
 
     def test_non_boolean_selection_never_triggers_workflow(self):
         self.assertFalse(self.api.trigger_action_build('test', 'false')['ok'])
@@ -49,12 +49,13 @@ class IosConnectDispatchTests(unittest.TestCase):
         self.assertFalse(self.api.trigger_action_build('test', True)['ok'])
         self.github.dispatch_workflow.assert_not_called()
 
-    def test_ios_dispatch_failure_reports_partial_success(self):
-        self.github.dispatch_workflow.side_effect = [True, RuntimeError('fixture failure')]
+    def test_dispatch_failure_never_starts_a_second_workflow(self):
+        self.github.dispatch_workflow.side_effect = RuntimeError('fixture failure')
         result = self.api.trigger_action_build('test', True)
         self.assertFalse(result['ok'])
-        self.assertTrue(result['app_dispatched'])
-        self.assertIn('主程序编译已触发', result['error'])
+        self.github.dispatch_workflow.assert_called_once()
+        self.assertNotIn('app_dispatched', result)
+        self.assertIn('fixture failure', result['error'])
 
     def test_tag_choice_is_immutable_and_does_not_dispatch_a_second_ios_build(self):
         with patch.object(git_ops, 'create_and_push_tag') as create:

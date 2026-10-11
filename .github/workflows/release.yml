@@ -12,6 +12,11 @@ on:
         description: Optional label for a manual build run
         required: false
         type: string
+      upload_to_connect:
+        description: Upload the signed iOS IPA to App Store Connect
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -46,23 +51,81 @@ jobs:
           { os: ubuntu-22.04,   type: linux },
           { os: macos-14,      type: macos },
           { os: windows-2022,  type: windows },
-          { os: windows-2022,  type: android }
+          { os: windows-2022,  type: android },
+          { os: macos-26,      type: ios }
         ]
     name: Build gyroflow(niyien) for ${{ matrix.targets.type }}
     runs-on: ${{ matrix.targets.os }}
+    timeout-minutes: ${{ matrix.targets.type == 'ios' && 180 || 360 }}
+    concurrency:
+      group: ${{ matrix.targets.type == 'ios' && 'niyien-ios-app-store-upload' || format('release-{0}-{1}', github.run_id, matrix.targets.type) }}
+      cancel-in-progress: false
+    env:
+      IOS_UPLOAD_TO_CONNECT: ${{ inputs.upload_to_connect && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: ${{ matrix.targets.type == 'ios' && '0' || '1' }}
+
+      - name: Test iOS build helpers
+        if: matrix.targets.type == 'ios'
+        run: python3 -B -m unittest discover -s _scripts/tests -p 'test_ios*.py'
+
+      - name: Check iOS configuration
+        id: config
+        if: matrix.targets.type == 'ios'
+        env:
+          IOS_CERTIFICATES: ${{ secrets.IOS_CERTIFICATES }}
+          IOS_CERTIFICATE_PWD: ${{ secrets.IOS_CERTIFICATE_PWD }}
+          MACOS_CERTIFICATES: ${{ secrets.MACOS_CERTIFICATES }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          MACOS_ACCOUNT_USER: ${{ secrets.MACOS_ACCOUNT_USER }}
+          MACOS_ACCOUNT_PASS: ${{ secrets.MACOS_ACCOUNT_PASS }}
+          IOS_PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
+          IOS_SIGNING_FINGERPRINT: ${{ vars.IOS_SIGNING_FINGERPRINT }}
+          APPSTORE_ISSUER_ID: ${{ vars.APPSTORE_ISSUER_ID || secrets.APPSTORE_ISSUER_ID || secrets.MACOS_ITCONNECT_ISSUER }}
+          APPSTORE_API_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID || secrets.APPSTORE_API_KEY_ID || secrets.MACOS_ITCONNECT_KEY_ID }}
+          APPSTORE_API_PRIVATE_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY || secrets.MACOS_ITCONNECT_KEY }}
+        run: python3 _scripts/ios_ci.py check-config
+
+      - name: Install Apple Distribution certificate
+        if: matrix.targets.type == 'ios' && steps.config.outputs.upload_enabled == 'true'
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.IOS_CERTIFICATES || secrets.MACOS_CERTIFICATES }}
+          p12-password: ${{ secrets.IOS_CERTIFICATE_PWD || secrets.MACOS_CERTIFICATE_PWD }}
+
+      - name: Download App Store provisioning profiles
+        if: matrix.targets.type == 'ios' && steps.config.outputs.upload_enabled == 'true' && steps.config.outputs.profile_mode == 'api'
+        id: provisioning
+        uses: apple-actions/download-provisioning-profiles@v3
+        with:
+          bundle-id: ${{ steps.config.outputs.bundle_identifier }}
+          profile-type: IOS_APP_STORE
+          issuer-id: ${{ vars.APPSTORE_ISSUER_ID || secrets.APPSTORE_ISSUER_ID || secrets.MACOS_ITCONNECT_ISSUER }}
+          api-key-id: ${{ vars.APPSTORE_API_KEY_ID || secrets.APPSTORE_API_KEY_ID || secrets.MACOS_ITCONNECT_KEY_ID }}
+          api-private-key: ${{ secrets.APPSTORE_API_PRIVATE_KEY || secrets.MACOS_ITCONNECT_KEY }}
+
+      - name: Select matching provisioning profile
+        if: matrix.targets.type == 'ios' && steps.config.outputs.upload_enabled == 'true'
+        env:
+          IOS_PROVISIONING_PROFILES: ${{ steps.provisioning.outputs.profiles }}
+          IOS_PROFILE_MODE: ${{ steps.config.outputs.profile_mode }}
+          IOS_PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
+          IOS_SIGNING_FINGERPRINT: ${{ vars.IOS_SIGNING_FINGERPRINT }}
+        run: python3 _scripts/ios_ci.py prepare-signing
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.targets.type }}-gyroflow-niyien-${{ matrix.targets.type == 'macos' && hashFiles('_scripts/macos.just') || matrix.targets.type == 'windows' && hashFiles('_scripts/windows.just', '_scripts/common.just', '_scripts/install_windows_ffmpeg.ps1') || '0' }}
+          key: ${{ matrix.targets.type }}-gyroflow-niyien-${{ matrix.targets.type == 'ios' && hashFiles('_scripts/ios.just', '_scripts/common.just', '_scripts/ios_native_deps.py') || matrix.targets.type == 'macos' && hashFiles('_scripts/macos.just') || matrix.targets.type == 'windows' && hashFiles('_scripts/windows.just', '_scripts/common.just', '_scripts/install_windows_ffmpeg.ps1') || '0' }}
       - name: Dependencies cache
         id: extcache
         uses: actions/cache@v4
         with:
           path: '${{ github.workspace }}/ext/'
-          key: ${{ matrix.targets.type }}-gyroflow-niyien-ext-${{ matrix.targets.type == 'macos' && hashFiles('_scripts/macos.just') || matrix.targets.type == 'windows' && hashFiles('_scripts/windows.just', '_scripts/common.just', '_scripts/install_windows_ffmpeg.ps1') || '0' }}
+          key: ${{ matrix.targets.type }}-gyroflow-niyien-ext-${{ matrix.targets.type == 'ios' && hashFiles('_scripts/ios.just', '_scripts/common.just', '_scripts/ios_native_deps.py') || matrix.targets.type == 'macos' && hashFiles('_scripts/macos.just') || matrix.targets.type == 'windows' && hashFiles('_scripts/windows.just', '_scripts/common.just', '_scripts/install_windows_ffmpeg.ps1') || '0' }}
 
       # NeuFlow v2 Burn (default feature) does not require Vulkan SDK at build
       # OR runtime: burn-onnx ModelGen is a host-side tool (ndarray, no GPU);
@@ -77,7 +140,7 @@ jobs:
       #     vulkan-use-cache: true
 
       - name: Force qml-video-rs rebuild (UNIX)
-        if: ${{ matrix.targets.os != 'windows-2022' }}
+        if: ${{ matrix.targets.os != 'windows-2022' && matrix.targets.type != 'ios' }}
         run: |
           rm -rf ${{ github.workspace }}/target/*/deploy/build/qml-video-rs*
           rm -rf ${{ github.workspace }}/target/deploy/build/qml-video-rs*
@@ -191,6 +254,56 @@ jobs:
           just android install-deps
           if ($LASTEXITCODE -ne 0) { Write-Host "::error::android install-deps failed with exit code $LASTEXITCODE"; exit $LASTEXITCODE }
           just android deploy
+
+      - name: Build IPA
+        if: matrix.targets.type == 'ios'
+        env:
+          IOS_UPLOAD_ENABLED: ${{ steps.config.outputs.upload_enabled }}
+        run: |
+          just ios install-deps
+          if [ "$IOS_UPLOAD_ENABLED" = "true" ]; then
+            just ios build-ipa
+          else
+            just ios build-and-package deploy unsigned
+          fi
+
+      - name: Verify IPA metadata
+        id: package
+        if: matrix.targets.type == 'ios'
+        env:
+          IOS_REQUIRE_DISTRIBUTION: ${{ steps.config.outputs.upload_enabled }}
+        run: python3 _scripts/ios_ci.py prepare-artifact
+
+      - name: Save IPA and debug symbols
+        if: matrix.targets.type == 'ios'
+        uses: actions/upload-artifact@v4
+        with:
+          name: niyien-ios
+          compression-level: 0
+          if-no-files-found: error
+          path: |
+            _deployment/_binaries/NiYien-*.ipa
+            _deployment/_binaries/ios/NiYien.app.dSYM/
+            _deployment/_binaries/ios/build-receipt.json
+
+      - name: Upload using existing Apple account
+        if: matrix.targets.type == 'ios' && steps.config.outputs.upload_enabled == 'true' && steps.config.outputs.upload_mode == 'account'
+        env:
+          MACOS_ACCOUNT_USER: ${{ secrets.MACOS_ACCOUNT_USER }}
+          MACOS_ACCOUNT_PASS: ${{ secrets.MACOS_ACCOUNT_PASS }}
+        run: python3 _scripts/ios_ci.py upload-account
+
+      - name: Upload using App Store Connect API
+        if: matrix.targets.type == 'ios' && steps.config.outputs.upload_enabled == 'true' && steps.config.outputs.upload_mode == 'api'
+        uses: apple-actions/upload-testflight-build@v5
+        with:
+          app-path: ${{ steps.package.outputs.ipa_path }}
+          app-type: ios
+          issuer-id: ${{ vars.APPSTORE_ISSUER_ID || secrets.APPSTORE_ISSUER_ID || secrets.MACOS_ITCONNECT_ISSUER }}
+          api-key-id: ${{ vars.APPSTORE_API_KEY_ID || secrets.APPSTORE_API_KEY_ID || secrets.MACOS_ITCONNECT_KEY_ID }}
+          api-private-key: ${{ secrets.APPSTORE_API_PRIVATE_KEY || secrets.MACOS_ITCONNECT_KEY }}
+          backend: appstore-api
+          wait-for-processing: 'false'
 
       # Release flow (tag push) — V7 + archive:false: raw bytes attached directly to GitHub release.
       - name: Upload Windows package (release)
@@ -310,6 +423,7 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           path: ./release_artifacts
+          pattern: gyroflow-niyien*
           merge-multiple: true
 
       - name: Publish

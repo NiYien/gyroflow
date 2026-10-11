@@ -20,14 +20,15 @@ GitHub Actions 自动编译上传：先提交并推送工作流与相关脚本�
   MACOS_ACCOUNT_USER/PASS 不可用时，完整 API 凭据可作为上传替代通道。
 在 Apple Developer 中准备匹配分发证书和包名的 App Store 描述文件，
 并在 App Store Connect 创建对应 App 记录；使用 API 时其权限为 App Manager。
-随后在 Actions → iOS release → Run workflow 中选择最新源码分支运行；
+随后在 Actions → release → Run workflow 中选择最新源码分支运行；
 直接运行时 upload_to_connect 默认关闭，只编译；需要上传时勾选该输入。
 发布中心的“①触发构建 / ②创建并推送 Tag”也有同名上传勾选项，默认关闭。
 未勾选时生成 unsigned 编译产物，不要求上述签名/上传凭据；勾选后才生成
 签名 IPA 并上传。发布中心勾选后创建的 Tag 会记录这次选择，只构建一次。
 普通 release tag 也会触发编译，默认不上传；IPA、调试符号和 receipt
-保存在 niyien-ios artifact。
-发布中心前后端、iOS 工作流和配套脚本需一起提交推送；更新后重启发布中心。
+保存在同一次 release 运行的 niyien-ios artifact。
+发布中心每次只触发 release；iOS 与其他平台在同一个构建矩阵中运行。
+发布中心前后端、release 工作流和配套脚本需一起提交推送；更新后重启发布中心。
 它替代本机打包与 Transporter 上传；上传后的测试组、外测审核及正式
 App Store 送审仍在 App Store Connect 操作。下列步骤保留作本机验证与备用。
 
@@ -57,7 +58,7 @@ App Store 送审仍在 App Store Connect 操作。下列步骤保留作本机验
    自动计数保存在 target/ios-version/build-number.json。换电脑或清理 target
    后先核对 App Store Connect 已上传的号码；必要时设置
    NIYIEN_IOS_BUILD_NUMBER 为更大的构建号，此次构建后自动计数从该号码继续。
-   CI 使用“下限首段 + workflow run number . run attempt”，下限 4 时
+   CI 使用 release 工作流的“下限首段 + workflow run number . run attempt”，下限 4 时
    首次运行为 5.1，重跑为 5.2，下一次为 6.1；首次接入前也需复核已上传号码。
    运行 python3 -B -m unittest discover -s _scripts/tests -p test_ios_metadata.py。
    运行 _scripts/test_ios_video_picker_bridge.sh 做原生桥接检查。
