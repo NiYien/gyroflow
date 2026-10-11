@@ -56,6 +56,8 @@ def signing_settings(kind, metadata):
     if not profile.is_file():
         raise ValueError(f"Missing provisioning profile for {metadata['bundle_identifier']}: {profile}")
     data = plistlib.loads(subprocess.check_output(["security", "cms", "-D", "-i", str(profile)]))
+    if "iOS" not in data.get("Platform", []):
+        raise ValueError("Provisioning profile must target iOS")
     entitlements = data["Entitlements"]
     team = data["TeamIdentifier"][0]
     expected = f"{team}.{metadata['bundle_identifier']}"

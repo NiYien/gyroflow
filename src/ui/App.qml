@@ -2780,7 +2780,8 @@ Rectangle {
         return (version || "").trim().replace(/^v/, "");
     }
     function addAppUpdateOption(dialog: Modal, updateInfo: var): void {
-        const versionText = updateInfo.version;
+        const versionId = updateInfo.version;
+        const versionText = Qt.platform.os === "android" ? versionId.replace(/-ni\.[0-9]+$/, "") : versionId;
         const isManual = updateInfo.channel === "manual";
         const channelTitle = isManual ? qsTr("Manual test version") : qsTr("Stable update");
         const changelogText = updateInfo.changelog || "";
@@ -2801,7 +2802,7 @@ Rectangle {
             Qt.callLater(() => {
                 showAppUpdateDownloadingDialog(heading, changelogText);
                 if (isManual) {
-                    controller.start_app_update_version(versionText);
+                    controller.start_app_update_version(versionId);
                 } else {
                     controller.start_app_update();
                 }

@@ -89,7 +89,10 @@ def get_remote_branch_sha(workdir: Path, remote: str, branch: str) -> str:
         return ""
 
 
-def create_and_push_tag(workdir: Path, remote: str, tag: str) -> None:
+def create_and_push_tag(workdir: Path, remote: str, tag: str, annotation: str = "") -> None:
     """Raises CalledProcessError on any failure."""
-    run_git(workdir, "tag", tag)
+    if annotation:
+        run_git(workdir, "tag", "-a", tag, "-m", annotation)
+    else:
+        run_git(workdir, "tag", tag)
     run_git(workdir, "push", remote, tag)

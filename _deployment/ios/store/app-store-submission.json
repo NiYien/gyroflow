@@ -4,7 +4,7 @@
   "app": {
     "name": "NiYien",
     "bundle_identifier": "com.niyien.stabilizer",
-    "version": "1.0.0",
+    "version_source": "_deployment/mobile-version.json",
     "primary_category": "PHOTO_AND_VIDEO",
     "support_email": "support@niyien.com"
   },

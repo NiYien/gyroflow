@@ -21,10 +21,12 @@ class AndroidIdentityTests(unittest.TestCase):
 
     def test_mobile_identity_and_display_version_match(self):
         ios = json.loads((ROOT / "_deployment/ios/app.json").read_text())
-        for field in ["bundle_identifier", "display_name", "version"]:
+        for field in ["bundle_identifier", "display_name"]:
             self.assertEqual(self.metadata[field], ios[field])
+        self.assertNotIn("version", self.metadata)
+        self.assertNotIn("version", ios)
         self.assertEqual(self.manifest.attrib["package"], self.package)
-        self.assertEqual(self.manifest.attrib[NS + "versionName"], self.metadata["version"])
+        self.assertNotIn(NS + "versionName", self.manifest.attrib)
         self.assertEqual(self.manifest.attrib[NS + "versionCode"], self.metadata["version_code"])
         for element in [self.manifest.find("application"), self.manifest.find("application/activity")]:
             self.assertEqual(element.attrib[NS + "label"], self.metadata["display_name"])

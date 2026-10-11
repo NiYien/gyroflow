@@ -1,0 +1,141 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: iOS release
+
+run-name: iOS ${{ github.event_name == 'workflow_dispatch' && inputs.build_label || github.ref_name }}
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      build_label:
+        description: Optional label for an iOS build
+        required: false
+        type: string
+      upload_to_connect:
+        description: Upload the signed IPA to App Store Connect
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: niyien-ios-app-store-upload
+  cancel-in-progress: false
+
+jobs:
+  ios:
+    name: Build NiYien iOS
+    runs-on: macos-26
+    timeout-minutes: 180
+    env:
+      IOS_UPLOAD_TO_CONNECT: ${{ inputs.upload_to_connect && 'true' || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check iOS configuration
+        id: config
+        env:
+          IOS_CERTIFICATES: ${{ secrets.IOS_CERTIFICATES }}
+          IOS_CERTIFICATE_PWD: ${{ secrets.IOS_CERTIFICATE_PWD }}
+          MACOS_CERTIFICATES: ${{ secrets.MACOS_CERTIFICATES }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          MACOS_ACCOUNT_USER: ${{ secrets.MACOS_ACCOUNT_USER }}
+          MACOS_ACCOUNT_PASS: ${{ secrets.MACOS_ACCOUNT_PASS }}
+          IOS_PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
+          IOS_SIGNING_FINGERPRINT: ${{ vars.IOS_SIGNING_FINGERPRINT }}
+          APPSTORE_ISSUER_ID: ${{ vars.APPSTORE_ISSUER_ID || secrets.APPSTORE_ISSUER_ID || secrets.MACOS_ITCONNECT_ISSUER }}
+          APPSTORE_API_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID || secrets.APPSTORE_API_KEY_ID || secrets.MACOS_ITCONNECT_KEY_ID }}
+          APPSTORE_API_PRIVATE_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY || secrets.MACOS_ITCONNECT_KEY }}
+        run: python3 _scripts/ios_ci.py check-config
+
+      - name: Install Apple Distribution certificate
+        if: steps.config.outputs.upload_enabled == 'true'
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.IOS_CERTIFICATES || secrets.MACOS_CERTIFICATES }}
+          p12-password: ${{ secrets.IOS_CERTIFICATE_PWD || secrets.MACOS_CERTIFICATE_PWD }}
+
+      - name: Download App Store provisioning profiles
+        if: steps.config.outputs.upload_enabled == 'true' && steps.config.outputs.profile_mode == 'api'
+        id: provisioning
+        uses: apple-actions/download-provisioning-profiles@v3
+        with:
+          bundle-id: ${{ steps.config.outputs.bundle_identifier }}
+          profile-type: IOS_APP_STORE
+          issuer-id: ${{ vars.APPSTORE_ISSUER_ID || secrets.APPSTORE_ISSUER_ID || secrets.MACOS_ITCONNECT_ISSUER }}
+          api-key-id: ${{ vars.APPSTORE_API_KEY_ID || secrets.APPSTORE_API_KEY_ID || secrets.MACOS_ITCONNECT_KEY_ID }}
+          api-private-key: ${{ secrets.APPSTORE_API_PRIVATE_KEY || secrets.MACOS_ITCONNECT_KEY }}
+
+      - name: Select matching provisioning profile
+        if: steps.config.outputs.upload_enabled == 'true'
+        env:
+          IOS_PROVISIONING_PROFILES: ${{ steps.provisioning.outputs.profiles }}
+          IOS_PROFILE_MODE: ${{ steps.config.outputs.profile_mode }}
+          IOS_PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
+          IOS_SIGNING_FINGERPRINT: ${{ vars.IOS_SIGNING_FINGERPRINT }}
+        run: python3 _scripts/ios_ci.py prepare-signing
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - uses: extractions/setup-just@v2
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ios-niyien-${{ hashFiles('_scripts/ios.just', '_scripts/common.just') }}
+      - name: Cache iOS dependencies
+        uses: actions/cache@v4
+        with:
+          path: ext/
+          key: ios-niyien-ext-${{ hashFiles('_scripts/ios.just', '_scripts/common.just') }}
+
+      - name: Build IPA
+        env:
+          IOS_UPLOAD_ENABLED: ${{ steps.config.outputs.upload_enabled }}
+        run: |
+          just ios install-deps
+          if [ "$IOS_UPLOAD_ENABLED" = "true" ]; then
+            just ios build-ipa
+          else
+            just ios build-and-package deploy unsigned
+          fi
+
+      - name: Verify IPA metadata
+        id: package
+        env:
+          IOS_REQUIRE_DISTRIBUTION: ${{ steps.config.outputs.upload_enabled }}
+        run: python3 _scripts/ios_ci.py prepare-artifact
+
+      - name: Save IPA and debug symbols
+        uses: actions/upload-artifact@v4
+        with:
+          name: niyien-ios
+          compression-level: 0
+          if-no-files-found: error
+          path: |
+            _deployment/_binaries/NiYien-*.ipa
+            _deployment/_binaries/ios/NiYien.app.dSYM/
+            _deployment/_binaries/ios/build-receipt.json
+
+      - name: Upload using existing Apple account
+        if: steps.config.outputs.upload_enabled == 'true' && steps.config.outputs.upload_mode == 'account'
+        env:
+          MACOS_ACCOUNT_USER: ${{ secrets.MACOS_ACCOUNT_USER }}
+          MACOS_ACCOUNT_PASS: ${{ secrets.MACOS_ACCOUNT_PASS }}
+        run: python3 _scripts/ios_ci.py upload-account
+
+      - name: Upload using App Store Connect API
+        if: steps.config.outputs.upload_enabled == 'true' && steps.config.outputs.upload_mode == 'api'
+        uses: apple-actions/upload-testflight-build@v5
+        with:
+          app-path: ${{ steps.package.outputs.ipa_path }}
+          app-type: ios
+          issuer-id: ${{ vars.APPSTORE_ISSUER_ID || secrets.APPSTORE_ISSUER_ID || secrets.MACOS_ITCONNECT_ISSUER }}
+          api-key-id: ${{ vars.APPSTORE_API_KEY_ID || secrets.APPSTORE_API_KEY_ID || secrets.MACOS_ITCONNECT_KEY_ID }}
+          api-private-key: ${{ secrets.APPSTORE_API_PRIVATE_KEY || secrets.MACOS_ITCONNECT_KEY }}
+          backend: appstore-api
+          wait-for-processing: 'false'

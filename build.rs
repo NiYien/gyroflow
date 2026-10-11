@@ -8,6 +8,8 @@ use std::process::Command;
 use walkdir::WalkDir;
 #[path = "_scripts/build_crm.rs"]
 mod crm;
+#[path = "_scripts/android_version.rs"]
+mod android_version;
 
 #[derive(Debug, Clone)]
 struct NiyienVersionInfo {
@@ -194,9 +196,12 @@ fn compile_qml(dir: &str, qt_include_path: &str, qt_library_path: &str) {
 fn main() {
     println!("cargo:rerun-if-env-changed=GITHUB_REF");
     println!("cargo:rerun-if-env-changed=GITHUB_RUN_NUMBER");
+    println!("cargo:rerun-if-changed=_deployment/mobile-version.json");
     println!("cargo:rerun-if-changed=_deployment/ios/app.json");
     println!("cargo:rerun-if-env-changed=NIYIEN_IOS_BUILD_NUMBER");
     println!("cargo:rerun-if-changed=_deployment/android/app.json");
+    println!("cargo:rerun-if-changed=_scripts/android_version.rs");
+    println!("cargo:rerun-if-env-changed=NIYIEN_ANDROID_VERSION_NAME");
     println!("cargo:rerun-if-env-changed=NIYIEN_ANDROID_VERSION_CODE");
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
     let build_time = std::time::SystemTime::now()
@@ -210,24 +215,28 @@ fn main() {
     );
     if target_os == "ios" {
         let metadata: serde_json::Value = serde_json::from_str(include_str!("_deployment/ios/app.json")).unwrap();
-        let version = metadata["version"].as_str().unwrap().to_owned();
+        let release: serde_json::Value = serde_json::from_str(include_str!("_deployment/mobile-version.json")).unwrap();
+        let version = release["version"].as_str().unwrap().to_owned();
         let build = env::var("NIYIEN_IOS_BUILD_NUMBER")
             .unwrap_or_else(|_| metadata["build_number"].as_str().unwrap().to_owned());
         assert!(version.split('.').count() == 3 && version.split('.').all(|part| !part.is_empty() && part.bytes().all(|c| c.is_ascii_digit())), "iOS version must contain three integers");
-        assert!(!build.is_empty() && build.bytes().all(|c| c.is_ascii_digit()) && build.parse::<u64>().unwrap_or(0) > 0, "iOS build number must be a positive integer");
+        let build_parts = build.split('.').collect::<Vec<_>>();
+        assert!((1..=3).contains(&build_parts.len()) && build_parts.iter().enumerate().all(|(index, part)| {
+            !part.is_empty() && part.bytes().all(|c| c.is_ascii_digit())
+                && part.len() <= if index == 0 { 4 } else { 2 }
+                && (index != 0 || !part.starts_with('0'))
+                && part.parse::<u32>().is_ok_and(|number| if index == 0 { (1..=9999).contains(&number) } else { number <= 99 })
+        }), "iOS build number must use one to three numeric parts (4/2/2 digits)");
         println!("cargo:rustc-env=NIYIEN_IOS_DISPLAY_NAME={}", metadata["display_name"].as_str().unwrap());
         version_info = NiyienVersionInfo { canonical: version.clone(), display: version, numeric: build };
     }
     if target_os == "android" {
         let metadata: serde_json::Value = serde_json::from_str(include_str!("_deployment/android/app.json")).unwrap();
-        let version = metadata["version"].as_str().unwrap().to_owned();
-        let build = env::var("NIYIEN_ANDROID_VERSION_CODE")
-            .or_else(|_| env::var("GITHUB_RUN_NUMBER"))
-            .unwrap_or_else(|_| metadata["version_code"].as_str().unwrap().to_owned());
-        assert!(version.split('.').count() == 3 && version.split('.').all(|part| !part.is_empty() && part.bytes().all(|c| c.is_ascii_digit())), "Android version must contain three integers");
-        assert!(build.parse::<u64>().is_ok_and(|code| (1..=2_100_000_000).contains(&code)), "Android version code must be a positive Play-compatible integer");
+        let release: serde_json::Value = serde_json::from_str(include_str!("_deployment/mobile-version.json")).unwrap();
+        let version = android_version::from_env(release["version"].as_str().unwrap(), metadata["version_code"].as_str().unwrap())
+            .expect("Cannot resolve Android version");
         println!("cargo:rustc-env=NIYIEN_ANDROID_DISPLAY_NAME={}", metadata["display_name"].as_str().unwrap());
-        version_info = NiyienVersionInfo { canonical: version.clone(), display: version, numeric: build };
+        version_info = NiyienVersionInfo { canonical: format!("{}-ni.{}", version.name, version.code), display: version.name, numeric: version.code.to_string() };
     }
 
     println!("cargo:rustc-env=BUILD_TIME={build_time_value}");

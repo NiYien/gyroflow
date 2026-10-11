@@ -2143,6 +2143,7 @@ def build_app_packages_metadata(app_assets: dict[str, Path]) -> dict[str, dict[s
     android_apk = app_assets.get("gyroflow-niyien.apk")
     if android_apk:
         android: dict[str, Any] = {"kind": "apk"}
+        android.update(read_android_version_metadata(android_apk))
         add_asset_metadata(
             android,
             prefix="package",
@@ -2152,6 +2153,26 @@ def build_app_packages_metadata(app_assets: dict[str, Path]) -> dict[str, dict[s
         packages["android"] = android
 
     return packages
+
+
+def read_android_version_metadata(apk_path: Path) -> dict[str, Any]:
+    """Read the version that packaging verified against the APK manifest."""
+    with zipfile.ZipFile(apk_path) as apk:
+        try:
+            data = apk.read("assets/niyien-version.json")
+        except KeyError:
+            # Older APKs predate embedded version metadata.
+            return {}
+    metadata = json.loads(data)
+    version = metadata.get("version", "")
+    code = metadata.get("version_code")
+    if (metadata.get("schema") != 1
+            or metadata.get("bundle_identifier") != "com.niyien.stabilizer"
+            or not isinstance(version, str)
+            or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?", version)
+            or type(code) is not int or not 1 <= code <= 2_100_000_000):
+        raise ValueError(f"Invalid Android version metadata in {apk_path}")
+    return {"version": version, "version_code": code}
 
 
 def add_asset_metadata(

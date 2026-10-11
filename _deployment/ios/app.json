@@ -1,7 +1,6 @@
 {
   "display_name": "NiYien",
   "bundle_identifier": "com.niyien.stabilizer",
-  "version": "1.0.0",
   "build_number": "4",
   "minimum_os_version": "15.0"
 }

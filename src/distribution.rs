@@ -1042,7 +1042,10 @@ pub fn resolve_update_changelog(
     }
     let text = entries
         .iter()
-        .map(|(version, text)| format!("**v{}**\n\n{}", version.trim_start_matches('v'), text))
+        .map(|(version, text)| {
+            let display = if cfg!(target_os = "android") { version.split("-ni.").next().unwrap_or(version) } else { version };
+            format!("**v{}**\n\n{}", display.trim_start_matches('v'), text)
+        })
         .collect::<Vec<_>>()
         .join("\n\n");
     (text, truncated)

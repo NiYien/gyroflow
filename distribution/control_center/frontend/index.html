@@ -110,7 +110,7 @@
         <label class="text-sm font-semibold text-slate-600 mb-2 block">操作模式</label>
         <div class="grid grid-cols-3 gap-2">
           <button data-mode="trigger" class="mode-btn p-3 text-left rounded-md border border-slate-200 bg-white hover:border-blue-400">
-            <div class="font-semibold text-sm">① 仅触发构建</div>
+            <div class="font-semibold text-sm">① 触发构建</div>
             <div class="text-xs text-slate-500 mt-1">dispatch GitHub Action,不打 tag,不发版</div>
           </button>
           <button data-mode="tag" class="mode-btn p-3 text-left rounded-md border border-slate-200 bg-white hover:border-blue-400">
@@ -125,9 +125,17 @@
       </div>
 
       <!-- Mode 1: Trigger only -->
+      <div id="ios-connect-option" class="hidden mb-4 rounded-md border border-slate-200 bg-white p-4">
+        <label class="flex items-center gap-2 text-sm font-medium text-slate-700">
+          <input id="ios-upload-to-connect" type="checkbox" class="h-4 w-4">
+          iOS 编译后上传到 App Store Connect
+        </label>
+        <p class="mt-1 text-xs text-slate-500">默认只编译并保存 IPA；勾选后生成签名 IPA 并上传，可继续用于 TestFlight 测试或 App Store 送审。</p>
+      </div>
+
       <div data-mode-panel="trigger" class="mode-panel hidden bg-white p-5 rounded-lg shadow-sm">
-        <h2 class="font-semibold mb-2">仅触发 Action 编译</h2>
-        <p class="text-sm text-slate-500 mb-4">不打 tag,不生成 release。只触发 GitHub 工作流开始编译,用于验证当前分支构建是否成功。</p>
+        <h2 class="font-semibold mb-2">触发 Action 构建</h2>
+        <p class="text-sm text-slate-500 mb-4">编译当前分支，不打 tag、不生成 GitHub Release。iOS 是否上传由上方选项控制。</p>
         <label class="text-sm text-slate-600 block mb-1">构建标题 (Action run 里显示此标签)</label>
         <input id="trigger-build-label" class="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm mb-3" placeholder="默认为当前 HEAD 的 commit 标题">
         <div class="flex gap-2 items-center">

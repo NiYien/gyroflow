@@ -28,6 +28,7 @@ from .vercel import VercelClient, parse_policy_from_envs
 
 # GitHub Action workflow that does release builds
 APP_BUILD_WORKFLOW_FILE = "release.yml"
+IOS_BUILD_WORKFLOW_FILE = "ios-release.yml"
 REPO_ROOT = Path(__file__).resolve().parents[3]  # gyroflow/
 
 # Action types that should auto-trigger pan123 publishing after policy push.
@@ -840,14 +841,16 @@ class Api:
         except Exception as e:
             return _error(e, "get_head_commit_subject")
 
-    def trigger_action_build(self, build_label: str = "") -> dict:
-        """Dispatch APP_BUILD_WORKFLOW against current branch. No tag created.
+    def trigger_action_build(self, build_label: str = "", upload_to_connect: bool = False) -> dict:
+        """Dispatch app and iOS workflows against current branch. No tag created.
 
         `build_label` surfaces in the Action run name. Empty → fall back to
         the current HEAD commit subject so the old auto-label behavior is
         preserved when the UI doesn't provide one.
         """
         try:
+            if type(upload_to_connect) is not bool:
+                return {"ok": False, "error": "Connect 上传选项必须是布尔值"}
             branch = git_ops.get_current_branch(REPO_ROOT)
             if not branch:
                 return {"ok": False, "error": "无法读取当前分支"}
@@ -863,23 +866,33 @@ class Api:
                     "error": f"本地 HEAD ({local_head[:8]}) 与远端 ({remote_head[:8]}) 不一致,Action 只会基于远端已推送的提交编译,请先 git push",
                 }
             label = str(build_label or "").strip() or git_ops.get_head_commit_subject(REPO_ROOT) or branch
-            self._github(cfg).dispatch_workflow(
+            gh = self._github(cfg)
+            gh.dispatch_workflow(
                 APP_BUILD_WORKFLOW_FILE,
                 branch,
                 inputs={"build_label": label[:80]},
             )
+            try:
+                gh.dispatch_workflow(IOS_BUILD_WORKFLOW_FILE, branch, inputs={
+                    "build_label": label[:80], "upload_to_connect": "true" if upload_to_connect else "false",
+                })
+            except Exception as error:
+                return {"ok": False, "error": f"主程序编译已触发，但 iOS 工作流触发失败: {error}", "app_dispatched": True}
             return {
                 "ok": True,
                 "branch": branch,
                 "label": label[:80],
-                "message": f"已在 {branch} 分支触发 {APP_BUILD_WORKFLOW_FILE}",
+                "upload_to_connect": upload_to_connect,
+                "message": f"已在 {branch} 分支触发主程序与 iOS 编译" + ("，iOS 编译后上传 Connect" if upload_to_connect else "，iOS 仅编译"),
             }
         except Exception as e:
             return _error(e, "trigger_action_build")
 
-    def create_and_push_tag(self, major: int, minor: int, patch: int) -> dict:
+    def create_and_push_tag(self, major: int, minor: int, patch: int, upload_to_connect: bool = False) -> dict:
         """Create and push `v<major>.<minor>.<patch>` tag at current HEAD."""
         try:
+            if type(upload_to_connect) is not bool:
+                return {"ok": False, "error": "Connect 上传选项必须是布尔值"}
             for v in (major, minor, patch):
                 if not isinstance(v, int) or v < 0 or v > 999:
                     return {"ok": False, "error": "版本号必须是 0-999 的整数"}
@@ -942,7 +955,11 @@ class Api:
                 }
             except RuntimeError as e:
                 return {"ok": False, "error": f"Cargo.toml bump 失败: {e}"}
-            git_ops.create_and_push_tag(REPO_ROOT, remote, tag)
+            if upload_to_connect:
+                annotation = f"NiYien release {tag}\n\nNiYien-IOS-Upload-To-Connect: true"
+                git_ops.create_and_push_tag(REPO_ROOT, remote, tag, annotation=annotation)
+            else:
+                git_ops.create_and_push_tag(REPO_ROOT, remote, tag)
             parts = []
             if stale_cleanup:
                 parts.append(stale_cleanup)
@@ -952,6 +969,7 @@ class Api:
             return {
                 "ok": True,
                 "tag": tag,
+                "upload_to_connect": upload_to_connect,
                 "cargo_bump": bump_diff,
                 "stale_cleanup": stale_cleanup,
                 "message": ";".join(parts),

@@ -1,7 +1,35 @@
-NiYien TestFlight — Mac 接续步骤（2026-10-07）
+NiYien TestFlight — 构建与上传步骤（2026-10-11）
 
 目标：先发布小范围 TestFlight，按测试反馈再修功能。保留当前并发、
 队列生命周期、导出流程和界面设计，不把额外功能改造当作首版前置条件。
+
+GitHub Actions 自动编译上传：先提交并推送工作流与相关脚本到默认分支，
+在仓库 Settings → Secrets and variables → Actions 中配置：
+  默认复用已有 Secrets：MACOS_CERTIFICATES、MACOS_CERTIFICATE_PWD、
+  MACOS_ACCOUNT_USER、MACOS_ACCOUNT_PASS。共享账号需有该 App 的上传权限。
+  默认只新增 Secret IOS_PROVISIONING_PROFILE：com.niyien.stabilizer 的
+  App Store .mobileprovision 描述文件，Base64 编码。Mac 上可执行
+  base64 -i NiYien_dist.mobileprovision | pbcopy，再粘贴到 GitHub Secret。
+  共享 P12 必须包含 Apple Distribution 证书及私钥；仅有 Developer ID 时，
+  可将 iOS 分发证书一起导出到原 P12，或增加 IOS_CERTIFICATES 作为覆盖。
+  覆盖的 P12 密码默认仍用 MACOS_CERTIFICATE_PWD，密码不同才加 IOS_CERTIFICATE_PWD。
+  签名指纹会从已导入的 iOS 分发私钥自动匹配，通常不需增加变量。
+  如果已有完整 MACOS_ITCONNECT_ISSUER / MACOS_ITCONNECT_KEY_ID /
+  MACOS_ITCONNECT_KEY，会复用它们自动下载描述文件，无需 IOS_PROVISIONING_PROFILE。
+  同样兼容 APPSTORE_ISSUER_ID、APPSTORE_API_KEY_ID、APPSTORE_API_PRIVATE_KEY。
+  MACOS_ACCOUNT_USER/PASS 不可用时，完整 API 凭据可作为上传替代通道。
+在 Apple Developer 中准备匹配分发证书和包名的 App Store 描述文件，
+并在 App Store Connect 创建对应 App 记录；使用 API 时其权限为 App Manager。
+随后在 Actions → iOS release → Run workflow 中选择最新源码分支运行；
+直接运行时 upload_to_connect 默认关闭，只编译；需要上传时勾选该输入。
+发布中心的“①触发构建 / ②创建并推送 Tag”也有同名上传勾选项，默认关闭。
+未勾选时生成 unsigned 编译产物，不要求上述签名/上传凭据；勾选后才生成
+签名 IPA 并上传。发布中心勾选后创建的 Tag 会记录这次选择，只构建一次。
+普通 release tag 也会触发编译，默认不上传；IPA、调试符号和 receipt
+保存在 niyien-ios artifact。
+发布中心前后端、iOS 工作流和配套脚本需一起提交推送；更新后重启发布中心。
+它替代本机打包与 Transporter 上传；上传后的测试组、外测审核及正式
+App Store 送审仍在 App Store Connect 操作。下列步骤保留作本机验证与备用。
 
 1. 同步源码
    在 Mac 的 gyroflow 仓库切到 niyien，git pull --ff-only origin niyien。
@@ -22,8 +50,15 @@ NiYien TestFlight — Mac 接续步骤（2026-10-07）
    签名资料保留在本机或环境变量中，不提交证书、描述文件、密码或 API key。
 
 3. 构建
-   先核对 App Store Connect 中已上传的 build number，然后设置
-   NIYIEN_IOS_BUILD_NUMBER 为更大的整数。仓库默认为 4，不代表可重复上传。
+   发布版本从 _deployment/mobile-version.json 读取，安卓和 iOS 共用；
+   用 python3 _scripts/mobile_version.py 查看当前版本，App Store Connect
+   的版本填写同一个值。下一版用 --bump patch，跳号可用 --set 1.0.5。
+   just ios build-ipa 在编译前自动分配新的 build number，并在打包时沿用。
+   自动计数保存在 target/ios-version/build-number.json。换电脑或清理 target
+   后先核对 App Store Connect 已上传的号码；必要时设置
+   NIYIEN_IOS_BUILD_NUMBER 为更大的构建号，此次构建后自动计数从该号码继续。
+   CI 使用“下限首段 + workflow run number . run attempt”，下限 4 时
+   首次运行为 5.1，重跑为 5.2，下一次为 6.1；首次接入前也需复核已上传号码。
    运行 python3 -B -m unittest discover -s _scripts/tests -p test_ios_metadata.py。
    运行 _scripts/test_ios_video_picker_bridge.sh 做原生桥接检查。
    运行 just ios build-ipa。此命令生成 deploy/distribution 包，保留 dSYM。

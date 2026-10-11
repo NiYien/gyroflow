@@ -110,6 +110,8 @@ build-and-package profile is_dist:
     #!/bin/bash
     set -e
 
+    NiyienIOSBuildNumber="$(python3 "{{ProjectDir}}/_scripts/ios_metadata.py" build_number --allocate-build)"
+    export NIYIEN_IOS_BUILD_NUMBER="$NiyienIOSBuildNumber"
     python3 "{{ProjectDir}}/_scripts/ios_metadata.py" > /dev/null
     export CARGO_PROFILE_DEPLOY_DEBUG=1
     export FFMPEG_DIR="{{ProjectDir}}/ext/ffmpeg-8.1-iOS-gpl-lite"

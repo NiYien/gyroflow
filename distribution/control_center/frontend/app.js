@@ -1258,6 +1258,7 @@ document.querySelectorAll('.mode-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     const mode = btn.dataset.mode;
     publishState.mode = mode;
+    document.getElementById('ios-connect-option')?.classList.toggle('hidden', mode === 'select');
     document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b === btn));
     document.querySelectorAll('.mode-panel').forEach(p => {
       p.classList.toggle('hidden', p.dataset.modePanel !== mode);
@@ -1284,15 +1285,19 @@ setReleasePlanPluginMode('release');
 
 // ---- Mode 1: Trigger action build ----
 
+function iosUploadToConnectSelected() {
+  return document.getElementById('ios-upload-to-connect')?.checked === true;
+}
+
 document.getElementById('trigger-action-btn')?.addEventListener('click', async () => {
   const resultEl = document.getElementById('trigger-action-result');
   const label = document.getElementById('trigger-build-label').value.trim();
   resultEl.textContent = '触发中...';
   resultEl.className = 'text-sm text-slate-600';
   try {
-    const r = await pywebview.api.trigger_action_build(label);
+    const r = await pywebview.api.trigger_action_build(label, iosUploadToConnectSelected());
     if (r.ok) {
-      resultEl.textContent = `✓ 已触发 · ${r.label ? 'label=' + r.label : ''}`;
+      resultEl.textContent = `✓ ${r.message || '已触发'} · ${r.label ? 'label=' + r.label : ''}`;
       resultEl.className = 'text-sm text-emerald-600';
     } else {
       resultEl.textContent = `✗ 失败: ${r.error}`;
@@ -1377,13 +1382,15 @@ document.getElementById('push-tag-btn')?.addEventListener('click', async () => {
     resultEl.className = 'text-sm text-red-600';
     return;
   }
-  if (!confirm(`确定创建并推送 tag v${maj}.${min}.${pat} 吗?`)) return;
+  const uploadToConnect = iosUploadToConnectSelected();
+  const iosAction = uploadToConnect ? 'iOS 编译后上传到 App Store Connect' : 'iOS 仅编译';
+  if (!confirm(`确定创建并推送 tag v${maj}.${min}.${pat} 吗?\n${iosAction}`)) return;
   resultEl.textContent = '推送中...';
   resultEl.className = 'text-sm text-slate-600';
   try {
-    const r = await pywebview.api.create_and_push_tag(maj, min, pat);
+    const r = await pywebview.api.create_and_push_tag(maj, min, pat, uploadToConnect);
     if (r.ok) {
-      resultEl.textContent = `✓ tag ${r.tag} 已创建`;
+      resultEl.textContent = `✓ tag ${r.tag} 已创建 · ${iosAction}`;
       resultEl.className = 'text-sm text-emerald-600';
     } else {
       resultEl.textContent = `✗ 失败: ${r.error}`;

@@ -141,15 +141,22 @@ deploy *param:
     $OriginalModalQml = [System.IO.File]::ReadAllText($ModalQmlPath)
     $OriginalAndroidManifest = [System.IO.File]::ReadAllText($AndroidManifestPath)
     $AndroidIdentity = Get-Content -Raw -LiteralPath "$ProjectDir\_deployment\android\app.json" | ConvertFrom-Json
-    if ($AndroidIdentity.version -notmatch '^\d+\.\d+\.\d+$') { throw "Android version must contain three integers" }
-    foreach ($IdentityField in @(@("package", $AndroidIdentity.bundle_identifier), @("android:label", $AndroidIdentity.display_name), @("android:versionName", $AndroidIdentity.version))) {
+    $MobileRelease = Get-Content -Raw -LiteralPath "$ProjectDir\_deployment\mobile-version.json" | ConvertFrom-Json
+    foreach ($IdentityField in @(@("package", $AndroidIdentity.bundle_identifier), @("android:label", $AndroidIdentity.display_name))) {
         $ExpectedAttribute = $IdentityField[0] + '="' + $IdentityField[1] + '"'
         if (-not $OriginalAndroidManifest.Contains($ExpectedAttribute)) { throw "Android manifest does not match app.json: $($IdentityField[0])" }
     }
-    $VersionCode = [string]$AndroidIdentity.version_code
-    if ($Env:GITHUB_RUN_NUMBER) { $VersionCode = $Env:GITHUB_RUN_NUMBER }
-    if ($Env:NIYIEN_ANDROID_VERSION_CODE) { $VersionCode = $Env:NIYIEN_ANDROID_VERSION_CODE }
-    if ($VersionCode -notmatch '^[1-9][0-9]*$' -or [decimal]$VersionCode -gt 2100000000) { throw "Invalid Android version code" }
+    New-Item -ItemType Directory -Path "$ProjectDir\target\android-version" -Force | Out-Null
+    $VersionTool = "$ProjectDir\target\android-version\android-version.exe"
+    rustc --edition=2024 "$ProjectDir\_scripts\android_version.rs" -o $VersionTool
+    if ($LASTEXITCODE -ne 0) { throw "Cannot compile Android version resolver" }
+    $VersionJson = & $VersionTool $MobileRelease.version $AndroidIdentity.version_code
+    if ($LASTEXITCODE -ne 0) { throw "Cannot resolve Android version" }
+    $AndroidVersion = $VersionJson | ConvertFrom-Json
+    $VersionName = [string]$AndroidVersion.version
+    $VersionCode = [string]$AndroidVersion.version_code
+    $OriginalVersionNameEnv = $Env:NIYIEN_ANDROID_VERSION_NAME
+    $OriginalVersionCodeEnv = $Env:NIYIEN_ANDROID_VERSION_CODE
     $BuildStoreBundle = "$Env:BUILD_APP_STORE_BUNDLE" -eq "true"
 
     function Restore-TemporarySourceEdits {
@@ -229,7 +236,11 @@ deploy *param:
     if ($BuildStoreBundle -and -not $UseReleaseSigning) { throw "An app-store AAB requires release signing" }
 
     try {
-        [System.IO.File]::WriteAllText($AndroidManifestPath, [regex]::Replace([System.IO.File]::ReadAllText($AndroidManifestPath), 'versionCode="\d+"', "versionCode=""$VersionCode"""))
+        $Env:NIYIEN_ANDROID_VERSION_NAME = $VersionName
+        $Env:NIYIEN_ANDROID_VERSION_CODE = $VersionCode
+        Write-Host "Android version: $VersionName (code $VersionCode)"
+        $VersionedManifest = [regex]::Replace($OriginalAndroidManifest, 'versionCode="\d+"', "versionCode=""$VersionCode"" android:versionName=""$VersionName""")
+        [System.IO.File]::WriteAllText($AndroidManifestPath, $VersionedManifest)
 
         Copy-Item -Path "$QT_LIBS\libQt6Core_arm64-v8a.so"           -Destination "$QT_LIBS\libQt6Core.so"           -ErrorAction SilentlyContinue
         Copy-Item -Path "$QT_LIBS\libQt6Gui_arm64-v8a.so"            -Destination "$QT_LIBS\libQt6Gui.so"            -ErrorAction SilentlyContinue
@@ -332,6 +343,13 @@ deploy *param:
         # Copy unstripped libgyroflow.so
         Copy-Item -Path "$ProjectDir\target\$CargoApkProfile\apk\lib\arm64-v8a\libgyroflow.so" -Destination "$ProjectDir\target\android-build\libs\arm64-v8a\libgyroflow_arm64-v8a.so" -Force
 
+        $AndroidPackageSourceDir = "$ProjectDir\target\android-package-source"
+        New-Item -ItemType Directory -Path "$AndroidPackageSourceDir\assets" -Force | Out-Null
+        Copy-Item -Path "$ProjectDir\_deployment\android\*" -Destination $AndroidPackageSourceDir -Recurse -Force
+        $PackageVersion = @{ schema = 1; bundle_identifier = $AndroidIdentity.bundle_identifier; version = $VersionName; version_code = [long]$VersionCode }
+        [System.IO.File]::WriteAllText("$AndroidPackageSourceDir\assets\niyien-version.json", ($PackageVersion | ConvertTo-Json))
+        $AndroidPackageSourceUnix = $AndroidPackageSourceDir.Replace('\', '/')
+
         $androiddeploy = @"
     {
         "description": "",
@@ -349,7 +367,7 @@ deploy *param:
         "ndk-host": "windows-x86_64",
         "architectures": {"arm64-v8a":"aarch64-linux-android"},
         "android-min-sdk-version": "26",
-        "android-package-source-directory": "$PROJECT_DIR_UNIX/_deployment/android",
+        "android-package-source-directory": "$AndroidPackageSourceUnix",
         "android-target-sdk-version": "36",
         "qml-importscanner-binary": "$PROJECT_DIR_UNIX/ext/{{QtVersion}}/mingw_64/bin/qmlimportscanner.exe",
         "rcc-binary": "$PROJECT_DIR_UNIX/ext/{{QtVersion}}/mingw_64/bin/rcc.exe",
@@ -409,6 +427,12 @@ deploy *param:
         if (-not (Test-Path -LiteralPath $BuiltApkPath)) {
             throw "Expected APK was not produced: $BuiltApkPath"
         }
+        $Badging = & "$Env:ANDROID_SDK_ROOT\build-tools\36.0.0\aapt.exe" dump badging $BuiltApkPath
+        Assert-NativeCommandSucceeded "aapt version verification"
+        $PackageLine = $Badging | Where-Object { $_ -like "package:*" } | Select-Object -First 1
+        foreach ($ExpectedField in @("name='$($AndroidIdentity.bundle_identifier)'", "versionCode='$VersionCode'", "versionName='$VersionName'")) {
+            if (-not $PackageLine -or -not $PackageLine.Contains($ExpectedField)) { throw "APK version verification failed: expected $ExpectedField" }
+        }
         Copy-Item -Path $BuiltApkPath -Destination $FinalApkPath -Force
         if (-not (Test-Path -LiteralPath $FinalApkPath)) {
             throw "Expected APK was not copied: $FinalApkPath"
@@ -432,6 +456,8 @@ deploy *param:
             Assert-NativeCommandSucceeded "adb logcat"
         }
     } finally {
+        $Env:NIYIEN_ANDROID_VERSION_NAME = $OriginalVersionNameEnv
+        $Env:NIYIEN_ANDROID_VERSION_CODE = $OriginalVersionCodeEnv
         Restore-TemporarySourceEdits
         Assert-TemporarySourceEditsRestored
     }
