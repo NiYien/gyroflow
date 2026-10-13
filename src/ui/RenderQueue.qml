@@ -207,10 +207,17 @@ Item {
     property bool _queueLayoutPending: false
     // [T14] Global matchExecuted flag: whether matching has run.
     property bool matchExecuted: false
-    // Simple-mode match dirty flag. true = never matched / gyro file set changed since last match.
+    // A match is stale after new raw inputs or gyro file changes.
     property bool matchDirty: true
     // Auto-match in-flight flag (moved up from the removed standalone "Auto match" button).
     property bool matching: false
+    function trackPendingFile(jobId: int, url: string): void {
+        if (jobId <= 0) return;
+        // Project imports keep their saved assignment; raw inputs need a fresh match.
+        loader.pendingJobs[jobId] = {
+            rematch: !filesystem.get_filename(url).toLowerCase().endsWith(".gyroflow")
+        };
+    }
     // Simple-mode match-then-sync orchestration: "" | "sync" | "export" | "review".
     // Set by beginMatchThenSync(); dispatched / cleared on match completion.
     // "review" runs the match pass alone and then prompts the user to verify
@@ -1249,6 +1256,12 @@ Item {
         Connections {
             target: render_queue;
             function onAdded(job_id: real): void {
+                // Only a successful new raw-file enqueue invalidates the previous match.
+                // Edits, presets, rejected duplicates and failed loads do not enter here
+                // with a pending raw-file marker.
+                if (loader.pendingJobs[job_id] && loader.pendingJobs[job_id].rematch) {
+                    root.matchDirty = true;
+                }
                 delete loader.pendingJobs[job_id];
                 // Sort the queue by filename whenever a job actually lands
                 // in the model (q.push happens here, not at add_file return).
@@ -3176,7 +3189,7 @@ Item {
                 }
                 const job_id = render_queue.add_file(url.toString(), crmProxyGyroByProxy[url.toString()] || "", perUrlAdditional);
                 if (window.useMobileWorkspace) window.rememberMobileDefaults(job_id, url.toString());
-                if (job_id > 0) loader.pendingJobs[job_id] = true;
+                root.trackPendingFile(job_id, url.toString());
             }
             if (otherUrls.length > 0) loader.updateStatus();
             if (redRawUrls.length > 0) {
@@ -3569,7 +3582,7 @@ Item {
             const job_id = render_queue.add_file(url.toString(), "", additional);
             if (window.useMobileWorkspace) window.rememberMobileDefaults(job_id, url.toString());
             if (job_id > 0) {
-                loader.pendingJobs[job_id] = true;
+                root.trackPendingFile(job_id, url.toString());
                 loader.updateStatus();
             } else Qt.callLater(loadNext);
         }
