@@ -13,7 +13,7 @@ pub mod splines;
 pub mod optical_correction;
 pub mod optical_translation;
 pub mod optical_stab;
-pub use optical_stab::{ OpticalStabReconstruction, StabReconConfig };
+pub use optical_stab::{ OpticalStabReconstruction, ResponseTap, StabReconConfig };
 pub use optical_correction::{ OpticalCorrection, OpticalCorrectionSettings };
 pub use optical_translation::{ OpticalTranslation, OpticalTranslationSettings, TranslationSample, TranslationConfig };
 pub use file_metadata::*;

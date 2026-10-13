@@ -42,14 +42,9 @@ fn resolve_number(name: &str, default: Option<f64>, upper: f64) -> Option<f64> {
     }
 }
 
-/// Logarithmic candidates: 0.05 * 40^(i/15), i = 0..16.
-pub const CUTOFF_GRID_HZ: [f64; 16] = [
-    0.05, 0.06394020196998705, 0.08176698855925471, 0.10456395525912732,
-    0.13371680836098582, 0.1709975946676697, 0.21867241478865562, 0.2796391673370285,
-    0.35760369676497206, 0.4573050519273263, 0.5848035476425731, 0.7478491389806213,
-    0.9563524997900372, 1.2229874398215395, 1.563961278178932, 2.0,
-];
-pub const DEFAULT_CUTOFF_HZ: f64 = 0.3;
+/// High-pass corner of the rotation the stabilizer response is applied to (the prior's cutoff). Below it a stabilizer
+/// recenters, and parallax, zoom or a moving subject dominate what the frames show, so nothing is modelled there.
+pub const INPUT_CUTOFF_HZ: f64 = 0.5;
 
 fn finite_vector(value: Vector3<f64>) -> Vector3<f64> {
     value.map(|component| if component.is_finite() { component } else { 0.0 })
@@ -78,7 +73,6 @@ impl<'a> PriorSampler<'a> {
         Ok(Self {quats,cutoff_hz,sigma_us,step_us,nodes:Default::default(),panels:0,log_evaluations:0,contributions:0})
     }
 
-    pub(crate) fn cached_nodes(&self)->usize {self.nodes.len()}
     pub(crate) fn cutoff_hz(&self)->f64 {self.cutoff_hz}
 
     fn checkpoint(&mut self,cancel:&impl Fn()->bool)->Result<(),PriorError> {
@@ -238,6 +232,35 @@ pub fn prior(quats:&TimeQuat,cutoff_hz:f64,times_us:&[f64])->Vec<Vector3<f64>> {
     }
 }
 
+/// One term of the response: the prior `lag_us` earlier (later for a negative lag) times the row-major [output][input] `h`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ResponseTap {
+    pub lag_us: f64,
+    pub h: [f32; 9],
+}
+
+/// No stabilizer remembers the rotation this long; a lag beyond it is a corrupt result, not a response.
+const MAX_RESPONSE_LAG_US: f64 = 2e6;
+
+/// 1 ms table times from `start` to `end` (rounded inwards), always ending on `end`.
+fn table_times(start: f64, end: f64, cancel: &impl Fn() -> bool) -> Result<Vec<f64>, PriorError> {
+    let start = start.ceil();
+    let end = end.floor();
+    if !start.is_finite() || !end.is_finite() || start < i64::MIN as f64 || end >= i64::MAX as f64 || end < start {
+        return Err(PriorError::InvalidInput);
+    }
+    let start = start as i64;
+    let end = end as i64;
+    let count = (end as i128 - start as i128) / 1000 + 1;
+    let Ok(count) = usize::try_from(count) else { return Err(PriorError::Allocation) };
+    let mut times = Vec::new();
+    let Some(capacity) = count.checked_add(1) else { return Err(PriorError::Allocation) };
+    times.try_reserve_exact(capacity).map_err(|_|PriorError::Allocation)?;
+    for i in 0..count { if i%1024==0 && cancel() {return Err(PriorError::Cancelled);} times.push((start as i128 + i as i128 * 1000) as f64); }
+    if times.last().copied() != Some(end as f64) { times.push(end as f64); }
+    Ok(times)
+}
+
 #[derive(Default, Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct OpticalStabReconstruction {
@@ -253,6 +276,10 @@ pub struct OpticalStabReconstruction {
     pub frames: usize,
     pub measured_frames: usize,
     pub max_deg: f64,
+    /// Linear response to the body rotation: s(t) = sum H p(t - lag) over the taps, p being the prior at `cutoff_hz`. The
+    /// table spans `start_us..=end_us`. Empty for results of the earlier spline model, which keep `coeffs`.
+    pub response: Vec<ResponseTap>,
+    pub end_us: f64,
     #[serde(skip)]
     pub applies: bool,
     #[serde(skip)]
@@ -279,24 +306,44 @@ impl OpticalStabReconstruction {
 
     pub(crate) fn rebuild_with_prior(&mut self,sampler:&mut PriorSampler<'_>,config:&StabReconConfig,cancel:&impl Fn()->bool)->Result<(),PriorError> {
         if sampler.cutoff_hz().to_bits()!=self.cutoff_hz.to_bits() {return Err(PriorError::InvalidInput);}
+        if !self.response.is_empty() { return self.rebuild_response(sampler, config, cancel); }
         if self.coeffs.len() < 3 || !self.start_us.is_finite() || !self.spacing_us.is_finite() || self.spacing_us <= 0.0 {
             return Err(PriorError::InvalidInput);
         }
-        let start = (self.start_us + self.spacing_us).ceil();
-        let end = (self.start_us + (self.coeffs.len() - 2) as f64 * self.spacing_us).floor();
-        if !start.is_finite() || !end.is_finite() || start < i64::MIN as f64 || end >= i64::MAX as f64 || end < start {
+        let times = table_times(self.start_us + self.spacing_us, self.start_us + (self.coeffs.len() - 2) as f64 * self.spacing_us, cancel)?;
+        let s0 = sampler.sample(&times,cancel)?;
+        let requested: Vec<_> = times.iter().zip(s0).map(|(&time, prior)| self.u_at(time) + prior).collect();
+        self.install(times, requested, config, cancel)
+    }
+
+    /// Applies the response taps to the prior, sampled once on a 1 ms grid that covers every lag.
+    fn rebuild_response(&mut self,sampler:&mut PriorSampler<'_>,config:&StabReconConfig,cancel:&impl Fn()->bool)->Result<(),PriorError> {
+        if self.response.iter().any(|tap| !tap.lag_us.is_finite() || tap.lag_us.abs() > MAX_RESPONSE_LAG_US) || !self.end_us.is_finite() || !self.start_us.is_finite() || self.end_us < self.start_us {
             return Err(PriorError::InvalidInput);
         }
-        let start = start as i64;
-        let end = end as i64;
-        let count = (end as i128 - start as i128) / 1000 + 1;
-        let Ok(count) = usize::try_from(count) else { return Err(PriorError::Allocation) };
-        let mut times = Vec::new();
-        let Some(capacity) = count.checked_add(1) else { return Err(PriorError::Allocation) };
-        times.try_reserve_exact(capacity).map_err(|_|PriorError::Allocation)?;
-        for i in 0..count { if i%1024==0 && cancel() {return Err(PriorError::Cancelled);} times.push((start as i128 + i as i128 * 1000) as f64); }
-        if times.last().copied() != Some(end as f64) { times.push(end as f64); }
-        let s0 = sampler.sample(&times,cancel)?;
+        let times = table_times(self.start_us, self.end_us, cancel)?;
+        let reach = self.response.iter().fold(0.0_f64, |m, tap| m.max(tap.lag_us.abs()));
+        // The grid keeps the table's 1 ms phase and reaches past every lag by at least one node.
+        let margin = ((reach / 1000.0).ceil() + 1.0) * 1000.0;
+        let grid = table_times(times[0] - margin, times[times.len() - 1] + margin, cancel)?;
+        let prior = sampler.sample(&grid, cancel)?;
+        let at = |t: f64| {
+            let i = (((t - grid[0]) / 1000.0).floor().max(0.0) as usize).min(grid.len() - 2);
+            let f = (t - grid[i]) / (grid[i + 1] - grid[i]);
+            prior[i] * (1.0 - f) + prior[i + 1] * f
+        };
+        let taps: Vec<_> = self.response.iter().map(|tap| (tap.lag_us, nalgebra::Matrix3::from_row_slice(&tap.h.map(|v| v as f64)))).collect();
+        let mut requested = Vec::new();
+        requested.try_reserve_exact(times.len()).map_err(|_|PriorError::Allocation)?;
+        for (n, &t) in times.iter().enumerate() {
+            if n%1024==0 && cancel() {return Err(PriorError::Cancelled);}
+            requested.push(taps.iter().fold(Vector3::zeros(), |s, (lag, h)| s + h * at(t - lag)));
+        }
+        self.install(times, requested, config, cancel)
+    }
+
+    /// Soft-limits the requested correction and publishes the table.
+    fn install(&mut self, times: Vec<f64>, requested: Vec<Vector3<f64>>, config: &StabReconConfig, cancel: &impl Fn() -> bool) -> Result<(), PriorError> {
         let limit = if config.max_deg.is_finite() && config.max_deg > 0.0 {
             config.max_deg.to_radians()
         } else { StabReconConfig::DEFAULT.max_deg.to_radians() };
@@ -307,9 +354,9 @@ impl OpticalStabReconstruction {
         let mut table = Vec::new();
         table.try_reserve_exact(times.len()).map_err(|_|PriorError::Allocation)?;
         let mut max_deg:f64=0.0;
-        for (i,(time, prior)) in times.into_iter().zip(s0).enumerate() {
+        for (i,(time, request)) in times.into_iter().zip(requested).enumerate() {
             if i%1024==0 && cancel() {return Err(PriorError::Cancelled);}
-            let mut s = finite_vector(self.u_at(time) + prior);
+            let mut s = finite_vector(request);
             let norm = s.xy().norm();
             if norm > 0.0 {
                 let scale = soft(norm) / norm;
@@ -361,7 +408,7 @@ impl OpticalStabReconstruction {
     }
 
     pub fn measured_on(&self, quats_checksum: u64, context_checksum: u64) -> bool {
-        !self.coeffs.is_empty() && self.quats_checksum == quats_checksum && self.context_checksum == context_checksum
+        (!self.coeffs.is_empty() || !self.response.is_empty()) && self.quats_checksum == quats_checksum && self.context_checksum == context_checksum
     }
 
     pub fn hash_into(&self, hasher: &mut impl Hasher) {
@@ -374,6 +421,15 @@ impl OpticalStabReconstruction {
         hasher.write_usize(self.coeffs.len());
         for c in &self.coeffs {
             for v in c { hasher.write_u32(v.to_bits()); }
+        }
+        // Only the response model adds these, so the hash of a spline result stays what it was.
+        if !self.response.is_empty() {
+            hasher.write_u64(self.end_us.to_bits());
+            hasher.write_usize(self.response.len());
+            for tap in &self.response {
+                hasher.write_u64(tap.lag_us.to_bits());
+                for v in tap.h { hasher.write_u32(v.to_bits()); }
+            }
         }
     }
 
@@ -594,14 +650,92 @@ mod tests {
         assert!(difference <= 1e-12, "dense versus sparse prior difference={difference}");
         assert!(value.at(time).norm() <= rounding_residual.norm() + 1e-12);
     }
-    #[test]
-    fn cutoff_grid_and_defaults_follow_the_spec() {
-        assert_eq!(StabReconConfig::DEFAULT, StabReconConfig { cutoff_hz: None, max_deg: 3.0 });
-        assert_eq!(DEFAULT_CUTOFF_HZ, 0.3);
-        for (i, cutoff) in CUTOFF_GRID_HZ.iter().enumerate() {
-            let expected = 0.05 * 40.0_f64.powf(i as f64 / 15.0);
-            assert!((*cutoff - expected).abs() <= expected * 1e-15);
+    fn response(taps: &[(f64, [f32; 9])]) -> OpticalStabReconstruction {
+        OpticalStabReconstruction {
+            enabled: true, applies: true, start_us: 5_000_000.0, end_us: 15_000_000.0,
+            response: taps.iter().map(|&(lag_us, h)| ResponseTap { lag_us, h }).collect(), cutoff_hz: 0.5, ..Default::default()
         }
+    }
+
+    #[test]
+    fn response_table_applies_the_taps_to_the_lagged_prior() {
+        let quats = rotations(1, 4.0);
+        let mut x_rot = [0.0f32; 9]; x_rot[0] = 0.25;
+        let mut y_rot = [0.0f32; 9]; y_rot[4] = 0.1;
+        // Half of the rotation now, a quarter of x 20 ms earlier and a tenth of y 7 ms later.
+        let mut value = response(&[(0.0, [0.5, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5]), (20_000.0, x_rot), (-7_000.0, y_rot)]);
+        value.rebuild(&quats, &StabReconConfig::DEFAULT);
+        assert!(value.is_active());
+        let times: Vec<_> = (6_000..14_000).step_by(7).map(|ms| ms as f64 * 1000.0).collect();
+        let now = prior(&quats, 0.5, &times);
+        let earlier = prior(&quats, 0.5, &times.iter().map(|t| t - 20_000.0).collect::<Vec<_>>());
+        let later = prior(&quats, 0.5, &times.iter().map(|t| t + 7_000.0).collect::<Vec<_>>());
+        for (i, &t) in times.iter().enumerate() {
+            let expected = Vector3::new(0.5 * now[i].x + 0.25 * earlier[i].x, 0.5 * now[i].y + 0.1 * later[i].y, 0.5 * now[i].z);
+            assert!((value.at(t) - expected).norm() <= 1e-9, "t={t} actual={} expected={expected}", value.at(t));
+        }
+        assert!(now.iter().map(|p| p.x.abs()).fold(0.0, f64::max) > 0.004);
+        assert_eq!(value.at(4_999_999.0), Vector3::zeros());
+        assert_eq!(value.at(15_000_001.0), Vector3::zeros());
+        assert!(value.at(15_000_000.0).norm() > 0.0);
+    }
+
+    #[test]
+    fn response_table_is_soft_limited() {
+        let quats = rotations(1, 4.0);
+        let mut value = response(&[(0.0, [20.0, 0.0, 0.0, 0.0, 20.0, 0.0, 0.0, 0.0, 20.0])]);
+        value.rebuild(&quats, &StabReconConfig::DEFAULT);
+        for ms in 5_000..=15_000 {
+            let s = value.at(ms as f64 * 1000.0);
+            assert!(s.xy().norm() <= 3.0_f64.to_radians() + 1e-9 && s.z.abs() <= 3.0_f64.to_radians() + 1e-9);
+        }
+        assert!(value.max_deg > 2.5 && value.max_deg <= 3.0 + 1e-9, "max_deg={}", value.max_deg);
+    }
+
+    #[test]
+    fn response_round_trip_keeps_the_taps_and_drives_the_checksum() {
+        let quats = rotations(0, 3.0);
+        let mut value = response(&[(-16_683.0, [0.1, 0.0, 0.0, 0.0, 0.2, 0.0, 0.0, 0.0, 0.3]), (0.0, [0.4, 0.01, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.6]), (5_000.0, [0.0; 9])]);
+        value.quats_checksum = 7; value.context_checksum = 9;
+        value.rebuild(&quats, &StabReconConfig::DEFAULT);
+        assert!(value.measured_on(7, 9) && !value.measured_on(8, 9));
+        let encoded = crate::util::compress_to_base91_cbor(&value).unwrap();
+        let mut decoded: OpticalStabReconstruction = crate::util::decompress_from_base91_cbor(&encoded).unwrap();
+        assert_eq!((decoded.response.clone(), decoded.start_us, decoded.end_us), (value.response.clone(), 5_000_000.0, 15_000_000.0));
+        decoded.applies = true;
+        decoded.rebuild(&quats, &StabReconConfig::DEFAULT);
+        assert_eq!(decoded.at(10_000_500.0), value.at(10_000_500.0));
+        let checksum = value.checksum();
+        assert_ne!(checksum, 0);
+        value.response[1].h[4] = 0.51;
+        assert_ne!(value.checksum(), checksum);
+        value.response[1].h[4] = 0.5;
+        assert_eq!(value.checksum(), checksum);
+        value.response[2].lag_us = 5_001.0;
+        assert_ne!(value.checksum(), checksum);
+    }
+
+    #[test]
+    fn invalid_response_never_builds_a_table() {
+        let quats = rotations(1, 4.0);
+        let gain = [0.5f32; 9];
+        // A lag that isn't finite or reaches past any stabilizer's memory, or a span that ends before it starts.
+        for (lag, end) in [(f64::NAN, 15e6), (f64::INFINITY, 15e6), (3e6, 15e6), (-3e6, 15e6), (0.0, 4e6)] {
+            let mut value = response(&[(0.0, gain), (lag, gain)]);
+            value.end_us = end;
+            value.rebuild(&quats, &StabReconConfig::DEFAULT);
+            assert!(!value.has_table() && !value.is_active(), "lag={lag} end={end}");
+            assert_eq!(value.at(10e6), Vector3::zeros());
+        }
+        let mut value = response(&[(0.0, [f32::NAN; 9])]);
+        value.rebuild(&quats, &StabReconConfig::DEFAULT);
+        for ms in 5_000..=15_000 { assert!(value.at(ms as f64 * 1000.0).iter().all(|v| v.is_finite())); }
+        assert!(value.max_deg.is_finite());
+    }
+
+    #[test]
+    fn config_defaults_follow_the_spec() {
+        assert_eq!(StabReconConfig::DEFAULT, StabReconConfig { cutoff_hz: None, max_deg: 3.0 });
     }
     #[test]
     fn invalid_times_and_spacing_are_safe() {

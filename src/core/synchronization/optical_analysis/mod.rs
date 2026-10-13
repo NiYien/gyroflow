@@ -236,14 +236,20 @@ pub fn solve_stab(m: &OpticalMeasurements, quats: &TimeQuat, config: &crate::gyr
 }
 
 pub(crate) fn solve_stab_with_cancel(m: &OpticalMeasurements, quats: &TimeQuat, config: &crate::gyro_source::optical_stab::StabReconConfig, cancel: impl Fn() -> bool) -> Result<crate::gyro_source::optical_stab::OpticalStabReconstruction, String> {
-    use crate::gyro_source::optical_stab::OpticalStabReconstruction;
+    use crate::gyro_source::optical_stab::{OpticalStabReconstruction, PriorError, PriorSampler, INPUT_CUTOFF_HZ};
     if cancel() { return Err("Cancelled".into()); }
     if optical_correction::checksum(quats) != m.quats_checksum {
         log::warn!("Sensor reconstruction rejected: motion checksum changed after analysis");
         return Err("Motion data changed after analysis; analyze again".into());
     }
-    let params = SolverParams { spacing_us: 1e6 / m.scaled_fps.max(1.0) / 6.0, ridge: 1e-5, ..Default::default() };
-    let mut fit = sensor_solver::solve_sensor(&m.stab_pairs, &m.stab_bands, quats, config.cutoff_hz, &params, &cancel).map_err(|error| {
+    let prior_error = |error: PriorError| {
+        log::warn!("Sensor reconstruction prior failed: {error:?}");
+        if error == PriorError::Cancelled { "Cancelled".to_string() } else { format!("Sensor reconstruction prior failed: {error:?}") }
+    };
+    let cutoff_hz = config.cutoff_hz.unwrap_or(INPUT_CUTOFF_HZ);
+    let frame_us = 1e6 / m.scaled_fps.max(1.0);
+    let mut sampler = PriorSampler::new(quats, cutoff_hz).map_err(prior_error)?;
+    let fit = sensor_solver::solve_response(&m.stab_pairs, &m.stab_bands, &mut sampler, frame_us, &cancel).map_err(|error| {
         log::warn!("Sensor reconstruction failed: {error:?}");
         match error {
             sensor_solver::SensorSolveError::NoMeasurements => "Not enough of the image could be tracked".to_string(),
@@ -251,29 +257,19 @@ pub(crate) fn solve_stab_with_cancel(m: &OpticalMeasurements, quats: &TimeQuat, 
             _ => format!("Sensor reconstruction failed: {error:?}"),
         }
     })?;
-    log::info!("Sensor reconstruction converged: iterations={} initial_cost={} final_cost={} max_step_px={} knots={} band_bytes={}", fit.iterations, fit.initial_cost, fit.final_cost, fit.max_step_px, fit.solution.coeffs.len(), fit.band_bytes);
-    #[cfg(test)]
-    if std::env::var_os("GYROFLOW_SENSOR_TEST_DIAGNOSTICS").is_some() {
-        println!("sensor solved test={} iterations={} initial_cost={} final_cost={} max_step_px={} knots={} band_bytes={}",std::thread::current().name().unwrap_or("unnamed"),fit.iterations,fit.initial_cost,fit.final_cost,fit.max_step_px,fit.solution.coeffs.len(),fit.band_bytes);
-    }
+    log::info!("Sensor reconstruction response: bands={} pairs={} gain_5hz={:?} scale_px={} cutoff_hz={cutoff_hz}", fit.bands, fit.measured_pairs, fit.gain_5hz, fit.scale_px);
     if cancel() { return Err("Cancelled".into()); }
     let mut result = OpticalStabReconstruction::default();
     result.enabled = true;
-    result.start_us = fit.solution.start_us;
-    result.spacing_us = params.spacing_us;
-    result.coeffs = fit.solution.coeffs.iter().map(|v| [v.x as f32, v.y as f32, v.z as f32]).collect();
-    result.cutoff_hz = fit.cutoff_hz;
+    result.start_us = fit.start_us;
+    result.end_us = fit.end_us;
+    result.response = fit.taps.iter().map(|(lag_us, h)| crate::gyro_source::ResponseTap { lag_us: *lag_us, h: h.map(|v| v as f32) }).collect();
+    result.cutoff_hz = cutoff_hz;
     result.quats_checksum = m.quats_checksum;
     result.context_checksum = m.context_checksum;
     result.frames = m.frames;
     result.measured_frames = fit.measured_pairs;
-    result.rebuild_with_prior(&mut fit.prior_sampler,config,&cancel).map_err(|error| {
-        log::warn!("Sensor reconstruction rebuild failed: {error:?}");
-        if error==crate::gyro_source::optical_stab::PriorError::Cancelled {"Cancelled".to_string()} else {format!("Sensor reconstruction prior failed: {error:?}")}
-    })?;
-    log::debug!("Sensor prior cache nodes={} panels={} logs={} contributions={}",fit.prior_sampler.cached_nodes(),fit.prior_sampler.panels,fit.prior_sampler.log_evaluations,fit.prior_sampler.contributions);
-    #[cfg(test)]
-    if std::env::var_os("GYROFLOW_SENSOR_TEST_DIAGNOSTICS").is_some() {println!("sensor prior cache nodes={} panels={} logs={} contributions={}",fit.prior_sampler.cached_nodes(),fit.prior_sampler.panels,fit.prior_sampler.log_evaluations,fit.prior_sampler.contributions);}
+    result.rebuild_with_prior(&mut sampler, config, &cancel).map_err(prior_error)?;
     if cancel() { return Err("Cancelled".into()); }
     Ok(result)
 }
@@ -1857,12 +1853,71 @@ mod sensor_solve_tests {
     }
 
     #[test]
-    fn solve_stab_short_measurements_use_the_default_cutoff() {
-        let (q, m) = prior_scene(1.5, optical_stab::DEFAULT_CUTOFF_HZ, |_| true);
+    fn solve_stab_reports_the_input_cutoff_and_measured_pairs() {
+        let (q, m) = prior_scene(1.5, 0.5, |_| true);
         assert_eq!(m.stab_bands.len(), 45 * 6);
         let result = solve_stab(&m, &q, &StabReconConfig::DEFAULT).unwrap();
-        assert_eq!(result.cutoff_hz, optical_stab::DEFAULT_CUTOFF_HZ);
+        assert_eq!(result.cutoff_hz, 0.5);
         assert_eq!(result.measured_frames, 45);
+        let forced = solve_stab(&m, &q, &StabReconConfig { cutoff_hz: Some(0.7), ..StabReconConfig::DEFAULT }).unwrap();
+        assert_eq!(forced.cutoff_hz, 0.7);
+    }
+
+    fn shaking_body(t: f64) -> UnitQuaternion<f64> {
+        let w = |amplitude: f64, hz: f64, phase: f64| amplitude * (std::f64::consts::TAU * hz * t + phase).sin();
+        UnitQuaternion::from_scaled_axis(Vector3::new(w(0.003, 2.3, 0.2) + w(0.001, 6.1, 1.0), w(0.005, 3.7, 0.7) + w(0.0015, 1.4, 2.0), w(0.002, 5.1, 0.3)))
+    }
+
+    /// Frame pairs at 30 fps whose sensor follows `truth` (normalized shift and roll at the given gyro times).
+    fn response_scene(seconds: f64, truth: impl Fn(&TimeQuat, &[f64]) -> Vec<Vector3<f64>>) -> (TimeQuat, OpticalMeasurements) {
+        let quats: TimeQuat = (-1000..=((seconds + 1.0) * 1000.0) as i64).map(|i| (i * 1000, shaking_body(i as f64 / 1000.0))).collect();
+        let times: Vec<_> = (0..=(seconds * 30.0).round() as usize).map(|i| i as f64 * 1e6 / 30.0).collect();
+        let s = truth(&quats, &times);
+        let pairs = times.windows(2).enumerate().map(|(i, t)| {
+            sensor::tests::physical_pair(i * 2 + 7, t[0], t[1], shaking_body(t[0] / 1e6), shaking_body(t[1] / 1e6), s[i], s[i + 1])
+        }).collect();
+        let m = measurements(&quats, pairs, 30.0);
+        (quats, m)
+    }
+
+    fn interior(seconds: f64) -> Vec<f64> { (1500..((seconds - 1.5) * 1000.0) as i64).map(|ms| ms as f64 * 1000.0).collect() }
+
+    #[test]
+    fn solve_stab_recovers_a_partial_lagged_stabilizer() {
+        // The stabilizer takes out 60% of the shake, 8 ms late (not a multiple of the frame).
+        let truth = |q: &TimeQuat, t: &[f64]| optical_stab::prior(q, 0.5, &t.iter().map(|t| t - 8000.0).collect::<Vec<_>>()).into_iter().map(|v| v * 0.6).collect();
+        let (q, m) = response_scene(8.0, truth);
+        let result = solve_stab(&m, &q, &StabReconConfig::DEFAULT).unwrap();
+        let times = interior(8.0);
+        let expected = truth(&q, &times);
+        let amplitude = expected.iter().map(|s| s.norm()).fold(0.0, f64::max);
+        let error = times.iter().zip(&expected).map(|(&t, s)| (result.at(t) - s).norm()).fold(0.0, f64::max);
+        println!("partial lagged stabilizer amplitude={amplitude} max_error={error}");
+        assert!(amplitude > 0.003 && error <= 0.05 * amplitude, "amplitude={amplitude} error={error}");
+    }
+
+    #[test]
+    fn solve_stab_does_not_absorb_slow_motion_the_rotation_does_not_drive() {
+        // Full stabilization plus a slow 2 degree sensor-plane drift no rotation explains (an arc's parallax looks like this).
+        let drift = |t: f64| Vector3::new(2.0_f64.to_radians() * (std::f64::consts::TAU * 0.1 * t / 1e6).sin(), 0.0, 0.0);
+        let truth = |q: &TimeQuat, t: &[f64]| optical_stab::prior(q, 0.5, t).into_iter().zip(t).map(|(v, &t)| v + drift(t)).collect();
+        let (q, m) = response_scene(20.0, truth);
+        let result = solve_stab(&m, &q, &StabReconConfig::DEFAULT).unwrap();
+        let times = interior(20.0);
+        let stabilizer = optical_stab::prior(&q, 0.5, &times);
+        let amplitude = stabilizer.iter().map(|s| s.norm()).fold(0.0, f64::max);
+        let error = times.iter().zip(&stabilizer).map(|(&t, s)| (result.at(t) - s).norm()).fold(0.0, f64::max);
+        println!("slow drift not absorbed amplitude={amplitude} max_error={error}");
+        assert!(error <= 0.05 * amplitude, "amplitude={amplitude} error={error}");
+    }
+
+    #[test]
+    fn solve_stab_without_a_stabilizer_reconstructs_nothing() {
+        let (q, m) = response_scene(8.0, |_, t| vec![Vector3::zeros(); t.len()]);
+        let result = solve_stab(&m, &q, &StabReconConfig::DEFAULT).unwrap();
+        let largest = interior(8.0).into_iter().map(|t| result.at(t).norm()).fold(0.0, f64::max);
+        assert!(result.is_active() || result.has_table());
+        assert!(largest <= 1e-5, "largest={largest}");
     }
 
     #[test]
@@ -1885,42 +1940,6 @@ mod sensor_solve_tests {
     }
 
     #[test]
-    fn solve_stab_nonzero_observed_correction_decays_inside_the_gap() {
-        let (q, mut m)=prior_scene(6.0,0.5,|t|t<=2.0 || t>=4.0);
-        let mut pairs=Vec::new();
-        for pair in &m.stab_pairs {
-            let times=[pair.points[0].ta_us,pair.points[0].tb_us];
-            let truth=optical_stab::prior(&q,0.5,&times);
-            let u=|t:f64|Vector3::new(0.001*(std::f64::consts::TAU*2.0*t/1e6).sin(),0.0007*(std::f64::consts::TAU*3.0*t/1e6).sin(),0.0);
-            pairs.push(sensor::tests::physical_pair(pair.seq,times[0],times[1],
-                GyroSource::clamped_quat_at_gyro_timestamp(&q,times[0]/1000.0),GyroSource::clamped_quat_at_gyro_timestamp(&q,times[1]/1000.0),truth[0]+u(times[0]),truth[1]+u(times[1])));
-        }
-        m=measurements(&q,pairs,30.0);
-        let result=solve_stab(&m,&q,&StabReconConfig {cutoff_hz:Some(0.5),..StabReconConfig::DEFAULT}).unwrap();
-        let times:Vec<_>=(2500..=3500).map(|i|i as f64*1000.0).collect();
-        let truth=optical_stab::prior(&q,0.5,&times);
-        let amplitude=truth.iter().map(|s|s.norm()).fold(0.0,f64::max);
-        let maximum=times.iter().zip(&truth).map(|(&t,s)|(result.at(t)-s).norm()).fold(0.0,f64::max);
-        println!("gap nonzero u maximum={maximum} limit={}",0.05*amplitude);
-        assert!(maximum<=0.05*amplitude);
-        assert!(result.u_at(250_000.0).norm()>0.0002);
-    }
-
-    #[test]
-    fn solve_stab_cutoff_fit_lands_next_to_the_truth() {
-        let body=|t:f64|UnitQuaternion::from_scaled_axis(Vector3::new(0.0,[0.07,0.2,0.5,1.3,3.0].iter().map(|f|0.2f64.to_radians()*(std::f64::consts::TAU*f*t).sin()).sum(),0.0));
-        let q:TimeQuat=(0..=12000).map(|i|(i*1000,body(i as f64/1000.0))).collect();
-        let times:Vec<_>=(30..=330).map(|i|i as f64*1e6/30.0).collect();
-        let truth=optical_stab::prior(&q,optical_stab::CUTOFF_GRID_HZ[8],&times);
-        let pairs=times.windows(2).enumerate().map(|(i,t)|sensor::tests::physical_pair(i*2+7,t[0],t[1],body(t[0]/1e6),body(t[1]/1e6),truth[i],truth[i+1])).collect();
-        let m=measurements(&q,pairs,30.0);
-        let result=solve_stab(&m,&q,&StabReconConfig::DEFAULT).unwrap();
-        let index=optical_stab::CUTOFF_GRID_HZ.iter().position(|f|*f==result.cutoff_hz).unwrap();
-        println!("cutoff truth_index=8 fitted_index={index}");
-        assert!(index.abs_diff(8)<=1);
-    }
-
-    #[test]
     fn solve_stab_bands_without_raw_points_cannot_fall_back() {
         let (q,mut m)=prior_scene(0.1,0.3,|_|true); m.stab_pairs.clear();
         assert_eq!(solve_stab(&m,&q,&StabReconConfig::DEFAULT).unwrap_err(),"Not enough of the image could be tracked");
@@ -1930,7 +1949,7 @@ mod sensor_solve_tests {
     fn solve_stab_rejects_changed_quaternions_and_cancellation() {
         let (mut q,m)=prior_scene(0.1,0.3,|_|true);
         let count=std::cell::Cell::new(0);
-        assert_eq!(solve_stab_with_cancel(&m,&q,&StabReconConfig::DEFAULT,|| { count.set(count.get()+1);count.get()>22 }).unwrap_err(),"Cancelled");
+        assert_eq!(solve_stab_with_cancel(&m,&q,&StabReconConfig::DEFAULT,|| { count.set(count.get()+1);count.get()>2 }).unwrap_err(),"Cancelled");
         q.insert(0,UnitQuaternion::from_euler_angles(0.1,0.0,0.0));
         assert_eq!(solve_stab(&m,&q,&StabReconConfig::DEFAULT).unwrap_err(),"Motion data changed after analysis; analyze again");
     }
