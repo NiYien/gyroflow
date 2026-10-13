@@ -16,12 +16,17 @@ pub struct IMUTransforms {
     pub gyro_bias: Option<[f64; 3]>,
 }
 impl IMUTransforms {
-    pub fn transform(&self, v: &mut [f64; 3], is_acc: bool) {
+    /// Apply the gyro bias in the original sample axes, before changing orientation.
+    pub fn transform_gyro(&self, v: &mut [f64; 3]) {
         if let Some(bias) = self.gyro_bias {
             v[0] += bias[0];
             v[1] += bias[1];
             v[2] += bias[2];
         }
+        self.transform(v, false);
+    }
+
+    pub fn transform(&self, v: &mut [f64; 3], is_acc: bool) {
         if let Some(ref orientation) = self.imu_orientation {
             if orientation != "XYZ" {
                 *v = Self::orient(v, orientation.as_bytes());
@@ -91,5 +96,36 @@ impl IMUTransforms {
     fn rotate(inp: &[f64; 3], rot: Rotation3<f64>) -> [f64; 3] {
         let rotated = rot.transform_vector(&Vector3::new(inp[0], inp[1], inp[2]));
         [rotated[0], rotated[1], rotated[2]]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gyro_bias_is_applied_before_axis_remapping() {
+        let transforms = IMUTransforms {
+            gyro_bias: Some([1.0, 2.0, 3.0]),
+            imu_orientation: Some("yxZ".into()),
+            ..Default::default()
+        };
+        let mut gyro = [4.0, 5.0, 6.0];
+        transforms.transform_gyro(&mut gyro);
+        assert_eq!(gyro, [-7.0, -5.0, 9.0]);
+    }
+
+    #[test]
+    fn gyro_bias_does_not_change_accelerometer_or_magnetometer() {
+        let transforms = IMUTransforms {
+            gyro_bias: Some([1.0, 2.0, 3.0]),
+            imu_orientation: Some("yxZ".into()),
+            ..Default::default()
+        };
+        for is_acc in [true, false] {
+            let mut sample = [4.0, 5.0, 6.0];
+            transforms.transform(&mut sample, is_acc);
+            assert_eq!(sample, [-5.0, -4.0, 6.0]);
+        }
     }
 }
