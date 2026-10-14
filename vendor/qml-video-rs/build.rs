@@ -113,11 +113,21 @@ fn main() {
             std::fs::copy(format!("{}/bin/{arch_win}/mdk.dll", path), format!("{}/../../../mdk.dll", env::var("OUT_DIR").unwrap())).unwrap();
             std::fs::copy(format!("{}/bin/{arch_win}/ffmpeg-9.dll", path), format!("{}/../../../ffmpeg-9.dll", env::var("OUT_DIR").unwrap())).unwrap();
             std::fs::copy(format!("{}/bin/{arch_win}/mdk-braw.dll", path), format!("{}/../../../mdk-braw.dll", env::var("OUT_DIR").unwrap())).unwrap();
-            std::fs::copy(format!("{}/bin/{arch_win}/mdk-r3d.dll", path), format!("{}/../../../mdk-r3d.dll", env::var("OUT_DIR").unwrap())).unwrap();
+            // Use the same seek/audio fixes as macOS instead of the bundled upstream plugin.
+            let compiler = cc::Build::new().cpp(true).get_compiler();
+            let python = env::var("PYTHON").unwrap_or_else(|_| "python".into());
+            let status = Command::new(python)
+                .envs(compiler.env().iter().cloned())
+                .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../_scripts/build_r3d_plugin.py"))
+                .arg("--mdk-sdk").arg(&path)
+                .arg("--output").arg(format!("{}/../../../mdk-r3d.dll", env::var("OUT_DIR").unwrap()))
+                .arg("--compiler").arg(compiler.path())
+                .arg("--arch").arg(arch_win)
+                .status().expect("Cannot build the Windows R3D plugin");
+            assert!(status.success(), "Windows R3D plugin build failed");
 
             let _ = std::fs::copy(format!("{}/bin/{arch_win}/mdk.pdb", path), format!("{}/../../../mdk.pdb", env::var("OUT_DIR").unwrap())).unwrap();
             let _ = std::fs::copy(format!("{}/bin/{arch_win}/mdk-braw.pdb", path), format!("{}/../../../mdk-braw.pdb", env::var("OUT_DIR").unwrap()));
-            let _ = std::fs::copy(format!("{}/bin/{arch_win}/mdk-r3d.pdb", path), format!("{}/../../../mdk-r3d.pdb", env::var("OUT_DIR").unwrap()));
         }
         if target_os == "android" {
             std::fs::copy(format!("{}/lib/arm64-v8a/libmdk.so", path), format!("{}/../../../libmdk.so", env::var("OUT_DIR").unwrap())).unwrap();

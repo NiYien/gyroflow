@@ -10,6 +10,9 @@
     "Drain SDK callbacks and pending Metal jobs before releasing resources",
     "Trim audio blocks to the requested video frame after seeking",
     "Complete seek callbacks without blocking loop output",
-    "Recover frame-index seeks from millisecond timestamps"
+    "Recover frame-index seeks from millisecond timestamps",
+    "Complete ordinary Windows GPU seeks on the output thread to preserve paused wakeups",
+    "Allow two Windows preview decode jobs with ordered delivery and retained-frame protection",
+    "Use Windows file mappings for cached reads of immutable R3D and NEV sources"
   ]
 }

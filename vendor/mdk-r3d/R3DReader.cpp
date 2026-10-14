@@ -18,12 +18,16 @@
 #include <memory>
 #include <mutex>
 #include <queue>
+#include <map>
 #include <string_view>
 #include <thread>
 #include "R3DSDK.h"
 #include "R3DSDKDecoder.h"
 #include "R3DCxxAbi.h"
 #include "Debayer.h"
+#if (_WIN32 + 0)
+#include "WindowsReadOnlyIO.h"
+#endif
 #if (__APPLE__ + 0) || (__linux__ + 0)
 #include <sys/resource.h>
 #endif
@@ -69,6 +73,8 @@ protected:
     void onPropertyChanged(const std::string& /*key*/, const std::string& /*value*/) override;
 private:
     bool readAt(uint64_t index, int seekId = -1, SeekFlag flag = SeekFlag::Default, uint64_t generation = UINT64_MAX);
+    bool startVideoReads(uint64_t index, int seekId = -1, SeekFlag flag = SeekFlag::Default, uint64_t generation = UINT64_MAX);
+    void fillVideoReads(uint64_t generation);
     void readAudioAt(size_t index, int seekId = -1, uint64_t generation = UINT64_MAX, int64_t seekMs = -1);
 
     void setupAudio(const AudioCodecParameters& par);
@@ -91,6 +97,7 @@ private:
         uint64_t generation = 0;
         bool failed = false;
         bool seekCompleted = false;
+        bool completeSeekInCallback = true;
         int seekId = 0;
         bool seekWaitFrame = true;
         VideoFrame frame; // TODO: BufferRef with deleter to recyle Buffer*. BufferPool clear buffers if size or format changed
@@ -169,6 +176,12 @@ private:
     recursive_mutex decode_submission_mtx_;
     atomic<bool> unloading_ = false;
     atomic<uint64_t> index_ = 0; // for stepping frame forward/backward
+    int decode_ahead_ = 1;
+    bool pipeline_ = false; // Fixed before the output thread starts.
+    atomic<uint64_t> pipeline_start_ = 0;
+    // Protected by decode_submission_mtx_; includes decoded frames waiting for delivery.
+    uint64_t next_decode_ = 0;
+    int pending_decode_ = 0;
     R3DSDK::ImageProcessingSettings ipsettings_;
 
     vector<R3DSDK::AsyncDecompressJob*> decompress_job_;
@@ -380,6 +393,12 @@ static auto init_sdk()
              return 0;
         }
     }
+#if (_WIN32 + 0)
+    // The SDK owns a process-wide I/O pointer. Install it once, before any clip
+    // opens, and retain it until process exit, including detached decoder teardown.
+    static auto io = new WindowsReadOnlyIO;
+    R3DSDK::SetIoInterface(io);
+#endif
     return flags;
 }
 
@@ -417,6 +436,9 @@ bool R3DReader::load()
     if (!setupDecoder()) {
         clog << "R3D will use software decoder" << endl;
     }
+#if (_WIN32 + 0)
+    pipeline_ = dec_ && decode_ahead_ > 1;
+#endif
 
     if (audio_thread_.joinable())
         audio_thread_.join();
@@ -470,7 +492,7 @@ bool R3DReader::load()
     if (seeking_ == 0) {
         if (audio_format_)
             readAudioAt(0);
-        if (!readAt(0)) // prepare(pos) will seek in changed(MediaInfo)
+        if (!startVideoReads(0)) // prepare(pos) will seek in changed(MediaInfo)
             return false;
     }
 
@@ -557,7 +579,7 @@ bool R3DReader::seekTo(int64_t msec, SeekFlag flag, int id)
         const auto seekMs = duration_ * int64_t(index) / frames_;
         readAudioAt(seekMs / audio_block_duration_ms_, id, generation, seekMs);
     }
-    if (readAt(index, id, flag, generation)) return true;
+    if (startVideoReads(index, id, flag, generation)) return true;
     if (generation == generation_.load()) seeking_ = 0;
     return false;
 }
@@ -565,6 +587,33 @@ bool R3DReader::seekTo(int64_t msec, SeekFlag flag, int id)
 int64_t R3DReader::buffered(int64_t* bytes, float* percent) const
 {
     return 0;
+}
+
+bool R3DReader::startVideoReads(uint64_t index, int seekId, SeekFlag flag, uint64_t generation)
+{
+    const lock_guard lock(decode_submission_mtx_);
+    if (generation == UINT64_MAX) generation = generation_.load();
+    if (!pipeline_) return readAt(index, seekId, flag, generation);
+    pipeline_start_ = index;
+    next_decode_ = index + 1;
+    pending_decode_ = 0;
+    if (!readAt(index, seekId, flag, generation)) return false;
+    ++pending_decode_;
+    // A paused seek prepares only its target. Queuing a future frame here would
+    // let it escape briefly when play() resumes before re-anchoring the clock.
+    if (state() == State::Running) fillVideoReads(generation);
+    return true;
+}
+
+void R3DReader::fillVideoReads(uint64_t generation)
+{
+    const lock_guard lock(decode_submission_mtx_);
+    if (unloading_ || generation != generation_.load()) return;
+    while (pending_decode_ < 2 && next_decode_ < uint64_t(frames_)) {
+        if (!readAt(next_decode_, -1, SeekFlag::Default, generation)) break;
+        ++next_decode_;
+        ++pending_decode_;
+    }
 }
 
 bool R3DReader::readAt(uint64_t index, int seekId, SeekFlag flag, uint64_t generation)
@@ -631,6 +680,12 @@ bool R3DReader::readAt(uint64_t index, int seekId, SeekFlag flag, uint64_t gener
     if (seekId > 0) {
         auto data = (UserData*)job->privateData;
         data->seekId = seekId;
+#if (_WIN32 + 0)
+        // A paused output thread may still be waiting in frameAvailable().
+        // Completing an ordinary seek here can clear Seeking before it wakes.
+        // Loop seeks wait on that thread themselves and need callback completion.
+        data->completeSeekInCallback = test_flag(flag, SeekFlag::IOCompleteCallback);
+#endif
         //data->seekWaitFrame = !test_flag(flag & SeekFlag::IOCompleteCallback); // FIXME:
     }
     const auto status = dec_->decode(job);
@@ -950,6 +1005,14 @@ R3DSDK::R3DDecodeJob* R3DReader::getJob(size_t index)
         auto n = (i + frame_idx_) % job_.size();
         auto j = job_[n];
         if (!j->privateData) {
+            // Completion releases the SDK job, but MDK may still retain its frame.
+            // Never decode over pixels or timestamps still owned by a consumer.
+            if (pipeline_ && (frame_[n].use_count() > 1 || frame_[n].buffer().use_count() > 2)) {
+                frame_[n] = VideoFrame(scaleToW_, scaleToH_, format_);
+                frame_[n].setBuffers(nullptr);
+                j->outputBuffer = frame_[n].buffer()->data();
+                j->bytesPerRow = frame_[n].buffer()->stride();
+            }
             j->videoFrameNo = index;
             auto data = new UserData();
             data->reader = this;
@@ -967,7 +1030,9 @@ void R3DReader::onJobComplete(R3DSDK::R3DDecodeJob *job, R3DSDK::R3DStatus statu
 {
     auto data = (UserData*)job->privateData;
     if (status != R3DSDK::R3DStatus_Ok) data->failed = true;
-    completeVideoJob(*data, !data->failed);
+    // Normal frames advance the reader position only when delivered in order.
+    if (data->failed || (data->completeSeekInCallback && (!pipeline_ || data->seekId > 0)))
+        completeVideoJob(*data, !data->failed);
     push(*data);
 
     delete data;
@@ -1080,6 +1145,15 @@ void R3DReader::process(const UserData& data)
     if (decompress_ != Decompress::R3D && decompress_ != Decompress::Cpu) {
         //return;
     }
+    if (pipeline_) {
+        const lock_guard lock(decode_submission_mtx_);
+        if (data.generation == generation_.load()) {
+            --pending_decode_;
+            if (accepted && seeking_ == 0 && state() == State::Running && test_flag(mediaStatus() & MediaStatus::Loaded))
+                fillVideoReads(data.generation);
+        }
+        return;
+    }
     // frameAvailable() will wait in pause state, and return when seeking, do not read the next index
     if (accepted && data.generation == generation_.load() && seeking_ == 0 && state() == State::Running && test_flag(mediaStatus() & MediaStatus::Loaded)) // seeking_ > 0: new seek created by seekComplete when continuously seeking
         readAt(index + 1, -1, SeekFlag::Default, data.generation);
@@ -1098,11 +1172,43 @@ void R3DReader::audioLoop()
 void R3DReader::outputLoop()
 {
     output_running_ = true;
+    // SDK callbacks can finish out of order. Keep delivery ordered within each
+    // seek generation, and discard pending old frames when the target changes.
+    map<uint64_t, UserData> ordered;
+    uint64_t orderedGeneration = UINT64_MAX, expected = 0;
+    bool orderedFailed = false;
     while (output_running_) {
         UserData data;
         if (!pop(data))
             continue;
-        process(data);
+        if (!pipeline_) {
+            process(data);
+            continue;
+        }
+        if (data.generation != generation_.load()) continue;
+        if (orderedGeneration != data.generation) {
+            ordered.clear();
+            orderedGeneration = data.generation;
+            expected = pipeline_start_.load();
+            orderedFailed = false;
+        }
+        if (orderedFailed) continue;
+        ordered.insert_or_assign(data.index, std::move(data));
+        while (ordered.count(expected)) {
+            auto next = std::move(ordered.at(expected));
+            ordered.erase(expected++);
+            process(next);
+            if (next.failed) {
+                // Do not silently skip a failed frame and deliver its successors.
+                orderedFailed = true;
+                ordered.clear();
+                break;
+            }
+            if (next.generation != generation_.load()) {
+                ordered.clear();
+                break;
+            }
+        }
     }
     // unload() drains remaining Metal jobs after SDK callbacks have stopped.
     clog << "R3D finish output loop" << endl;
@@ -1112,6 +1218,9 @@ void R3DReader::onPropertyChanged(const std::string& key, const std::string& val
 {
     const auto k = detail::fnv1ah32::hash(key);
     switch (k) {
+    case "ahead"_svh:
+        decode_ahead_ = clamp(stoi(val), 1, 2);
+        return;
     case "format"_svh:
         format_ = VideoFormat::fromName(val.data());
         return;

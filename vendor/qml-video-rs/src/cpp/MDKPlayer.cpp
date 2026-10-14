@@ -81,6 +81,8 @@ std::vector<std::string> MDKPlayer::defaultDecoderList() const {
     #elif (__APPLE__+0)
         // Keep the existing aligned half-resolution path on other Apple targets.
         "R3D:gpu=auto:scale=3840x2160",
+    #elif (_WIN32+0)
+        "R3D:gpu=auto:scale=1920x1080:ahead=2",
     #else
         "R3D:gpu=auto:scale=1920x1080",
     #endif
@@ -827,10 +829,13 @@ void MDKPlayer::play() {
     // Queue the re-anchor while paused. Starting the async decoder first lets
     // its old decode chain race the seek and submit duplicate/out-of-order frames.
     if (m_isR3dFormat) m_player->seek(pos, mdk::SeekFlag::FromStart);
+#elif (_WIN32+0)
+    // Flush frames queued before the pause before resuming the two decode jobs.
+    if (m_isR3dFormat) m_player->seek(pos, mdk::SeekFlag::FromStart);
 #endif
     m_player->set(mdk::PlaybackState::Playing);
     forceRedraw();
-#if !(defined(Q_OS_MACOS) && defined(Q_PROCESSOR_ARM_64))
+#if !(defined(Q_OS_MACOS) && defined(Q_PROCESSOR_ARM_64)) && !(_WIN32+0)
     if (m_isR3dFormat) m_player->seek(pos, mdk::SeekFlag::FromStart);
 #endif
 }

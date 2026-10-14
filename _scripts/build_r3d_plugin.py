@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Build the macOS R3D plugin against pinned public MDK and RED SDK inputs."""
+"""Build desktop R3D plugins against pinned public MDK and RED SDK inputs."""
 import argparse
 import hashlib
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import urllib.request
 import zipfile
@@ -49,18 +50,25 @@ def install_inputs():
                         raise RuntimeError('Unsafe archive member: ' + member)
                 package.extractall(CACHE)
         else:
-            # macOS libarchive supports this hash-verified 7z development package.
-            subprocess.run(['/usr/bin/tar', '-xf', str(archive), '-C', str(CACHE)], check=True)
+            # Both macOS and Windows ship libarchive with 7z support.
+            tar = str(Path(os.environ['SystemRoot']) / 'System32/tar.exe') if sys.platform == 'win32' else '/usr/bin/tar'
+            subprocess.run([tar, '-xf', str(archive), '-C', str(CACHE)], check=True)
         if not (CACHE / sentinel).is_file():
             raise RuntimeError('Incomplete SDK package: ' + name)
         stamp.write_text(expected)
 
 
-def build(sdk, output):
+def build(sdk, output, *, compiler=None, arch='x64'):
     install_inputs()
     source = ROOT / 'vendor' / 'mdk-r3d'
     sdk = sdk.resolve()
+    output = output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
+    if sys.platform == 'win32':
+        if not compiler:
+            raise RuntimeError('Pass --compiler with the MSVC environment for the target architecture')
+        build_windows(sdk, source, output, compiler, arch)
+        return
     compiler = subprocess.check_output(['xcrun', '--sdk', 'macosx', '--find', 'clang++'], text=True).strip()
     sysroot = subprocess.check_output(['xcrun', '--sdk', 'macosx', '--show-sdk-path'], text=True).strip()
     with tempfile.TemporaryDirectory(dir=output.parent) as work:
@@ -79,9 +87,36 @@ def build(sdk, output):
         os.replace(library, output)
 
 
+def build_windows(sdk, source, output, compiler, arch):
+    red_library = {'x64': 'win64/R3DSDK-2017MD.lib', 'arm64': 'winarm64/R3DSDK-2022MD.lib'}[arch]
+    with tempfile.TemporaryDirectory(dir=output.parent) as work:
+        work = Path(work)
+        headers = work / 'abi'
+        shutil.copytree(CACHE / 'include/abi', headers)
+        # MSVC 14.43 cannot evaluate std::ceil in a constexpr function.
+        # Adapt a build-local copy, preserving the verified SDK headers.
+        audio_format = headers / 'mdk/AudioFormat.h'
+        original = audio_format.read_text()
+        signature = 'constexpr int framesForDuration(double duration) const'
+        if original.count(signature) != 1:
+            raise RuntimeError('Review the MDK AudioFormat compatibility fix after an SDK upgrade')
+        audio_format.write_text(original.replace(signature, 'int framesForDuration(double duration) const', 1))
+        library = work / 'mdk-r3d.dll'
+        command = [str(compiler), '/nologo', '/utf-8', '/std:c++latest', '/EHsc', '/O2', '/MD', '/LD',
+                   '/DBUILD_MDK_LIB', '/DMDK_ABI=abi', '/I' + str(headers),
+                   '/I' + str(CACHE / 'R3DSDK/Include')]
+        command += [str(source / name) for name in ('R3DReader.cpp', 'R3DCxxAbi.cpp', 'Debayer.cpp')]
+        command += ['/Fe:' + str(library), '/link', str(sdk / 'lib' / arch / 'mdk.lib'),
+                    str(CACHE / 'R3DSDK/Lib' / red_library)]
+        subprocess.run(command, cwd=work, check=True)
+        os.replace(library, output)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--mdk-sdk', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--compiler', type=Path)
+    parser.add_argument('--arch', choices=('x64', 'arm64'), default='x64')
     args = parser.parse_args()
-    build(args.mdk_sdk, args.output)
+    build(args.mdk_sdk, args.output, compiler=args.compiler, arch=args.arch)

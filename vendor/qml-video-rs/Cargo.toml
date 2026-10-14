@@ -18,5 +18,6 @@ default = ["mdk-nightly"]
 mdk-nightly = []
 
 [build-dependencies]
+cc = "1"
 cpp_build = "0.5"
 ureq = "3.1"
