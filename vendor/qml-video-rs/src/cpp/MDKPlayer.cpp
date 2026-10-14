@@ -315,8 +315,8 @@ void MDKPlayer::setReadyForProcessingCallback(ReadyForProcessingCb &&cb) {
 void MDKPlayer::setupPlayer() {
     auto player = m_player.get();
 #if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_ARM_64)
-    // Avoid AudioQueue's initial clock jump on this RAW playback path.
-    if (m_isR3dFormat) m_player->setAudioBackends({"OpenAL", "AudioQueue"});
+    // OpenAL rejects queued audio buffers after RAW seeks and loops on macOS.
+    if (m_isR3dFormat) m_player->setAudioBackends({"AudioQueue"});
 #endif
     m_player->setRenderCallback([this, player](void *) {
         if (m_player.get() != player) return;

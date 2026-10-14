@@ -34,7 +34,7 @@ int main(int argc, char** argv) {
         p.setVideoSurfaceSize(1920,1080);
         p.setDecoders(mdk::MediaType::Video, {argv[2]});
         p.setMute(true);
-        p.setAudioBackends({"OpenAL", "AudioQueue"});
+        p.setAudioBackends({"AudioQueue"});
         if (std::getenv("R3D_BENCH_UNPACED")) p.onSync([]{ return DBL_MAX; });
         p.setBufferRange(argc>4 ? std::atoi(argv[4]) : 0);
         p.setProperty("continue_at_end","1");
@@ -97,6 +97,10 @@ int main(int argc, char** argv) {
         play(6); renderFor(700);pause();
         phase.store(0);seek(999999);renderFor(250);seek(0);renderFor(250);current=p.renderVideo();
         play(7);renderFor(700);
+        phase.store(8);
+        p.setLoop(1);
+        seek(p.mediaInfo().duration - 300);
+        renderFor(850);
         p.set(mdk::State::Stopped);
         p.waitFor(mdk::State::Stopped);
         p.setVideoSurfaceSize(-1, -1);

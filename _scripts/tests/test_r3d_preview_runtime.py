@@ -38,7 +38,11 @@ class R3DPreviewRuntimeTests(unittest.TestCase):
             if result.returncode == 77:
                 self.skipTest('The sample must be at least three seconds long')
             self.assertEqual(result.returncode, 0, result.stderr[-4000:])
-            frames = {i: [] for i in range(1, 8)}
+            self.assertIn('Using audio backend: AudioQueue', result.stderr)
+            for error in ('Audio output rejected frame', 'Invalid Operation',
+                          'ERROR: AudioQueueEnqueueBuffer', 'AudioQueueStart ERROR'):
+                self.assertNotIn(error, result.stderr, result.stderr[-4000:])
+            frames = {i: [] for i in range(1, 9)}
             for line in result.stdout.splitlines():
                 fields = line.split()
                 if fields and fields[0] == 'RENDER' and int(fields[1]) in frames:
@@ -59,6 +63,10 @@ class R3DPreviewRuntimeTests(unittest.TestCase):
             first = next(i for i, (_, pts) in enumerate(backward) if .39 <= pts <= .5)
             self.assertTrue(all(.39 <= pts < 1.2 for _, pts in backward[first:]), backward)
             self.assertTrue(all(b[1] >= a[1] for a, b in zip(backward[first:], backward[first+1:])), backward)
+            loop = frames[8]
+            self.assertGreaterEqual(len(loop), 20, loop)
+            self.assertTrue(any(b[1] < a[1] for a, b in zip(loop, loop[1:])), loop)
+            self.assertLess(loop[-1][1], 1.0, loop)
 
 
 if __name__ == '__main__':
