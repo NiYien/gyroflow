@@ -1,0 +1,22 @@
+[package]
+name = "qml-video-rs"
+version = "0.1.0"
+authors = ["Adrian <adrian.eddy@gmail.com>"]
+edition = "2021"
+description = "Video player component for QML using Qt6 and mdk-sdk"
+links = "mdk"
+build = "build.rs"
+
+[dependencies]
+qmetaobject = { version = "0.2.10", default-features = false, features = ["log"] }
+qttypes     = { version = "0.2.10", default-features = false, features = ["required", "qtquick", "qtquickcontrols2"] }
+cstr = "0.2"
+cpp = "0.5"
+
+[features]
+default = ["mdk-nightly"]
+mdk-nightly = []
+
+[build-dependencies]
+cpp_build = "0.5"
+ureq = "3.1"

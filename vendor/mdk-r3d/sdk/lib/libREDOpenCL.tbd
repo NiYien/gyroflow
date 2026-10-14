@@ -1,0 +1,20 @@
+--- !tapi-tbd
+tbd-version:     4
+targets:         [ x86_64-macos, arm64-macos ]
+flags:           [ not_app_extension_safe ]
+install-name:    '@rpath/REDOpenCL.dylib'
+current-version: 0
+compatibility-version: 0
+exports:
+  - targets:         [ x86_64-macos, arm64-macos ]
+    symbols:         [ _RED_LIB_BUILD_NAME, _RED_LIB_FINALIZE, _RED_LIB_ID, _RED_LIB_INITIALIZE,
+                       _RED_LIB_MAJOR_VERSION, _RED_LIB_MINOR_VERSION, _RED_LIB_PATCH_VERSION,
+                       _RED_MINIMUM_MAJOR_VERSION, _RED_MINIMUM_MINOR_VERSION, _RED_MINIMUM_PATCH_VERSION,
+                       _RED_STATICLIB_BUILD_NAME, _RED_STATICLIB_MAJOR_VERSION, _RED_STATICLIB_MINOR_VERSION,
+                       _RED_STATICLIB_PATCH_VERSION, _f012905b098d2132ac7aac130f111f1b6,
+                       _f0c9e0944145f2aa4cafd89eb891854d2, _f2130dfbceb7155edd1eb316357580441,
+                       _f3155c827786257539abbf7063a2f0101, _f5bb1055c5f86b86fd7efb960cf5ed0d1,
+                       _f995643fbfce6bbd5bf1fe078d565f7df, _fcd54fa9aadff6c12a22cf3319a73a12c,
+                       _fd304461ef20cea8d1558d50625b4430d, _fdaa332e3cddb9704453f726ed4f8c0db,
+                       _fec0c1d581a1073589b2a944d1b3bed28, _ff757bfaca1304179bce3cdf5980bec5f ]
+...

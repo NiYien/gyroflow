@@ -1,0 +1,45 @@
+{
+  "version": "0.39.0",
+  "revision": "braw6-20261014",
+  "abi_version": 20260922,
+  "platforms": {
+    "macos": {
+      "archive": "MDK_SDK_MacOS_0.39.0_db3d7ac.tar.xz",
+      "sha256": "f7e48e4f79bdb934dd21e2c545b590df6e4e09f1c825a0ccb346a82142f1c1a7",
+      "runtime_sha256": {
+        "lib/mdk.framework/Versions/A/mdk": "13b0a4104ce992775d2ce43fdf2056cb5184992e6f61762007c98ab56e507b0f",
+        "lib/mdk.framework/Versions/A/libmdk-braw.dylib": "f8e7bc2ebdf8db638a4711b065230fc444d11d6f37628a8e1869cc93b7d0d89b"
+      },
+      "revision": "db3d7ac"
+    },
+    "windows": {
+      "archive": "MDK_SDK_Windows_0.39.0_db3d7ac.7z",
+      "sha256": "5ac7b683114162aba940baa56747e17fad7398707a9bd8249679fa20740724a3",
+      "runtime_sha256": {
+        "bin/x64/mdk.dll": "aeb3849598803a633d57aeea62ac9dd601fceeb29e3460c5b07e82ff26882bda",
+        "bin/x64/mdk-braw.dll": "2e51747494cf17e50653f1f41b67603af7071e3b88df4ec5e44608b9ca2c31df",
+        "bin/arm64/mdk.dll": "3b40c7bdc07e52320663412b738a33a18b0175e28b2f979c395c67fb17ac4ba0",
+        "bin/arm64/mdk-braw.dll": "35de2ede33428eec56ea5599edebdee12caa134fb7af3f10a0d418fc2a77a6f2"
+      },
+      "revision": "db3d7ac"
+    },
+    "linux": {
+      "archive": "MDK_SDK_Linux_0.39.0_a040ba9.tar.xz",
+      "sha256": "8b1fe76121025b10544ff82d972911fe7ae5d9dd91987f7a4a50369c85faf39b",
+      "runtime_sha256": {
+        "lib/amd64/libmdk.so.0": "d0a4db5f7a8c2f1cf35ece6c80eccf8d47653da4ffaeda752f70fe6e6b87736a",
+        "lib/amd64/libmdk-braw.so": "028121826e84cb0638c00311341d745277b2618170db27a6c9418d457c1d1461",
+        "lib/amd64/libc++.so.1": "45ae08de235d50e88e8db54f2476b608e1443923a416193c07d17150ec1f86c7"
+      },
+      "revision": "a040ba9"
+    },
+    "ios": {
+      "archive": "MDK_SDK_iOS_0.39.0_db3d7ac.tar.xz",
+      "sha256": "4159b1c0d8de4aae15465176b6464bbb5cbbe0761b1394412844543ebc97afdc",
+      "runtime_sha256": {
+        "lib/mdk.xcframework/ios-arm64/mdk.framework/mdk": "790248209f2fc3c361e1839cd9a7048e59564a8d3fadb777a7b5220146c92ac7"
+      },
+      "revision": "db3d7ac"
+    }
+  }
+}

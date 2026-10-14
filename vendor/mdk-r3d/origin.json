@@ -1,0 +1,13 @@
+{
+  "repository": "https://github.com/wang-bin/mdk-r3d",
+  "revision": "17350174fbb64373ecbc9410faab39687eee7e07",
+  "changes": [
+    "Use public AudioFrame API for RED PCM instead of private AudioDecoder API",
+    "Fence video and audio decode chains by seek generation",
+    "Submit RED PCM as short frames with exact sample timestamps",
+    "Drain SDK callbacks and pending Metal jobs before releasing resources",
+    "Trim audio blocks to the requested video frame after seeking",
+    "Complete seek callbacks without blocking loop output",
+    "Recover frame-index seeks from millisecond timestamps"
+  ]
+}

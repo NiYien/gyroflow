@@ -426,7 +426,8 @@ deploy *param: assert-linux-x86-64
     cp -f "$CARGO_TARGET/libmdk.so.0"                      "$TARGET/lib/"
     cp -f "$CARGO_TARGET/libmdk-braw.so"                   "$TARGET/lib/"
     cp -f "$CARGO_TARGET/libmdk-r3d.so"                    "$TARGET/lib/"
-    #cp -f "$CARGO_TARGET/libffmpeg.so.6"                  "$TARGET/"
+    cp -f "$CARGO_TARGET/libc++.so.1"                      "$TARGET/lib/"
+    cp -f "$CARGO_TARGET/libffmpeg.so.9"                      "$TARGET/lib/"
 
     cp -f "$FFMPEG_DIR/lib/{{FFmpegLinuxArch}}/libavcodec.so.62"         "$TARGET/lib/"
     cp -f "$FFMPEG_DIR/lib/{{FFmpegLinuxArch}}/libavfilter.so.11"        "$TARGET/lib/"
@@ -440,16 +441,14 @@ deploy *param: assert-linux-x86-64
     # which matches Rust-side `external_sdk::SDK_PATH` on Linux (exe_dir/lib/).
     : "${SDK_BASE:=https://www.niyien.com/api/sdk}"
     curl -fSL "$SDK_BASE/libshaderc_shared.so" -o "$TARGET/lib/libshaderc_shared.so"
-    if [ ! -s "$TARGET/lib/REDR3D-x64.so" ]; then
-        curl -fSL "$SDK_BASE/RED_SDK_Linux_9.2.0.tar.gz" -o /tmp/red_sdk.tar.gz
-        tar -xzf /tmp/red_sdk.tar.gz -C "$TARGET/lib/"
-        rm -f /tmp/red_sdk.tar.gz
-    fi
-    if [ ! -s "$TARGET/lib/libBlackmagicRawAPI.so" ]; then
-        curl -fSL "$SDK_BASE/Blackmagic_RAW_SDK_Linux_5.0.0.tar.gz" -o /tmp/braw_sdk.tar.gz
-        tar -xzf /tmp/braw_sdk.tar.gz -C "$TARGET/lib/"
-        rm -f /tmp/braw_sdk.tar.gz
-    fi
+    # Refresh RED on every package build so staging cannot retain an older SDK.
+    curl -fSL "$SDK_BASE/RED_SDK_Linux_9.2.1.tar.gz" -o /tmp/red_sdk.tar.gz
+    tar -xzf /tmp/red_sdk.tar.gz -C "$TARGET/lib/"
+    rm -f /tmp/red_sdk.tar.gz
+    # Refresh BRAW on every package build so staging cannot retain the old ABI.
+    curl -fSL "$SDK_BASE/Blackmagic_RAW_SDK_Linux_6.0.0.tar.gz" -o /tmp/braw_sdk.tar.gz
+    tar -xzf /tmp/braw_sdk.tar.gz -C "$TARGET/lib/"
+    rm -f /tmp/braw_sdk.tar.gz
     for sdk_file in libshaderc_shared.so REDR3D-x64.so libBlackmagicRawAPI.so; do
         test -s "$TARGET/lib/$sdk_file" || { echo "Required Linux SDK payload is missing or empty: $TARGET/lib/$sdk_file" >&2; exit 1; }
     done

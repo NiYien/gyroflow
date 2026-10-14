@@ -404,16 +404,14 @@ deploy *param:
         # codesign here so the SDK dylibs are signed + notarized together with the app.
         FrameworksDir="$APP_BUNDLE/Contents/Frameworks"
         : "${SDK_BASE:=https://www.niyien.com/api/sdk}"
-        if [ ! -f "$FrameworksDir/REDR3D.dylib" ]; then
-            curl -fSL "$SDK_BASE/RED_SDK_MacOS_9.2.0.tar.gz" -o /tmp/red_sdk.tar.gz
-            tar -xzf /tmp/red_sdk.tar.gz -C "$FrameworksDir/"
-            rm -f /tmp/red_sdk.tar.gz
-        fi
-        if [ ! -f "$FrameworksDir/BlackmagicRawAPI.framework/Versions/A/BlackmagicRawAPI" ]; then
-            curl -fSL "$SDK_BASE/Blackmagic_RAW_SDK_MacOS_5.0.0.tar.gz" -o /tmp/braw_sdk.tar.gz
-            tar -xzf /tmp/braw_sdk.tar.gz -C "$FrameworksDir/"
-            rm -f /tmp/braw_sdk.tar.gz
-        fi
+        # Refresh RED on every package build so staging cannot retain an older SDK.
+        curl -fSL "$SDK_BASE/RED_SDK_MacOS_9.2.1.tar.gz" -o /tmp/red_sdk.tar.gz
+        tar -xzf /tmp/red_sdk.tar.gz -C "$FrameworksDir/"
+        rm -f /tmp/red_sdk.tar.gz
+        # Refresh BRAW on every package build so staging cannot retain the old ABI.
+        curl -fSL "$SDK_BASE/Blackmagic_RAW_SDK_MacOS_6.0.0.tar.gz" -o /tmp/braw_sdk.tar.gz
+        tar -xzf /tmp/braw_sdk.tar.gz -C "$FrameworksDir/"
+        rm -f /tmp/braw_sdk.tar.gz
         chmod -R 0755 "$FrameworksDir"/*
 
         if [ "$SIGNING_FINGERPRINT" != "" ]; then
@@ -489,18 +487,14 @@ bundle *param:
     # Bundle BRAW and RED SDK
     FrameworksDir={{AppBundle}}/Contents/Frameworks
     : "${SDK_BASE:=https://www.niyien.com/api/sdk}"
-    if [ ! -f "$FrameworksDir/REDR3D.dylib" ]; then
-        curl -L "$SDK_BASE/RED_SDK_MacOS_9.2.0.tar.gz" -o tmp.tar.gz
-        7z x -aoa tmp.tar.gz
-        7z x -o"$FrameworksDir/" tmp.tar
-        rm tmp.tar tmp.tar.gz
-    fi
-    if [ ! -f "$FrameworksDir/BlackmagicRawAPI.framework/Versions/A/BlackmagicRawAPI" ]; then
-        curl -L "$SDK_BASE/Blackmagic_RAW_SDK_MacOS_5.0.0.tar.gz" -o tmp.tar.gz
-        7z x -aoa tmp.tar.gz
-        7z x -o"$FrameworksDir/" tmp.tar
-        rm tmp.tar tmp.tar.gz
-    fi
+    # Refresh RED on every package build so staging cannot retain an older SDK.
+    curl -fSL "$SDK_BASE/RED_SDK_MacOS_9.2.1.tar.gz" -o tmp.tar.gz
+    tar -xzf tmp.tar.gz -C "$FrameworksDir/"
+    rm tmp.tar.gz
+    # Refresh BRAW on every package build so staging cannot retain the old ABI.
+    curl -fSL "$SDK_BASE/Blackmagic_RAW_SDK_MacOS_6.0.0.tar.gz" -o tmp.tar.gz
+    tar -xzf tmp.tar.gz -C "$FrameworksDir/"
+    rm tmp.tar.gz
     chmod -R 0755 $FrameworksDir/*
 
     # Generate entitlements

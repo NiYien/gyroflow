@@ -1,0 +1,25 @@
+--- !tapi-tbd
+tbd-version:     4
+targets:         [ x86_64-macos, arm64-macos ]
+flags:           [ not_app_extension_safe ]
+install-name:    '@rpath/REDDecoder.dylib'
+current-version: 0
+compatibility-version: 0
+exports:
+  - targets:         [ x86_64-macos, arm64-macos ]
+    symbols:         [ _RED_LIB_BUILD_NAME, _RED_LIB_FINALIZE, _RED_LIB_ID, _RED_LIB_INITIALIZE,
+                       _RED_LIB_MAJOR_VERSION, _RED_LIB_MINOR_VERSION, _RED_LIB_PATCH_VERSION,
+                       _RED_MINIMUM_MAJOR_VERSION, _RED_MINIMUM_MINOR_VERSION, _RED_MINIMUM_PATCH_VERSION,
+                       _RED_STATICLIB_BUILD_NAME, _RED_STATICLIB_MAJOR_VERSION, _RED_STATICLIB_MINOR_VERSION,
+                       _RED_STATICLIB_PATCH_VERSION, _f1702b956ad32adf534c5bfe5de2ac8db,
+                       _f1e82f5c153d982b538b8a2216af5b574, _f2c6238fbd38d451afed9b22ff2e06431,
+                       _f310d397c9ecd9caff408619daef99197, _f31c000bfdab16741fc60a38a5bf17891,
+                       _f41edabd8abfe97037982a01ccf5de86f, _f44dd7493935f92936ed7260158e61262,
+                       _f48a6663327eee3dc451f5f9303913d89, _f4906d2aa005dc14930f26fce81460e3d,
+                       _f51ed355cf32d36842643f197f7d8903f, _f580bf9ae8327f7969f8da4a61135d98e,
+                       _f69ff449a6e338bdad0f7d7f3cb616db4, _f6edbbbe96b10207b642267dc32fa49c2,
+                       _f72d0883edd40209c3b5020ac5c0406a4, _f7a9a30de65646e3e4ddc996c3fe132d7,
+                       _f801c2afa99c22e073052549cef11d3f6, _f8c113aea84613f44f2c9fd9abd3f88c1,
+                       _fdc10d4e58a741b656a3f315d98b51f61, _fde5f393d0a669220f0542f00c45f147c,
+                       _ff67a0ac6bbeb6af3bcc6209c295cf51f ]
+...

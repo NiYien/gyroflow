@@ -6454,40 +6454,22 @@ mod tests {
 
     #[test]
     fn qml_video_rs_pins_raw_preview_pipeline_fixes() {
-        // Pins the qml-video-rs fork at the commit that contains the R3D/NEV
-        // preview fixes: Play immediately re-anchors to the last rendered frame
-        // without a 500 ms timer, old R3D players are torn down off the GUI
-        // thread, callbacks are bound to their originating player, loaded setup
-        // is de-duplicated, the MDK download is pinned to the wang-bin 503d1ed
-        // build served from the fork's own mdk-503d1ed release mirror (Nikon
-        // ZR .R3D native frame size; nightly.link degraded 2026-07-18 and the
-        // source artifacts expire 2026-08-21), the macOS
-        // R3D decoder requests a 16-aligned scale to avoid REDMetal red-channel
-        // stripes, and the Android AMediaCodec decoder uses image=1
-        // (AImageReader) instead of the SurfaceTexture handoff whose missing
-        // fence sync tears the bottom of the frame during playback. Reverting
-        // drops these and can reintroduce R3D Play stalls, clip-switch
-        // freezes, a regressed MDK, macOS preview striping, or Android
-        // bottom-of-frame tearing.
-        //
-        // The pin also carries `MDKPlayer::setToneCurve()` and its onFrame
-        // filter: CinemaDNG decodes to scene-linear samples, and without the
-        // filter the preview collapses into ~10 distinct levels once MDK
-        // renders into its RGBA8 texture. Reverting past it takes the DNG
-        // preview back to a near-black picture.
-        // Kinefinity processing also requires the source-pixel aspect override.
+        // The vendored wrapper retains the fork's RAW preview, teardown,
+        // CinemaDNG tone-curve, and Android texture synchronization fixes.
+        // SDK runtime versions are pinned separately by mdk_sdk_manifest.json.
         const PINNED_REV: &str = "4d4704866192da314aa9654d0fde29448018f330";
-        let lock_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock");
-        let lock = std::fs::read_to_string(&lock_path).expect("read Cargo.lock");
-        let expected = format!(
-            "source = \"git+https://github.com/NiYien/qml-video-rs?rev={hash}#{hash}\"",
-            hash = PINNED_REV,
-        );
-
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let manifest = std::fs::read_to_string(root.join("Cargo.toml")).expect("read Cargo.toml");
         assert!(
-            lock.contains(&expected),
-            "qml-video-rs must stay pinned to the NiYien fork commit that contains the R3D/NEV preview re-anchor and teardown isolation fix."
+            manifest.lines().any(|line| line.trim() == r#"qml-video-rs = { path = "vendor/qml-video-rs" }"#),
+            "qml-video-rs must use the audited vendored wrapper."
         );
+        let origin: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("vendor/qml-video-rs/origin.json"))
+                .expect("read vendored wrapper provenance"),
+        ).expect("parse vendored wrapper provenance");
+        assert_eq!(origin["repository"], "https://github.com/NiYien/qml-video-rs");
+        assert_eq!(origin["revision"], PINNED_REV);
     }
 }
 

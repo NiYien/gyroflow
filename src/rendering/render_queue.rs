@@ -32896,7 +32896,7 @@ mod tests {
         let samples = (0..100).map(|i| TranslationSample {
             timestamp_us: i as i64 * 100_000,
             position: [0.01 * (i as f32 * 0.6).sin(), 0.0, 0.0],
-            ref_inv_depth: 1.0, confidence: 1.0, track_age_s: 2.0, segment: 0,
+            ref_inv_depth: 1.0, confidence: 1.0, track_age_s: 2.0, segment: 0, depth_segment: 0,
             camera_to_world: [1.0, 0.0, 0.0, 0.0], focal_length_over_short_side: 1.0,
             layer_motion: [0.001, 0.0], far_beta: 1.0, auto_beta: 1.0, weight: 1.0, layer_scale_rate: 0.0,
         }).collect();

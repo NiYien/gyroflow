@@ -1,0 +1,44 @@
+--- !tapi-tbd
+tbd-version:     4
+targets:         [ x86_64-macos, arm64-macos ]
+flags:           [ not_app_extension_safe ]
+install-name:    '@rpath/REDR3D.dylib'
+current-version: 0
+compatibility-version: 0
+exports:
+  - targets:         [ x86_64-macos, arm64-macos ]
+    symbols:         [ _R3D_AAA, _R3D_AAB, _R3D_AAC, _R3D_AAD, _R3D_AAE, _R3D_AAF,
+                       _R3D_AAG, _R3D_AAH, _R3D_AAI, _R3D_AAJ, _R3D_AAK, _R3D_AAL,
+                       _R3D_AAM, _R3D_AAN, _R3D_AAO, _R3D_AAP, _R3D_AAQ, _R3D_AAR,
+                       _R3D_AAS, _R3D_AAT, _R3D_AAU, _R3D_AAV, _R3D_AAW, _R3D_AAX,
+                       _R3D_AAY, _R3D_AAZ, _R3D_ABA, _R3D_ABB, _R3D_ABC, _R3D_ABD,
+                       _R3D_ABE, _R3D_ABF, _R3D_ABG, _R3D_ABH, _R3D_ABI, _R3D_ABJ,
+                       _R3D_ABK, _R3D_ABL, _R3D_ABM, _R3D_ABN, _R3D_ABO, _R3D_ABP,
+                       _R3D_ABQ, _R3D_ABR, _R3D_ABS, _R3D_ABT, _R3D_ABU, _R3D_ABV,
+                       _R3D_ABW, _R3D_ABX, _R3D_ABY, _R3D_ABZ, _R3D_ACA, _R3D_ACB,
+                       _R3D_ACC, _R3D_ACD, _R3D_ACE, _R3D_ACF, _R3D_ACG, _R3D_ACH,
+                       _R3D_ACI, _R3D_ACJ, _R3D_ACK, _R3D_ACL, _R3D_ACM, _R3D_ACN,
+                       _R3D_ACO, _R3D_ACP, _R3D_ACQ, _R3D_ACR, _R3D_ADB, _R3D_ADC,
+                       _R3D_BAA, _R3D_BAB, _R3D_BAC, _R3D_BAD, _R3D_BAE, _R3D_BAF,
+                       _R3D_BAG, _R3D_BAH, _R3D_BAI, _R3D_BAJ, _R3D_BAK, _R3D_BAL,
+                       _R3D_BAM, _R3D_CAA, _R3D_CAB, _R3D_CAC, _R3D_CAD, _R3D_CAE,
+                       _R3D_CAF, _R3D_CAG, _R3D_CAH, _R3D_CAI, _R3D_CAJ, _R3D_CGA,
+                       _R3D_CGB, _R3D_CGC, _R3D_CGD, _R3D_CGE, _R3D_CGF, _R3D_CGG,
+                       _R3D_CGH, _R3D_CGI, _R3D_DAA, _R3D_DAB, _R3D_DAC, _R3D_DAD,
+                       _R3D_DAD2, _R3D_DAE, _R3D_DAF, _R3D_DAG, _R3D_DAH, _R3D_DAI,
+                       _R3D_DAJ, _R3D_DAK, _R3D_DAL, _R3D_DAM, _R3D_DAN, _R3D_DAO,
+                       _R3D_DAP, _R3D_DAQ, _R3D_DAR, _R3D_EAA, _R3D_EAB, _R3D_EAC,
+                       _R3D_FAA, _R3D_FAB, _R3D_FAC, _R3D_FAD, _R3D_FAE, _R3D_FAF,
+                       _R3D_FAH, _R3D_GAA, _R3D_GAB, _R3D_GAC, _R3D_GAD, _R3D_GAE,
+                       _R3D_GAF, _R3D_HAA, _R3D_HAB, _R3D_HAC, _R3D_HAD, _R3D_HAE,
+                       _R3D_HAF, _R3D_HAG, _R3D_HAH, _R3D_HAI, _R3D_IAA, _R3D_IAB,
+                       _R3D_IAC, _R3D_IAD, _R3D_ICA, _R3D_ICB, _R3D_ICC, _R3D_ICD,
+                       _R3D_JAA, _R3D_JAB, _R3D_JAC, _R3D_JAD, _R3D_SAA, _R3D_SAB,
+                       _R3D_SAC, _R3D_SAD, _R3D_SAE, _R3D_SAF, _R3D_SAG, _R3D_SAH,
+                       _R3D_SAI, _RED_IMPORTS, _RED_LIB_BUILD_NAME, _RED_LIB_FINALIZE,
+                       _RED_LIB_ID, _RED_LIB_INITIALIZE, _RED_LIB_MAJOR_VERSION,
+                       _RED_LIB_MINOR_VERSION, _RED_LIB_PATCH_VERSION, _RED_MINIMUM_MAJOR_VERSION,
+                       _RED_MINIMUM_MINOR_VERSION, _RED_MINIMUM_PATCH_VERSION, _RED_REDIRECT,
+                       _RED_STATICLIB_BUILD_NAME, _RED_STATICLIB_MAJOR_VERSION, _RED_STATICLIB_MINOR_VERSION,
+                       _RED_STATICLIB_PATCH_VERSION ]
+...

@@ -113,38 +113,40 @@ PLUGIN_ASSET_NAMES = (
 )
 
 SDK_FILENAMES = (
-    "Blackmagic_RAW_SDK_Windows_5.0.0.tar.gz",
-    "Blackmagic_RAW_SDK_MacOS_5.0.0.tar.gz",
-    "Blackmagic_RAW_SDK_Linux_5.0.0.tar.gz",
-    "RED_SDK_Windows_9.2.0.tar.gz",
-    "RED_SDK_MacOS_9.2.0.tar.gz",
-    "RED_SDK_Linux_9.2.0.tar.gz",
+    "Blackmagic_RAW_SDK_Windows_6.0.0.tar.gz",
+    "Blackmagic_RAW_SDK_Windows_arm64_6.0.0.tar.gz",
+    "Blackmagic_RAW_SDK_MacOS_6.0.0.tar.gz",
+    "Blackmagic_RAW_SDK_Linux_6.0.0.tar.gz",
+    "RED_SDK_Windows_9.2.1.tar.gz",
+    "RED_SDK_Windows_arm64_9.2.1.tar.gz",
+    "RED_SDK_MacOS_9.2.1.tar.gz",
+    "RED_SDK_Linux_9.2.1.tar.gz",
 )
 
 SDK_DOWNLOAD_SOURCES = {
-    "Blackmagic_RAW_SDK_Windows_5.0.0.tar.gz": (
-        {"kind": "direct", "path": "Blackmagic_RAW_SDK_Windows_5.0.0.tar.gz"},
-        {"kind": "direct", "path": "Blackmagic_RAW_SDK_Windows.tar.gz"},
+    "RED_SDK_Windows_arm64_9.2.1.tar.gz": (
+        {"kind": "direct", "path": "RED_SDK_Windows_arm64_9.2.1.tar.gz"},
     ),
-    "Blackmagic_RAW_SDK_MacOS_5.0.0.tar.gz": (
-        {"kind": "direct", "path": "Blackmagic_RAW_SDK_MacOS_5.0.0.tar.gz"},
-        {"kind": "direct", "path": "Blackmagic_RAW_SDK_MacOS.tar.gz"},
+    "Blackmagic_RAW_SDK_Windows_arm64_6.0.0.tar.gz": (
+        {"kind": "direct", "path": "Blackmagic_RAW_SDK_Windows_arm64_6.0.0.tar.gz"},
     ),
-    "Blackmagic_RAW_SDK_Linux_5.0.0.tar.gz": (
-        {"kind": "direct", "path": "Blackmagic_RAW_SDK_Linux_5.0.0.tar.gz"},
-        {"kind": "direct", "path": "Blackmagic_RAW_SDK_Linux.tar.gz"},
+    "Blackmagic_RAW_SDK_Windows_6.0.0.tar.gz": (
+        {"kind": "direct", "path": "Blackmagic_RAW_SDK_Windows_6.0.0.tar.gz"},
     ),
-    "RED_SDK_Windows_9.2.0.tar.gz": (
-        {"kind": "direct", "path": "RED_SDK_Windows_9.2.0.tar.gz"},
-        {"kind": "direct", "path": "RED_SDK_Windows.tar.gz"},
+    "Blackmagic_RAW_SDK_MacOS_6.0.0.tar.gz": (
+        {"kind": "direct", "path": "Blackmagic_RAW_SDK_MacOS_6.0.0.tar.gz"},
     ),
-    "RED_SDK_MacOS_9.2.0.tar.gz": (
-        {"kind": "direct", "path": "RED_SDK_MacOS_9.2.0.tar.gz"},
-        {"kind": "direct", "path": "RED_SDK_MacOS.tar.gz"},
+    "Blackmagic_RAW_SDK_Linux_6.0.0.tar.gz": (
+        {"kind": "direct", "path": "Blackmagic_RAW_SDK_Linux_6.0.0.tar.gz"},
     ),
-    "RED_SDK_Linux_9.2.0.tar.gz": (
-        {"kind": "direct", "path": "RED_SDK_Linux_9.2.0.tar.gz"},
-        {"kind": "direct", "path": "RED_SDK_Linux.tar.gz"},
+    "RED_SDK_Windows_9.2.1.tar.gz": (
+        {"kind": "direct", "path": "RED_SDK_Windows_9.2.1.tar.gz"},
+    ),
+    "RED_SDK_MacOS_9.2.1.tar.gz": (
+        {"kind": "direct", "path": "RED_SDK_MacOS_9.2.1.tar.gz"},
+    ),
+    "RED_SDK_Linux_9.2.1.tar.gz": (
+        {"kind": "direct", "path": "RED_SDK_Linux_9.2.1.tar.gz"},
     ),
 }
 
@@ -1503,7 +1505,7 @@ def download_sdk_assets(
     sdk_base = normalize_base_url(sdk_base, DEFAULT_SDK_BASE, "sdk base URL")
     for filename in SDK_FILENAMES:
         destination = temp_root / "sdk" / filename
-        # SDK filenames carry their version (e.g. *_5.0.0.tar.gz), so once
+        # SDK filenames carry their version (e.g. *_6.0.0.tar.gz), so once
         # we've downloaded a copy that matches the expected base+name, it
         # never needs to be redownloaded for subsequent publish runs. Cache
         # key includes sdk_base so a base URL change does force re-fetch.

@@ -268,7 +268,9 @@ fn main() {
     } else if target_os == "ios" {
         println!("cargo:rerun-if-changed=src/rendering/apple_analysis_decoder_ios.cpp");
         println!("cargo:rerun-if-env-changed=MDK_SDK");
-        let sdk = env::var("MDK_SDK").unwrap_or_else(|_| "ext/mdk-sdk-ios".into());
+        let sdk = env::var("DEP_MDK_SDK_PATH")
+            .or_else(|_| env::var("MDK_SDK"))
+            .expect("qml-video-rs must provide the validated iOS MDK SDK path");
         let include = Path::new(&sdk).join("include");
         assert!(include.join("mdk/Player.h").exists(), "Set MDK_SDK to the iOS SDK containing include/mdk/Player.h");
         cc::Build::new()

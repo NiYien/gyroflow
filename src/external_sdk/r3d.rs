@@ -7,14 +7,19 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::SeqCst;
 pub struct REDSdk {}
 
-const REQUIRED_RUNTIME_VERSION_PREFIX: &[u8] = b"9.2.0-";
+const REQUIRED_RUNTIME_VERSION_PREFIX: &[u8] = b"9.2.1-";
 
 impl REDSdk {
     pub fn is_installed() -> bool {
         if let Ok(path) = super::SDK_PATH.as_ref() {
             let mut path = path.clone();
             path.push("_");
-            if cfg!(target_os = "windows") {
+            if cfg!(all(target_os = "windows", target_arch = "aarch64")) {
+                return Self::all_runtime_files_supported(&[
+                    path.with_file_name("REDR3D-a64.dll"),
+                    path.with_file_name("REDOpenCL-a64.dll"),
+                ]);
+            } else if cfg!(target_os = "windows") {
                 return Self::all_runtime_files_supported(&[
                     path.with_file_name("REDDecoder-x64.dll"),
                     path.with_file_name("REDR3D-x64.dll"),
@@ -43,12 +48,14 @@ impl REDSdk {
     }
 
     pub fn get_download_url(sdk_base: &str) -> Option<String> {
-        let filename = if cfg!(target_os = "windows") {
-            "RED_SDK_Windows_9.2.0.tar.gz"
+        let filename = if cfg!(all(target_os = "windows", target_arch = "aarch64")) {
+            "RED_SDK_Windows_arm64_9.2.1.tar.gz"
+        } else if cfg!(target_os = "windows") {
+            "RED_SDK_Windows_9.2.1.tar.gz"
         } else if cfg!(target_os = "macos") {
-            "RED_SDK_MacOS_9.2.0.tar.gz"
+            "RED_SDK_MacOS_9.2.1.tar.gz"
         } else if cfg!(target_os = "linux") {
-            "RED_SDK_Linux_9.2.0.tar.gz"
+            "RED_SDK_Linux_9.2.1.tar.gz"
         } else {
             return None;
         };
@@ -216,6 +223,9 @@ mod tests {
     #[test]
     fn red_runtime_version_accepts_only_required_major_minor_patch() {
         assert!(REDSdk::is_supported_runtime_version(
+            b"9.2.1-7058969 (20260608 Wx64S)"
+        ));
+        assert!(!REDSdk::is_supported_runtime_version(
             b"9.2.0-b822452 (20260226 Wx64S)"
         ));
         assert!(!REDSdk::is_supported_runtime_version(

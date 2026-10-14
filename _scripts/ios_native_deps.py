@@ -9,12 +9,14 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import install_mdk_sdk
 
 ROOT = Path(__file__).resolve().parents[1]
-MDK_URL = "https://github.com/wang-bin/mdk-sdk/releases/download/v0.38.0/mdk-sdk-iOS.tar.xz"
-MDK_SHA256 = "8df01971556dfca0a0bf2434f4c7012d3ae6f3263041faa28d3d30df27c5cf3e"
-BRAW_ARCHIVE = "Blackmagic_RAW_SDK_iOS_5.0.0.tar.gz"
-BRAW_SHA256 = "79c3746843fa8d6ffe34a99de6267307e3170f43acaa6a968c6979d2a1224c2b"
+MDK_PACKAGE = install_mdk_sdk.manifest()['platforms']['ios']
+MDK_URL = install_mdk_sdk.DEFAULT_SDK_BASE + '/' + MDK_PACKAGE['archive']
+MDK_SHA256 = MDK_PACKAGE['sha256']
+BRAW_ARCHIVE = "Blackmagic_RAW_SDK_iOS_6.0.0.tar.gz"
+BRAW_SHA256 = "66d484a019384798eae70a9ff36b0f5a71b54a544da3da73a89c3c5590a4f91e"
 BRAW_FRAMEWORKS = ("BlackmagicRawAPI", "DecoderMetal")
 
 
@@ -46,7 +48,7 @@ def install_archive(url, digest, destination, subdirectory="", downloader=downlo
 
 def mdk_directory(root=ROOT, environment=None):
     environment = os.environ if environment is None else environment
-    return Path(environment.get("MDK_SDK") or root / "ext/mdk-sdk-ios").resolve()
+    return Path(environment.get("MDK_SDK") or root / "ext/mdk-sdk-ios-0.39.0-db3d7ac").resolve()
 
 
 def mdk_framework(sdk):
@@ -56,8 +58,9 @@ def mdk_framework(sdk):
     if not (framework / "mdk").is_file() or not (framework / "Info.plist").is_file():
         raise ValueError(f"Missing iOS device MDK framework in {sdk}; run just ios install-deps")
     info = plistlib.loads((framework / "Info.plist").read_bytes())
-    if info.get("CFBundleVersion") != "0.38.0":
-        raise ValueError(f"Expected the validated MDK 0.38.0 SDK in {sdk}")
+    if info.get("CFBundleVersion") != "0.39.0":
+        raise ValueError(f"Expected the validated MDK 0.39.0 SDK in {sdk}")
+    install_mdk_sdk.validate(sdk, MDK_PACKAGE)
     return framework
 
 
@@ -76,7 +79,7 @@ def prepare_mdk(sdk):
 
 
 def braw_directory(root=ROOT):
-    return root / "ext/braw-sdk-ios-5.0.0"
+    return root / "ext/braw-sdk-ios-6.0.0"
 
 
 def runtime_frameworks(root=ROOT, environment=None):
@@ -94,8 +97,9 @@ def install(root=ROOT, environment=None, downloader=download):
     if not sdk.exists():
         if environment.get("MDK_SDK"):
             raise ValueError(f"Explicit MDK_SDK does not exist: {sdk}")
-        install_archive(MDK_URL, MDK_SHA256, sdk, "mdk-sdk", downloader)
-    # Keep existing local SDKs; CI installs the pinned archive on a cache miss.
+        base = environment.get("SDK_BASE") or install_mdk_sdk.DEFAULT_SDK_BASE
+        install_archive(base.rstrip('/') + '/' + MDK_PACKAGE['archive'], MDK_SHA256, sdk, "mdk-sdk", downloader)
+    # Reuse only the exact snapshot whose bundled reader supports BRAW 6.
     prepare_mdk(sdk)
     braw = braw_directory(root)
     if not braw.exists():

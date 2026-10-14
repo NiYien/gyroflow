@@ -12,8 +12,8 @@ DEST = ROOT / 'ext' / 'crm'
 PACKAGES = [
     ('LibRaw-0.22.2-Win64.zip', 'https://www.libraw.org/data/LibRaw-0.22.2-Win64.zip',
      'ac64fa12bb00a7581332d4c6ab918c0533fb3f119d6b668d47a6875410dca948', 'LibRaw-0.22.2/libraw/libraw.h'),
-    ('mdk-abi-sdk-0.36.zip', 'https://github.com/wang-bin/mdk-sdk/releases/download/v0.36.0/mdk-abi-sdk.zip',
-     '259de2bd9326c19d7b277cea210f99daaa7a4fc2251711748f04e61402308e86', 'include/abi/mdk/VideoDecoder.h'),
+    ('mdk-abi-sdk-0.39.zip', 'https://github.com/wang-bin/mdk-sdk/releases/download/v0.39.0/mdk-abi-sdk.zip',
+     '7cfad8f4d64db926176becfab4918df65e90647aae5348e67e6fbd73dd13364d', 'include/abi/mdk/VideoDecoder.h'),
 ]
 
 

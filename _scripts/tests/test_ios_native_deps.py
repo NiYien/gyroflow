@@ -24,7 +24,7 @@ class IOSNativeDependenciesTests(unittest.TestCase):
         self.sdk_files = {
             'mdk-sdk/lib/mdk.xcframework/ios-arm64/mdk.framework/mdk': b'device mdk',
             'mdk-sdk/lib/mdk.xcframework/ios-arm64/mdk.framework/Info.plist':
-                plistlib.dumps({'CFBundleVersion': '0.38.0'}),
+                plistlib.dumps({'CFBundleVersion': '0.39.0'}),
             'mdk-sdk/lib/mdk.xcframework/ios-arm64/mdk.framework/Headers/Player.h': b'public header',
             'mdk-sdk/lib/mdk.xcframework/ios-arm64/mdk.framework/Headers/c/Player.h': b'C header',
             'mdk-sdk/lib/mdk.xcframework/ios-arm64/mdk.framework/_CodeSignature/CodeResources': b'old signature',
@@ -33,10 +33,18 @@ class IOSNativeDependenciesTests(unittest.TestCase):
         self.braw_files = {}
         for name in deps.BRAW_FRAMEWORKS:
             self.braw_files[f'{name}.framework/{name}'] = name.encode()
-            self.braw_files[f'{name}.framework/Info.plist'] = plistlib.dumps({'CFBundleVersion': '5.0'})
+            self.braw_files[f'{name}.framework/Info.plist'] = plistlib.dumps({'CFBundleVersion': '6.0'})
         self.mdk_archive = self.archive(self.sdk_files)
         self.braw_archive = self.archive(self.braw_files)
         self.downloader = Mock(side_effect=self.download)
+        package = dict(deps.MDK_PACKAGE)
+        package['runtime_sha256'] = {
+            'lib/mdk.xcframework/ios-arm64/mdk.framework/mdk':
+                hashlib.sha256(b'device mdk').hexdigest(),
+        }
+        pin = patch.object(deps, 'MDK_PACKAGE', package)
+        pin.start()
+        self.addCleanup(pin.stop)
         for name, value in [('MDK_SHA256', self.mdk_archive), ('BRAW_SHA256', self.braw_archive)]:
             patcher = patch.object(deps, name, hashlib.sha256(value).hexdigest())
             patcher.start()
@@ -72,11 +80,17 @@ class IOSNativeDependenciesTests(unittest.TestCase):
     def test_warm_install_does_not_download_or_replace_local_sdk(self):
         sdk = self.install()
         binary = deps.mdk_framework(sdk) / 'mdk'
-        binary.write_bytes(b'existing authorized SDK')
         self.downloader.reset_mock()
         self.assertEqual(self.install(), sdk)
         self.downloader.assert_not_called()
-        self.assertEqual(binary.read_bytes(), b'existing authorized SDK')
+        self.assertEqual(binary.read_bytes(), b'device mdk')
+
+    def test_same_version_old_mdk_reader_cannot_be_packaged_with_braw6(self):
+        sdk = self.install()
+        binary = deps.mdk_framework(sdk) / 'mdk'
+        binary.write_bytes(b'0.39.0 release with the old BRAW reader')
+        with self.assertRaisesRegex(ValueError, 'does not match the BRAW 6 pin'):
+            deps.runtime_frameworks(self.root, {})
 
     def test_packaging_works_without_cargo_frameworks_after_cache_cleanup(self):
         self.install()
@@ -115,14 +129,14 @@ class IOSNativeDependenciesTests(unittest.TestCase):
         with patch.object(deps, 'MDK_SHA256', '0' * 64):
             with self.assertRaisesRegex(ValueError, 'checksum'):
                 self.install()
-        self.assertFalse((self.root / 'ext/mdk-sdk-ios').exists())
+        self.assertFalse((self.root / 'ext/mdk-sdk-ios-0.39.0-db3d7ac').exists())
 
     def test_unsafe_archive_is_rejected_before_extraction(self):
         self.mdk_archive = self.archive({'../escape': b'invalid'})
         with patch.object(deps, 'MDK_SHA256', hashlib.sha256(self.mdk_archive).hexdigest()):
             with self.assertRaisesRegex(ValueError, 'archive entry'):
                 self.install()
-        self.assertFalse((self.root / 'ext/mdk-sdk-ios').exists())
+        self.assertFalse((self.root / 'ext/mdk-sdk-ios-0.39.0-db3d7ac').exists())
 
     def test_missing_braw_is_detected_before_creating_app_frameworks(self):
         self.install()

@@ -473,27 +473,39 @@ class PluginBundleSelectionTests(unittest.TestCase):
 
         self.assertEqual(args.plugins_run_id, 0)
 
-    def test_publish_default_sdk_base_uses_niyien_mirror_and_keeps_six_assets(self):
+    def test_raw_sdk_downloads_never_fall_back_to_an_unversioned_old_runtime(self):
+        for family, version in (("Blackmagic_RAW", "6.0.0"), ("RED", "9.2.1")):
+            for platform in ("Windows", "Windows_arm64", "MacOS", "Linux"):
+                name = f"{family}_SDK_{platform}_{version}.tar.gz"
+                candidates = publish_module.build_sdk_download_candidates(
+                    name, publish_module.DEFAULT_SDK_BASE,
+                )
+                self.assertEqual(len(candidates), 1)
+                self.assertEqual(candidates[0]["url"], publish_module.DEFAULT_SDK_BASE + "/" + name)
+
+    def test_publish_default_sdk_base_uses_niyien_mirror_and_includes_windows_arm64(self):
         self.assertEqual(publish_module.DEFAULT_SDK_BASE, "https://www.niyien.com/api/sdk")
         self.assertEqual(
             publish_module.SDK_FILENAMES,
             (
-                "Blackmagic_RAW_SDK_Windows_5.0.0.tar.gz",
-                "Blackmagic_RAW_SDK_MacOS_5.0.0.tar.gz",
-                "Blackmagic_RAW_SDK_Linux_5.0.0.tar.gz",
-                "RED_SDK_Windows_9.2.0.tar.gz",
-                "RED_SDK_MacOS_9.2.0.tar.gz",
-                "RED_SDK_Linux_9.2.0.tar.gz",
+                "Blackmagic_RAW_SDK_Windows_6.0.0.tar.gz",
+                "Blackmagic_RAW_SDK_Windows_arm64_6.0.0.tar.gz",
+                "Blackmagic_RAW_SDK_MacOS_6.0.0.tar.gz",
+                "Blackmagic_RAW_SDK_Linux_6.0.0.tar.gz",
+                "RED_SDK_Windows_9.2.1.tar.gz",
+                "RED_SDK_Windows_arm64_9.2.1.tar.gz",
+                "RED_SDK_MacOS_9.2.1.tar.gz",
+                "RED_SDK_Linux_9.2.1.tar.gz",
             ),
         )
         candidates = publish_module.build_sdk_download_candidates(
-            "RED_SDK_Windows_9.2.0.tar.gz",
+            "RED_SDK_Windows_9.2.1.tar.gz",
             publish_module.DEFAULT_SDK_BASE,
         )
 
         self.assertEqual(
             candidates[0]["url"],
-            "https://www.niyien.com/api/sdk/RED_SDK_Windows_9.2.0.tar.gz",
+            "https://www.niyien.com/api/sdk/RED_SDK_Windows_9.2.1.tar.gz",
         )
 
     def test_control_center_latest_resource_tags_default_sdk_base_uses_niyien_mirror(self):

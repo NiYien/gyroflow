@@ -11,6 +11,7 @@ pub fn build(target_os: &str) {
     let root = Path::new("ext/crm");
     if !root.join("LibRaw-0.22.2/libraw/libraw.h").exists()
         || !root.join("include/abi/mdk/VideoDecoder.h").exists()
+        || !root.join("mdk-abi-sdk-0.39.zip.verified").exists()
     {
         let python = env::var("PYTHON").unwrap_or_else(|_| {
             if target_os == "windows" {

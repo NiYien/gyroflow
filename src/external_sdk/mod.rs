@@ -199,20 +199,25 @@ mod tests {
     fn empty_sdk_base_uses_niyien_mirror_for_braw() {
         let url = super::braw::BrawSdk::get_download_url("").unwrap();
 
-        if cfg!(target_os = "windows") {
+        if cfg!(all(target_os = "windows", target_arch = "aarch64")) {
             assert_eq!(
                 url,
-                "https://www.niyien.com/api/sdk/Blackmagic_RAW_SDK_Windows_5.0.0.tar.gz"
+                "https://www.niyien.com/api/sdk/Blackmagic_RAW_SDK_Windows_arm64_6.0.0.tar.gz"
+            );
+        } else if cfg!(target_os = "windows") {
+            assert_eq!(
+                url,
+                "https://www.niyien.com/api/sdk/Blackmagic_RAW_SDK_Windows_6.0.0.tar.gz"
             );
         } else if cfg!(target_os = "macos") {
             assert_eq!(
                 url,
-                "https://www.niyien.com/api/sdk/Blackmagic_RAW_SDK_MacOS_5.0.0.tar.gz"
+                "https://www.niyien.com/api/sdk/Blackmagic_RAW_SDK_MacOS_6.0.0.tar.gz"
             );
         } else if cfg!(target_os = "linux") {
             assert_eq!(
                 url,
-                "https://www.niyien.com/api/sdk/Blackmagic_RAW_SDK_Linux_5.0.0.tar.gz"
+                "https://www.niyien.com/api/sdk/Blackmagic_RAW_SDK_Linux_6.0.0.tar.gz"
             );
         }
     }
@@ -221,20 +226,25 @@ mod tests {
     fn empty_sdk_base_uses_niyien_mirror_for_red() {
         let url = super::r3d::REDSdk::get_download_url("").unwrap();
 
-        if cfg!(target_os = "windows") {
+        if cfg!(all(target_os = "windows", target_arch = "aarch64")) {
             assert_eq!(
                 url,
-                "https://www.niyien.com/api/sdk/RED_SDK_Windows_9.2.0.tar.gz"
+                "https://www.niyien.com/api/sdk/RED_SDK_Windows_arm64_9.2.1.tar.gz"
+            );
+        } else if cfg!(target_os = "windows") {
+            assert_eq!(
+                url,
+                "https://www.niyien.com/api/sdk/RED_SDK_Windows_9.2.1.tar.gz"
             );
         } else if cfg!(target_os = "macos") {
             assert_eq!(
                 url,
-                "https://www.niyien.com/api/sdk/RED_SDK_MacOS_9.2.0.tar.gz"
+                "https://www.niyien.com/api/sdk/RED_SDK_MacOS_9.2.1.tar.gz"
             );
         } else if cfg!(target_os = "linux") {
             assert_eq!(
                 url,
-                "https://www.niyien.com/api/sdk/RED_SDK_Linux_9.2.0.tar.gz"
+                "https://www.niyien.com/api/sdk/RED_SDK_Linux_9.2.1.tar.gz"
             );
         }
     }

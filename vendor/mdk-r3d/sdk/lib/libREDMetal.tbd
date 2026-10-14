@@ -1,0 +1,21 @@
+--- !tapi-tbd
+tbd-version:     4
+targets:         [ x86_64-macos, arm64-macos ]
+flags:           [ not_app_extension_safe ]
+install-name:    '@rpath/REDMetal.dylib'
+current-version: 0
+compatibility-version: 0
+exports:
+  - targets:         [ x86_64-macos, arm64-macos ]
+    symbols:         [ _RED_LIB_BUILD_NAME, _RED_LIB_FINALIZE, _RED_LIB_ID, _RED_LIB_INITIALIZE,
+                       _RED_LIB_MAJOR_VERSION, _RED_LIB_MINOR_VERSION, _RED_LIB_PATCH_VERSION,
+                       _RED_MINIMUM_MAJOR_VERSION, _RED_MINIMUM_MINOR_VERSION, _RED_MINIMUM_PATCH_VERSION,
+                       _RED_STATICLIB_BUILD_NAME, _RED_STATICLIB_MAJOR_VERSION, _RED_STATICLIB_MINOR_VERSION,
+                       _RED_STATICLIB_PATCH_VERSION, _f2ae38ecf1fdbfd21bbc46d77b216232f,
+                       _f4ae49d3f0dd0773b2f77da75c6229c4b, _f51a49e8872818fbdbf138e7e557c12eb,
+                       _f615a534f9a50444aaab4a4b2ab4f38c8, _f66decdc7725db7c28336bf803cc16ec5,
+                       _f97641f7ee0db9c1c163931c58a217ecf, _f9978148f920e78e9b72a987cb465e827,
+                       _f9ab321dba7d833c81482dfdce17385a8, _fc6010ca4fc7822bbad87cd98c1945666,
+                       _fdeb671b73f56d4cf9929bde07c2fee06, _fdfd722fbbf87029ac1c2478c8b641434,
+                       _ff9cf6f79b9b1725cdc4e7125025260bd ]
+...

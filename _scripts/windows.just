@@ -464,6 +464,7 @@ deploy:
     del "$TargetDir\opencv_*videoio*"
 
     # Copy Gyroflow
+    Copy-Item -LiteralPath "$CargoTarget\ffmpeg-9.dll" -Destination "$TargetDir\" -ErrorAction Stop
     xcopy /Y "$CargoTarget\mdk.dll"                                      "$TargetDir\"
     xcopy /Y "$CargoTarget\mdk-braw.dll"                                 "$TargetDir\"
     xcopy /Y "$CargoTarget\mdk-r3d.dll"                                  "$TargetDir\"
@@ -506,20 +507,24 @@ deploy:
     # Bundle BRAW and RED SDK so users don't hit a runtime download.
     # Mirrors upstream gyroflow `_scripts/windows.just::bundle`; placed before
     # the zip step here so the SDK DLLs ship inside the release archive.
-    if ("{{Arch}}" -eq "x86_64") {
-        if (-not (Test-Path -Path "$TargetDir\REDR3D-x64.dll")) {
-            Invoke-WebRequest -URI "$Env:SDK_BASE/RED_SDK_Windows_9.2.0.tar.gz" -OutFile tmp.tar.gz
-            7z x -aoa tmp.tar.gz
-            7z x -aoa -o"$TargetDir" tmp.tar
-            Remove-Item tmp.tar.gz, tmp.tar -Force
-        }
-        if (-not (Test-Path -Path "$TargetDir\BlackmagicRawAPI.dll")) {
-            Invoke-WebRequest -URI "$Env:SDK_BASE/Blackmagic_RAW_SDK_Windows_5.0.0.tar.gz" -OutFile tmp.tar.gz
-            7z x -aoa tmp.tar.gz
-            7z x -aoa -o"$TargetDir" tmp.tar
-            Remove-Item tmp.tar.gz, tmp.tar -Force
-        }
-    }
+    # Refresh RED on every package build so staging cannot retain an older SDK.
+    if (-not $Env:SDK_BASE) { $Env:SDK_BASE = "https://www.niyien.com/api/sdk" }
+    $RedArchive = if ("{{Arch}}" -eq "aarch64") { "RED_SDK_Windows_arm64_9.2.1.tar.gz" } else { "RED_SDK_Windows_9.2.1.tar.gz" }
+    Invoke-WebRequest -URI "$Env:SDK_BASE/$RedArchive" -OutFile tmp.tar.gz
+    7z x -aoa tmp.tar.gz
+    if ($LASTEXITCODE -ne 0) { throw "Failed to unpack RED gzip" }
+    7z x -aoa -o"$TargetDir" tmp.tar
+    if ($LASTEXITCODE -ne 0) { throw "Failed to unpack RED runtime" }
+    Remove-Item tmp.tar.gz, tmp.tar -Force
+    # Refresh BRAW on every package build so staging cannot retain the old ABI.
+    if (-not $Env:SDK_BASE) { $Env:SDK_BASE = "https://www.niyien.com/api/sdk" }
+    $BrawArchive = if ("{{Arch}}" -eq "aarch64") { "Blackmagic_RAW_SDK_Windows_arm64_6.0.0.tar.gz" } else { "Blackmagic_RAW_SDK_Windows_6.0.0.tar.gz" }
+    Invoke-WebRequest -URI "$Env:SDK_BASE/$BrawArchive" -OutFile tmp.tar.gz
+    7z x -aoa tmp.tar.gz
+    if ($LASTEXITCODE -ne 0) { throw "Failed to unpack BRAW gzip" }
+    7z x -aoa -o"$TargetDir" tmp.tar
+    if ($LASTEXITCODE -ne 0) { throw "Failed to unpack BRAW runtime" }
+    Remove-Item tmp.tar.gz, tmp.tar -Force
 
     $PackageName = "{{ArtifactPrefix}}-{{NameSuffix}}.zip"
     $PackagePath = "$ProjectDir\_deployment\_binaries\$PackageName"
@@ -607,21 +612,24 @@ bundle:
     }
 
     # Bundle BRAW and RED SDK
-    if ("{{Arch}}" -eq "x86_64") {
-        if (-not $Env:SDK_BASE) { $Env:SDK_BASE = "https://www.niyien.com/api/sdk" }
-        if (-not (Test-Path -Path "$TargetDir\REDR3D-x64.dll")) {
-            Invoke-WebRequest -URI "$Env:SDK_BASE/RED_SDK_Windows_9.2.0.tar.gz" -OutFile tmp.tar.gz
-            7z x tmp.tar.gz
-            7z x -o"$TargetDir\" tmp.tar
-            Remove-Item -Path tmp.ta* -Force
-        }
-        if (-not (Test-Path -Path "$TargetDir\BlackmagicRawAPI.dll")) {
-            Invoke-WebRequest -URI "$Env:SDK_BASE/Blackmagic_RAW_SDK_Windows_5.0.0.tar.gz" -OutFile tmp.tar.gz
-            7z x tmp.tar.gz
-            7z x -o"$TargetDir\" tmp.tar
-            Remove-Item -Path tmp.ta* -Force
-        }
-    }
+    # Refresh RED on every package build so staging cannot retain an older SDK.
+    if (-not $Env:SDK_BASE) { $Env:SDK_BASE = "https://www.niyien.com/api/sdk" }
+    $RedArchive = if ("{{Arch}}" -eq "aarch64") { "RED_SDK_Windows_arm64_9.2.1.tar.gz" } else { "RED_SDK_Windows_9.2.1.tar.gz" }
+    Invoke-WebRequest -URI "$Env:SDK_BASE/$RedArchive" -OutFile tmp.tar.gz
+    7z x -aoa tmp.tar.gz
+    if ($LASTEXITCODE -ne 0) { throw "Failed to unpack RED gzip" }
+    7z x -aoa -o"$TargetDir" tmp.tar
+    if ($LASTEXITCODE -ne 0) { throw "Failed to unpack RED runtime" }
+    Remove-Item tmp.tar.gz, tmp.tar -Force
+    # Refresh BRAW on every package build so staging cannot retain the old ABI.
+    if (-not $Env:SDK_BASE) { $Env:SDK_BASE = "https://www.niyien.com/api/sdk" }
+    $BrawArchive = if ("{{Arch}}" -eq "aarch64") { "Blackmagic_RAW_SDK_Windows_arm64_6.0.0.tar.gz" } else { "Blackmagic_RAW_SDK_Windows_6.0.0.tar.gz" }
+    Invoke-WebRequest -URI "$Env:SDK_BASE/$BrawArchive" -OutFile tmp.tar.gz
+    7z x -aoa tmp.tar.gz
+    if ($LASTEXITCODE -ne 0) { throw "Failed to unpack BRAW gzip" }
+    7z x -aoa -o"$TargetDir\" tmp.tar
+    if ($LASTEXITCODE -ne 0) { throw "Failed to unpack BRAW runtime" }
+    Remove-Item tmp.tar.gz, tmp.tar -Force
 
     # Generate self-signed key
     # $cert = New-SelfSignedCertificate -Subject "CN=10F1B828-8298-48D5-8164-662492DBDECB" -DnsName 29160AdrianRoss.Gyroflow -Type CodeSigning -CertStoreLocation Cert:\CurrentUser\My
