@@ -9,6 +9,8 @@ mod imu_transforms;
 mod sony;
 #[cfg(test)]
 mod output_dimensions_tests;
+#[cfg(test)]
+mod sony_braw_tests;
 pub mod splines;
 pub mod optical_correction;
 pub mod optical_translation;
@@ -949,6 +951,9 @@ impl GyroSource {
                         }
                     }
                     if let Some(im) = tag_map.get(&GroupId::Imager) {
+                        if let Some(estimated) = im.get_t(TagId::Custom("readout_estimated".into())) as Option<&bool> {
+                            additional_data["readout_estimated"] = (*estimated).into();
+                        }
                         if input.camera_type() == "RED" {
                             lens_info.capture_area_size = Some((size.0 as f32, size.1 as f32));
                         }
@@ -1240,6 +1245,18 @@ impl GyroSource {
                             if let Some(v) = map.get(&TagId::FocalLength) {
                                 settings.insert(
                                     String::from("Focal length"),
+                                    v.value.to_string().into(),
+                                );
+                            }
+                            if let Some(v) = map.get(&TagId::LensZoom35mm) {
+                                settings.insert(
+                                    String::from("Focal length (35mm equivalent)"),
+                                    v.value.to_string().into(),
+                                );
+                            }
+                            if let Some(v) = map.get(&TagId::FocusDistance) {
+                                settings.insert(
+                                    String::from("Focus distance"),
                                     v.value.to_string().into(),
                                 );
                             }

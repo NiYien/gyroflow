@@ -55,6 +55,8 @@ MenuItem {
         QT_TRANSLATE_NOOP("TableList", "White balance");
         QT_TRANSLATE_NOOP("TableList", "Iris");
         QT_TRANSLATE_NOOP("TableList", "Focal length");
+        QT_TRANSLATE_NOOP("TableList", "Focal length (35mm equivalent)");
+        QT_TRANSLATE_NOOP("TableList", "Focus distance");
         QT_TRANSLATE_NOOP("TableList", "Focus mode");
         QT_TRANSLATE_NOOP("TableList", "Image stabilization");
         // Image stabilization value toggles — translated by TableList's qsTr at display time.

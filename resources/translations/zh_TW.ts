@@ -5683,6 +5683,14 @@ Needs some camera shake; very smooth motion may produce no sync points.</source>
         <translation>焦距</translation>
     </message>
     <message>
+        <source>Focal length (35mm equivalent)</source>
+        <translation>35mm 等效焦距</translation>
+    </message>
+    <message>
+        <source>Focus distance</source>
+        <translation>對焦距離</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/LensProfile.qml" line="157"/>
         <source>Crop factor</source>
         <translation>裁切因子</translation>
