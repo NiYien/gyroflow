@@ -94,8 +94,22 @@ QString MDKPlayer::defaultVideoDecoders() const {
     return names.join(',');
 }
 
+void MDKPlayer::captureSourceVideoInfo(const std::shared_ptr<SourceVideoInfo> &source, const MediaInfo &info) {
+    if (info.video.empty() || source->ready.load(std::memory_order_acquire)) return;
+    std::lock_guard<std::mutex> lock(source->mutex);
+    if (source->ready.load(std::memory_order_relaxed)) return;
+    const auto &video = info.video[0];
+    source->duration = video.duration;
+    source->fps = video.codec.frame_rate;
+    source->frames = video.frames;
+    source->width = video.codec.width;
+    source->height = video.codec.height;
+    source->ready.store(true, std::memory_order_release);
+}
+
 void MDKPlayer::initPlayer() {
     m_player = std::make_unique<mdk::Player>();
+    m_sourceVideoInfo = std::make_shared<SourceVideoInfo>();
     m_metadata = QJsonObject();
     m_shuttingDown = false;
 
@@ -257,10 +271,16 @@ void MDKPlayer::setUrl(const QUrl &url, const QString &customDecoder) {
     m_player->setMedia(qUtf8Printable(path));
 #if (_WIN32+0)
     auto player = m_player.get();
+    const auto sourceInfo = m_sourceVideoInfo;
     // Called once the stream info is known and before the video decoder is created.
-    m_player->prepare(0, [this, player](int64_t position, bool *) {
-        if (position < 0 || !m_autoSoftwareDecoders.load()) return true;
+    m_player->prepare(0, [this, player, sourceInfo](int64_t position, bool *) {
+        qDebug2("prepare") << "position:" << position << "source info ready:" << sourceInfo->ready.load();
+        if (position < 0) return true;
         const auto &info = player->mediaInfo();
+        // RAW decoders may replace codec dimensions with their scaled output.
+        // Keep the source properties before decoding, separately for each player.
+        captureSourceVideoInfo(sourceInfo, info);
+        if (!m_autoSoftwareDecoders.load()) return true;
         if (!info.video.empty() && !hardwareDecoderSupports(info.video[0].codec)) {
             player->setDecoders(mdk::MediaType::Video, {"FFmpeg"});
             qDebug2("setUrl") << "Software decoder selected for" << info.video[0].codec.codec << info.video[0].codec.format_name;
@@ -314,6 +334,7 @@ void MDKPlayer::setReadyForProcessingCallback(ReadyForProcessingCb &&cb) {
 
 void MDKPlayer::setupPlayer() {
     auto player = m_player.get();
+    const auto sourceInfo = m_sourceVideoInfo;
 #if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_ARM_64)
     // OpenAL rejects queued audio buffers after RAW seeks and loops on macOS.
     if (m_isR3dFormat) m_player->setAudioBackends({"AudioQueue"});
@@ -329,10 +350,13 @@ void MDKPlayer::setupPlayer() {
     for (auto it = m_defaultProperties.constBegin(); it != m_defaultProperties.constEnd(); ++it) {
         setProperty(it.key(), it.value());
     }
-    m_player->onEvent([this, player](const mdk::MediaEvent &evt) -> bool {
+    m_player->onEvent([this, player, sourceInfo](const mdk::MediaEvent &evt) -> bool {
         if (m_player.get() != player) return false;
         if (evt.category == "metadata") {
             auto md = player->mediaInfo();
+#if (_WIN32+0)
+            captureSourceVideoInfo(sourceInfo, md);
+#endif
             QJsonObject obj;
             for (const auto &x : getMediaInfo(md)) {
                 obj.insert(QString::fromUtf8(x.first.c_str(), x.first.size()), QString::fromUtf8(x.second.c_str(), x.second.size()));
@@ -340,7 +364,34 @@ void MDKPlayer::setupPlayer() {
             m_metadata = obj;
         }
         if (evt.detail == "size") {
-            QMetaObject::invokeMethod(m_item, "metadataLoaded", Qt::QueuedConnection, Q_ARG(QJsonObject, m_metadata));
+            // A size event can arrive before Prepared publishes the new clip's
+            // properties. Deliver those properties and completion together so
+            // QML cannot initialize this clip with the previous clip's values.
+            if (sourceInfo->ready.load(std::memory_order_acquire)) {
+                auto frames = sourceInfo->frames;
+                if (!frames && sourceInfo->duration > 0 && sourceInfo->fps > 0)
+                    frames = sourceInfo->duration / 1000.0 * sourceInfo->fps;
+                m_fps = sourceInfo->fps;
+                m_duration = sourceInfo->duration;
+                double fps = m_fps;
+                if (m_overrideFps > 0.0) {
+                    m_duration *= m_fps / m_overrideFps;
+                    fps = m_overrideFps;
+                }
+                const auto duration = m_duration;
+                const auto width = sourceInfo->width;
+                const auto height = sourceInfo->height;
+                const auto metadata = m_metadata;
+                QMetaObject::invokeMethod(m_item, [this, player, duration, frames, fps, width, height, metadata] {
+                    if (m_shuttingDown.load() || m_player.get() != player) return;
+                    QMetaObject::invokeMethod(m_item, "videoLoaded", Qt::DirectConnection,
+                        Q_ARG(double, duration), Q_ARG(qlonglong, frames), Q_ARG(double, fps),
+                        Q_ARG(uint, width), Q_ARG(uint, height));
+                    QMetaObject::invokeMethod(m_item, "metadataLoaded", Qt::DirectConnection, Q_ARG(QJsonObject, metadata));
+                }, Qt::QueuedConnection);
+            } else {
+                QMetaObject::invokeMethod(m_item, "metadataLoaded", Qt::QueuedConnection, Q_ARG(QJsonObject, m_metadata));
+            }
 
             m_firstFrameLoaded = true;
         }
@@ -451,8 +502,12 @@ void MDKPlayer::setupPlayer() {
         QMetaObject::invokeMethod(m_item, "stateChanged", Q_ARG(int, int(state)));
     });
 
-    m_player->onMediaStatusChanged([this, player](mdk::MediaStatus status) -> bool {
+    m_player->onMediaStatusChanged([this, player, sourceInfo](mdk::MediaStatus status) -> bool {
         if (m_player.get() != player) return false;
+#if (_WIN32+0)
+        if ((status & mdk::MediaStatus::Loaded) && !sourceInfo->ready.load(std::memory_order_acquire))
+            captureSourceVideoInfo(sourceInfo, player->mediaInfo());
+#endif
 
         if (status & mdk::MediaStatus::Buffering) {
             QMetaObject::invokeMethod(m_item, "setBuffering", Q_ARG(bool, true));
@@ -494,6 +549,13 @@ void MDKPlayer::setupPlayer() {
 
             if (!md.video.empty()) {
                 auto v = md.video[0];
+                if (sourceInfo->ready.load(std::memory_order_acquire)) {
+                    v.duration = sourceInfo->duration;
+                    v.frames = sourceInfo->frames;
+                    v.codec.frame_rate = sourceInfo->fps;
+                    v.codec.width = sourceInfo->width;
+                    v.codec.height = sourceInfo->height;
+                }
                 if (!v.frames && v.duration > 0 && v.codec.frame_rate > 0) {
                     v.frames = (double(v.duration) / 1000.0) * v.codec.frame_rate;
                 }
@@ -793,7 +855,15 @@ void MDKPlayer::setFrameRate(float fps) {
 void MDKPlayer::seekToTimestamp(float timestampMs, bool exact) {
     if (!m_videoLoaded || !m_player) return;
 
-    m_player->seek(timestampMs, (exact? mdk::SeekFlag::FromStart : mdk::SeekFlag::FromStart | mdk::SeekFlag::KeyFrame) | mdk::SeekFlag::InCache);
+    auto flags = exact ? mdk::SeekFlag::FromStart : mdk::SeekFlag::FromStart | mdk::SeekFlag::KeyFrame;
+#if (_WIN32+0)
+    // RED can retain an earlier paused frame when seeking through MDK's cache
+    // after a loop. Ask its reader to position the local RAW clip directly.
+    if (!m_isR3dFormat) flags = flags | mdk::SeekFlag::InCache;
+#else
+    flags = flags | mdk::SeekFlag::InCache;
+#endif
+    m_player->seek(timestampMs, flags);
     forceRedraw();
 }
 

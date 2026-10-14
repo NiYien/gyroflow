@@ -347,6 +347,10 @@ public:
   }
 
 protected:
+  // Frames leave pending_ in submission order; no MDK reordering is needed.
+  // Define this locally because the Windows MDK DLL does not export the default.
+  int sortFrames() const override { return 0; }
+
   bool processOutput(int timeout = 0) override {
     try {
       return receive(timeout != 0);

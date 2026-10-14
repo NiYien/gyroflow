@@ -137,6 +137,15 @@ private:
     ReadyForProcessingCb m_readyForProcessing;
 
     std::unique_ptr<mdk::Player> m_player;
+    struct SourceVideoInfo {
+        std::atomic<bool> ready{false};
+        std::mutex mutex;
+        double duration{0.0}, fps{0.0};
+        qlonglong frames{0};
+        uint width{0}, height{0};
+    };
+    void captureSourceVideoInfo(const std::shared_ptr<SourceVideoInfo> &source, const MediaInfo &info);
+    std::shared_ptr<SourceVideoInfo> m_sourceVideoInfo;
     std::map<uint64_t, std::unique_ptr<mdk::Player>> m_processingPlayers;
 
     std::atomic<bool> m_videoLoaded{false};

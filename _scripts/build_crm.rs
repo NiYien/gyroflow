@@ -30,6 +30,39 @@ pub fn build(target_os: &str) {
             "CRM source dependency installation failed"
         );
     }
+    let abi_headers = root.join("include/abi");
+    let abi_headers = if target_os == "windows" {
+        // MSVC 14.43 cannot use std::ceil in a constexpr function. Keep the
+        // pinned SDK intact and adapt only the headers used by this build.
+        let headers = Path::new(&env::var("OUT_DIR").unwrap()).join("mdk-abi");
+        for entry in walkdir::WalkDir::new(&abi_headers) {
+            let entry = entry.unwrap();
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let relative = entry.path().strip_prefix(&abi_headers).unwrap();
+            let destination = headers.join(relative);
+            std::fs::create_dir_all(destination.parent().unwrap()).unwrap();
+            if relative == Path::new("mdk/AudioFormat.h") {
+                let original = std::fs::read_to_string(entry.path()).unwrap();
+                let signature = "constexpr int framesForDuration(double duration) const";
+                assert_eq!(
+                    original.matches(signature).count(),
+                    1,
+                    "Review the MDK AudioFormat compatibility fix after an SDK upgrade"
+                );
+                std::fs::write(
+                    destination,
+                    original.replacen(signature, "int framesForDuration(double duration) const", 1),
+                ).unwrap();
+            } else {
+                std::fs::copy(entry.path(), destination).unwrap();
+            }
+        }
+        headers
+    } else {
+        abi_headers
+    };
     let source = root.join("LibRaw-0.22.2");
     let mut raw = cc::Build::new();
     raw.cpp(true)
@@ -71,7 +104,7 @@ pub fn build(target_os: &str) {
     decoder
         .cpp(true)
         .warnings(false)
-        .include(root.join("include/abi"))
+        .include(&abi_headers)
         .include(&source)
         .define("LIBRAW_NODLL", None)
         .file("src/rendering/crm_decoder.cpp");
