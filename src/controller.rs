@@ -2762,6 +2762,7 @@ impl Controller {
             // `Box<dyn FnMut + Send>` bound on onProcessTexture.
             let last_seen_epoch = std::cell::Cell::new(0u64);
             let gpu_epoch_for_render = self.stabilizer.gpu_epoch.clone();
+            let last_preview_state = std::cell::Cell::new(None);
 
             #[allow(unused_variables)]
             vid.onProcessTexture(Box::new(
@@ -2810,7 +2811,14 @@ impl Controller {
                         );
                     }
 
-                    if !stab.params.read().stab_enabled {
+                    let enabled = stab.params.read().stab_enabled;
+                    let pipeline = preview_pipeline.load(SeqCst);
+                    let preview_state = (enabled, pipeline, backend_id, width, height);
+                    if last_preview_state.replace(Some(preview_state)) != Some(preview_state) {
+                        ::log::debug!(target: "video.render",
+                            "preview.process enabled={enabled} pipeline={pipeline} backend_id={backend_id} size={width}x{height}");
+                    }
+                    if !enabled {
                         return true;
                     }
 

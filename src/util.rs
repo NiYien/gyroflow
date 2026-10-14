@@ -480,9 +480,40 @@ pub fn init_logging() {
 
     qmetaobject::log::init_qt_to_rust();
 
-    // Suppress MDK SDK internal logs. App-level media errors are logged at
-    // the call sites that handle them.
-    qml_video_rs::video_item::MDKVideoItem::setLogHandler(|_: i32, _: &str| {});
+    // MDK levels are Off=0, Error=1, Warning=2, Info=3, Debug=4, All=5.
+    // Keep SDK failures in feedback without letting a per-frame error fill the log.
+    let mdk_log_windows = std::sync::Mutex::new([(std::time::Instant::now(), 0u32, 0u64); 2]);
+    qml_video_rs::video_item::MDKVideoItem::setLogHandler(move |level, message| {
+        if !(1..=2).contains(&level) || message.trim().is_empty() {
+            return;
+        }
+        let (emit, suppressed) = {
+            let mut windows = mdk_log_windows.lock().unwrap_or_else(|e| e.into_inner());
+            let window = &mut windows[(level - 1) as usize];
+            let now = std::time::Instant::now();
+            let suppressed = if now.duration_since(window.0).as_secs() >= 5 {
+                let suppressed = window.2;
+                *window = (now, 0, 0);
+                suppressed
+            } else {
+                0
+            };
+            let emit = window.1 < 32;
+            if emit { window.1 += 1; } else { window.2 = window.2.saturating_add(1); }
+            (emit, suppressed)
+        };
+        if suppressed > 0 {
+            ::log::warn!(target: "mdk", "SDK log rate limit: suppressed {suppressed} messages at level={level} in the previous window");
+        }
+        if emit {
+            if level == 1 {
+                ::log::error!(target: "mdk", "{}", message.trim_end());
+            } else {
+                ::log::warn!(target: "mdk", "{}", message.trim_end());
+            }
+        }
+    });
+    qml_video_rs::video_item::MDKVideoItem::setGlobalOption("log", "Warning");
 }
 
 /// Invalidate Qt RHI pipeline cache and QML bytecode cache when the host application's
