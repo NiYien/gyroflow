@@ -64,6 +64,8 @@ const ALLOW_EXACT: &[&str] = &[
     "processingDevice",
     "processingDeviceIndex",
     "processingDevicePhysicalId",
+    // The experimental panel exposes translation controls in Simple mode.
+    "translationStabilization",
     // Window geometry and panel splitters: user-dragged, no bearing on output.
     "windowX",
     "windowY",
@@ -338,6 +340,7 @@ mod tests {
             "processingDevice",
             "processingDeviceIndex",
             "processingDevicePhysicalId",
+            "translationStabilization",
             "niyien_tutorial_seen_v1",
             "bottomPanelSize",
             "bottomPanelSize-full",

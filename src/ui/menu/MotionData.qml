@@ -19,7 +19,10 @@ MenuItem {
     // with (and cleared) the mounting rotation MountingPresetSelector had just
     // applied to the main stab at startup.
     property bool initialized: false;
-    Component.onCompleted: root.initialized = true;
+    Component.onCompleted: {
+        root.restoreTranslationPreferences();
+        root.initialized = true;
+    }
     property bool hasAccurateTimestamps: false;
     property alias hasRawGyro: integrator.hasRawGyro;
     property alias integrationMethod: integrator.currentIndex;
@@ -63,6 +66,55 @@ MenuItem {
     // Qt signals can call back synchronously while a batch of user choices is being applied.
     property bool updatingOpticalControls: false;
     property bool hasExplicitOpticalRequest: false;
+    function translationPreferences(): var {
+        try {
+            const saved = JSON.parse(settings.value("translationStabilization", "{}"));
+            return saved && typeof saved === "object" && !Array.isArray(saved) ? saved : {};
+        } catch (e) {
+            return {};
+        }
+    }
+    function saveTranslationPreference(key: string, value: var): void {
+        if (!root.initialized || root.updatingOpticalControls) return;
+        // Save only the edited preference so project readback cannot replace the other defaults.
+        const saved = root.translationPreferences();
+        saved[key] = value;
+        settings.setValue("translationStabilization", JSON.stringify(saved));
+    }
+    function restoreTranslationPreferences(): void {
+        const saved = root.translationPreferences();
+        let restored = false;
+        root.updatingOpticalControls = true;
+        try {
+            if (typeof saved.enabled === "boolean") {
+                controller.set_translation_stabilization_enabled(saved.enabled);
+                restored = true;
+            }
+            if (typeof saved.reference === "number" && isFinite(saved.reference)) {
+                controller.set_translation_reference(Math.max(0, Math.min(2, saved.reference)));
+                restored = true;
+            }
+            if (typeof saved.smoothness_s === "number" && isFinite(saved.smoothness_s)) {
+                controller.set_translation_smoothness(Math.max(0.1, Math.min(10, saved.smoothness_s)));
+                restored = true;
+            }
+            if (typeof saved.along_axis === "boolean") {
+                controller.set_translation_along_axis(saved.along_axis);
+                restored = true;
+            }
+            if (typeof saved.auto === "boolean") {
+                controller.set_translation_auto(saved.auto);
+                restored = true;
+            }
+        } finally {
+            root.updatingOpticalControls = false;
+        }
+        if (restored) {
+            root.restoreOpticalControls(false);
+            // Restored choices also apply to clips added directly to the queue after a restart.
+            root.pushQueueOpticalSettings();
+        }
+    }
     function cancelOpticalEdits(): void {
         opticalStrengthTimer.stop();
         translationReferenceTimer.stop();
@@ -133,6 +185,7 @@ MenuItem {
     }
     function changeOpticalMode(mode: string, enabled: bool): void {
         if (!root.initialized || root.updatingOpticalControls) return;
+        if (mode === "translation") root.saveTranslationPreference("enabled", enabled);
         root.updatingOpticalControls = true;
         try {
             if (mode === "stab") {
@@ -544,7 +597,10 @@ MenuItem {
             text: qsTr("Automatic parameters");
             tooltip: qsTr("Choose the reference distance and the smoothness from the analysis: hold the distant scenery steady, or the subject once it fills most of the picture, and smooth as much as the shift range allows.");
             checked: true;
-            onCheckedChanged: if (root.initialized && !root.updatingOpticalControls) translationAutoTimer.restart();
+            onCheckedChanged: if (root.initialized && !root.updatingOpticalControls) {
+                root.saveTranslationPreference("auto", checked);
+                translationAutoTimer.restart();
+            }
         }
         BasicText {
             width: parent.width;
@@ -577,7 +633,10 @@ MenuItem {
                     width: parent.width - translationNear.width - translationFar.width - 2 * parent.spacing;
                     from: 0; to: 200; value: 100;
                     showValueTooltip: false;
-                    onValueChanged: if (root.initialized && !root.updatingOpticalControls) translationReferenceTimer.restart();
+                    onValueChanged: if (root.initialized && !root.updatingOpticalControls) {
+                        root.saveTranslationPreference("reference", (200 - value) / 100);
+                        translationReferenceTimer.restart();
+                    }
                 }
                 BasicText {
                     id: translationFar;
@@ -599,7 +658,10 @@ MenuItem {
                     height: root.mobileStyle ? 44 * dpiScale : 20 * dpiScale;
                     width: parent.width - translationSmoothnessValue.width - parent.spacing;
                     from: -1; to: 1; value: 0;
-                    onValueChanged: if (root.initialized && !root.updatingOpticalControls) translationSmoothnessTimer.restart();
+                    onValueChanged: if (root.initialized && !root.updatingOpticalControls) {
+                        root.saveTranslationPreference("smoothness_s", Math.pow(10, value));
+                        translationSmoothnessTimer.restart();
+                    }
                 }
                 BasicText {
                     id: translationSmoothnessValue;
@@ -614,7 +676,10 @@ MenuItem {
             text: qsTr("Compensate movement along the lens axis");
             visible: !translationAuto.checked;
             checked: true;
-            onCheckedChanged: if (root.initialized && !root.updatingOpticalControls) translationAlongAxisTimer.restart();
+            onCheckedChanged: if (root.initialized && !root.updatingOpticalControls) {
+                root.saveTranslationPreference("along_axis", checked);
+                translationAlongAxisTimer.restart();
+            }
         }
     }
     Timer {

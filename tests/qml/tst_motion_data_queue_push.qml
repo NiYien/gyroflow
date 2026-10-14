@@ -35,8 +35,9 @@ TestCase {
 
     QtObject {
         id: settingsStub;
-        function value(key, def) { return def; }
-        function setValue(key, value) { }
+        property var values: ({});
+        function value(key, def) { return values.hasOwnProperty(key) ? values[key] : def; }
+        function setValue(key, value) { values[key] = value; }
     }
     property alias settings: settingsStub;
 
@@ -53,10 +54,16 @@ TestCase {
         // What the core reports: a clip without a correction result reports no strength
         property var opticalInfo: ({ "available": false, "ignore_file_motion": false, "has_motion": true });
         property bool translationRequested: true;
+        property real translationReference: 1.0;
+        property real translationSmoothness: 1.0;
+        property bool translationAlongAxis: true;
+        property bool translationAuto: true;
         property bool reconstructionRequested: false;
         function optical_correction_info() { return JSON.stringify(opticalInfo); }
         function translation_stabilization_info() {
-            return JSON.stringify({ "requested": translationRequested, "reference": 1.0, "smoothness_s": 1.0, "along_axis": true, "has_motion": true });
+            return JSON.stringify({ "requested": translationRequested, "reference": translationReference,
+                "smoothness_s": translationSmoothness, "along_axis": translationAlongAxis,
+                "auto": translationAuto, "has_motion": true });
         }
         function stab_reconstruction_info() { return JSON.stringify({ "requested": reconstructionRequested, "has_motion": true }); }
         function set_stab_reconstruction_enabled(enabled) {
@@ -64,6 +71,10 @@ TestCase {
             optical_correction_changed();
         }
         function set_translation_stabilization_enabled(enabled) { translationRequested = enabled; optical_correction_changed(); }
+        function set_translation_reference(value) { translationReference = value; optical_correction_changed(); }
+        function set_translation_smoothness(value) { translationSmoothness = value; optical_correction_changed(); }
+        function set_translation_along_axis(value) { translationAlongAxis = value; optical_correction_changed(); }
+        function set_translation_auto(value) { translationAuto = value; optical_correction_changed(); }
         function set_optical_correction_enabled(enabled) { }
         function set_ignore_file_motion(enabled) { }
         function set_integration_method(index) { }
@@ -150,15 +161,126 @@ TestCase {
     }
 
     function init() {
+        settingsStub.values = {};
         renderQueueStub.pushed = [];
         renderQueueStub.processingSettings = null;
         windowStub.isSimpleMode = true;
         windowStub.useMobileWorkspace = false;
         controllerStub.translationRequested = true;
+        controllerStub.translationReference = 1.0;
+        controllerStub.translationSmoothness = 1.0;
+        controllerStub.translationAlongAxis = true;
+        controllerStub.translationAuto = true;
         controllerStub.reconstructionRequested = false;
         controllerStub.opticalInfo = { "available": false, "ignore_file_motion": false, "has_motion": true };
         motion = createTemporaryObject(factory, testCase, { width: 380 });
         verify(motion !== null);
+    }
+
+    function restartPanel() {
+        motion.destroy();
+        wait(0);
+        controllerStub.translationRequested = false;
+        controllerStub.translationReference = 1.0;
+        controllerStub.translationSmoothness = 1.0;
+        controllerStub.translationAlongAxis = true;
+        controllerStub.translationAuto = true;
+        renderQueueStub.pushed = [];
+        motion = createTemporaryObject(factory, testCase, { width: 380 });
+        verify(motion !== null);
+        wait(0);
+    }
+
+    function controlMatching(item, predicate) {
+        if (predicate(item)) return item;
+        const children = item.children || [];
+        for (let i = 0; i < children.length; ++i) {
+            const found = controlMatching(children[i], predicate);
+            if (found) return found;
+        }
+        return null;
+    }
+
+    function test_translation_edits_survive_a_restart_and_reach_the_queue() {
+        motion.restoreOpticalControls(false);
+        motion.changeOpticalMode("translation", false);
+        motion.changeOpticalMode("translation", true);
+        const automatic = controlMatching(motion.experimentalControls, x => x.text === "Automatic parameters");
+        const alongAxis = controlMatching(motion.experimentalControls, x => x.text === "Compensate movement along the lens axis");
+        const reference = controlMatching(motion.experimentalControls, x => x.from === 0 && x.to === 200);
+        const smoothness = controlMatching(motion.experimentalControls, x => x.from === -1 && x.to === 1);
+        verify(automatic && alongAxis && reference && smoothness);
+        automatic.checked = false;
+        alongAxis.checked = false;
+        reference.value = 150;
+        smoothness.value = Math.log(2.5) / Math.LN10;
+        // Close before the debounce timers fire; the last user choices must still be saved.
+        restartPanel();
+        compare(controllerStub.translationRequested, true);
+        compare(controllerStub.translationAuto, false);
+        compare(controllerStub.translationAlongAxis, false);
+        compare(controllerStub.translationReference, 0.5);
+        fuzzyCompare(controllerStub.translationSmoothness, 2.5, 0.000001);
+        compare(lastPush().translation, true);
+        compare(lastPush().translation_auto, false);
+        compare(lastPush().translation_along_axis, false);
+        compare(lastPush().translation_reference, 0.5);
+        fuzzyCompare(lastPush().translation_smoothness, 2.5, 0.000001);
+        motion.changeOpticalMode("translation", false);
+        restartPanel();
+        compare(lastPush().translation, false);
+        compare(lastPush().translation_reference, 0.5);
+    }
+
+    function test_project_readback_wins_without_changing_saved_preferences() {
+        settingsStub.values = { translationStabilization: JSON.stringify({ enabled: true, auto: true, reference: 0.5, smoothness_s: 2.5, along_axis: false }) };
+        restartPanel();
+        const saved = settingsStub.value("translationStabilization", "");
+        const pushes = renderQueueStub.pushed.length;
+        controllerStub.translationRequested = false;
+        controllerStub.translationReference = 1.75;
+        controllerStub.translationSmoothness = 0.2;
+        controllerStub.translationAlongAxis = true;
+        controllerStub.translationAuto = false;
+        motion.loadGyroflow({ gyro_source: { translation_stabilization_enabled: false,
+            translation_reference: 1.75, translation_smoothness: 0.2, translation_along_axis: true, translation_auto: false } });
+        wait(250);
+        compare(settingsStub.value("translationStabilization", ""), saved);
+        compare(renderQueueStub.pushed.length, pushes);
+        dispatchFromApp("runSimpleBatchExport");
+        compare(renderQueueStub.processingSettings.translation, false);
+        compare(renderQueueStub.processingSettings.translation_reference, 1.75);
+        motion.changeOpticalMode("translation", true);
+        compare(settingsStub.value("translationStabilization", ""), saved);
+        restartPanel();
+        compare(lastPush().translation_reference, 0.5);
+        compare(lastPush().translation_auto, true);
+    }
+
+    function test_missing_or_invalid_preferences_keep_defaults_data() {
+        return [
+            { tag: "missing", saved: "{}" },
+            { tag: "broken-json", saved: "{" },
+            { tag: "null", saved: "null" },
+            { tag: "array", saved: "[]" },
+            { tag: "wrong-types", saved: '{"enabled":"true","reference":null,"auto":0}' }
+        ];
+    }
+
+    function test_missing_or_invalid_preferences_keep_defaults(data) {
+        settingsStub.values = { translationStabilization: data.saved };
+        restartPanel();
+        compare(controllerStub.translationRequested, false);
+        compare(controllerStub.translationAuto, true);
+        compare(controllerStub.translationReference, 1.0);
+        compare(renderQueueStub.pushed.length, 0);
+    }
+
+    function test_saved_parameters_are_clamped_to_the_control_ranges() {
+        settingsStub.values = { translationStabilization: '{"reference":-1,"smoothness_s":100}' };
+        restartPanel();
+        compare(lastPush().translation_reference, 0);
+        compare(lastPush().translation_smoothness, 10);
     }
 
     function test_a_clip_without_a_correction_keeps_the_strength_a_number() {
