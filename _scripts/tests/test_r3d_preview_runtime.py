@@ -43,10 +43,15 @@ class R3DPreviewRuntimeTests(unittest.TestCase):
                           'ERROR: AudioQueueEnqueueBuffer', 'AudioQueueStart ERROR'):
                 self.assertNotIn(error, result.stderr, result.stderr[-4000:])
             frames = {i: [] for i in range(1, 9)}
+            starts = {}
             for line in result.stdout.splitlines():
                 fields = line.split()
+                if fields and fields[0] == 'PLAY':
+                    starts[int(fields[1])] = float(fields[2])
                 if fields and fields[0] == 'RENDER' and int(fields[1]) in frames:
                     frames[int(fields[1])].append((float(fields[2]), float(fields[3])))
+            first_motion = next(t for t, pts in frames[1] if pts > 0)
+            self.assertLess(first_motion - starts[1], 75, frames[1])
             for phase in (1, 2, 3, 6, 7):
                 samples = frames[phase]
                 self.assertGreaterEqual(len(samples), 12, (phase, samples))
@@ -54,7 +59,7 @@ class R3DPreviewRuntimeTests(unittest.TestCase):
                 self.assertTrue(all(b[1] >= a[1] for a, b in zip(samples, samples[1:])), (phase, samples))
                 gaps = [b[0] - a[0] for a, b in zip(samples, samples[1:])]
                 self.assertLess(statistics.median(gaps), 40, (phase, gaps))
-                self.assertLess(max(gaps), 180, (phase, gaps))
+                self.assertLess(max(gaps), 75 if phase == 1 else 180, (phase, gaps))
             # Once the new seek target is visible, the old decode chain must not return.
             forward = frames[4]
             first = next(i for i, (_, pts) in enumerate(forward) if pts >= 2.1)
@@ -67,6 +72,22 @@ class R3DPreviewRuntimeTests(unittest.TestCase):
             self.assertGreaterEqual(len(loop), 20, loop)
             self.assertTrue(any(b[1] < a[1] for a, b in zip(loop, loop[1:])), loop)
             self.assertLess(loop[-1][1], 1.0, loop)
+
+    def test_preview_audio_preserves_every_source_sample(self):
+        frameworks = ROOT / 'target/Frameworks'
+        abi = ROOT / 'ext/r3d-preview/include/abi'
+        self.assertTrue((abi / 'mdk/FrameReader.h').exists(), 'Run just run before the runtime test')
+        with tempfile.TemporaryDirectory(dir=ROOT / 'target') as work:
+            work = Path(work)
+            (work / 'Frameworks').symlink_to(frameworks, target_is_directory=True)
+            executable = work / 'r3d_audio_samples'
+            subprocess.run(['xcrun', 'clang++', '-std=c++2b', '-DBUILD_MDK_LIB', '-DMDK_ABI=abi',
+                            str(ROOT / '_scripts/tests/r3d_audio_samples.cpp'),
+                            '-I', str(abi), '-F', str(frameworks), '-framework', 'mdk',
+                            '-Wl,-rpath,@executable_path/Frameworks', '-o', str(executable)], check=True)
+            result = subprocess.run([str(executable), CLIP], capture_output=True, text=True, timeout=40)
+            self.assertEqual(result.returncode, 0, result.stderr[-4000:])
+            self.assertIn('PCM_IDENTICAL ', result.stdout)
 
 
 if __name__ == '__main__':

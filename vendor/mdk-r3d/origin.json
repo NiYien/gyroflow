@@ -5,6 +5,8 @@
     "Use public AudioFrame API for RED PCM instead of private AudioDecoder API",
     "Fence video and audio decode chains by seek generation",
     "Submit RED PCM as short frames with exact sample timestamps",
+    "Read audio by sample position instead of padded SDK block capacity",
+    "Prepare audio before playback and preserve PCM in F64 for low-latency Metal previews",
     "Drain SDK callbacks and pending Metal jobs before releasing resources",
     "Trim audio blocks to the requested video frame after seeking",
     "Complete seek callbacks without blocking loop output",

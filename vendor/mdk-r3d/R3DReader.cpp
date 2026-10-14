@@ -189,6 +189,7 @@ private:
     bool enable_video_ = true;
     bool enable_audio_ = true;
     size_t audio_block_size_ = 0;
+    size_t audio_samples_per_block_ = 0;
     size_t audio_blocks_ = 0;
     double audio_block_duration_ms_ = 0;
     atomic<int> audio_seeking_ = 0;
@@ -676,23 +677,35 @@ void R3DReader::readAudioAt(size_t index, int seekId, uint64_t generation, int64
             frameAvailable(AudioFrame().setTimestamp(TimestampEOS));
             return;
         }
-        size_t size = audio_buf_.size();
-        // can be f32 or s24, see RMD_SAMPLE_SIZE
-        if (const auto ret = clip_->DecodeAudioBlock(index, audio_buf_.data(), &size); ret != R3DSDK::DSDecodeOK) {
-            clog << "DecodeAudioBlock error: " << ret << endl;
+        size_t sampleCount = audio_samples_per_block_;
+        const auto startSample = uint64_t(index) * audio_samples_per_block_;
+        // Address PCM samples explicitly: AudioBlockCountAndSize returns an
+        // aligned buffer capacity, not the duration of a recorded audio block.
+        if (const auto ret = clip_->DecodeAudio(startSample, &sampleCount, audio_buf_.data(), audio_buf_.size()); ret != R3DSDK::DSDecodeOK) {
+            clog << "DecodeAudio error: " << ret << endl;
             return;
         }
+        const size_t size = sampleCount * sizeof(int32_t) * audio_format_.channels();
         if (generation != generation_.load()) return;
-        const auto pts = index * audio_block_duration_ms_ / 1000.0;
+        const auto pts = double(startSample) / audio_format_.sampleRate();
         // RED returns interleaved big-endian signed 32-bit PCM, including
         // its default conversion of floating-point Nikon audio.
-        AudioFrame frame(audio_format_, size);
+        const size_t sampleBytes = audio_format_.bytesPerSample();
+        const size_t pcmSize = size / sizeof(int32_t) * sampleBytes;
+        AudioFrame frame(audio_format_, pcmSize);
         auto dst = frame.buffer()->data();
         const auto src = audio_buf_.constData();
         for (size_t i = 0; i + 3 < size; i += 4) {
             uint32_t sample = (uint32_t(src[i]) << 24) | (uint32_t(src[i+1]) << 16)
                             | (uint32_t(src[i+2]) << 8) | uint32_t(src[i+3]);
-            memcpy(dst + i, &sample, sizeof(sample));
+            if (audio_format_.sampleFormat() == AudioFormat::SampleFormat::F64) {
+                int32_t signedSample;
+                memcpy(&signedSample, &sample, sizeof(sample));
+                const double value = double(signedSample) / 2147483648.0;
+                memcpy(dst + i / sizeof(int32_t) * sampleBytes, &value, sizeof(value));
+            } else {
+                memcpy(dst + i, &sample, sizeof(sample));
+            }
         }
         frame.setTimestamp(pts);
         const size_t bytesPerSampleFrame = audio_format_.bytesPerSample() * audio_format_.channels();
@@ -700,10 +713,12 @@ void R3DReader::readAudioAt(size_t index, int seekId, uint64_t generation, int64
         // requested video frame, otherwise the audio clock restarts too early
         // and holds the picture still until the skipped audio has played.
         const auto skipSamples = seekMs < 0 ? 0 : std::llround(std::max(0.0, seekMs / 1000.0 - pts) * audio_format_.sampleRate());
-        const size_t firstOffset = std::min<size_t>(skipSamples, size / bytesPerSampleFrame) * bytesPerSampleFrame;
+        const size_t firstOffset = std::min<size_t>(skipSamples, pcmSize / bytesPerSampleFrame) * bytesPerSampleFrame;
         const double firstTimestamp = pts + double(firstOffset / bytesPerSampleFrame) / audio_format_.sampleRate();
         if (generation != generation_.load()) return;
-        if (seekId > 0) {
+        // Announce the initial audio format while preparing, just as after a
+        // seek. Otherwise MDK opens the device only after playback has begun.
+        if (seekId > 0 || (index == 0 && seekMs < 0)) {
             updateBufferingProgress(100); // unpause audio renderer
             frameAvailable(AudioFrame(frame.format()).setTimestamp(firstTimestamp));
         }
@@ -713,9 +728,9 @@ void R3DReader::readAudioAt(size_t index, int seekId, uint64_t generation, int64
         // already started. Use short PCM frames to keep startup/seek latency low.
         const size_t chunkBytes = size_t(audio_format_.sampleRate() / 100) * bytesPerSampleFrame;
         bool accepted = true;
-        for (size_t offset = firstOffset; offset < size && accepted; offset += chunkBytes) {
+        for (size_t offset = firstOffset; offset < pcmSize && accepted; offset += chunkBytes) {
             if (generation != generation_.load()) return;
-            const auto length = std::min(chunkBytes, size - offset);
+            const auto length = std::min(chunkBytes, pcmSize - offset);
             AudioFrame chunk(audio_format_, length, frame.buffer()->constData() + offset);
             chunk.setTimestamp(pts + double(offset / bytesPerSampleFrame) / audio_format_.sampleRate());
             accepted = frameAvailable(chunk);
@@ -741,8 +756,19 @@ void R3DReader::setupAudio(const AudioCodecParameters& par)
       .setChannels(par.channels)
       .setSampleRate(par.sample_rate);
     if (!af || af.sampleRate() < 100 || !audio_block_size_) return;
+    audio_samples_per_block_ = audio_block_size_ / (sizeof(int32_t) * af.channels());
+    const auto totalSamples = clip_->AudioSampleCount();
+    if (!audio_samples_per_block_ || !totalSamples) return;
+    audio_blocks_ = (totalSamples + audio_samples_per_block_ - 1) / audio_samples_per_block_;
+    audio_block_duration_ms_ = 1000.0 * audio_samples_per_block_ / af.sampleRate();
+#if (__APPLE__ + 0)
+    // AudioQueue's fixed byte buffers hold twice as much silence with S32.
+    // F64 preserves every source PCM bit while halving the buffered silence.
+    // Keep the source block duration above in the SDK's S32 byte format.
+    if (decompress_ == Decompress::Async && (gpu_ & OPTION_RED_METAL))
+        af.setSampleFormat(AudioFormat::SampleFormat::F64);
+#endif
     audio_format_ = af;
-    audio_block_duration_ms_ = af.durationForBytes(audio_block_size_)*1000.0;
     audio_thread_ = thread([this]{ audioLoop(); });
 }
 
