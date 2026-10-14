@@ -6468,7 +6468,7 @@ mod tests {
         // renders into its RGBA8 texture. Reverting past it takes the DNG
         // preview back to a near-black picture.
         // Kinefinity processing also requires the source-pixel aspect override.
-        const PINNED_REV: &str = "4b1729d236a0b2f563e6bb3f618abefb91936b63";
+        const PINNED_REV: &str = "4d4704866192da314aa9654d0fde29448018f330";
         let lock_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock");
         let lock = std::fs::read_to_string(&lock_path).expect("read Cargo.lock");
         let expected = format!(
