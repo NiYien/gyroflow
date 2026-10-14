@@ -110,14 +110,14 @@ impl<'a> VideoProcessor<'a> {
                         info2.width = org_width;
                         info2.height = org_height;
                     }
-                    if frame_num == -1 || data.is_empty() {
-                        let _ = tx.send(());
+                    if frame_num < 0 || data.is_empty() {
+                        let _ = tx.send(frame_num != -2);
                         return true;
                     }
                     false
                 },
             );
-            pollster::block_on(rx.receive());
+            let succeeded = pollster::block_on(rx.receive()).unwrap_or(false);
             info.borrow_mut().rotation = mdk.mdk.getRotation();
 
             // Nikon ZR .r3d is MP4 with NR3D codec; MDK's R3D plugin returns 0
@@ -158,6 +158,10 @@ impl<'a> VideoProcessor<'a> {
             std::thread::sleep(std::time::Duration::from_millis(100));
             mdk.mdk.stopProcessing(0);
 
+            if !succeeded {
+                log::error!(target: "video.codec", "MDK video info prepare failed: {url}");
+                return Err(ffmpeg_next::Error::InvalidData);
+            }
             let info = info.borrow().clone();
             Ok(info)
         } else {

@@ -167,8 +167,8 @@ impl MDKProcessor {
                   _duration_ms,
                   _frame_count,
                   data| {
-                if frame_num == -1 || data.is_empty() {
-                    let _ = tx.send(());
+                if frame_num < 0 || data.is_empty() {
+                    let _ = tx.send(frame_num != -2);
                     return true;
                 }
 
@@ -210,13 +210,62 @@ impl MDKProcessor {
             },
         );
 
-        pollster::block_on(rx.receive());
+        let succeeded = pollster::block_on(rx.receive()).unwrap_or(false);
 
         std::thread::sleep(std::time::Duration::from_millis(100));
         self.mdk.stopProcessing(0);
 
+        if !succeeded {
+            log::error!(target: "video.codec", "MDK processing prepare failed: {}", self.url);
+            return Err(FFmpegError::InternalError(ffmpeg_next::Error::InvalidData));
+        }
         Ok(())
     }
 }
 
 unsafe extern "C" fn noop(_opaque: *mut std::os::raw::c_void, _data: *mut u8) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires the native MDK/BRAW runtime and GYROFLOW_BRAW_TEST_FILE"]
+    fn braw_failed_open_returns_error_and_allows_next_file() {
+        let source = std::env::var("GYROFLOW_BRAW_TEST_FILE").unwrap();
+        assert!(std::path::Path::new(&source).is_file());
+        qml_video_rs::video_item::MDKVideoItem::setGlobalOption("plugins", "mdk-braw:mdk-r3d");
+        let missing = tempfile::tempdir().unwrap().path().join("missing.braw");
+        let missing_url = gyroflow_core::filesystem::path_to_url(missing.to_str().unwrap());
+        let source_url = gyroflow_core::filesystem::path_to_url(&source);
+
+        assert!(matches!(
+            crate::rendering::VideoProcessor::get_video_info(&missing_url),
+            Err(ffmpeg_next::Error::InvalidData)
+        ));
+        {
+            let mut processor = MDKProcessor::from_file(&missing_url, None, false);
+            assert!(matches!(
+                processor.start_decoder_only(vec![], Arc::new(AtomicBool::new(false))),
+                Err(FFmpegError::InternalError(ffmpeg_next::Error::InvalidData))
+            ));
+        }
+
+        // Both failed operations must release the BRAW lock before another file opens.
+        let info = crate::rendering::VideoProcessor::get_video_info(&source_url).unwrap();
+        assert!(info.width > 0 && info.height > 0 && info.fps > 0.0);
+        let mut processor = MDKProcessor::from_file(&source_url, None, false);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_on_frame = cancel.clone();
+        let frames = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let frames_on_frame = frames.clone();
+        processor.on_frame(move |_, frame, _, _, _| {
+            assert!(frame.width() > 0 && frame.height() > 0);
+            frames_on_frame.fetch_add(1, Relaxed);
+            cancel_on_frame.store(true, Relaxed);
+            Ok(())
+        });
+        processor.start_decoder_only(vec![], cancel).unwrap();
+        assert_eq!(frames.load(Relaxed), 1);
+    }
+}
