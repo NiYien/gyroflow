@@ -61,9 +61,9 @@ TestCase {
         function stab_reconstruction_info() { return JSON.stringify({ "requested": reconstructionRequested, "has_motion": true }); }
         function set_stab_reconstruction_enabled(enabled) {
             reconstructionRequested = enabled;
-            if (enabled) translationRequested = false;
             optical_correction_changed();
         }
+        function set_translation_stabilization_enabled(enabled) { translationRequested = enabled; optical_correction_changed(); }
         function set_optical_correction_enabled(enabled) { }
         function set_ignore_file_motion(enabled) { }
         function set_integration_method(index) { }
@@ -169,6 +169,23 @@ TestCase {
         verify(typeof pushed.strength === "number" && isFinite(pushed.strength), "strength pushed as " + JSON.stringify(pushed.strength));
         compare(pushed.strength, 0.5, "the slider keeps its value");
         compare(pushed.translation, true);
+    }
+
+    function test_translation_and_reconstruction_can_be_selected_in_either_order() {
+        motion.restoreOpticalControls(false);
+        motion.changeOpticalMode("stab", true);
+        wait(0);
+        compare(lastPush().translation, true);
+        compare(lastPush().reconstruction, true);
+        motion.changeOpticalMode("translation", false);
+        motion.changeOpticalMode("translation", true);
+        wait(0);
+        compare(lastPush().translation, true);
+        compare(lastPush().reconstruction, true);
+        motion.changeOpticalMode("stab", false);
+        wait(0);
+        compare(lastPush().translation, true);
+        compare(lastPush().reconstruction, false);
     }
 
     function test_a_correction_brings_its_strength() {

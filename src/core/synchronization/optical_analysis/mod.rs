@@ -38,9 +38,7 @@ use crate::StabilizationManager;
 use crate::gyro_source::{ GyroSource, OpticalCorrection, OpticalCorrectionSettings, TimeQuat, optical_correction::{ self, Fnv } };
 use crate::stabilization::{ ComputeParams, FrameTransform, undistort_points_to_plane };
 use solver::{ BandMeasurement, SolverParams };
-use translation::{ PairPoint, TranslationSolver };
-#[cfg(feature = "use-opencv")]
-use translation::TranslationSolverConfig;
+use translation::{ PairPoint, TranslationSolver, TranslationSolverConfig };
 use crate::gyro_source::optical_translation::TranslationSample;
 use super::optical_motion::tracks::Observation;
 #[cfg(feature = "use-opencv")]
@@ -157,6 +155,7 @@ struct Pair {
 }
 
 /// One tracked point in one frame pair, against the uncorrected quaternions
+#[derive(Clone, Copy)]
 struct Derived {
     id: u32,
     seq: usize,
@@ -179,6 +178,7 @@ pub struct OpticalMeasurements {
     pub(crate) stab_bands: Vec<sensor::SensorBand>,
     pub translation_requested: bool,
     pub translation_samples: Vec<TranslationSample>,
+    pub(crate) translation_replay: Option<TranslationReplay>,
     /// Actual analysis cadence in motion-data time, after integer frame sampling.
     pub scaled_fps: f64,
     /// Of the quaternions they were measured against, see `OpticalCorrection::quats_checksum`
@@ -360,9 +360,41 @@ struct TranslationState {
     pairs: HashMap<usize, (Vector3<f64>, HashMap<u32, f64>)>,
     position: Vector3<f64>,
     segment: u32,
+    depth_segment: u32,
     samples: Vec<TranslationSample>,
+    median_depths: Vec<f64>,
     /// Numerator and denominator of each sample's dominant layer gain, see `finish`
     dominant: Vec<[f32; 2]>,
+}
+
+/// Tracks kept only until the sensor response is known; no second decode or tracking pass is needed.
+pub(crate) struct TranslationReplay {
+    params: ComputeParams,
+    pairs: VecDeque<Pair>,
+    track_size: (u32, u32),
+    horizontal_readout: bool,
+    focal_px: f64,
+}
+
+impl TranslationReplay {
+    pub(crate) fn measure(mut self, reconstruction: &crate::gyro_source::OpticalStabReconstruction,
+        cancel: &impl Fn() -> bool) -> Result<Vec<TranslationSample>, String> {
+        let mut reconstruction = reconstruction.clone();
+        reconstruction.enabled = true;
+        reconstruction.applies = true;
+        self.params.gyro.write().optical_stab = Some(reconstruction);
+        self.params.apply_optical_stab = true;
+        let mut state = TranslationState::new();
+        while !self.pairs.is_empty() {
+            if cancel() { return Err("Cancelled".into()); }
+            let pairs: VecDeque<_> = self.pairs.drain(..self.pairs.len().min(CHUNK)).collect();
+            let mut derived = OpticalMotionAnalysis::derive_pairs(&self.params, &pairs, &None, self.track_size, self.horizontal_readout);
+            let next_seq = pairs.back().unwrap().seq + 1;
+            OpticalMotionAnalysis::measure_translation_pairs(&self.params, &mut state, &pairs, next_seq, self.focal_px, &mut derived, false);
+        }
+        if cancel() { return Err("Cancelled".into()); }
+        Ok(state.finish())
+    }
 }
 
 /// Time scale (Gaussian sigma) over which the automatic reference pools the dominant layer of neighbouring samples:
@@ -373,16 +405,51 @@ const AUTO_DOMINANT_SIGMA_S: f64 = 1.0;
 const AUTO_DOMINANT_RANGE: (f64, f64) = (0.02, 50.0);
 
 impl TranslationState {
+    fn new() -> Self {
+        Self { solver: TranslationSolver::new(TranslationSolverConfig::resolved()),
+            next_seq: 0, pairs: HashMap::new(), position: Vector3::zeros(), segment: 0, depth_segment: 0,
+            samples: Vec::new(), median_depths: Vec::new(), dominant: Vec::new() }
+    }
     /// Each sample's automatic layer: the dominant layer gain of the samples around it in its segment, numerators and
     /// denominators added up weighted by time and confidence, so that what a stretch of video shows decides.
     fn finish(self) -> Vec<TranslationSample> {
-        let TranslationState { mut samples, dominant, .. } = self;
+        let TranslationState { mut samples, mut dominant, median_depths, .. } = self;
+        // One constant unit per solve span. A changing visible depth distribution must not rescale each frame's motion.
+        let mut start = 0;
+        while start < samples.len() {
+            let mut end = start + 1;
+            while end < samples.len() && samples[end].segment == samples[start].segment
+                && samples[end].depth_segment == samples[start].depth_segment { end += 1; }
+            let (mut sum, mut weight) = (0.0, 0.0);
+            for i in start..end {
+                let depth = median_depths[i];
+                if depth.is_finite() && depth > 0.0 && samples[i].weight > 0.0 {
+                    let duration = if end - start == 1 { 1.0 } else {
+                        (samples[(i + 1).min(end - 1)].timestamp_us - samples[i.saturating_sub(1).max(start)].timestamp_us) as f64
+                    };
+                    let w = duration * samples[i].weight as f64;
+                    sum += w * depth.ln(); weight += w;
+                }
+            }
+            if weight > 0.0 {
+                let unit = (sum / weight).exp();
+                for i in start..end {
+                    for motion in &mut samples[i].layer_motion { *motion = (*motion as f64 * unit) as f32; }
+                    samples[i].layer_scale_rate = (samples[i].layer_scale_rate as f64 * unit) as f32;
+                    samples[i].far_beta = (samples[i].far_beta as f64 / unit) as f32;
+                    dominant[i][0] = (dominant[i][0] as f64 * unit) as f32;
+                    dominant[i][1] = (dominant[i][1] as f64 * unit * unit) as f32;
+                }
+            }
+            start = end;
+        }
         let seconds = |a: &TranslationSample, b: &TranslationSample| (a.timestamp_us - b.timestamp_us) as f64 / 1e6;
         let chosen: Vec<_> = (0..samples.len()).map(|i| {
             let (mut numerator, mut denominator) = (0.0, 0.0);
             let mut add = |j: usize| -> bool {
                 let dt = seconds(&samples[j], &samples[i]);
-                if samples[j].segment != samples[i].segment || dt.abs() > 3.0 * AUTO_DOMINANT_SIGMA_S { return false; }
+                if samples[j].segment != samples[i].segment || samples[j].depth_segment != samples[i].depth_segment
+                    || dt.abs() > 3.0 * AUTO_DOMINANT_SIGMA_S { return false; }
                 let [n, d] = dominant[j];
                 if n.is_finite() && d.is_finite() && d > 0.0 {
                     let k = (-0.5 * (dt / AUTO_DOMINANT_SIGMA_S).powi(2)).exp() * samples[j].weight.clamp(0.0, 1.0) as f64;
@@ -420,6 +487,12 @@ pub struct OpticalMotionAnalysis {
     tracker: KltTracker,
     last: Option<Frame>,
     pairs: VecDeque<Pair>,
+    /// Uncorrected bearings are fixed during reconstruction analysis; retain only the rolling window.
+    derived_cache: HashMap<usize, Vec<Derived>>,
+    #[cfg(test)]
+    reuse_derived: bool,
+    #[cfg(test)]
+    derived_pair_evaluations: usize,
     next_seq: usize,
     measured_upto: usize,
     measurements: Vec<BandMeasurement>,
@@ -430,6 +503,7 @@ pub struct OpticalMotionAnalysis {
     /// frames' own times. What the rest of the analysis compares the image against instead of the quaternions
     vision: Option<TimeQuat>,
     translation: Option<TranslationState>,
+    translation_replay: Option<VecDeque<Pair>>,
     stab_requested: bool,
     stab_next_seq: usize,
     stab_pairs: Vec<sensor::SensorPair>,
@@ -448,8 +522,8 @@ pub struct OpticalMotionAnalysis {
 
 impl OpticalMotionAnalysis {
     pub fn from_manager(stab: &StabilizationManager, cancel_flag: Arc<AtomicBool>) -> Result<Self, String> {
+        #[cfg(feature = "use-opencv")]
         let ui = *stab.optical_ui.read();
-        ui.validate_analysis_request()?;
         #[cfg(not(feature = "use-opencv"))]
         { let _ = (stab, cancel_flag); return Err("Optical analysis is not available in this build".into()); }
 
@@ -489,10 +563,8 @@ impl OpticalMotionAnalysis {
             let total_frames = total_frames.div_ceil(every_nth_frame);
             log::info!("Optical analysis sampling: source_fps={scaled_fps:.6} every_nth={every_nth_frame} analysis_fps={:.6}",
                 scaled_fps / every_nth_frame as f64);
-            let translation = (vision.is_none() && ui.translation_enabled).then(|| TranslationState {
-                solver: TranslationSolver::new(TranslationSolverConfig::resolved()),
-                next_seq: 0, pairs: HashMap::new(), position: Vector3::zeros(), segment: 0, samples: Vec::new(), dominant: Vec::new(),
-            });
+            let translation = (vision.is_none() && ui.translation_enabled).then(TranslationState::new);
+            let translation_replay = (translation.is_some() && ui.stab_enabled).then(VecDeque::new);
             Ok(Self {
                 params, fps_scale, scaled_fps, quats_checksum, context_checksum, horizontal_readout,
                 every_nth_frame, hp_min, hp_max,
@@ -501,6 +573,9 @@ impl OpticalMotionAnalysis {
                 tracker: Self::new_tracker(),
                 last: None,
                 pairs: VecDeque::new(),
+                derived_cache: HashMap::new(),
+                #[cfg(test)] reuse_derived: true,
+                #[cfg(test)] derived_pair_evaluations: 0,
                 next_seq: 0,
                 measured_upto: 0,
                 measurements: Vec::new(),
@@ -512,6 +587,7 @@ impl OpticalMotionAnalysis {
                 stab_next_seq: 0, stab_pairs: Vec::new(), stab_bands: Vec::new(), sensor_projections: HashMap::new(),
                 vision,
                 translation,
+                translation_replay,
                 base: base::VisionBase::new(OpticalBaseMode::resolved(), BlendConfig::resolved()),
                 sg_cache: HashMap::new(),
                 cancel: CancelCheck { flag: cancel_flag, generation: (stab.optical_generation.clone(), generation), latched: Arc::new(AtomicBool::new(false)) },
@@ -582,6 +658,7 @@ impl OpticalMotionAnalysis {
     /// Common path for decoded tracks and synthetic observations.
     fn push_tracked_frame(&mut self, index: usize, ts_ms: f64, size: (u32, u32), obs: Vec<Observation>) {
         if self.track_size != size {
+            self.derived_cache.clear();
             self.track_size = size;
             let (k, ..) = FrameTransform::get_lens_data_at_timestamp(&self.params, ts_ms, false);
             self.focal_px = k[(0, 0)] * size.0 as f64 / self.params.width.max(1) as f64;
@@ -631,6 +708,11 @@ impl OpticalMotionAnalysis {
             },
             None => (self.quats_checksum, Vec::new()),
         };
+        let translation_replay = self.translation_replay.take().map(|mut pairs| {
+            pairs.append(&mut self.pairs);
+            TranslationReplay { params: self.params, pairs, track_size: self.track_size,
+                horizontal_readout: self.horizontal_readout, focal_px: self.focal_px }
+        });
         Ok(OpticalMeasurements {
             bands: self.measurements,
             stab_requested: self.stab_requested,
@@ -638,6 +720,7 @@ impl OpticalMotionAnalysis {
             stab_bands: self.stab_bands,
             translation_requested: self.translation.is_some(),
             translation_samples: self.translation.map(TranslationState::finish).unwrap_or_default(),
+            translation_replay,
             scaled_fps: self.scaled_fps / self.every_nth_frame as f64,
             quats_checksum,
             context_checksum: self.context_checksum,
@@ -710,8 +793,8 @@ impl OpticalMotionAnalysis {
         if end <= self.measured_upto || (!last_call && end < self.measured_upto + CHUNK) { return; }
         if self.is_cancelled() { return; }
 
-        let mut derived = self.derive();
-        self.measure_translation(&mut derived);
+        let mut derived = self.derive((!last_call).then_some(end.saturating_sub(self.hp_max)));
+        if self.translation_replay.is_none() { self.measure_translation(&mut derived); }
         let rhp = self.high_pass(&derived);
 
         // (seq, band) -> the points
@@ -741,7 +824,9 @@ impl OpticalMotionAnalysis {
         let keep_from = end.saturating_sub(self.hp_max);
         while self.pairs.front().map(|p| p.seq < keep_from).unwrap_or(false) {
             if let Some(pair) = self.pairs.pop_front() {
+                self.derived_cache.remove(&pair.seq);
                 if let Some(state) = &mut self.translation { state.pairs.remove(&pair.seq); }
+                if let Some(replay) = &mut self.translation_replay { replay.push_back(pair); }
             }
         }
     }
@@ -795,28 +880,33 @@ impl OpticalMotionAnalysis {
     /// Solve each pair once, then reuse its parallax while the high-pass still needs it.
     fn measure_translation(&mut self, derived: &mut [Derived]) {
         let Some(state) = &mut self.translation else { return };
+        Self::measure_translation_pairs(&self.params, state, &self.pairs, self.next_seq, self.focal_px, derived, true);
+    }
+
+    fn measure_translation_pairs(params: &ComputeParams, state: &mut TranslationState, pairs: &VecDeque<Pair>,
+        next_seq: usize, focal_px: f64, derived: &mut [Derived], remove_parallax: bool) {
         // Lens queries take the gyro lock themselves. Complete them before reading poses.
         let mut focal_ratios = HashMap::new();
         let mut output_projections = HashMap::new();
-        for pair in self.pairs.iter().filter(|pair| pair.seq >= state.next_seq) {
+        for pair in pairs.iter().filter(|pair| pair.seq >= state.next_seq) {
             for frame in [pair.a, pair.b] {
                 focal_ratios.entry(frame.index).or_insert_with(|| {
-                    let (mut k, ..) = FrameTransform::get_lens_data_at_timestamp(&self.params, frame.timestamp_ms, false);
-                    FrameTransform::dequantize_camera_matrix(&self.params, frame.index, &mut k);
-                    (k[(0, 0)] / self.params.width.min(self.params.height).max(1) as f64) as f32
+                    let (mut k, ..) = FrameTransform::get_lens_data_at_timestamp(params, frame.timestamp_ms, false);
+                    FrameTransform::dequantize_camera_matrix(params, frame.index, &mut k);
+                    (k[(0, 0)] / params.width.min(params.height).max(1) as f64) as f32
                 });
             }
-            let centre = [(self.params.width as f32 / 2.0, self.params.height as f32 / 2.0)];
-            let transform = FrameTransform::at_timestamp_for_points(&self.params, &centre, pair.b.timestamp_ms, Some(pair.b.index), true);
+            let centre = [(params.width as f32 / 2.0, params.height as f32 / 2.0)];
+            let transform = FrameTransform::at_timestamp_for_points(params, &centre, pair.b.timestamp_ms, Some(pair.b.index), true);
             output_projections.insert(pair.b.index, transform.3[0]);
         }
-        let gyro = self.params.gyro.read();
+        let gyro = params.gyro.read();
         let camera_to_world = |timestamp| {
             let q = gyro.org_quat_at_timestamp(timestamp);
             [q.w as f32, q.i as f32, q.j as f32, q.k as f32]
         };
         let mut points_of = points_by_pair(derived, state.next_seq);
-        for pair in self.pairs.iter().filter(|pair| pair.seq >= state.next_seq) {
+        for pair in pairs.iter().filter(|pair| pair.seq >= state.next_seq) {
             let points = points_of.remove(&pair.seq).unwrap_or_default();
             let start_us = (pair.a.mid_ms * 1000.0).round() as i64;
             if state.samples.last().is_none_or(|s| s.timestamp_us != start_us) {
@@ -824,21 +914,24 @@ impl OpticalMotionAnalysis {
                 state.solver.reset();
                 state.position = Vector3::zeros();
                 state.dominant.push([0.0; 2]);
+                state.median_depths.push(0.0);
                 state.samples.push(TranslationSample {
                     timestamp_us: start_us,
                     segment: state.segment,
+                    depth_segment: state.depth_segment,
                     camera_to_world: camera_to_world(pair.a.mid_ms),
                     focal_length_over_short_side: focal_ratios[&pair.a.index],
                     ..Default::default()
                 });
             }
-            let result = state.solver.step(&points, 1.0 / self.focal_px, pair.b.mid_ms / 1000.0);
+            let result = state.solver.step(&points, 1.0 / focal_px, pair.b.mid_ms / 1000.0);
+            if result.new_segment && state.samples.len() > 1 { state.depth_segment += 1; }
             let layer = image_space::fit(&points, &result, &output_projections[&pair.b.index],
-                (self.params.output_width, self.params.output_height));
+                (params.output_width, params.output_height));
             if result.new_segment { state.position = Vector3::zeros(); }
             if result.confidence > 0.0 {
                 state.position += gyro.org_quat_at_timestamp(pair.b.mid_ms) * result.c_segment;
-                state.pairs.insert(pair.seq, (result.c, result.inv_depth));
+                if remove_parallax { state.pairs.insert(pair.seq, (result.c, result.inv_depth)); }
             }
             state.samples.push(TranslationSample {
                 timestamp_us: (pair.b.mid_ms * 1000.0).round() as i64,
@@ -847,6 +940,7 @@ impl OpticalMotionAnalysis {
                 confidence: result.confidence as f32,
                 track_age_s: result.track_age_s as f32,
                 segment: state.segment,
+                depth_segment: state.depth_segment,
                 camera_to_world: camera_to_world(pair.b.mid_ms),
                 focal_length_over_short_side: focal_ratios[&pair.b.index],
                 layer_motion: layer.motion,
@@ -856,44 +950,72 @@ impl OpticalMotionAnalysis {
                 ..Default::default()
             });
             state.dominant.push(layer.dominant);
+            state.median_depths.push(layer.median_inv_depth);
         }
-        state.next_seq = self.next_seq;
-        for d in derived {
-            if let Some((c, depth)) = state.pairs.get(&d.seq) {
-                if let Some(rho) = depth.get(&d.id) { d.r += *rho * (c - c.dot(&d.p) * d.p); }
+        state.next_seq = next_seq;
+        if remove_parallax {
+            for d in derived {
+                if let Some((c, depth)) = state.pairs.get(&d.seq) {
+                    if let Some(rho) = depth.get(&d.id) { d.r += *rho * (c - c.dot(&d.p) * d.p); }
+                }
             }
         }
     }
 
     /// Residuals of every point of the pairs held, against the quaternions
-    fn derive(&self) -> Vec<Derived> {
-        let params = &self.params;
-        let size = self.track_size;
-        let horizontal = self.horizontal_readout;
-        let track_rows = if horizontal { size.0 } else { size.1 }.max(1) as f32;
-        let per_pair: Vec<Vec<Derived>> = self.pairs.par_iter().map(|pair| {
-            let pts_a: Vec<(f32, f32)> = pair.obs.iter().map(|o| (o.a[0], o.a[1])).collect();
-            let pts_b: Vec<(f32, f32)> = pair.obs.iter().map(|o| (o.b[0], o.b[1])).collect();
-            let ba = undistort_points_to_plane(&pts_a, pair.a.timestamp_ms, pair.a.index, params, size);
-            let bb = undistort_points_to_plane(&pts_b, pair.b.timestamp_ms, pair.b.index, params, size);
-            let gyro = params.gyro.read();
-            let orient = |t: f64| orientation(&self.vision, &gyro, t);
-            let mut out = Vec::with_capacity(pair.obs.len());
-            for (i, o) in pair.obs.iter().enumerate() {
-                let (Some(a), Some(b)) = (ba.get(i).copied().flatten(), bb.get(i).copied().flatten()) else { continue };
-                let pos_a = if horizontal { o.a[0] } else { o.a[1] };
-                let pos_b = if horizontal { o.b[0] } else { o.b[1] };
-                let ta = pair.a.start_ms + pair.a.per_px_ms * pos_a as f64;
-                let tb = pair.b.start_ms + pair.b.per_px_ms * pos_b as f64;
-                let m = (orient(tb).inverse() * orient(ta)).to_rotation_matrix().into_inner();
-                let (va, vb) = (to_quat_frame(a), to_quat_frame(b));
-                let p = m * va;
-                let band = ((pos_a / track_rows) * BANDS as f32).floor().clamp(0.0, (BANDS - 1) as f32) as u8;
-                out.push(Derived { id: o.id, seq: pair.seq, band, p, r: vb - p, ta_ms: ta, tb_ms: tb, texture: o.texture });
+    fn derive(&mut self, keep_from: Option<usize>) -> Vec<Derived> {
+        let reuse = self.stab_requested;
+        #[cfg(test)] let reuse = reuse && self.reuse_derived;
+        if !reuse || (keep_from.is_none() && self.derived_cache.is_empty()) {
+            #[cfg(test)] { self.derived_pair_evaluations += self.pairs.len(); }
+            return Self::derive_pairs(&self.params, &self.pairs, &self.vision, self.track_size, self.horizontal_readout);
+        }
+        let missing: Vec<_> = self.pairs.iter().filter(|pair| !self.derived_cache.contains_key(&pair.seq)).collect();
+        #[cfg(test)] { self.derived_pair_evaluations += missing.len(); }
+        let measured: Vec<_> = missing.par_iter().map(|pair|
+            Self::derive_pair(&self.params, pair, &self.vision, self.track_size, self.horizontal_readout)).collect();
+        let mut measured = measured.into_iter();
+        let mut out = Vec::with_capacity(self.pairs.iter().map(|pair| pair.obs.len()).sum());
+        for pair in &self.pairs {
+            if let Some(points) = self.derived_cache.get(&pair.seq) {
+                out.extend_from_slice(points);
+            } else {
+                let points = measured.next().unwrap();
+                out.extend_from_slice(&points);
+                // Only the overlap with a later processing block has another consumer.
+                if keep_from.is_some_and(|start| pair.seq >= start) { self.derived_cache.insert(pair.seq, points); }
             }
-            out
-        }).collect();
+        }
+        out
+    }
+
+    fn derive_pairs(params: &ComputeParams, pairs: &VecDeque<Pair>, vision: &Option<TimeQuat>, size: (u32, u32), horizontal: bool) -> Vec<Derived> {
+        let per_pair: Vec<_> = pairs.par_iter().map(|pair| Self::derive_pair(params, pair, vision, size, horizontal)).collect();
         per_pair.into_iter().flatten().collect()
+    }
+
+    fn derive_pair(params: &ComputeParams, pair: &Pair, vision: &Option<TimeQuat>, size: (u32, u32), horizontal: bool) -> Vec<Derived> {
+        let track_rows = if horizontal { size.0 } else { size.1 }.max(1) as f32;
+        let pts_a: Vec<(f32, f32)> = pair.obs.iter().map(|o| (o.a[0], o.a[1])).collect();
+        let pts_b: Vec<(f32, f32)> = pair.obs.iter().map(|o| (o.b[0], o.b[1])).collect();
+        let ba = undistort_points_to_plane(&pts_a, pair.a.timestamp_ms, pair.a.index, params, size);
+        let bb = undistort_points_to_plane(&pts_b, pair.b.timestamp_ms, pair.b.index, params, size);
+        let gyro = params.gyro.read();
+        let orient = |t: f64| orientation(vision, &gyro, t);
+        let mut out = Vec::with_capacity(pair.obs.len());
+        for (i, o) in pair.obs.iter().enumerate() {
+            let (Some(a), Some(b)) = (ba.get(i).copied().flatten(), bb.get(i).copied().flatten()) else { continue };
+            let pos_a = if horizontal { o.a[0] } else { o.a[1] };
+            let pos_b = if horizontal { o.b[0] } else { o.b[1] };
+            let ta = pair.a.start_ms + pair.a.per_px_ms * pos_a as f64;
+            let tb = pair.b.start_ms + pair.b.per_px_ms * pos_b as f64;
+            let m = (orient(tb).inverse() * orient(ta)).to_rotation_matrix().into_inner();
+            let (va, vb) = (to_quat_frame(a), to_quat_frame(b));
+            let p = m * va;
+            let band = ((pos_a / track_rows) * BANDS as f32).floor().clamp(0.0, (BANDS - 1) as f32) as u8;
+            out.push(Derived { id: o.id, seq: pair.seq, band, p, r: vb - p, ta_ms: ta, tb_ms: tb, texture: o.texture });
+        }
+        out
     }
 
     /// Takes the slow part out of each track's residuals: a local quadratic fit (Savitzky-Golay, the fit of the
@@ -1008,8 +1130,7 @@ mod tests {
 
     #[test]
     fn translation_auto_layer_is_the_pooled_dominant_gain() {
-        let mut state = TranslationState { solver: TranslationSolver::new(TranslationSolverConfig::DEFAULT), next_seq: 0,
-            pairs: HashMap::new(), position: Vector3::zeros(), segment: 0, samples: Vec::new(), dominant: Vec::new() };
+        let mut state = TranslationState::new();
         state.samples.push(TranslationSample { timestamp_us: 0, ..Default::default() });
         state.dominant.push([0.0; 2]);
         // Single pairs alternate between two layers: the pooled gain is steady in between
@@ -1024,12 +1145,38 @@ mod tests {
         state.dominant.push([9e-6, 1e-6]);
         state.samples.push(TranslationSample { timestamp_us: 61 * 40_000, segment: 2, weight: 1.0, ..Default::default() });
         state.dominant.push([0.0, 0.0]);
+        state.median_depths = vec![1.0; state.samples.len()];
         let samples = state.finish();
         for s in &samples[5..55] { assert!((s.auto_beta - 1.25).abs() < 0.05, "{}", s.auto_beta); }
         for w in samples[5..55].windows(2) { assert!((w[1].auto_beta / w[0].auto_beta - 1.0).abs() < 0.02); }
         assert!(samples[0].auto_beta > 0.0, "the segment start takes its neighbours' layer");
         assert!((samples[60].auto_beta - 9.0).abs() < 1e-5, "{}", samples[60].auto_beta);
         assert_eq!(samples[61].auto_beta, 0.0);
+    }
+
+    #[test]
+    fn translation_depth_units_are_normalized_once_per_solve_span() {
+        let build = |scale: f64| {
+            let mut state = TranslationState::new();
+            for i in 0..120 {
+                let depth_segment = u32::from(i >= 60);
+                let unit = if depth_segment == 0 { 1.0 } else { scale };
+                state.samples.push(TranslationSample { timestamp_us: i * 40_000, depth_segment,
+                    weight: 1.0, layer_motion: [(0.002 * unit) as f32, 0.0],
+                    far_beta: (0.5 / unit) as f32, ..Default::default() });
+                // The tracked area alternates between near and far, without any change in camera velocity.
+                state.median_depths.push(if i % 2 == 0 { 0.5 / unit } else { 2.0 / unit });
+                state.dominant.push([(4e-6 * unit) as f32, (4e-6 * unit * unit) as f32]);
+            }
+            state.finish()
+        };
+        let reference = build(1.0);
+        let changed = build(32.0);
+        for (a, b) in reference.iter().zip(&changed) {
+            assert!((a.layer_motion[0] * a.auto_beta - b.layer_motion[0] * b.auto_beta).abs() * 4616.63 < 0.01);
+            assert!((b.layer_motion[0] * b.auto_beta - 0.002).abs() * 4616.63 < 0.01);
+            assert!((b.layer_motion[0] * b.far_beta - 0.001).abs() * 4616.63 < 0.01);
+        }
     }
 
     #[test]
@@ -1085,11 +1232,140 @@ mod tests {
 
     #[cfg(feature = "use-opencv")]
     #[test]
-    fn raw_sensor_rejects_translation_and_stab_request() {
+    fn raw_sensor_defers_translation_until_reconstruction() {
         let stab = analysis_fixture(8, |_| crate::Quat64::identity());
         { let mut ui = stab.optical_ui.write(); ui.stab_enabled = true; ui.translation_enabled = true; }
-        let result = OpticalMotionAnalysis::from_manager(&stab, Arc::new(AtomicBool::new(false)));
-        assert_eq!(result.err().as_deref(), Some("Translation stabilization and in-camera stabilization reconstruction cannot be analyzed together"));
+        let result = OpticalMotionAnalysis::from_manager(&stab, Arc::new(AtomicBool::new(false))).unwrap();
+        assert!(result.translation.is_some());
+        assert!(result.translation_replay.is_some());
+        assert_eq!(result.every_nth_frame, 1);
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn reconstruction_reuses_each_uncorrected_pair_and_keeps_identical_measurements() {
+        let run = |reuse| {
+            let manager = analysis_fixture(900, |_| crate::Quat64::identity());
+            manager.set_stab_reconstruction_enabled(true);
+            manager.set_translation_stabilization_enabled(true);
+            let mut analysis = OpticalMotionAnalysis::from_manager(&manager, Arc::new(AtomicBool::new(false))).unwrap();
+            analysis.reuse_derived = reuse;
+            for frame in (1..900).filter(|f| !(95..105).contains(f)) {
+                let a: HashMap<_,_> = parallax_observations(frame-1).into_iter().collect();
+                let obs = parallax_observations(frame).into_iter().map(|(id,b)| Observation { id, a:a[&id], b, texture:f32::NAN }).collect();
+                analysis.push_test_pair(frame-1,frame,obs);
+                assert!(analysis.derived_cache.len() <= analysis.pairs.len());
+                assert!(analysis.derived_cache.len() <= 2*analysis.hp_max+CHUNK);
+            }
+            analysis.flush();
+            let evaluations = analysis.derived_pair_evaluations;
+            if reuse { assert_eq!(evaluations, analysis.next_seq); }
+            (analysis.finish().unwrap(), evaluations)
+        };
+        let (reference, repeated) = run(false);
+        let (cached, reused) = run(true);
+        assert_eq!(measurement_bits(&reference), measurement_bits(&cached));
+        assert!(repeated > reused, "repeated={repeated} reused={reused}");
+
+        let response = crate::gyro_source::OpticalStabReconstruction::from_samples(
+            vec![(-20_000,[0.0;3]),(30_000_000,[0.003,-0.002,0.01])]);
+        let mut replay = reference.translation_replay.unwrap();
+        replay.params.apply_optical_stab = true;
+        replay.params.gyro.write().optical_stab = Some(response.clone());
+        let mut state = TranslationState::new();
+        while !replay.pairs.is_empty() {
+            let pairs: VecDeque<_> = replay.pairs.drain(..replay.pairs.len().min(CHUNK)).collect();
+            let mut derived = OpticalMotionAnalysis::derive_pairs(&replay.params, &pairs, &None, replay.track_size, replay.horizontal_readout);
+            OpticalMotionAnalysis::measure_translation_pairs(&replay.params, &mut state, &pairs,
+                pairs.back().unwrap().seq+1, replay.focal_px, &mut derived, true);
+            state.pairs.clear();
+        }
+        let samples = cached.translation_replay.unwrap().measure(&response,&||false).unwrap();
+        assert_eq!(state.finish(), samples, "unused parallax removal must not change translation samples");
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn reconstruction_bearing_cache_follows_tracking_geometry() {
+        let manager = analysis_fixture(8, |_| crate::Quat64::identity());
+        manager.set_stab_reconstruction_enabled(true);
+        let mut analysis = OpticalMotionAnalysis::from_manager(&manager, Arc::new(AtomicBool::new(false))).unwrap();
+        let a: HashMap<_,_> = parallax_observations(0).into_iter().collect();
+        let obs = parallax_observations(1).into_iter().map(|(id,b)| Observation { id, a:a[&id], b, texture:f32::NAN }).collect();
+        analysis.push_test_pair(0,1,obs);
+        let old = analysis.derive(Some(0));
+        assert!(!analysis.derived_cache.is_empty());
+        analysis.push_tracked_frame(2, 2000.0/30.0, (480,270), vec![]);
+        assert!(analysis.derived_cache.is_empty());
+        let fresh = OpticalMotionAnalysis::derive_pairs(&analysis.params,&analysis.pairs,&None,analysis.track_size,analysis.horizontal_readout);
+        let actual = analysis.derive(None);
+        assert!(old.iter().zip(&actual).any(|(a,b)| a.p != b.p));
+        assert_eq!(fresh.len(), actual.len());
+        for (a,b) in fresh.iter().zip(&actual) { assert_eq!((a.p,a.r),(b.p,b.r)); }
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn combined_translation_removes_sensor_motion_before_estimating_parallax() {
+        use crate::gyro_source::{OpticalStabReconstruction, CameraStabData, splines::CatmullRom};
+        use nalgebra::{Vector2, Rotation2};
+        for horizontal in [false, true] {
+            let frames = 90;
+            let make = |recorded: bool| {
+                let stab = analysis_fixture(frames, |_| crate::Quat64::identity());
+                { let mut p = stab.params.write(); p.frame_readout_time = 10.0;
+                    if horizontal { p.frame_readout_direction = crate::stabilization_params::ReadoutDirection::LeftToRight; } }
+                { let mut ui = stab.optical_ui.write(); ui.stab_enabled = true; ui.translation_enabled = true; }
+                if recorded {
+                    let mut spline = CatmullRom::new();
+                    for row in [0.0, 1080.0] { spline.add_point(row, Vector3::new(3.0, -2.0, 0.02_f64.to_degrees() * 1000.0)); }
+                    stab.gyro.write().file_metadata.write().camera_stab_data = (0..frames).map(|_| CameraStabData {
+                        sensor_size: (960, 540), crop_area: (0.0, 0.0, 960.0, 540.0), pixel_pitch: (1, 1),
+                        ibis_spline: spline.clone(), ..Default::default() }).collect();
+                }
+                stab
+            };
+            let truth = OpticalStabReconstruction::from_samples((-20..=3020).map(|ms| {
+                let t = ms as f64 / 1000.0;
+                (ms * 1000, [0.006 * (19.0*t).sin(), 0.004*(23.0*t).cos(), 0.008*(11.0*t).sin()])
+            }).collect());
+            let zero = OpticalStabReconstruction::from_samples(vec![(-20000, [0.0;3]), (3020000, [0.0;3])]);
+            let base = make(false);
+            let shifted = make(true);
+            let baseline = analyze_pairs(&base, frames, parallax_observations);
+            let moved = analyze_pairs(&shifted, frames, |frame| parallax_observations(frame).into_iter().map(|(id, xy)| {
+                let body = Vector2::new(xy[0] as f64, xy[1] as f64);
+                let mut raw = body;
+                for _ in 0..12 {
+                    let row = if horizontal { raw.x / 960.0 } else { raw.y / 540.0 };
+                    let t = frame as f64 * 1e6 / 30.0 + 10000.0 * (row - 0.5);
+                    let s = truth.at(t);
+                    raw = Rotation2::new(-0.02-s.z) * (body - Vector2::new(483.0,268.0) - s.xy()*500.0) + Vector2::new(480.0,270.0);
+                }
+                (id, [raw.x as f32, raw.y as f32])
+            }).collect());
+            assert!(moved.translation_samples.is_empty());
+            let a = baseline.translation_replay.unwrap().measure(&zero, &||false).unwrap();
+            let replay = moved.translation_replay.unwrap();
+            let mut params = replay.params.clone();
+            params.apply_optical_stab = true;
+            params.gyro.write().optical_stab = Some(truth.clone());
+            let corrected = OpticalMotionAnalysis::derive_pairs(&params, &replay.pairs, &None, (960,540), horizontal);
+            let mut max_error = 0.0_f64;
+            for d in &corrected {
+                let xy = parallax_observations(d.seq + 1).into_iter().find(|(id,_)| *id == d.id).unwrap().1;
+                max_error = max_error.max(((d.p+d.r)-to_quat_frame(((xy[0]-480.0)/500.0,(xy[1]-270.0)/500.0))).norm()*500.0);
+            }
+            assert!(max_error < 0.01, "horizontal={horizontal} rays={max_error}");
+            let b = replay.measure(&truth, &||false).unwrap();
+            assert_eq!(a.len(), b.len());
+            let mut max_motion = 0.0_f64;
+            for (a,b) in a.iter().zip(&b).skip(10) {
+                for k in 0..2 { max_motion = max_motion.max((a.layer_motion[k]*a.auto_beta*a.weight-b.layer_motion[k]*b.auto_beta*b.weight).abs() as f64*500.0); }
+            }
+            eprintln!("combined horizontal={horizontal} ray_px={max_error} motion_px={max_motion}");
+            assert!(max_motion < 0.02);
+        }
     }
 
     #[cfg(feature = "use-opencv")]
@@ -1835,7 +2111,7 @@ mod sensor_solve_tests {
             }
         }
         OpticalMeasurements { bands: vec![], stab_requested: true, stab_pairs: pairs, stab_bands: bands,
-            translation_requested: false, translation_samples: vec![], scaled_fps: fps,
+            translation_requested: false, translation_samples: vec![], translation_replay: None, scaled_fps: fps,
             quats_checksum: optical_correction::checksum(quats), context_checksum: 9, video_base: vec![],
             frames: 300, measured_frames: 0, generation: 0 }
     }

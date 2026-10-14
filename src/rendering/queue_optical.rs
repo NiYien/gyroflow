@@ -144,7 +144,8 @@ pub fn run_queue_optical(
             Ok(()) => {
                 stab.recompute_blocking();
                 ::log::info!(target: "queue.optical", "[queue-optical] job={job_id} analysis done in {} ms", started.elapsed().as_millis());
-                failed.extend(pending.iter().filter(|item| !applies(stab, item)).map(|item| (*item, NO_RESULT.to_string())));
+                failed.extend(requested.iter().filter(|item| (file_motion || **item == CORRECTION) && !applies(stab, item))
+                    .map(|item| (*item, NO_RESULT.to_string())));
             }
         }
     }
@@ -189,8 +190,7 @@ pub fn run_queue_optical(
     QueueOpticalOutcome::Fallback { analyzed, items, reason }
 }
 
-/// The order of `MotionData.qml::analyzeOpticalModes`: the core setters keep the modes exclusive, the last tick wins as on
-/// the panel. Only what differs is set, so that an unchanged job is not invalidated. True when anything changed
+/// Apply the panel's resolved choices without invalidating an unchanged job.
 fn apply_settings(job_id: u32, stab: &StabilizationManager, s: &QueueOpticalSettings) -> bool {
     let state = |stab: &StabilizationManager| {
         let (ui, strength) = (*stab.optical_ui.read(), stab.optical_settings.read().strength);
@@ -198,8 +198,9 @@ fn apply_settings(job_id: u32, stab: &StabilizationManager, s: &QueueOpticalSett
     };
     let before = state(stab);
     let (ui, strength, ignoring) = before;
-    if ui.correction_enabled != s.correction {
-        stab.set_optical_correction_enabled(s.correction);
+    let resolved = resolve(s);
+    if ui.correction_enabled != resolved.correction {
+        stab.set_optical_correction_enabled(resolved.correction);
     }
     let ignore = resolve(s).ignore_file_motion;
     if ignoring != ignore {
@@ -233,8 +234,7 @@ fn apply_settings(job_id: u32, stab: &StabilizationManager, s: &QueueOpticalSett
     before != state(stab)
 }
 
-/// What `apply_settings` leaves switched on: the core setters keep the modes exclusive and a reconstruction turns the
-/// other two off; ignoring the file's motion is part of the correction, and a reconstruction needs the motion
+/// Reconstruction excludes rotation correction and needs file motion; translation can accompany either.
 struct Resolved {
     correction: bool,
     translation: bool,
@@ -245,7 +245,7 @@ struct Resolved {
 fn resolve(s: &QueueOpticalSettings) -> Resolved {
     Resolved {
         correction: s.correction && !s.reconstruction,
-        translation: s.translation && !s.reconstruction,
+        translation: s.translation,
         reconstruction: s.reconstruction,
         ignore_file_motion: s.correction && s.ignore_file_motion && !s.reconstruction,
     }
@@ -277,7 +277,7 @@ pub fn needs_analysis(stab: &StabilizationManager, settings: &QueueOpticalSettin
     let context = context_checksum(&measurement_params(stab));
     let strength = settings.strength.clamp(0.0, 1.0);
     let gyro = stab.gyro.read();
-    items.iter().any(|item| !result_applies(&gyro, context, item, strength))
+    items.iter().any(|item| !result_applies(&gyro, context, item, strength, resolved.reconstruction))
 }
 
 /// stabilize-flow-optical-analysis: whether `run_queue_optical` would change the manager's settings
@@ -305,7 +305,7 @@ pub fn stabilize_pass_needed(stab: &StabilizationManager, settings: &QueueOptica
 /// Whether the result for `item` is there and measured on what the job has now, switched on or not: the uncorrected
 /// motion and `context` (sync, lens, frame timing), for a translation or a reconstruction the file's motion data. A
 /// correction also has to be fitted with `strength`. Shared by `applies` and `needs_analysis`
-fn result_applies(gyro: &GyroSource, context: u64, item: &str, strength: f64) -> bool {
+fn result_applies(gyro: &GyroSource, context: u64, item: &str, strength: f64, reconstruction: bool) -> bool {
     let file_motion = gyro.has_motion() && !gyro.ignores_file_motion();
     let uncorrected = gyro.optical_uncorrected_checksum;
     match item {
@@ -313,6 +313,7 @@ fn result_applies(gyro: &GyroSource, context: u64, item: &str, strength: f64) ->
             .is_some_and(|c| c.measured_on(uncorrected, context) && c.settings.strength == strength),
         TRANSLATION => file_motion && gyro.optical_translation.as_ref().is_some_and(|t| {
             t.has_valid_geometry() && !t.samples.is_empty() && t.quats_checksum == uncorrected && t.context_checksum == context
+                && t.reconstruction_checksum == gyro.translation_reconstruction_checksum(context, reconstruction)
         }),
         _ => file_motion && gyro.optical_stab.as_ref().is_some_and(|s| s.measured_on(uncorrected, context) && s.has_table()),
     }
@@ -329,7 +330,7 @@ fn applies(stab: &StabilizationManager, item: &str) -> bool {
         _ => gyro.optical_stab.as_ref().is_some_and(|s| s.enabled),
     };
     // After the refresh the cached context is the current one
-    enabled && result_applies(&gyro, gyro.optical_context, item, strength)
+    enabled && result_applies(&gyro, gyro.optical_context, item, strength, gyro.optical_stab.as_ref().is_some_and(|s| s.enabled))
 }
 
 #[cfg(test)]
@@ -486,7 +487,7 @@ mod tests {
         assert_eq!((ui.translation_settings.reference, ui.translation_settings.smoothness_s, ui.translation_settings.along_axis), (0.6, 2.5, false));
         assert!(ui.translation_settings.auto);
         assert_eq!(stab.optical_settings.read().strength, 0.3);
-        // The last tick wins, as on the panel: reconstruction turns the other two off
+        // Both requested measurements fail; rotation correction stays excluded by reconstruction.
         let stab = manager(false);
         run_queue_optical(1, &stab, &settings(serde_json::json!({ "translation": true, "correction": true, "reconstruction": true })), false, |_| Err("x".into()));
         let ui = *stab.optical_ui.read();
@@ -624,6 +625,29 @@ mod tests {
     }
 
     #[test]
+    fn combined_results_are_reused_only_with_their_measured_reconstruction() {
+        let stab = manager(true);
+        let s = settings(serde_json::json!({"translation":true,"reconstruction":true}));
+        let outcome = run_queue_optical(1, &stab, &s, true, |stab| {
+            install_reconstruction(stab); install_translation(stab);
+            { let mut g = stab.gyro.write();
+                let dependency = g.optical_stab.as_ref().unwrap().measurement_checksum();
+                g.optical_translation.as_mut().unwrap().reconstruction_checksum = dependency;
+                g.optical_translation.as_mut().unwrap().geometry_version = gyroflow_core::gyro_source::optical_translation::CONDITIONED_GEOMETRY_VERSION; }
+            stab.recompute_gyro();
+            Ok(())
+        });
+        assert_eq!(outcome, QueueOpticalOutcome::Applied { analyzed: true });
+        assert!(translation_active(&stab) && reconstruction_active(&stab));
+        assert!(!needs_analysis(&stab,&s));
+        assert_eq!(run_queue_optical(1,&stab,&s,true, |_| panic!("unchanged combination must be reused")),
+            QueueOpticalOutcome::Applied { analyzed: false });
+        stab.gyro.write().optical_stab.as_mut().unwrap().coeffs[0][0] += 0.001;
+        assert!(needs_analysis(&stab,&s));
+        assert!(needs_analysis(&stab,&QueueOpticalSettings {reconstruction:false,..s}));
+    }
+
+    #[test]
     fn a_clip_that_needs_compensation_is_skipped_when_the_settings_turn_its_reconstruction_off() {
         // A preview result came with the job, but the queue's settings untick the reconstruction
         let stab = manager(true);
@@ -710,12 +734,12 @@ mod tests {
                 settings: json!({ "correction": true, "strength": 0.9 }), needs: true, analyzes: true,
             },
             Fixture {
-                name: "reconstruction wins over the other two, and applies",
+                name: "reconstruction applies but the requested translation is missing",
                 build: || { let stab = manager(false); stab.set_stab_reconstruction_enabled(true); install_reconstruction(&stab); stab },
-                settings: json!({ "translation": true, "correction": true, "reconstruction": true }), needs: false, analyzes: false,
+                settings: json!({ "translation": true, "correction": true, "reconstruction": true }), needs: true, analyzes: true,
             },
             Fixture {
-                name: "reconstruction wins over a translation that applies",
+                name: "translation must be remeasured with the requested reconstruction",
                 build: with_translation,
                 settings: json!({ "translation": true, "reconstruction": true }), needs: true, analyzes: true,
             },

@@ -2174,7 +2174,7 @@ impl GyroSource {
         if let Some(t) = &mut self.optical_translation {
             t.applies = translation_applies;
             if t.enabled && !t.applies {
-                log::warn!("The optical translation was measured on other motion data, sync, lens or frame timing, or file motion is unavailable, not applying it");
+                log::warn!("The optical translation was measured on other motion data, sync, lens, frame timing or reconstruction, or file motion is unavailable, not applying it");
             }
         }
         if let Some(c) = &self.optical_correction {
@@ -2197,7 +2197,16 @@ impl GyroSource {
     /// Whether the translation matches the uncorrected motion and current context.
     pub fn optical_translation_applies(&self) -> bool {
         self.optical_translation.as_ref().is_some_and(|t| t.has_valid_geometry() && t.quats_checksum == self.optical_uncorrected_checksum
-            && t.context_checksum == self.optical_context && !self.ignores_file_motion() && self.has_motion())
+            && t.context_checksum == self.optical_context && !self.ignores_file_motion() && self.has_motion()
+            && t.reconstruction_checksum == self.translation_reconstruction_checksum(self.optical_context,
+                self.optical_stab.as_ref().is_some_and(|s| s.enabled)))
+    }
+
+    /// Which sensor response a translation would be measured against for the requested reconstruction state.
+    pub fn translation_reconstruction_checksum(&self, context: u64, enabled: bool) -> u64 {
+        self.optical_stab.as_ref().filter(|s| enabled && s.has_table()
+            && s.measured_on(self.optical_uncorrected_checksum, context) && self.has_motion() && !self.ignores_file_motion())
+            .map_or(0, |s| s.measurement_checksum())
     }
     /// Whether `integrate` composes the correction onto the quaternions, as things stand
     pub fn optical_correction_applies(&self) -> bool {

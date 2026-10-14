@@ -11,7 +11,8 @@ mod smoothing;
 #[cfg(all(test, feature = "use-opencv"))]
 #[path = "optical_translation/acceptance.rs"]
 mod acceptance;
-pub const GEOMETRY_VERSION: u32 = 2;
+pub const GEOMETRY_VERSION: u32 = 4;
+pub const CONDITIONED_GEOMETRY_VERSION: u32 = 5;
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -37,6 +38,9 @@ pub struct TranslationSample {
     pub confidence: f32,
     pub track_age_s: f32,
     pub segment: u32,
+    /// Samples sharing a fixed depth coordinate system, within an analysis range.
+    #[serde(default)]
+    pub depth_segment: u32,
     /// Camera-to-world quaternion at this sample's video time, in w, x, y, z order.
     #[serde(default)]
     pub camera_to_world: [f32; 4],
@@ -129,6 +133,8 @@ pub struct OpticalTranslation {
     pub samples: Vec<TranslationSample>,
     pub quats_checksum: u64,
     pub context_checksum: u64,
+    /// Sensor response removed before estimating these samples; zero for measurements without reconstruction.
+    pub reconstruction_checksum: u64,
     pub frames: usize,
     pub measured_frames: usize,
     pub geometry_version: u32,
@@ -272,6 +278,7 @@ fn filtered_beta(segment: &[TranslationSample], beta: impl Fn(&TranslationSample
         let (mut sum, mut weights) = (0.0, 0.0);
         for j in left..right {
             let s = &segment[j];
+            if s.depth_segment != segment[i].depth_segment { continue; }
             let value = beta(s);
             if !value.is_finite() || value <= 0.0 || !s.weight.is_finite() || s.weight <= 0.0 { continue; }
             let duration = sample_duration(&times, j);
@@ -308,27 +315,41 @@ const NEIGHBOUR_RADIUS_S: f64 = 0.75;
 /// duration at two sigma, so where no trusted pair is near, the motion fades to zero instead of carrying a distant
 /// velocity.
 fn blended_layer_motion(segment: &[TranslationSample]) -> Vec<nalgebra::Vector3<f64>> {
+    blend_motion(segment, &segment.iter().map(|s| nalgebra::Vector3::new(
+        s.layer_motion[0] as f64, s.layer_motion[1] as f64, s.layer_scale_rate as f64)).collect::<Vec<_>>())
+}
+
+fn blend_motion(segment: &[TranslationSample], measured: &[nalgebra::Vector3<f64>]) -> Vec<nalgebra::Vector3<f64>> {
     let times: Vec<_> = segment.iter().map(|s| time_difference_s(s.timestamp_us, segment[0].timestamp_us)).collect();
     let durations: Vec<_> = (0..segment.len()).map(|j| sample_duration(&times, j)).collect();
-    let measured = |s: &TranslationSample| nalgebra::Vector3::new(s.layer_motion[0] as f64, s.layer_motion[1] as f64, s.layer_scale_rate as f64);
     let prior = (-2.0_f64).exp();
     segment.iter().enumerate().map(|(i, sample)| {
         let confidence = sample.weight as f64;
         // Exactly the measurement, so fully trusted analyses build the same curve as before.
-        if confidence == 1.0 { return measured(sample); }
+        if confidence == 1.0 { return measured[i]; }
         let left = times.partition_point(|t| *t < times[i] - NEIGHBOUR_RADIUS_S);
         let right = times.partition_point(|t| *t <= times[i] + NEIGHBOUR_RADIUS_S);
         let (mut sum, mut weights) = (nalgebra::Vector3::zeros(), 0.0);
         for j in (left..right).filter(|j| *j != i) {
             let weight = (-0.5 * ((times[j] - times[i]) / NEIGHBOUR_SIGMA_S).powi(2)).exp() * segment[j].weight as f64 * durations[j];
             if weight > 0.0 {
-                sum += measured(&segment[j]) * weight;
+                sum += measured[j] * weight;
                 weights += weight;
             }
         }
         let estimate = sum / (weights + prior * durations[i]);
-        measured(sample) * confidence + estimate * (1.0 - confidence)
+        measured[i] * confidence + estimate * (1.0 - confidence)
     }).collect()
+}
+
+/// Neighbours must be compared in image units, even when their depth solves use unrelated scales.
+fn reference_layer_motion(segment: &[TranslationSample], depths: &[f64], reference: f64, fixed_depth_units: bool) -> Vec<nalgebra::Vector3<f64>> {
+    if !fixed_depth_units {
+        return blended_layer_motion(segment).into_iter().zip(depths).map(|(motion, depth)| motion * (reference * depth)).collect();
+    }
+    let measured: Vec<_> = segment.iter().zip(depths).map(|(s, depth)| nalgebra::Vector3::new(
+        s.layer_motion[0] as f64, s.layer_motion[1] as f64, s.layer_scale_rate as f64) * (reference * depth)).collect();
+    blend_motion(segment, &measured)
 }
 
 /// Position minus its Gaussian average, with time and position reflected at both ends so that a constant velocity
@@ -468,7 +489,7 @@ impl OpticalTranslation {
         samples.dedup_by_key(|sample| sample.timestamp_us);
         let geometry: Option<Vec<_>> = samples.iter().map(TranslationSample::geometry).collect();
         if cancelled() { return false; }
-        let Some(geometry) = geometry.filter(|_| self.geometry_version == GEOMETRY_VERSION) else {
+        let Some(geometry) = geometry.filter(|_| self.geometry_version_matches()) else {
             self.curve.clear();
             self.effective_smoothness_s = 0.0;
             self.geometry_valid = false;
@@ -503,7 +524,7 @@ impl OpticalTranslation {
             // Analysed before the automatic reference existed: hold the far layer until analysed again
             if far_fallback { far_fallback_segments += 1; }
             let depths = if auto && !far_fallback { filtered_auto_beta(segment) } else { filtered_far_beta(segment) };
-            let motion = blended_layer_motion(segment);
+            let motion = reference_layer_motion(segment, &depths, reference, self.fixed_depth_units());
             if cancelled() { return false; }
             // One position sequence for both the automatic smoothness and the high pass
             let mut position = nalgebra::Vector3::zeros();
@@ -512,9 +533,8 @@ impl OpticalTranslation {
                     let previous = output_path.get(&segment[i - 1].timestamp_us).copied().unwrap_or_default();
                     let current = output_path.get(&sample.timestamp_us).copied().unwrap_or_default();
                     let rotation = retained_rotation(&previous, &current);
-                    let gain = reference * depths[i];
-                    position += nalgebra::Vector3::new(rotation.x + gain * motion[i].x, rotation.y + gain * motion[i].y,
-                        if self.settings.along_axis { gain * motion[i].z } else { 0.0 });
+                    position += nalgebra::Vector3::new(rotation.x + motion[i].x, rotation.y + motion[i].y,
+                        if self.settings.along_axis { motion[i].z } else { 0.0 });
                 }
                 position
             }).collect();
@@ -620,8 +640,15 @@ impl OpticalTranslation {
 
     pub fn has_valid_geometry(&self) -> bool { self.geometry_valid }
 
+    fn geometry_version_matches(&self) -> bool {
+        if self.reconstruction_checksum == 0 { matches!(self.geometry_version, 2 | GEOMETRY_VERSION) }
+        else { matches!(self.geometry_version, 3 | CONDITIONED_GEOMETRY_VERSION) }
+    }
+
+    fn fixed_depth_units(&self) -> bool { matches!(self.geometry_version, GEOMETRY_VERSION | CONDITIONED_GEOMETRY_VERSION) }
+
     pub(crate) fn validate_geometry(&mut self) {
-        self.geometry_valid = self.geometry_version == GEOMETRY_VERSION && !self.samples.is_empty()
+        self.geometry_valid = self.geometry_version_matches() && !self.samples.is_empty()
             && self.samples.iter().all(|sample| sample.geometry().is_some());
     }
 
@@ -638,6 +665,7 @@ impl OpticalTranslation {
         if self.settings.auto { true.hash(hasher); }
         self.quats_checksum.hash(hasher);
         self.context_checksum.hash(hasher);
+        if self.reconstruction_checksum != 0 { self.reconstruction_checksum.hash(hasher); }
         self.geometry_version.hash(hasher);
         self.output_path_checksum.hash(hasher);
         let config = TranslationConfig::resolved();
@@ -653,6 +681,7 @@ impl OpticalTranslation {
             sample.confidence.to_bits().hash(hasher);
             sample.track_age_s.to_bits().hash(hasher);
             sample.segment.hash(hasher);
+            if self.fixed_depth_units() { sample.depth_segment.hash(hasher); }
             for value in sample.camera_to_world { value.to_bits().hash(hasher); }
             sample.focal_length_over_short_side.to_bits().hash(hasher);
             for value in sample.layer_motion { value.to_bits().hash(hasher); }
@@ -695,6 +724,66 @@ mod tests {
     }
 
     #[test]
+    fn conditioned_translation_format_requires_its_dependency() {
+        let mut t = OpticalTranslation::new((0..31).map(sample).collect(), OpticalTranslationSettings::default());
+        assert!(t.has_valid_geometry());
+        t.geometry_version = CONDITIONED_GEOMETRY_VERSION;
+        t.reconstruction_checksum = 123;
+        t.validate_geometry();
+        assert!(t.has_valid_geometry());
+        let mut saved = serde_json::to_value(&t).unwrap();
+        let mut restored: OpticalTranslation = serde_json::from_value(saved.clone()).unwrap();
+        restored.validate_geometry();
+        assert!(restored.has_valid_geometry());
+        saved.as_object_mut().unwrap().remove("reconstruction_checksum");
+        let mut missing: OpticalTranslation = serde_json::from_value(saved).unwrap();
+        missing.validate_geometry();
+        assert!(!missing.has_valid_geometry());
+        t.geometry_version = GEOMETRY_VERSION;
+        t.validate_geometry();
+        assert!(!t.has_valid_geometry());
+    }
+
+    #[test]
+    fn translation_reference_blends_across_depth_coordinates_in_image_units() {
+        let base: Vec<_> = (0..180).map(|i| TranslationSample {
+            layer_motion: [0.001 * (i as f32 * 0.13).sin(), -0.002], layer_scale_rate: 0.0003,
+            far_beta: 1.0, auto_beta: 1.0, depth_segment: u32::from(i >= 90),
+            weight: if (85..95).contains(&i) { 0.0 } else { 1.0 }, ..sample(i)
+        }).collect();
+        let mut changed = base.clone();
+        for s in &mut changed[90..] {
+            for value in &mut s.layer_motion { *value *= 32.0; }
+            s.layer_scale_rate *= 32.0;
+            s.far_beta /= 32.0; s.auto_beta /= 32.0;
+        }
+        for auto in [false, true] {
+            let depths = |s: &[TranslationSample]| if auto { filtered_auto_beta(s) } else { filtered_far_beta(s) };
+            let a = reference_layer_motion(&base, &depths(&base), 1.0, true);
+            let b = reference_layer_motion(&changed, &depths(&changed), 1.0, true);
+            for (a, b) in a.iter().zip(b) { assert!((a - b).norm() * 4616.63 < 0.01); }
+            let settings = OpticalTranslationSettings { auto, ..Default::default() };
+            let a = OpticalTranslation::new(base.clone(), settings);
+            let b = OpticalTranslation::new(changed.clone(), settings);
+            for (a, b) in a.curve.iter().zip(b.curve) { assert!((a.shift - b.shift).norm() * 4616.63 < 0.01); }
+        }
+    }
+
+    #[test]
+    fn translation_legacy_depth_formats_keep_their_curve_and_checksum() {
+        for (version, dependency) in [(2, 0), (3, 123)] {
+            let mut a = OpticalTranslation::new((0..90).map(sample).collect(), OpticalTranslationSettings::default());
+            a.geometry_version = version; a.reconstruction_checksum = dependency; a.rebuild();
+            assert!(a.has_valid_geometry() && !a.fixed_depth_units());
+            let encoded = crate::util::compress_to_base91_cbor(&a).unwrap();
+            let mut b: OpticalTranslation = crate::util::decompress_from_base91_cbor(&encoded).unwrap();
+            b.rebuild();
+            assert_eq!(a.content_checksum(), b.content_checksum());
+            for (a, b) in a.curve.iter().zip(b.curve) { assert_eq!(a.shift, b.shift); }
+        }
+    }
+
+    #[test]
     fn project_round_trip_keeps_what_is_stored_and_nothing_else() {
         let t = OpticalTranslation { enabled: true, applies: true, samples: (0..90).map(sample).collect(), quats_checksum: 7, context_checksum: 9, frames: 90, measured_frames: 88, ..Default::default() };
         let text = crate::util::compress_to_base91_cbor(&t).unwrap();
@@ -711,7 +800,9 @@ mod tests {
         samples[40].layer_scale_rate = 0.003;
         samples[40].far_beta = 0.4;
         samples[40].weight = 0.7;
-        let t = OpticalTranslation::new(samples, Default::default());
+        let mut t = OpticalTranslation::new(samples, Default::default());
+        // This fixture deliberately exercises the older per-frame depth format.
+        t.geometry_version = 2;
         let encoded = crate::util::compress_to_base91_cbor(&t).unwrap();
         let back: OpticalTranslation = crate::util::decompress_from_base91_cbor(&encoded).unwrap();
         assert_eq!(back.samples, t.samples);

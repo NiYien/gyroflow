@@ -1406,6 +1406,23 @@ mod tests {
     }
 
     #[test]
+    fn combined_translation_and_reconstruction_share_inverse_and_stmap_geometry() {
+        let mut p = translated(0.0, Quat64::from_euler_angles(0.2, -0.1, 0.4), [0.004,-0.003,0.01], true);
+        p.apply_optical_stab = true;
+        p.gyro.write().optical_stab = Some(crate::gyro_source::OpticalStabReconstruction::from_samples(
+            vec![(0,[0.006,-0.004,0.025]), (1_000_000,[0.006,-0.004,0.025])]));
+        for point in POINTS {
+            let output = to_output(&p, point);
+            let source = to_source(&p, output, 0).unwrap();
+            assert!((source.0-point.0).hypot(source.1-point.1) < 0.02, "{point:?} -> {output:?} -> {source:?}");
+        }
+        p.suppress_rotation = true;
+        let off = with_gyro(&p, |g| {g.optical_stab = None; g.optical_translation = None;});
+        for point in POINTS { assert_eq!(to_output(&p,point), to_output(&off,point)); }
+        assert_eq!(FrameTransform::at_timestamp(&p,0.0,0).matrices, FrameTransform::at_timestamp(&off,0.0,0).matrices);
+    }
+
+    #[test]
     fn camera_moved_right_shifts_the_picture_right() {
         // The camera is 0.01 (in units of the reference depth) to the right of its smooth path: the output camera sits
         // to its left and sees every point of the reference layer further right

@@ -21,6 +21,8 @@ pub struct PairTranslation {
     pub c: Vector3<f64>,
     /// The same movement in the segment's fixed scale.
     pub c_segment: Vector3<f64>,
+    /// Length of one pair-scale unit in the segment's fixed coordinates.
+    pub depth_scale: f64,
     /// Inverse depths used by this pair's model, before propagation and normalization.
     pub inv_depth: HashMap<u32, f64>,
     /// Variance of each of those inverse depths, from this pair's parallax and the depth carried into it.
@@ -109,7 +111,7 @@ impl TranslationSolver {
 
     fn failed(&mut self) -> PairTranslation {
         self.reset();
-        PairTranslation { c: Vector3::zeros(), c_segment: Vector3::zeros(), inv_depth: HashMap::new(), inv_depth_var: HashMap::new(), carried_depth: HashSet::new(),
+        PairTranslation { c: Vector3::zeros(), c_segment: Vector3::zeros(), depth_scale: 1.0, inv_depth: HashMap::new(), inv_depth_var: HashMap::new(), carried_depth: HashSet::new(),
             ref_inv_depth: 0.0, confidence: 0.0, track_age_s: 0.0, new_segment: true, pred: None }
     }
 
@@ -251,7 +253,7 @@ impl TranslationSolver {
         let confidence = if new_segment || prediction_rejected { 0.0 } else { confidence };
         self.first_seen = pts.iter().map(|p| (p.id, self.first_seen.get(&p.id).copied().unwrap_or(tb_s))).collect();
         let output = PairTranslation {
-            c, c_segment: c * self.lambda,
+            c, c_segment: c * self.lambda, depth_scale: self.lambda,
             inv_depth: pts.iter().zip(&rho).map(|(p, r)| (p.id, *r)).collect(),
             inv_depth_var: pts.iter().zip(&hrr).map(|(p, h)| (p.id, 1.0 / h)).collect(),
             carried_depth,

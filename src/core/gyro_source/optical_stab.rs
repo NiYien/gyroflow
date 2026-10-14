@@ -440,6 +440,16 @@ impl OpticalStabReconstruction {
         hasher.finish().max(1)
     }
 
+    /// Measurement dependency, independent of the checkbox and including the table's limiting rule.
+    pub fn measurement_checksum(&self) -> u64 {
+        let mut enabled = self.clone();
+        enabled.enabled = true;
+        let mut hasher = DefaultHasher::new();
+        enabled.hash_into(&mut hasher);
+        hasher.write_u64(StabReconConfig::resolved().max_deg.to_bits());
+        hasher.finish().max(1)
+    }
+
     /// Installs the given table directly; rebuilding still uses only the stored spline and body rotations.
     #[cfg(any(test, feature = "test-support"))]
     pub fn from_samples(samples: Vec<(i64, [f64; 3])>) -> Self {

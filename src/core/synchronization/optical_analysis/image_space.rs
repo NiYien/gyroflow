@@ -10,6 +10,8 @@ pub(super) struct LayerMotion {
     pub motion: [f32; 2],
     pub scale_rate: f32,
     pub far_beta: f32,
+    /// Typical visible inverse depth in the same fixed coordinates as the fitted motion.
+    pub median_inv_depth: f64,
     /// Numerator and denominator of the dominant layer's depth gain, for the analysis to pool over neighbouring pairs:
     /// the weighted median of the content's parallax projected on the unit-depth layer's motion, and its squared norm
     pub dominant: [f32; 2],
@@ -66,7 +68,7 @@ pub(super) fn fit(points: &[PairPoint], pair: &PairTranslation, projection: &Mat
     if data.len() < 12 { return LayerMotion::default(); }
     let depths: Vec<_> = data.iter().map(|d| (d.2, 1.0 / cells[d.3] as f64)).collect();
     let median = quantile(&depths, 0.5);
-    if median <= 0.0 { return LayerMotion::default(); }
+    if median <= 0.0 || !pair.depth_scale.is_finite() || pair.depth_scale <= 0.0 { return LayerMotion::default(); }
     let mut robust = vec![[1.0; 2]; data.len()];
     let mut solution = Vector3::zeros();
     for _ in 0..6 {
@@ -106,9 +108,12 @@ pub(super) fn fit(points: &[PairPoint], pair: &PairTranslation, projection: &Mat
     let weights: Vec<_> = data.iter().zip(&texture).map(|(d, e)| visibility(*e, typical) / cells[d.3] as f64).collect();
     let median_of = |axis: usize| quantile(&data.iter().zip(&weights).map(|(d, w)| (d.1[axis], *w)).collect::<Vec<_>>(), 0.5);
     let parallax = Vector2::new(median_of(0), median_of(1));
+    // Keep the fit well conditioned, then express its result in the solver's fixed depth coordinates.
+    solution *= pair.depth_scale / median;
     let unit = solution.xy();
     LayerMotion { motion: [solution.x as f32, solution.y as f32], scale_rate: solution.z as f32,
-        far_beta: (quantile(&depths, 0.2) / median) as f32,
+        far_beta: (quantile(&depths, 0.2) / pair.depth_scale) as f32,
+        median_inv_depth: median / pair.depth_scale,
         dominant: [parallax.dot(&unit) as f32, unit.norm_squared() as f32],
         weight: pair.confidence.clamp(0.0, 1.0) as f32 }
 }
@@ -137,7 +142,7 @@ mod tests {
                 }
             }
         }
-        let pair = PairTranslation { c: Vector3::zeros(), c_segment: Vector3::zeros(),
+        let pair = PairTranslation { c: Vector3::zeros(), c_segment: Vector3::zeros(), depth_scale: 0.5,
             carried_depth: depths.keys().copied().collect::<HashSet<_>>(), inv_depth_var: depths.keys().map(|id| (*id, 1e-6)).collect(), inv_depth: depths,
             ref_inv_depth: 0.0, confidence: 0.75, track_age_s: 1.0, new_segment: false, pred: Some(0.1) };
         (points, pair, Matrix3::new(500.0, 0.0, 400.0, 0.0, 500.0, 225.0, 0.0, 0.0, 1.0))
@@ -212,7 +217,7 @@ mod tests {
         let (points, pair, projection) = layered(0, 1.0, Some(1.3));
         let got = fit(&points, &pair, &projection, (800, 450));
         let ratio = (got.dominant[0] / got.dominant[1]) as f64;
-        assert!((ratio - 1.0).abs() < 0.02, "{got:?}");
+        assert!((ratio * pair.depth_scale - 1.3).abs() < 0.02, "{got:?}");
     }
 
     #[test]
@@ -243,5 +248,25 @@ mod tests {
         let (points, mut pair, projection) = layered(5, 1.0, None);
         pair.confidence = 0.0;
         assert_eq!(fit(&points, &pair, &projection, (800, 450)).dominant, [0.0, 0.0]);
+    }
+
+    #[test]
+    fn translation_layer_motion_keeps_its_unit_when_visible_depths_switch() {
+        let mut motion = Vec::new();
+        for near_columns in [7, 8, 9, 7] {
+            let (points, mut pair, projection) = layered(near_columns, 1.0, None);
+            let original = fit(&points, &pair, &projection, (800, 450));
+            motion.push(original.motion);
+            // Changing the solver's arbitrary pair coordinates cannot change a physical layer's motion.
+            for depth in pair.inv_depth.values_mut() { *depth *= 37.0; }
+            pair.depth_scale *= 37.0;
+            let scaled = fit(&points, &pair, &projection, (800, 450));
+            assert!((scaled.median_inv_depth - original.median_inv_depth).abs() < 1e-12);
+            assert_eq!(scaled.motion, original.motion);
+            assert_eq!(scaled.far_beta, original.far_beta);
+        }
+        for pair in motion.windows(2) {
+            assert!((Vector2::from(pair[0]) - Vector2::from(pair[1])).norm() < 1e-8, "{motion:?}");
+        }
     }
 }

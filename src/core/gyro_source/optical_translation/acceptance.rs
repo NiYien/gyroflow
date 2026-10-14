@@ -11,6 +11,16 @@ fn blended_by_range(samples: &[TranslationSample]) -> Vec<nalgebra::Vector3<f64>
     cleaned.chunk_by(|a, b| a.segment == b.segment).flat_map(blended_layer_motion).collect()
 }
 
+fn reference_by_range(samples: &[TranslationSample], auto: bool, reference: f64, fixed_depth_units: bool) -> Vec<nalgebra::Vector3<f64>> {
+    let mut cleaned = samples.to_vec();
+    cleaned.iter_mut().for_each(clean_layer_fit);
+    cleaned.chunk_by(|a, b| a.segment == b.segment).flat_map(|segment| {
+        let use_auto = auto && segment.iter().any(|s| s.auto_beta > 0.0 && s.weight > 0.0);
+        let depths = if use_auto { filtered_auto_beta(segment) } else { filtered_far_beta(segment) };
+        reference_layer_motion(segment, &depths, reference, fixed_depth_units)
+    }).collect()
+}
+
 fn preview_export_grid(params: &ComputeParams, transform: &FrameTransform) -> Vec<Option<(f64, f64)>> {
     let kernel = &transform.kernel_params;
     let mesh: Vec<f64> = transform.mesh_data.iter().map(|value| *value as f64).collect();
@@ -342,7 +352,6 @@ fn translation_auto_parameters_report() {
     let mut samples = result.samples.clone();
     samples.sort_by_key(|s| s.timestamp_us);
     samples.iter_mut().for_each(clean_layer_fit);
-    let motion = blended_by_range(&samples);
     let mut rows = Vec::new();
     let mut start = 0;
     while start < samples.len() {
@@ -358,15 +367,15 @@ fn translation_auto_parameters_report() {
     let (path, _) = result.output_path(&manager.gyro.read());
     let config = TranslationConfig::resolved();
     let mut sweep = serde_json::Map::new();
-    for (name, depths) in [("far", filtered_far_beta(&samples)), ("auto", filtered_auto_beta(&samples))] {
+    for (name, auto) in [("far", false), ("auto", true)] {
+        let motion = reference_by_range(&samples, auto, 1.0, result.fixed_depth_units());
         let times: Vec<_> = samples.iter().map(|s| time_difference_s(s.timestamp_us, samples[0].timestamp_us)).collect();
         let geometry: Vec<_> = samples.iter().map(|s| s.geometry().unwrap()).collect();
         let mut position = nalgebra::Vector3::zeros();
         let positions: Vec<_> = samples.iter().enumerate().map(|(i, s)| {
             if i > 0 {
                 let rotation = retained_rotation(&path[&samples[i - 1].timestamp_us], &path[&s.timestamp_us]);
-                let gain = depths[i];
-                position += nalgebra::Vector3::new(rotation.x + gain * motion[i].x, rotation.y + gain * motion[i].y, gain * motion[i].z);
+                position += nalgebra::Vector3::new(rotation.x + motion[i].x, rotation.y + motion[i].y, motion[i].z);
             }
             position
         }).collect();
@@ -380,14 +389,13 @@ fn translation_auto_parameters_report() {
     // Requested (before the budget) against planned compensation at the frame centre, in % of the short side
     let mut budget_rows = Vec::new();
     {
-        let depths = filtered_auto_beta(&samples);
+        let motion = reference_by_range(&samples, true, 1.0, result.fixed_depth_units());
         let times: Vec<_> = samples.iter().map(|s| time_difference_s(s.timestamp_us, samples[0].timestamp_us)).collect();
         let mut position = nalgebra::Vector3::zeros();
         let positions: Vec<_> = samples.iter().enumerate().map(|(i, s)| {
             if i > 0 {
                 let rotation = retained_rotation(&path[&samples[i - 1].timestamp_us], &path[&s.timestamp_us]);
-                let gain = depths[i];
-                position += nalgebra::Vector3::new(rotation.x + gain * motion[i].x, rotation.y + gain * motion[i].y, gain * motion[i].z);
+                position += nalgebra::Vector3::new(rotation.x + motion[i].x, rotation.y + motion[i].y, motion[i].z);
             }
             position
         }).collect();
@@ -428,13 +436,16 @@ fn translation_smoothing_study_dump() {
             while end < samples.len() && samples[end].segment == samples[start].segment { end += 1; }
             let segment = &samples[start..end];
             let motion = blended_by_range(segment);
+            let reference = reference_by_range(segment, result.settings.auto,
+                if result.settings.auto { 1.0 } else { result.settings.reference }, result.fixed_depth_units());
             for (i, (s, (far, auto))) in segment.iter().zip(filtered_far_beta(segment).into_iter().zip(filtered_auto_beta(segment))).enumerate() {
                 let rotation = if i > 0 { retained_rotation(&path[&segment[i - 1].timestamp_us], &path[&s.timestamp_us]) } else { nalgebra::Vector2::zeros() };
                 let shift = result.shift_at(s.timestamp_us as f64 / 1000.0);
                 let q = path[&s.timestamp_us];
                 rows.push(serde_json::json!([s.timestamp_us, s.segment, rotation.x, rotation.y, s.layer_motion[0], s.layer_motion[1],
                     s.layer_scale_rate, s.far_beta, s.auto_beta, far, auto, s.weight, s.track_age_s, s.focal_length_over_short_side,
-                    shift.x, shift.y, shift.z, q.w, q.i, q.j, q.k, motion[i].x, motion[i].y, motion[i].z]));
+                    shift.x, shift.y, shift.z, q.w, q.i, q.j, q.k, motion[i].x, motion[i].y, motion[i].z,
+                    reference[i].x, reference[i].y, reference[i].z, s.depth_segment]));
             }
             start = end;
         }
@@ -444,12 +455,12 @@ fn translation_smoothing_study_dump() {
         manager.recompute_blocking();
         let fovs_off = manager.params.read().fovs.clone();
         let report = serde_json::json!({"project": project, "settings": result.settings, "effective_smoothness_s": result.effective_smoothness_s(),
-            "fovs": fovs, "fovs_off": fovs_off, "fov_scale": fov_scale,
+            "fovs": fovs, "fovs_off": fovs_off, "fov_scale": fov_scale, "geometry_version": result.geometry_version,
             "config": {"track_age_k": TranslationConfig::resolved().track_age_k, "max_shift": TranslationConfig::resolved().max_shift,
                 "max_axial_shift": TranslationConfig::resolved().max_axial_shift()},
             "columns": ["timestamp_us", "segment", "rotation_x", "rotation_y", "layer_x", "layer_y", "layer_scale_rate", "far_beta",
                 "auto_beta", "far_filtered", "auto_filtered", "weight", "track_age_s", "focal_over_short", "shift_x", "shift_y", "shift_z", "output_w", "output_x", "output_y", "output_z",
-                "blend_x", "blend_y", "blend_z"],
+                "blend_x", "blend_y", "blend_z", "reference_x", "reference_y", "reference_z", "depth_segment"],
             "samples": rows});
         let output = format!("{project}.samples.json");
         std::fs::write(&output, serde_json::to_string(&report).unwrap()).unwrap();
@@ -532,19 +543,17 @@ fn translation_joint_target_study() {
         let mut samples = result.samples.clone();
         samples.sort_by_key(|s| s.timestamp_us);
         samples.iter_mut().for_each(clean_layer_fit);
-        let motion = blended_by_range(&samples);
         let gyro = manager.gyro.read().clone();
         let (path, _) = result.output_path(&gyro);
         let n = samples.len();
         let auto = result.settings.auto && samples.iter().any(|s| s.auto_beta > 0.0 && s.weight > 0.0);
-        let depths = if auto { filtered_auto_beta(&samples) } else { filtered_far_beta(&samples) };
         let reference = if auto { 1.0 } else { result.settings.reference };
+        let motion = reference_by_range(&samples, auto, reference, result.fixed_depth_units());
         let mut tref = vec![nalgebra::Vector2::zeros(); n];
         let mut p = vec![nalgebra::Vector2::zeros(); n];
         for i in 1..n {
             let s = &samples[i];
-            let gain = reference * depths[i];
-            let step = nalgebra::Vector2::new(gain * motion[i].x, gain * motion[i].y);
+            let step = motion[i].xy();
             tref[i] = tref[i - 1] + step;
             p[i] = p[i - 1] + retained_rotation(&path[&samples[i - 1].timestamp_us], &path[&s.timestamp_us]) + step;
         }

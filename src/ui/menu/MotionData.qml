@@ -138,14 +138,12 @@ MenuItem {
             if (mode === "stab") {
                 if (enabled) {
                     opticalcb.checked = false;
-                    translationcb.checked = false;
                     // An explicit optical-off action restores the file motion, unlike project readback.
                     controller.set_optical_correction_enabled(false);
                     controller.set_ignore_file_motion(false);
                 }
                 controller.set_stab_reconstruction_enabled(enabled);
             } else if (mode === "translation") {
-                if (enabled) stabcb.checked = false;
                 controller.set_translation_stabilization_enabled(enabled);
             } else {
                 if (enabled) stabcb.checked = false;
