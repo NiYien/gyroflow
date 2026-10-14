@@ -149,9 +149,10 @@ impl MDKPlayerWrapper {
         })
     }
 
-    pub fn set_log_handler<F: Fn(i32, &str) + 'static>(cb: F) {
-        let func: Box<dyn Fn(i32, &str)> = Box::new(cb);
-        let cb_ptr = Box::into_raw(func);
+    pub fn set_log_handler<F: Fn(i32, &str) + Send + Sync + 'static>(cb: F) {
+        type LogCallback = dyn Fn(i32, &str) + Send + Sync;
+        let func: Box<LogCallback> = Box::new(cb);
+        let cb_ptr = Box::into_raw(func) as *const LogCallback;
 
         #[cfg(any(target_os = "android", all(target_os = "linux", target_arch = "aarch64")))]
         type TextPtr = *const u8;
@@ -160,13 +161,13 @@ impl MDKPlayerWrapper {
 
         cpp!(unsafe [cb_ptr as "TraitObject2"] {
             setLogHandler([cb_ptr](LogLevel level, const char *text) {
-                rust!(Rust_MDKPlayer_logHandler [cb_ptr: *mut dyn FnMut(i32, &str) as "TraitObject2", level: i32 as "int", text: TextPtr as "const char *"] {
-                    let text = unsafe { std::ffi::CStr::from_ptr(text) }.to_string_lossy();
-
-                    let mut cb = unsafe { Box::from_raw(cb_ptr) };
-
-                    cb(level, &text);
-                    let _ = Box::into_raw(cb); // leak again so it doesn't get deleted here
+                rust!(Rust_MDKPlayer_logHandler [cb_ptr: *const LogCallback as "TraitObject2", level: i32 as "int", text: TextPtr as "const char *"] {
+                    if !text.is_null() {
+                        let text = unsafe { std::ffi::CStr::from_ptr(text) }.to_string_lossy();
+                        // SDK threads share the process-lifetime callback; none owns it.
+                        let cb = unsafe { &*cb_ptr };
+                        cb(level, &text);
+                    }
                 });
             });
         })

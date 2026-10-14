@@ -6457,7 +6457,7 @@ mod tests {
         // The vendored wrapper retains the fork's RAW preview, teardown,
         // CinemaDNG tone-curve, and Android texture synchronization fixes.
         // SDK runtime versions are pinned separately by mdk_sdk_manifest.json.
-        const PINNED_REV: &str = "4d4704866192da314aa9654d0fde29448018f330";
+        const PINNED_REV: &str = "046cfdc2583f7bb6c16121e5687c182290be940d";
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let manifest = std::fs::read_to_string(root.join("Cargo.toml")).expect("read Cargo.toml");
         assert!(

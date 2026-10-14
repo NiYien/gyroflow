@@ -132,6 +132,28 @@ QSGTexture *VideoTextureNodePriv::createTexture(mdk::Player *player, const QSize
             qDebug2("VideoTextureNodePriv::createTexture") << "QSGRendererInterface::Direct3D11";
             D3D11RenderAPI ra;
             ra.rtv = reinterpret_cast<ID3D11DeviceChild*>(quintptr(m_texture->nativeTexture().object));
+            // Log the renderer's actual adapter, not the separate compute device.
+            auto *device = static_cast<ID3D11Device *>(rif->getResource(m_window, QSGRendererInterface::DeviceResource));
+            IDXGIDevice *dxgiDevice = nullptr;
+            IDXGIAdapter *adapter = nullptr;
+            DXGI_ADAPTER_DESC desc{};
+            LARGE_INTEGER driver{};
+            auto adapterResult = device ? device->QueryInterface(__uuidof(IDXGIDevice), (void **)&dxgiDevice) : E_POINTER;
+            if (SUCCEEDED(adapterResult)) adapterResult = dxgiDevice->GetAdapter(&adapter);
+            if (SUCCEEDED(adapterResult)) adapterResult = adapter->GetDesc(&desc);
+            const auto driverResult = adapter ? adapter->CheckInterfaceSupport(__uuidof(IDXGIDevice), &driver) : E_POINTER;
+            QMessageLogger(__FILE__, __LINE__, "createTexture").debug(QLoggingCategory("gpu")).nospace()
+                << "preview.d3d11 adapter=" << QString::fromWCharArray(desc.Description)
+                << " vendor=0x" << QString::number(desc.VendorId, 16)
+                << " device_id=0x" << QString::number(desc.DeviceId, 16)
+                << " driver=" << HIWORD(driver.HighPart) << '.' << LOWORD(driver.HighPart)
+                << '.' << HIWORD(driver.LowPart) << '.' << LOWORD(driver.LowPart)
+                << " adapter_result=0x" << QString::number(uint32_t(adapterResult), 16)
+                << " driver_result=0x" << QString::number(uint32_t(driverResult), 16)
+                << " feature_level=0x" << QString::number(device ? uint32_t(device->GetFeatureLevel()) : 0, 16)
+                << " device=" << device << " texture=" << ra.rtv << " size=" << size << " format=RGBA8";
+            if (adapter) adapter->Release();
+            if (dxgiDevice) dxgiDevice->Release();
             player->setRenderAPI(&ra);
             #if (QT_VERSION < QT_VERSION_CHECK(6, 6, 0))
                 if (ra.rtv)

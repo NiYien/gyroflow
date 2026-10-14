@@ -14,6 +14,25 @@
 #include "mdk/VideoFrame.h"
 using namespace mdk;
 
+#if (_WIN32+0)
+void MDKPlayer::logD3D11Failure(size_t index, const char *stage, uint32_t result, ID3D11Device *device, DWORD win32Error) {
+    auto &state = m_d3d11Failures[index];
+    const auto now = std::chrono::steady_clock::now();
+    ++state.count;
+    if (state.count != 1 && state.result == result && now < state.next) return;
+    state.result = result;
+    state.next = now + std::chrono::seconds(5);
+    const auto removed = device ? device->GetDeviceRemovedReason() : E_POINTER;
+    QMessageLogger(__FILE__, __LINE__, "windowBeforeRendering").warning(QLoggingCategory("video.render")).nospace()
+        << "preview.d3d11 stage=" << stage
+        << " result=0x" << QString::number(result, 16)
+        << " win32_error=" << win32Error
+        << " device_removed=0x" << QString::number(uint32_t(removed), 16)
+        << " occurrences=" << state.count << " player=" << m_player.get()
+        << " device=" << device << " size=" << m_size << " position_ms=" << m_playerPosition;
+}
+#endif
+
 void printMd(const std::map<std::string, std::string> &md) {
     for (auto &x : md) {
         qDebug2("printMd") << QString::fromStdString(x.first) << " = " << QString::fromStdString(x.second);
@@ -116,6 +135,7 @@ void MDKPlayer::initPlayer() {
     m_shuttingDown = false;
 
     m_player->setDecoders(mdk::MediaType::Video, defaultDecoderList());
+    qDebug2("initPlayer") << "preview.decoders" << defaultVideoDecoders();
 #if (_WIN32+0)
     m_autoSoftwareDecoders = QString(qgetenv("MDK_DECODERS")).trimmed().isEmpty();
 #endif
@@ -364,6 +384,14 @@ void MDKPlayer::setupPlayer() {
                 obj.insert(QString::fromUtf8(x.first.c_str(), x.first.size()), QString::fromUtf8(x.second.c_str(), x.second.size()));
             }
             m_metadata = obj;
+            for (const auto &stream : md.video) {
+                const auto &codec = stream.codec;
+                qDebug2("m_player->onEvent") << "preview.stream" << "player=" << player
+                    << "stream=" << stream.index << "codec=" << (codec.codec ? codec.codec : "unknown")
+                    << "format=" << (codec.format_name ? codec.format_name : "unknown")
+                    << "profile=" << codec.profile << "size=" << QSize(codec.width, codec.height)
+                    << "fps=" << codec.frame_rate << "color_space=" << int(codec.color_space);
+            }
         }
         if (evt.detail == "size") {
             // A size event can arrive before Prepared publishes the new clip's
@@ -397,7 +425,12 @@ void MDKPlayer::setupPlayer() {
 
             m_firstFrameLoaded = true;
         }
-        qDebug2("m_player->onEvent") << QString::fromUtf8(evt.category.c_str(), evt.category.size()) << QString::fromUtf8(evt.detail.c_str(), evt.detail.size());
+        if (evt.error < 0) {
+            QMessageLogger(__FILE__, __LINE__, "m_player->onEvent").warning(QLoggingCategory("video.codec"))
+                << "preview.event failed" << "player=" << player << "result=" << evt.error
+                << "category=" << QString::fromStdString(evt.category) << "detail=" << QString::fromStdString(evt.detail);
+        }
+        qDebug2("m_player->onEvent") << QString::fromUtf8(evt.category.c_str(), evt.category.size()) << QString::fromUtf8(evt.detail.c_str(), evt.detail.size()) << "result=" << evt.error;
         return true;
     });
 
@@ -734,21 +767,41 @@ void MDKPlayer::windowBeforeRendering() {
 
         ID3D11Device5 *dev5 = nullptr;
         ID3D11DeviceContext4 *ctx4 = nullptr;
-        if (dev->QueryInterface(IID_ID3D11Device5, (void**)&dev5) == S_OK) {
-            if (ctx->QueryInterface(IID_ID3D11DeviceContext4, (void**)&ctx4) == S_OK) {
+        const auto deviceResult = dev->QueryInterface(IID_ID3D11Device5, (void**)&dev5);
+        if (deviceResult == S_OK) {
+            const auto contextResult = ctx->QueryInterface(IID_ID3D11DeviceContext4, (void**)&ctx4);
+            if (contextResult == S_OK) {
                 if (!m_fence) {
-                    if (dev5->CreateFence(m_fenceValue, D3D11_FENCE_FLAG_NONE, __uuidof(ID3D11Fence), (void**)&m_fence) == S_OK) {
+                    const auto fenceResult = dev5->CreateFence(m_fenceValue, D3D11_FENCE_FLAG_NONE, __uuidof(ID3D11Fence), (void**)&m_fence);
+                    if (fenceResult == S_OK) {
                         m_event = CreateEventW(NULL, FALSE, FALSE, NULL);
+                        if (!m_event) {
+                            const auto error = GetLastError();
+                            logD3D11Failure(3, "CreateEventW", uint32_t(HRESULT_FROM_WIN32(error)), dev, error);
+                        }
+                        qDebug2("windowBeforeRendering") << "preview.d3d11 fence created" << "device=" << dev << "event_valid=" << bool(m_event);
+                    } else {
+                        logD3D11Failure(2, "CreateFence", uint32_t(fenceResult), dev);
                     }
                 }
                 if (m_fence && m_event) {
-                    ctx4->Signal(m_fence, ++m_fenceValue);
-                    m_fence->SetEventOnCompletion(m_fenceValue, m_event);
-                    WaitForSingleObject(m_event, 5000);
+                    const auto signalResult = ctx4->Signal(m_fence, ++m_fenceValue);
+                    if (FAILED(signalResult)) logD3D11Failure(4, "Signal", uint32_t(signalResult), dev);
+                    const auto completionResult = m_fence->SetEventOnCompletion(m_fenceValue, m_event);
+                    if (FAILED(completionResult)) logD3D11Failure(5, "SetEventOnCompletion", uint32_t(completionResult), dev);
+                    const auto waitResult = WaitForSingleObject(m_event, 5000);
+                    if (waitResult != WAIT_OBJECT_0) {
+                        const auto error = waitResult == WAIT_FAILED ? GetLastError() : 0;
+                        logD3D11Failure(6, "WaitForSingleObject", waitResult, dev, error);
+                    }
                 }
                 ctx4->Release();
+            } else {
+                logD3D11Failure(1, "QueryInterface.Context4", uint32_t(contextResult), dev);
             }
             dev5->Release();
+        } else {
+            logD3D11Failure(0, "QueryInterface.Device5", uint32_t(deviceResult), dev);
         }
     }
 #endif

@@ -10,6 +10,7 @@
 #include <chrono>
 #include <queue>
 #include <atomic>
+#include <array>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -116,6 +117,16 @@ public:
     void setUserData2Destructor(std::function<void(void *)> &&cb);
 
 private:
+#if (_WIN32+0)
+    struct D3D11FailureLog {
+        std::chrono::steady_clock::time_point next{};
+        uint64_t count{0};
+        uint32_t result{0};
+    };
+    // Only accessed by the render thread, including across player reloads.
+    std::array<D3D11FailureLog, 7> m_d3d11Failures{};
+    void logD3D11Failure(size_t index, const char *stage, uint32_t result, ID3D11Device *device, DWORD win32Error = 0);
+#endif
     void applySourceAspectRatio();
     std::atomic<bool> m_sourceAspectRatio{false};
     std::vector<std::string> defaultDecoderList() const;
