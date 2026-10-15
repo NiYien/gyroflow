@@ -72,8 +72,8 @@ install-deps:
         rm -rf ./vcpkg/downloads
     fi
 
-    ffmpeg_url="https://github.com/NiYien/avbuild/releases/download/gyroflow-ffmpeg-8.1.3-macos-v1/ffmpeg-8.1-macOS-gpl-lite.tar.xz"
-    ffmpeg_sha256="cf232e07c14282031591ff1376b7f9114974c4ddb4a7a6b022ddb8e809716e32"
+    ffmpeg_url="https://github.com/NiYien/avbuild/releases/download/gyroflow-ffmpeg-9.0.2-macos-v1/ffmpeg-9.0-macOS-gpl-lite.tar.xz"
+    ffmpeg_sha256="ffcae969cfa0d39af49e9e2b5b03c49082855c51694f58d7d98c7d2e8e557ab1"
 
     # Probing the files we actually consume, not just the directory: the section
     # below creates the arch dirs up front and only fills include/ at the very
@@ -112,7 +112,7 @@ install-deps:
         rm ffmpeg.tar ffmpeg.tar.xz
         mkdir -p ffmpeg-x86_64/lib ffmpeg-x86_64/include
         mkdir -p ffmpeg-arm64/lib ffmpeg-arm64/include
-        cd ffmpeg-8.1-macOS-gpl-lite
+        cd ffmpeg-9.0-macOS-gpl-lite
 
         # Reject incomplete universal packages before populating either arch directory.
         ffmpeg_archs=" $(lipo -archs lib/libavcodec.a) "

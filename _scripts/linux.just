@@ -170,6 +170,7 @@ install-deps: assert-linux-x86-64
 
         # Download and extract ffmpeg
         curl -L https://sourceforge.net/projects/avbuild/files/linux/{{FFmpeg}}.tar.xz/download -o ffmpeg.tar.xz
+        echo "48595d8b12354cbb2027c85b0da26c0b28c0185ea76d86d11b08dc99b920167b  ffmpeg.tar.xz" | sha256sum --check - || exit 1
         7z x -aoa ffmpeg.tar.xz
         tar -xf ffmpeg.tar
         rm ffmpeg.tar ffmpeg.tar.xz

@@ -59,7 +59,7 @@ install-deps:
     # ――――――――――――――――――――――――――――――――――――――――― Qt ――――――――――――――――――――――――――――――――――――――――――
 
     # ――――――――――――――――――――――――――――――――――――――― FFmpeg ――――――――――――――――――――――――――――――――――――――――
-    $FFmpeg = "ffmpeg-8.1-android-gpl-lite"
+    $FFmpeg = "ffmpeg-9.0-android-gpl-lite"
     # Probing the files we actually consume, not just the directory: an extraction
     # that dies half way leaves the top-level directory behind, and a bare
     # directory check would then skip the download and fail much later with a
@@ -74,6 +74,8 @@ install-deps:
         # HTTP 200 instead of the archive. macos.just and linux.just already curl.
         curl.exe -fsSL --retry 3 --retry-delay 5 -o ffmpeg.tar.xz "https://master.dl.sourceforge.net/project/avbuild/android/$FFmpeg.tar.xz?viasf=1"
         if ($LASTEXITCODE -ne 0) { throw "Failed to download $FFmpeg (curl exit code $LASTEXITCODE)" }
+        python -c "import hashlib; assert hashlib.sha256(open('ffmpeg.tar.xz', 'rb').read()).hexdigest() == '763116e515b88827d6d637c412763cbf5d90d7bb92e5dfdec561bb48bdcef810', 'FFmpeg package checksum mismatch'"
+        if ($LASTEXITCODE -ne 0) { throw "FFmpeg package verification failed" }
         7z x -aoa ffmpeg.tar.xz
         if ($LASTEXITCODE -ne 0) { throw "Failed to extract ffmpeg.tar.xz - the downloaded file is not an xz archive" }
         del ffmpeg.tar.xz
@@ -213,7 +215,7 @@ deploy *param:
     $QT_LIBS = "$ProjectDir\ext\{{QtVersion}}\android_arm64_v8a\lib"
     $Env:Path = "$ProjectDir\ext\{{QtVersion}}\android_arm64_v8a\bin;$ProjectDir\ext\{{QtVersion}}\mingw_64\bin\;$Env:Path"
     $Env:QMAKE = "$ProjectDir\ext\{{QtVersion}}\android_arm64_v8a\bin\qmake.bat"
-    $Env:FFMPEG_DIR = "$ProjectDir\ext\ffmpeg-8.1-android-gpl-lite"
+    $Env:FFMPEG_DIR = "$ProjectDir\ext\ffmpeg-9.0-android-gpl-lite"
     $Env:OPENCV_LINK_LIBS = "opencv_stitching,opencv_calib3d,opencv_features2d,opencv_imgproc,opencv_video,opencv_flann,opencv_core,tegra_hal,tbb,ittnotify,z,kleidicv,kleidicv_hal,kleidicv_thread"
     $Env:OPENCV_LINK_PATHS = "$ProjectDir\ext\OpenCV-android-sdk\sdk\native\staticlibs\arm64-v8a,$ProjectDir\ext\OpenCV-android-sdk\sdk\native\3rdparty\libs\arm64-v8a"
     $Env:OPENCV_INCLUDE_PATHS = "$ProjectDir\ext\OpenCV-android-sdk\sdk\native\jni\include"
@@ -269,6 +271,11 @@ deploy *param:
         mkdir "$ProjectDir\target\android-build" -ErrorAction SilentlyContinue
         mkdir "$ProjectDir\target\android-build\libs" -ErrorAction SilentlyContinue
         Copy-Item -Path "$ProjectDir\target\$CargoApkProfile\apk\lib\*" -Destination "$ProjectDir\target\android-build\libs\" -Recurse -Force
+        # cargo-apk can retain older unversioned libraries in its incremental staging directory.
+        # Always package the split libraries from the SDK used to build the Rust bindings.
+        foreach ($Library in @("avcodec", "avdevice", "avfilter", "avformat", "avutil", "swresample", "swscale")) {
+            Copy-Item -LiteralPath "$Env:FFMPEG_DIR\lib\lib$Library.so" -Destination "$ProjectDir\target\android-build\libs\arm64-v8a\" -Force -ErrorAction Stop
+        }
         # Copy-Item -Path "$ProjectDir\_deployment\android\src" -Destination "$ProjectDir\target\android-build\" -Recurse -Force
         Copy-Item -Path "$ProjectDir\target\aarch64-linux-android\$CargoApkProfile\libffmpeg.so" -Destination "$ProjectDir\target\android-build\libs\arm64-v8a\" -Force
         # Copy-Item -Path "$ProjectDir\target\aarch64-linux-android\$CargoApkProfile\libqtav-mediacodec.so" -Destination "$ProjectDir\target\android-build\libs\arm64-v8a\" -Force

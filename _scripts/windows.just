@@ -1,7 +1,7 @@
 import 'common.just'
 
-WindowsFFmpegUrl := "https://github.com/NiYien/avbuild/releases/download/gyroflow-ffmpeg-8.1-windows-hevc-tiles-v1/ffmpeg-8.1-windows-x64-hevc-tiles-v1.7z"
-WindowsFFmpegSha256 := "ea80858d1f5b06219fdab268a29903f84d10b0d940b52ad239df9dcf1d52dab8"
+WindowsFFmpegUrl := "https://github.com/NiYien/avbuild/releases/download/gyroflow-ffmpeg-9.0.2-windows-hevc-tiles-v1/ffmpeg-9.0-windows-x64-hevc-tiles-v1.7z"
+WindowsFFmpegSha256 := "01fc86614010b7cb68da89d4cbccf681adbc6078ae9f4345dfb53b1d537aa1d2"
 
 NameSuffix := if Arch == "aarch64" { "windows-arm64" } else { "windows64" }
 

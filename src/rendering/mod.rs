@@ -1420,21 +1420,14 @@ unsafe fn codec_options(c: *const ffi::AVCodec) {
             to_str((*c).name)
         );
 
-        if !(*c).pix_fmts.is_null() {
+        let pix_fmts = ffmpeg_hw::codec_pix_formats(std::ptr::null(), c);
+        if !pix_fmts.is_empty() {
             ret.push_str("Supported pixel formats (-pix_fmt): ");
-            for i in 0..100 {
-                let fmt = (*c).pix_fmts.offset(i);
-                if fmt.is_null() {
-                    break;
-                }
-                let p = *fmt;
-                if p == ffi::AVPixelFormat::AV_PIX_FMT_NONE {
-                    break;
-                }
+            for (i, p) in pix_fmts.iter().enumerate() {
                 if i > 0 {
                     ret.push_str(", ");
                 }
-                ret.push_str(&to_str(ffi::av_get_pix_fmt_name(p)));
+                ret.push_str(&to_str(ffi::av_get_pix_fmt_name((*p).into())));
             }
         }
 

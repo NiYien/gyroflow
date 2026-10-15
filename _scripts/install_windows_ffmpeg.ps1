@@ -20,13 +20,14 @@ $RequiredFiles = @(
     'include/libavcodec/avcodec.h',
     'include/libavutil/avutil.h',
     'bin/ffmpeg.exe',
-    'bin/avcodec-62.dll',
-    'bin/avformat-62.dll',
-    'bin/avutil-60.dll',
-    'bin/avdevice-62.dll',
-    'bin/avfilter-11.dll',
-    'bin/swresample-6.dll',
-    'bin/swscale-9.dll',
+    'bin/avcodec-63.dll',
+    'bin/avformat-63.dll',
+    'bin/avutil-61.dll',
+    'bin/avdevice-63.dll',
+    'bin/avfilter-12.dll',
+    'bin/swresample-7.dll',
+    'bin/swscale-10.dll',
+    'bin/ffmpeg-9.dll',
     'lib/avcodec.lib',
     'lib/avformat.lib',
     'lib/avutil.lib',
@@ -60,9 +61,10 @@ function Test-SdkFiles {
     }
     try {
         $Info = [IO.File]::ReadAllText($PatchInfo) | ConvertFrom-Json
-        if ($Info.avcodec_major -ne 62 -or -not $Info.tile_interleave_available) { return $false }
-        $DllHash = Get-Sha256Hex (Join-Path $SdkDir 'bin/avcodec-62.dll')
-        return $DllHash -eq $Info.dll_sha256
+        if ($Info.avcodec_major -ne 63 -or -not $Info.tile_interleave_available -or -not $Info.monolithic_tile_interleave_available) { return $false }
+        $DllHash = Get-Sha256Hex (Join-Path $SdkDir 'bin/avcodec-63.dll')
+        $PlayerHash = Get-Sha256Hex (Join-Path $SdkDir 'bin/ffmpeg-9.dll')
+        return ($DllHash -eq $Info.dll_sha256) -and ($PlayerHash -eq $Info.monolithic_dll_sha256)
     } catch {
         return $false
     }

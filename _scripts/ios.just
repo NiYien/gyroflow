@@ -75,11 +75,12 @@ install-deps:
         rm -rf ./vcpkg/downloads
     fi
 
-    if [ ! -d "ffmpeg-8.1-iOS-gpl-lite" ]; then
+    if [ ! -d "ffmpeg-9.0-iOS-gpl-lite" ]; then
         echo "Downloading ffmpeg for iOS"
 
         # Download and extract ffmpeg
-        curl -L https://sourceforge.net/projects/avbuild/files/iOS/ffmpeg-8.1-iOS-gpl-lite.tar.xz/download -o ffmpeg.tar.xz
+        curl -L https://sourceforge.net/projects/avbuild/files/iOS/ffmpeg-9.0-iOS-gpl-lite.tar.xz/download -o ffmpeg.tar.xz
+        echo "68ec9025b5d9c9391332ac8c8ff44dd72a5e59e056983bf355e27a5369c87912  ffmpeg.tar.xz" | shasum -a 256 --check - || exit 1
         7z x -aoa ffmpeg.tar.xz
         tar -xf ffmpeg.tar
         rm ffmpeg.tar ffmpeg.tar.xz
@@ -118,7 +119,7 @@ build-and-package profile is_dist:
     export NIYIEN_IOS_BUILD_NUMBER="$NiyienIOSBuildNumber"
     python3 "{{ProjectDir}}/_scripts/ios_metadata.py" > /dev/null
     export CARGO_PROFILE_DEPLOY_DEBUG=1
-    export FFMPEG_DIR="{{ProjectDir}}/ext/ffmpeg-8.1-iOS-gpl-lite"
+    export FFMPEG_DIR="{{ProjectDir}}/ext/ffmpeg-9.0-iOS-gpl-lite"
     export PATH="{{ProjectDir}}/ext/{{QtVersionIOS}}/ios/bin:/usr/libexec/:$PATH"
     export QMAKE="{{ProjectDir}}/ext/{{QtVersionIOS}}/ios/bin/qmake"
     NiyienIOSMDKSdk="$(python3 "{{ProjectDir}}/_scripts/ios_native_deps.py" mdk-path)"

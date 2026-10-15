@@ -12,6 +12,11 @@ use std::sync::LazyLock;
 
 type DeviceType = ffi::AVHWDeviceType;
 
+// Vulkan devices are created only when the user explicitly enables this backend.
+pub fn is_vulkan_enabled() -> bool {
+    gyroflow_core::settings::get_bool("useVulkanEncoder", false)
+}
+
 #[derive(Debug)]
 pub struct HWDevice {
     type_: DeviceType,
@@ -29,6 +34,10 @@ impl HWDevice {
         device_name: Option<&str>,
     ) -> Result<Self, super::FFmpegError> {
         log::debug!("HWDevice::from_type {type_:?}, device: {device_name:?}");
+        if type_ == DeviceType::AV_HWDEVICE_TYPE_VULKAN && !is_vulkan_enabled() {
+            log::debug!("Vulkan hwaccel is disabled");
+            return Err(super::FFmpegError::CannotCreateGPUDecoding);
+        }
         unsafe {
             let dev = device_name.and_then(|x| {
                 if x.is_empty() {
@@ -145,6 +154,34 @@ pub unsafe fn pix_formats_to_vec(formats: *const ffi::AVPixelFormat) -> Vec<form
     ret
 }
 
+pub unsafe fn codec_pix_formats(
+    codec_ctx: *const ffi::AVCodecContext,
+    codec: *const ffi::AVCodec,
+) -> Vec<format::Pixel> {
+    if codec.is_null() && codec_ctx.is_null() {
+        return Vec::new();
+    }
+    let mut formats: *const ffi::AVPixelFormat = ptr::null();
+    let mut count = 0;
+    let result = unsafe {
+        ffi::avcodec_get_supported_config(
+            codec_ctx,
+            codec,
+            ffi::AVCodecConfig::AV_CODEC_CONFIG_PIX_FORMAT,
+            0,
+            (&mut formats as *mut *const ffi::AVPixelFormat).cast(),
+            &mut count,
+        )
+    };
+    if result < 0 || formats.is_null() || count <= 0 {
+        return Vec::new();
+    }
+    unsafe { std::slice::from_raw_parts(formats, count as usize) }
+        .iter()
+        .map(|p| (*p).into())
+        .collect()
+}
+
 pub fn init_device_for_decoding(
     index: usize,
     codec: *const ffi::AVCodec,
@@ -179,7 +216,7 @@ pub fn init_device_for_decoding(
         let cuda = decoders.remove(pos);
         decoders.insert(0, cuda);
     }
-    if gyroflow_core::settings::get_bool("useVulkanEncoder", false) {
+    if is_vulkan_enabled() {
         if let Some(pos) = decoders
             .iter()
             .position(|(_, type_)| *type_ == ffi::AVHWDeviceType::AV_HWDEVICE_TYPE_VULKAN)
@@ -187,6 +224,8 @@ pub fn init_device_for_decoding(
             let x = decoders.remove(pos);
             decoders.insert(0, x);
         }
+    } else {
+        decoders.retain(|(_, type_)| *type_ != DeviceType::AV_HWDEVICE_TYPE_VULKAN);
     }
     if gyroflow_core::settings::get_bool("useD3D12Encoder", false) {
         if let Some(pos) = decoders
@@ -391,7 +430,7 @@ pub fn initialize_hwframes_context(
 
             if init_hwframes {
                 if dev.sw_formats.is_empty() && !(*encoder_ctx).codec.is_null() {
-                    dev.sw_formats = pix_formats_to_vec((*(*encoder_ctx).codec).pix_fmts);
+                    dev.sw_formats = codec_pix_formats(encoder_ctx, (*encoder_ctx).codec);
                     log::debug!("Setting codec formats: {:?}", dev.sw_formats);
                 }
 

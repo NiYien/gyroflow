@@ -3,6 +3,16 @@
   "revision": "braw6-20261014",
   "abi_version": 20260922,
   "platforms": {
+    "android": {
+      "archive": "mdk-sdk-android.7z",
+      "url": "https://github.com/wang-bin/mdk-sdk/releases/download/v0.39.0/mdk-sdk-android.7z",
+      "sha256": "cd196c9f6fb1872c4f35184848522ca3ab9c91196da47ca9761d8fb50e3e9cf3",
+      "runtime_sha256": {
+        "lib/arm64-v8a/libmdk.so": "495fbd6d41b826d538e78a67d89d336e9d2931d7dc8ab69d62bae80de046cf82",
+        "lib/arm64-v8a/libffmpeg.so": "52a4d058590619bf095e49a340b5f74b7e38f86389d01cfb60a63fe8a4ce44f5"
+      },
+      "revision": "v0.39.0"
+    },
     "macos": {
       "archive": "MDK_SDK_MacOS_0.39.0_db3d7ac.tar.xz",
       "sha256": "f7e48e4f79bdb934dd21e2c545b590df6e4e09f1c825a0ccb346a82142f1c1a7",

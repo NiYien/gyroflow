@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Install the exact MDK snapshot paired with the BRAW 6 runtime."""
+"""Install the pinned MDK runtimes used by the preview and RAW decoders."""
 import argparse
 import hashlib
 import json
@@ -32,7 +32,7 @@ def validate(sdk, package):
     for relative, expected in package['runtime_sha256'].items():
         path = sdk / relative
         if not path.is_file() or sha256(path) != expected:
-            raise ValueError(f'MDK SDK does not match the BRAW 6 pin: {path}. Unset MDK_SDK to install the pinned snapshot.')
+            raise ValueError(f'MDK SDK does not match the runtime pin: {path}. Unset MDK_SDK to install the pinned snapshot.')
 
 
 def prepare_headers(sdk, target):
@@ -94,7 +94,10 @@ def install(target, root=ROOT, environment=None, downloader=download):
         temporary = Path(temporary)
         archive = temporary / package['archive']
         base = environment.get('SDK_BASE') or DEFAULT_SDK_BASE
-        downloader(base.rstrip('/') + '/' + package['archive'], archive)
+        url = base.rstrip('/') + '/' + package['archive']
+        if not environment.get('SDK_BASE'):
+            url = package.get('url', url)
+        downloader(url, archive)
         if sha256(archive) != package['sha256']:
             raise ValueError(f'MDK archive checksum mismatch: {package["archive"]}')
         extracted = temporary / 'extracted'
@@ -111,7 +114,7 @@ def install(target, root=ROOT, environment=None, downloader=download):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('target', choices=('windows', 'macos', 'linux', 'ios'))
+    parser.add_argument('target', choices=('windows', 'macos', 'linux', 'ios', 'android'))
     args = parser.parse_args()
     try:
         print(str(install(args.target)) + '/')

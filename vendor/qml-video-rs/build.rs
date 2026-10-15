@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::env;
-use std::fs::File;
 use std::process::Command;
 use std::path::Path;
 
 fn main() {
     println!("cargo:rerun-if-env-changed=MDK_SDK");
     println!("cargo:rerun-if-env-changed=SDK_BASE");
+    println!("cargo:rerun-if-env-changed=FFMPEG_DIR");
     println!("cargo:rerun-if-changed=../../_scripts/install_mdk_sdk.py");
     println!("cargo:rerun-if-changed=../../_scripts/mdk_sdk_manifest.json");
     println!("cargo:rerun-if-changed=../../_scripts/build_r3d_plugin.py");
@@ -54,22 +54,19 @@ fn main() {
     let arch_win = if target_arch == "aarch64" { "arm64" } else { "x64" };
     let arch_lnx = if target_arch == "aarch64" { "arm64" } else { "amd64" };
 
-    // Desktop and iOS use the verified BRAW 6 snapshot installed below.
-    // Android keeps its existing SDK because it has no BRAW runtime.
+    // Each platform installs its pinned runtime and validates the libraries it uses.
     let sdk: HashMap<&str, (String, String, &str, &str)> = vec![
         ("windows", (String::new(), format!("lib/{arch_win}/"), "mdk.lib", "include/")),
         ("linux", (String::new(), format!("lib/{arch_lnx}/"), "libmdk.so", "include/")),
         ("macos", (String::new(), "lib/mdk.framework/".to_owned(), "mdk", "include/")),
-        ("android",  ("https://github.com/NiYien/qml-video-rs/releases/download/mdk-503d1ed/mdk-sdk-android-arm64-v8a-MinSizeRel.zip".to_string(), format!("lib/arm64-v8a/"),  "libmdk.so",  "include/")),
+        ("android", (String::new(), format!("lib/arm64-v8a/"), "libmdk.so", "include/")),
         ("ios", (String::new(), "lib/mdk.framework/".to_owned(), "mdk", "include/")),
     ].into_iter().collect();
 
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
     let entry = &sdk[target_os.as_str()];
 
-    let sdk_result = if target_os == "android" {
-        download_and_extract(&entry.0, &format!("{}/{}", entry.1, entry.2))
-    } else {
+    let sdk_result: Result<String, std::io::Error> = {
         let python = env::var("PYTHON").unwrap_or_else(|_| if cfg!(windows) { "python" } else { "python3" }.into());
         let output = Command::new(python)
             .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../_scripts/install_mdk_sdk.py"))
@@ -111,7 +108,17 @@ fn main() {
         if target_os == "windows" {
             println!("cargo:rustc-link-lib=dxguid");
             std::fs::copy(format!("{}/bin/{arch_win}/mdk.dll", path), format!("{}/../../../mdk.dll", env::var("OUT_DIR").unwrap())).unwrap();
-            std::fs::copy(format!("{}/bin/{arch_win}/ffmpeg-9.dll", path), format!("{}/../../../ffmpeg-9.dll", env::var("OUT_DIR").unwrap())).unwrap();
+            let ffmpeg = if target_arch == "x86_64" {
+                // Preview and export must both keep the verified HEVC tile decoder.
+                let sdk = env::var("FFMPEG_DIR").expect("FFMPEG_DIR must point to the verified FFmpeg 9 SDK");
+                let marker = Path::new(&sdk).join(".gyroflow-hevc-tile-patch.json");
+                assert!(marker.is_file(), "The Windows FFmpeg SDK is missing its HEVC tile verification");
+                println!("cargo:rerun-if-changed={}", marker.display());
+                format!("{sdk}/bin/ffmpeg-9.dll")
+            } else {
+                format!("{path}/bin/{arch_win}/ffmpeg-9.dll")
+            };
+            std::fs::copy(ffmpeg, format!("{}/../../../ffmpeg-9.dll", env::var("OUT_DIR").unwrap())).unwrap();
             std::fs::copy(format!("{}/bin/{arch_win}/mdk-braw.dll", path), format!("{}/../../../mdk-braw.dll", env::var("OUT_DIR").unwrap())).unwrap();
             // Use the same seek/audio fixes as macOS instead of the bundled upstream plugin.
             let compiler = cc::Build::new().cpp(true).get_compiler();
@@ -159,58 +166,4 @@ fn main() {
         .include(&qt_include_path)
         .build("src/lib.rs");
 
-}
-
-fn download_and_extract(url: &str, check: &str) -> Result<String, std::io::Error> {
-    if let Ok(path) = env::var("MDK_SDK") {
-        if Path::new(&format!("{}/{}", path, check)).exists() {
-            return Ok(path);
-        }
-    }
-    let out_dir = env::var("OUT_DIR").unwrap();
-
-    if !Path::new(&format!("{}/mdk-sdk/{}", out_dir, check)).exists() && !Path::new(&format!("{}/mdk-sdk/{}", out_dir, check.replace("mdk.framework", "mdk.xcframework"))).exists() {
-        // Detect outer archive extension. `.zip` is the nightly.link wrapper
-        // (zip-of-7z or zip-of-tar.xz); `.tar.xz` and `.7z` are the original
-        // wang-bin formats served directly by SourceForge.
-        let download_ext = if url.ends_with(".zip") { ".zip" }
-                          else if url.contains(".tar.xz") { ".tar.xz" }
-                          else { ".7z" };
-        {
-            let mut reader = ureq::get(url).call().map(|x| x.into_body().into_reader()).map_err(|_| std::io::ErrorKind::Other)?;
-            let mut file = File::create(format!("{}/mdk-sdk{}", out_dir, download_ext))?;
-            std::io::copy(&mut reader, &mut file)?;
-        }
-        // If the outer is a nightly.link zip, peel it to expose the inner
-        // wang-bin archive, then continue through the existing .7z / .tar.xz
-        // extraction logic. The inner archive's filename follows wang-bin's
-        // `mdk-sdk-*` convention.
-        let ext = if download_ext == ".zip" {
-            Command::new("7z").current_dir(&out_dir).args(&["x", "-y", "mdk-sdk.zip"]).status()?;
-            std::fs::remove_file(format!("{}/mdk-sdk.zip", out_dir))?;
-            let inner = std::fs::read_dir(&out_dir)?
-                .filter_map(|e| e.ok())
-                .map(|e| e.file_name().to_string_lossy().into_owned())
-                .find(|n| n.starts_with("mdk-sdk-") && (n.ends_with(".7z") || n.ends_with(".tar.xz")))
-                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "Inner archive (mdk-sdk-*.7z or mdk-sdk-*.tar.xz) not found after unzipping outer nightly.link wrapper"))?;
-            let inner_ext = if inner.ends_with(".tar.xz") { ".tar.xz" } else { ".7z" };
-            std::fs::rename(format!("{}/{}", out_dir, inner), format!("{}/mdk-sdk{}", out_dir, inner_ext))?;
-            inner_ext
-        } else {
-            download_ext
-        };
-        Command::new("7z").current_dir(&out_dir).args(&["x", "-y", &format!("mdk-sdk{}", ext)]).status()?;
-        std::fs::remove_file(format!("{}/mdk-sdk{}", out_dir, ext))?;
-        if ext == ".tar.xz" {
-            let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
-            if target_os == "macos" || target_os == "ios" || target_os == "linux" {
-                Command::new("tar").current_dir(&out_dir).args(&["-xf", "mdk-sdk.tar"]).status()?;
-            } else {
-                Command::new("7z").current_dir(&out_dir).args(&["x", "-y", "mdk-sdk.tar"]).status()?;
-            }
-            std::fs::remove_file(format!("{}/mdk-sdk.tar", out_dir))?;
-        }
-    }
-
-    Ok(format!("{}/mdk-sdk/", out_dir))
 }

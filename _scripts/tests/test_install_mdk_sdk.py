@@ -58,6 +58,16 @@ class MDKSnapshotTests(unittest.TestCase):
         self.assertEqual(len(backups), 1)
         self.assertEqual((backups[0] / self.relative).read_bytes(), b'old API')
 
+    def test_official_package_url_keeps_checksum_validation(self):
+        self.package['url'] = 'https://github.com/vendor/sdk/releases/download/v1/snapshot.tar.xz'
+        self.install()
+        self.assertEqual(self.downloader.call_args.args[0], self.package['url'])
+
+    def test_explicit_mirror_overrides_official_package_url(self):
+        self.package['url'] = 'https://github.com/vendor/sdk/releases/download/v1/snapshot.tar.xz'
+        self.install({'SDK_BASE': 'https://mirror.example/sdk'})
+        self.assertEqual(self.downloader.call_args.args[0], 'https://mirror.example/sdk/snapshot.tar.xz')
+
     def test_explicit_old_sdk_is_rejected_without_mutation_or_download(self):
         sdk = self.install()
         (sdk / self.relative).write_bytes(b'old API')
