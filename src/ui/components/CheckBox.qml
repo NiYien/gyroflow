@@ -11,8 +11,13 @@ QQC.CheckBox {
     onCheckedChanged: if (checked) { cb.indicator.reset();  }
     implicitHeight: mobileStyle ? Math.max(44 * dpiScale, contentItem.implicitHeight + 12 * dpiScale) : 30 * dpiScale;
 
+    property bool unavailable: false;
+    readonly property bool interactive: enabled && !unavailable;
+    focusPolicy: cb.interactive ? Qt.StrongFocus : Qt.NoFocus;
+    nextCheckState: cb.interactive ? null : function() { return cb.checkState; };
+
     Keys.onPressed: (e) => {
-        if (e.key == Qt.Key_Enter || e.key == Qt.Key_Return) {
+        if (cb.interactive && (e.key == Qt.Key_Enter || e.key == Qt.Key_Return)) {
             checked = !checked;
         }
     }
@@ -27,7 +32,7 @@ QQC.CheckBox {
         Behavior on color { ColorAnimation { duration: 300; easing.type: Easing.OutExpo; } }
         border.color: cb.checked? styleAccentColor : "#999999";
 
-        opacity: cb.down || cb.activeFocus? 0.8 : 1.0;
+        opacity: !cb.interactive ? 0.3 : (cb.down || cb.activeFocus ? 0.8 : 1.0);
         Ease on opacity { }
 
         function reset(): void {
@@ -86,11 +91,15 @@ QQC.CheckBox {
         font.family: cb.mobileStyle ? Mobile.MobileStyle.fontFamily : styleFont;
         wrapMode: cb.mobileStyle ? Text.WordWrap : Text.NoWrap;
         color: styleTextColor;
-        opacity: enabled ? 1.0 : 0.3
+        opacity: cb.interactive ? 1.0 : 0.3
         verticalAlignment: Text.AlignVCenter
         leftPadding: cb.indicator.width + cb.spacing
     }
-    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; acceptedButtons: Qt.NoButton; }
+    MouseArea {
+        anchors.fill: parent;
+        cursorShape: cb.interactive ? Qt.PointingHandCursor : Qt.ArrowCursor;
+        acceptedButtons: cb.interactive ? Qt.NoButton : Qt.AllButtons;
+    }
 
     property alias tooltip: tt.text;
     ToolTip { id: tt; visible: !isMobile && text.length > 0 && cb.hovered; }

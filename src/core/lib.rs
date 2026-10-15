@@ -4051,6 +4051,11 @@ impl StabilizationManager {
                 "horizon_lock_roll":      horizon_lock.horizonroll,
                 "horizon_lock_pitch_enabled": horizon_lock.lock_pitch,
                 "horizon_lock_pitch":     horizon_lock.horizonpitch,
+                "automatic_lock":         horizon_lock.automatic_lock,
+                "turn_threshold":         horizon_lock.turn_threshold,
+                "turn_smoothing_ms":      horizon_lock.turn_smoothing_ms,
+                "turn_multiplier":        horizon_lock.turn_multiplier,
+                "tilt_accel_limit":        horizon_lock.tilt_accel_limit.is_finite().then_some(horizon_lock.tilt_accel_limit), // null means no limit
                 "use_gravity_vectors":    gyro.use_gravity_vectors,
                 "horizon_lock_integration_method": gyro.horizon_lock_integration_method,
                 "video_speed":                   params.video_speed,
@@ -5900,6 +5905,14 @@ mod tests {
         assert_eq!(fields.remove("translation_smoothness"), Some(serde_json::json!(1.0)));
         assert_eq!(fields.remove("translation_along_axis"), Some(serde_json::json!(false)));
         assert_eq!(fields.remove("translation_auto"), Some(serde_json::json!(false)));
+        // The horizon persistence fix adds these defaults; keep the rest of this golden unchanged.
+        let horizon = project["stabilization"].as_object_mut().unwrap();
+        assert_eq!(horizon.get("automatic_lock"), Some(&serde_json::json!(false)));
+        assert_eq!(horizon.get("turn_threshold"), Some(&serde_json::json!(5.0)));
+        assert_eq!(horizon.get("turn_smoothing_ms"), Some(&serde_json::json!(500.0)));
+        assert_eq!(horizon.get("turn_multiplier"), Some(&serde_json::json!(1.0)));
+        assert_eq!(horizon.get("tilt_accel_limit"), Some(&serde_json::Value::Null));
+        horizon.retain(|key, _| !matches!(key.as_str(), "automatic_lock" | "turn_threshold" | "turn_smoothing_ms" | "turn_multiplier" | "tilt_accel_limit"));
         project.as_object_mut().unwrap().remove("date");
         let mut hash = std::collections::hash_map::DefaultHasher::new();
         project.to_string().hash(&mut hash);
@@ -5908,6 +5921,56 @@ mod tests {
         assert_eq!(enabled, Some(serde_json::Value::Null));
         assert_eq!(strength, Some(serde_json::json!(0.5)));
         assert_eq!(ignored, Some(serde_json::json!(false)));
+    }
+
+    #[test]
+    fn horizon_lock_settings_round_trip_in_projects_and_presets() {
+        let source = optical_project_manager();
+        source.set_horizon_lock(87.0, 2.5, true, -4.0, true, 8.5, 730.0, 1.4, 7.5);
+        for typ in [GyroflowProjectType::Simple, GyroflowProjectType::WithGyroData, GyroflowProjectType::WithProcessedData] {
+            let data = source.export_gyroflow_data(typ, "{}", None).unwrap();
+            let project: serde_json::Value = serde_json::from_str(&data).unwrap();
+            assert_eq!(project["stabilization"]["automatic_lock"], true);
+            assert_eq!(project["stabilization"]["turn_smoothing_ms"], 730.0);
+            for preset in [false, true] {
+                let mut input = project.clone();
+                if preset { input["videofile"] = "".into(); }
+                let target = StabilizationManager::default();
+                let mut is_preset = false;
+                target.import_gyroflow_data(input.to_string().as_bytes(), false, None, |_| (),
+                    Arc::new(AtomicBool::new(false)), &mut is_preset, true).unwrap();
+                assert_eq!(is_preset, preset);
+                let actual = target.smoothing.read();
+                let expected = source.smoothing.read();
+                assert_eq!(actual.horizon_lock.get_checksum(), expected.horizon_lock.get_checksum());
+                assert_eq!(actual.horizon_lock.automatic_lock, expected.horizon_lock.automatic_lock);
+            }
+        }
+    }
+
+    #[test]
+    fn horizon_lock_unlimited_and_legacy_projects_keep_defaults() {
+        let source = optical_project_manager();
+        source.set_horizon_lock(100.0, 0.0, false, 0.0, true, 5.0, 500.0, 1.0, f64::INFINITY);
+        let project = optical_export(&source);
+        assert_eq!(project["stabilization"].get("tilt_accel_limit"), Some(&serde_json::Value::Null));
+        let restored = optical_import(&project);
+        assert_eq!(restored.smoothing.read().horizon_lock.tilt_accel_limit, f64::INFINITY);
+        for null_fields in [false, true] {
+            let mut legacy = project.clone();
+            let fields = legacy["stabilization"].as_object_mut().unwrap();
+            for key in ["automatic_lock", "turn_threshold", "turn_smoothing_ms", "turn_multiplier", "tilt_accel_limit"] {
+                if null_fields { fields.insert(key.into(), serde_json::Value::Null); }
+                else { fields.remove(key); }
+            }
+            let restored = optical_import(&legacy);
+            let lock = restored.smoothing.read();
+            assert!(!lock.horizon_lock.automatic_lock);
+            assert_eq!(lock.horizon_lock.turn_threshold, 5.0);
+            assert_eq!(lock.horizon_lock.turn_smoothing_ms, 500.0);
+            assert_eq!(lock.horizon_lock.turn_multiplier, 1.0);
+            assert_eq!(lock.horizon_lock.tilt_accel_limit, f64::INFINITY);
+        }
     }
 
     fn optical_import(project: &serde_json::Value) -> StabilizationManager {

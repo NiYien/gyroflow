@@ -568,6 +568,26 @@ fn video_log_scheme(url: &str) -> &'static str {
     }
 }
 
+fn raw_preview_decoder(decoder: &str, defaults: &str, target_height: i32, gpu_decoding: bool) -> String {
+    // Keep the player's platform-specific RAW options when selecting a decoder explicitly.
+    let fallback = format!("{decoder}:gpu=auto");
+    let base = defaults.split(',').map(str::trim)
+        .find(|entry| entry.split(':').next() == Some(decoder))
+        .unwrap_or(&fallback);
+    let mut options: Vec<String> = base.split(':').map(str::to_owned).collect();
+    if decoder == "BRAW" && !gpu_decoding {
+        options.retain(|entry| !entry.starts_with("gpu="));
+        options.push("gpu=no".into());
+    }
+    // The legacy Apple decoder still needs its aligned half-resolution workaround.
+    let legacy_apple_r3d = decoder == "R3D" && cfg!(all(target_vendor = "apple", not(all(target_os = "macos", target_arch = "aarch64"))));
+    if target_height > 0 && !legacy_apple_r3d {
+        options.retain(|entry| !entry.starts_with("scale="));
+        options.push(format!("scale={}x{}", (target_height * 16) / 9, target_height));
+    }
+    options.join(":")
+}
+
 fn video_log_decoder_label(custom_decoder: &str) -> &'static str {
     if custom_decoder.is_empty() {
         "default"
@@ -813,7 +833,7 @@ impl Controller {
         // Build the MDK custom decoder string deterministically from the URL
         // so the worker can hand it to MDK without re-reading any
         // self.* state.
-        let custom_decoder = self.make_custom_decoder(&filename, &url);
+        let custom_decoder = self.make_custom_decoder(&filename, &url, &player);
         if !custom_decoder.is_empty() {
             ::log::debug!(target: "video.load", "Custom decoder: {custom_decoder}");
         }
@@ -3246,7 +3266,7 @@ impl Controller {
     // and current controller state. Shared by load_video and
     // restore_video_after_resume so a post-suspend reload picks the same
     // decoder as the original load.
-    fn make_custom_decoder(&self, filename: &str, url: &str) -> String {
+    fn make_custom_decoder(&self, filename: &str, url: &str, player: &QJSValue) -> String {
         if let Some(decoder) = crate::crm::decoder_for_url(url) {
             return decoder;
         }
@@ -3257,26 +3277,20 @@ impl Controller {
                 self.image_sequence_start
             );
         }
-        let options = {
-            let target_height = self.preview_resolution;
-            if target_height > 0 {
-                format!(":scale={}x{}", (target_height * 16) / 9, target_height)
-            } else {
-                "".to_owned()
-            }
-        };
-        if filename.to_ascii_lowercase().ends_with("braw") {
-            let gpu = if self.stabilizer.gpu_decoding.load(SeqCst) {
-                "auto"
-            } else {
-                "no"
-            };
-            custom_decoder = format!("BRAW:gpu={}{}", gpu, options);
+        // The environment override already supplies the complete decoder list to the player.
+        if std::env::var("MDK_DECODERS").is_ok_and(|value| !value.trim().is_empty()) {
+            return custom_decoder;
         }
-        if filename.to_ascii_lowercase().ends_with("r3d")
-            || filename.to_ascii_lowercase().ends_with("nev")
-        {
-            custom_decoder = format!("R3D:gpu=auto{}", options);
+        let filename = filename.to_ascii_lowercase();
+        let decoder = if filename.ends_with("braw") { Some("BRAW") }
+            else if filename.ends_with("r3d") || filename.ends_with("nev") { Some("R3D") }
+            else { None };
+        if let Some(decoder) = decoder {
+            let defaults = player.to_qobject::<MDKVideoItem>()
+                .map(|vid| unsafe { (&mut *vid.as_ptr()).defaultVideoDecoders().to_string() })
+                .unwrap_or_default();
+            custom_decoder = raw_preview_decoder(decoder, &defaults, self.preview_resolution,
+                self.stabilizer.gpu_decoding.load(SeqCst));
         }
         custom_decoder
     }
@@ -3296,7 +3310,7 @@ impl Controller {
             return false;
         }
         let filename = filesystem::get_filename(&url);
-        let custom_decoder = self.make_custom_decoder(&filename, &url);
+        let custom_decoder = self.make_custom_decoder(&filename, &url, &player);
         if let Some(vid) = player.to_qobject::<MDKVideoItem>() {
             let vid = unsafe { &mut *vid.as_ptr() };
             crate::crm::configure_player(vid, &url);
@@ -6404,6 +6418,28 @@ mod tests {
             video_log_decoder_label("R3D:gpu=auto:scale=1920x1080"),
             "R3D"
         );
+    }
+
+    #[test]
+    fn raw_preview_decoder_preserves_windows_r3d_prefetch() {
+        let defaults = "D3D11:threads=0,R3D:gpu=auto:scale=1920x1080:ahead=2,FFmpeg";
+        assert_eq!(raw_preview_decoder("R3D", defaults, -1, true), "R3D:gpu=auto:scale=1920x1080:ahead=2");
+        #[cfg(not(target_vendor = "apple"))]
+        assert_eq!(raw_preview_decoder("R3D", defaults, 720, true), "R3D:gpu=auto:ahead=2:scale=1280x720");
+    }
+
+    #[test]
+    fn raw_preview_decoder_preserves_metal_and_braw_options() {
+        let defaults = "BRAW:gpu=auto:copy=1:scale=1920x1080,R3D:gpu=metal:decompress=async:format=rgb48le:copy=1:scale=1920x1080";
+        assert_eq!(raw_preview_decoder("R3D", defaults, -1, true), "R3D:gpu=metal:decompress=async:format=rgb48le:copy=1:scale=1920x1080");
+        assert_eq!(raw_preview_decoder("BRAW", defaults, 720, false), "BRAW:copy=1:gpu=no:scale=1280x720");
+        assert_eq!(raw_preview_decoder("BRAW", defaults, -1, true), "BRAW:gpu=auto:copy=1:scale=1920x1080");
+    }
+
+    #[test]
+    fn raw_preview_decoder_falls_back_without_a_matching_default() {
+        assert_eq!(raw_preview_decoder("BRAW", "FFmpeg", 720, false), "BRAW:gpu=no:scale=1280x720");
+        assert_eq!(raw_preview_decoder("R3D", "", -1, true), "R3D:gpu=auto");
     }
 
     #[test]

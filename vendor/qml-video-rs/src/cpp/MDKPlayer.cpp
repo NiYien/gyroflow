@@ -274,6 +274,12 @@ void MDKPlayer::setUrl(const QUrl &url, const QString &customDecoder) {
         } else if (customDecoder.startsWith("headers:")) {
             qDebug2("setUrl") << "Setting custom HTTP headers:" << customDecoder.mid(8);
             m_player->setProperty("avio.headers", customDecoder.mid(8).toStdString());
+        } else {
+            m_player->setDecoders(mdk::MediaType::Video, { toStdString(customDecoder) });
+#if (_WIN32+0)
+            // An explicit decoder must not be replaced by the automatic software fallback.
+            m_autoSoftwareDecoders = false;
+#endif
         }
     }
 

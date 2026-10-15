@@ -4719,6 +4719,10 @@ Please provide frame rate: </source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Pitch locking is not available when using gravity vectors.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Stabilization.qml" line="506"/>
         <source>Automatic lock</source>
         <translation type="unfinished"></translation>

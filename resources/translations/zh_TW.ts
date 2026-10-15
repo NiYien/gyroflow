@@ -5126,6 +5126,10 @@ Please provide frame rate: </source>
         <translation>鎖定俯仰角度</translation>
     </message>
     <message>
+        <source>Pitch locking is not available when using gravity vectors.</source>
+        <translation>使用重力向量時無法鎖定俯仰角度。</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Stabilization.qml" line="506"/>
         <source>Automatic lock</source>
         <translation>自動鎖定</translation>
