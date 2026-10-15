@@ -66,8 +66,13 @@ def extract(archive, destination):
             if member.issym() or member.islnk():
                 base = destination / path.parent if member.issym() else destination
                 link = base / member.linkname
-                if Path(member.linkname).is_absolute() or not link.resolve().is_relative_to(destination.resolve()):
+                if Path(member.linkname).is_absolute():
                     raise ValueError(f'Unsafe MDK archive link: {member.name}')
+                try:
+                    # Python 3.7/3.8 do not provide Path.is_relative_to.
+                    link.resolve().relative_to(destination.resolve())
+                except ValueError:
+                    raise ValueError(f'Unsafe MDK archive link: {member.name}') from None
         bundle.extractall(destination)
 
 
