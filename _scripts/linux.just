@@ -287,7 +287,7 @@ deploy *param: assert-linux-x86-64
     for required in \
         "$QT_DIR/lib/libQt6Core.so.6" \
         "$QT_DIR/plugins/platforms/libqxcb.so" \
-        "$FFMPEG_DIR/lib/{{FFmpegLinuxArch}}/libavcodec.so.62" \
+        "$FFMPEG_DIR/lib/{{FFmpegLinuxArch}}/libavcodec.so.63" \
         "$CARGO_TARGET/gyroflow" \
         "$CARGO_TARGET/libmdk.so.0"; do
         if [ ! -s "$required" ]; then
@@ -430,12 +430,13 @@ deploy *param: assert-linux-x86-64
     cp -f "$CARGO_TARGET/libc++.so.1"                      "$TARGET/lib/"
     cp -f "$CARGO_TARGET/libffmpeg.so.9"                      "$TARGET/lib/"
 
-    cp -f "$FFMPEG_DIR/lib/{{FFmpegLinuxArch}}/libavcodec.so.62"         "$TARGET/lib/"
-    cp -f "$FFMPEG_DIR/lib/{{FFmpegLinuxArch}}/libavfilter.so.11"        "$TARGET/lib/"
-    cp -f "$FFMPEG_DIR/lib/{{FFmpegLinuxArch}}/libavformat.so.62"        "$TARGET/lib/"
-    cp -f "$FFMPEG_DIR/lib/{{FFmpegLinuxArch}}/libavutil.so.60"          "$TARGET/lib/"
-    cp -f "$FFMPEG_DIR/lib/{{FFmpegLinuxArch}}/libswresample.so.6"       "$TARGET/lib/"
-    cp -f "$FFMPEG_DIR/lib/{{FFmpegLinuxArch}}/libswscale.so.9"          "$TARGET/lib/"
+    cp -f "$FFMPEG_DIR/lib/{{FFmpegLinuxArch}}/libavcodec.so.63"         "$TARGET/lib/"
+    cp -f "$FFMPEG_DIR/lib/{{FFmpegLinuxArch}}/libavfilter.so.12"        "$TARGET/lib/"
+    cp -f "$FFMPEG_DIR/lib/{{FFmpegLinuxArch}}/libavformat.so.63"        "$TARGET/lib/"
+    cp -f "$FFMPEG_DIR/lib/{{FFmpegLinuxArch}}/libavutil.so.61"          "$TARGET/lib/"
+    cp -f "$FFMPEG_DIR/lib/{{FFmpegLinuxArch}}/libavdevice.so.63"        "$TARGET/lib/"
+    cp -f "$FFMPEG_DIR/lib/{{FFmpegLinuxArch}}/libswresample.so.7"       "$TARGET/lib/"
+    cp -f "$FFMPEG_DIR/lib/{{FFmpegLinuxArch}}/libswscale.so.10"         "$TARGET/lib/"
 
     # Bundle BRAW and RED SDK so users don't hit a runtime download.
     # Mirrors macos/windows deploy; SDK shared objects go into $TARGET/lib/

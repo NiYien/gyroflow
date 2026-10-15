@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory = $true)][string]$ExtDir,
     [Parameter(Mandatory = $true)][string]$PackageName,
     [Parameter(Mandatory = $true)][string]$Url,
-    [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-fA-F]{64}$')][string]$Sha256
+    [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-fA-F]{64}$')][string]$Sha256,
+    [ValidateSet('x64', 'arm64')][string]$Architecture = 'x64'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -60,6 +61,15 @@ function Test-SdkFiles {
         if (-not (Test-Path -LiteralPath (Join-Path $SdkDir $RelativePath) -PathType Leaf)) { return $false }
     }
     try {
+        $ExpectedMachine = if ($Architecture -eq 'arm64') { 0xaa64 } else { 0x8664 }
+        foreach ($RelativePath in $RequiredFiles) {
+            if ($RelativePath -notmatch '\.(dll|exe)$') { continue }
+            $Bytes = [IO.File]::ReadAllBytes((Join-Path $SdkDir $RelativePath))
+            if ($Bytes.Length -lt 64 -or $Bytes[0] -ne 0x4d -or $Bytes[1] -ne 0x5a) { return $false }
+            $Offset = [BitConverter]::ToInt32($Bytes, 0x3c)
+            if ($Offset -lt 0 -or $Offset -gt $Bytes.Length - 6) { return $false }
+            if ([BitConverter]::ToUInt32($Bytes, $Offset) -ne 0x4550 -or [BitConverter]::ToUInt16($Bytes, $Offset + 4) -ne $ExpectedMachine) { return $false }
+        }
         $Info = [IO.File]::ReadAllText($PatchInfo) | ConvertFrom-Json
         if ($Info.avcodec_major -ne 63 -or -not $Info.tile_interleave_available -or -not $Info.monolithic_tile_interleave_available) { return $false }
         $DllHash = Get-Sha256Hex (Join-Path $SdkDir 'bin/avcodec-63.dll')
@@ -92,6 +102,15 @@ if (Test-Path -LiteralPath $Marker) { Remove-Item -LiteralPath $Marker }
 & 7z x -y $Archive "-o$Root"
 if ($LASTEXITCODE -ne 0) { throw "Failed to extract $PackageName" }
 if (-not (Test-SdkFiles)) { throw "Incomplete or mismatched FFmpeg SDK: $PackageName" }
+$NativeArm64 = $env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64'
+if ($Architecture -eq 'arm64' -and -not $NativeArm64) {
+    # Cross builds validate architecture and the pinned native CI evidence without executing ARM64 on x64.
+    $Info = [IO.File]::ReadAllText($PatchInfo) | ConvertFrom-Json
+    if ($Info.architecture -ne 'arm64' -or -not $Info.native_runtime_test) { throw 'ARM64 SDK has no native runtime verification' }
+    [IO.File]::WriteAllText($Marker, $ExpectedHash + "`n")
+    Write-Host "Installed verified ARM64 SDK for cross compilation: $PackageName"
+    exit 0
+}
 $StartInfo = New-Object System.Diagnostics.ProcessStartInfo
 $StartInfo.FileName = Join-Path $SdkDir 'bin/ffmpeg.exe'
 $StartInfo.Arguments = '-hide_banner -h decoder=hevc'

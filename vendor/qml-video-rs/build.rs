@@ -108,7 +108,7 @@ fn main() {
         if target_os == "windows" {
             println!("cargo:rustc-link-lib=dxguid");
             std::fs::copy(format!("{}/bin/{arch_win}/mdk.dll", path), format!("{}/../../../mdk.dll", env::var("OUT_DIR").unwrap())).unwrap();
-            let ffmpeg = if target_arch == "x86_64" {
+            let ffmpeg = if target_arch == "x86_64" || target_arch == "aarch64" {
                 // Preview and export must both keep the verified HEVC tile decoder.
                 let sdk = env::var("FFMPEG_DIR").expect("FFMPEG_DIR must point to the verified FFmpeg 9 SDK");
                 let marker = Path::new(&sdk).join(".gyroflow-hevc-tile-patch.json");

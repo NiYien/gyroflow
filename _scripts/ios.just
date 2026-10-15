@@ -18,6 +18,8 @@ DistributionProvisioningName  := "Gyroflow dist"
 AppBundle := ProjectDir / "_deployment/_binaries/ios/Payload/NiYien.app"
 
 QtVersionIOS := "6.7.3"
+IOSFFmpegUrl := "https://github.com/NiYien/avbuild/releases/download/gyroflow-ffmpeg-9.0.2-ios-v1/ffmpeg-9.0-iOS-gpl-lite.tar.xz"
+IOSFFmpegSha256 := "0820b479f19f3d192ea8572c114f15aae3b84f880fbc1562df234dea293bd0d7"
 
 IPHONESDK := `xcode-select -p` + "/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk"
 export BINDGEN_EXTRA_CLANG_ARGS_aarch64_apple_ios := "--target=arm64-apple-ios -arch arm64 -miphoneos-version-min=15 -isysroot " + IPHONESDK
@@ -75,15 +77,25 @@ install-deps:
         rm -rf ./vcpkg/downloads
     fi
 
-    if [ ! -d "ffmpeg-9.0-iOS-gpl-lite" ]; then
+    ffmpeg_marker="ffmpeg-9.0-iOS-gpl-lite/.gyroflow-package-sha256"
+    ffmpeg_complete=true
+    for library in avcodec avformat avutil avfilter swresample swscale x264 x265; do
+        test -s "ffmpeg-9.0-iOS-gpl-lite/lib/lib$library.a" || ffmpeg_complete=false
+    done
+    if [ "$(cat "$ffmpeg_marker" 2>/dev/null)" != "{{IOSFFmpegSha256}}" ] || [ "$ffmpeg_complete" != true ]; then
         echo "Downloading ffmpeg for iOS"
 
         # Download and extract ffmpeg
-        curl -L https://sourceforge.net/projects/avbuild/files/iOS/ffmpeg-9.0-iOS-gpl-lite.tar.xz/download -o ffmpeg.tar.xz
-        echo "68ec9025b5d9c9391332ac8c8ff44dd72a5e59e056983bf355e27a5369c87912  ffmpeg.tar.xz" | shasum -a 256 --check - || exit 1
-        7z x -aoa ffmpeg.tar.xz
-        tar -xf ffmpeg.tar
-        rm ffmpeg.tar ffmpeg.tar.xz
+        curl -fL --retry 3 "{{IOSFFmpegUrl}}" -o ffmpeg.tar.xz
+        echo "{{IOSFFmpegSha256}}  ffmpeg.tar.xz" | shasum -a 256 --check - || exit 1
+        rm -f "$ffmpeg_marker"
+        tar -xJf ffmpeg.tar.xz
+        for library in avcodec avformat avutil avfilter swresample swscale x264 x265; do
+            test -s "ffmpeg-9.0-iOS-gpl-lite/lib/lib$library.a" || exit 1
+        done
+        python3 -c 'import json; d=json.load(open("ffmpeg-9.0-iOS-gpl-lite/gyroflow-ffmpeg-build.json")); assert d["ffmpeg_commit"] == "946fcce07b6dcd0331c8cc609192aeff5e1924f8" and d["patch"] == "videotoolbox-color-ownership-v1"'
+        printf '%s\n' "{{IOSFFmpegSha256}}" > "$ffmpeg_marker"
+        rm ffmpeg.tar.xz
     fi
 
     python3 "{{ProjectDir}}/_scripts/ios_native_deps.py" install

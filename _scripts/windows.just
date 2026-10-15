@@ -1,7 +1,7 @@
 import 'common.just'
 
-WindowsFFmpegUrl := "https://github.com/NiYien/avbuild/releases/download/gyroflow-ffmpeg-9.0.2-windows-hevc-tiles-v1/ffmpeg-9.0-windows-x64-hevc-tiles-v1.7z"
-WindowsFFmpegSha256 := "01fc86614010b7cb68da89d4cbccf681adbc6078ae9f4345dfb53b1d537aa1d2"
+WindowsFFmpegUrl := if Arch == "aarch64" { "https://github.com/NiYien/avbuild/releases/download/gyroflow-ffmpeg-9.0.2-windows-arm64-v1/ffmpeg-9.0-windows-arm64-hevc-tiles-v1.7z" } else { "https://github.com/NiYien/avbuild/releases/download/gyroflow-ffmpeg-9.0.2-windows-hevc-tiles-v1/ffmpeg-9.0-windows-x64-hevc-tiles-v1.7z" }
+WindowsFFmpegSha256 := if Arch == "aarch64" { "64d4752a0527f4a7d3fc8da0c5e51184078d820d72ce0b6c8af795a56eccf063" } else { "01fc86614010b7cb68da89d4cbccf681adbc6078ae9f4345dfb53b1d537aa1d2" }
 
 NameSuffix := if Arch == "aarch64" { "windows-arm64" } else { "windows64" }
 
@@ -117,28 +117,8 @@ install-deps:
     # that dies half way leaves the top-level directory behind, and a bare
     # directory check would then skip the download and fail much later with a
     # missing header.
-    if ("{{Arch}}" -eq "x86_64") {
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{{ProjectDir}}/_scripts/install_windows_ffmpeg.ps1" -ExtDir "{{ExtDir}}" -PackageName "{{FFmpeg}}" -Url "{{WindowsFFmpegUrl}}" -Sha256 "{{WindowsFFmpegSha256}}"
-        if ($LASTEXITCODE -ne 0) { throw "Failed to install the verified Windows FFmpeg SDK" }
-    } else {
-        $FFmpegHeader = "{{FFmpeg}}/include/libavutil/avutil.h"
-        $FFmpegLib    = "{{FFmpeg}}/lib/avutil.lib"
-        if (-not ((Test-Path -Path $FFmpegHeader) -and (Test-Path -Path $FFmpegLib))) {
-            echo "Downloading {{FFmpeg}}"
-            # Must be curl.exe, never `wget`/`curl`: in Windows PowerShell both are
-            # aliases for Invoke-WebRequest, whose default Mozilla/5.0 user agent makes
-            # SourceForge answer with its HTML "download will start shortly" page under
-            # HTTP 200 instead of the archive. macos.just and linux.just already curl.
-            curl.exe -fsSL --retry 3 --retry-delay 5 -o "{{FFmpeg}}.7z" "https://master.dl.sourceforge.net/project/avbuild/windows-desktop/{{FFmpeg}}.7z?viasf=1"
-            if ($LASTEXITCODE -ne 0) { throw "Failed to download {{FFmpeg}} (curl exit code $LASTEXITCODE)" }
-            7z x -y {{FFmpeg}}.7z
-            if ($LASTEXITCODE -ne 0) { throw "Failed to extract {{FFmpeg}}.7z - the downloaded file is not a 7z archive" }
-            del {{FFmpeg}}.7z
-            if (-not ((Test-Path -Path $FFmpegHeader) -and (Test-Path -Path $FFmpegLib))) {
-                throw "{{FFmpeg}} extracted but is incomplete: expected $FFmpegHeader and $FFmpegLib"
-            }
-        }
-    }
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{{ProjectDir}}/_scripts/install_windows_ffmpeg.ps1" -ExtDir "{{ExtDir}}" -PackageName "{{FFmpeg}}" -Url "{{WindowsFFmpegUrl}}" -Sha256 "{{WindowsFFmpegSha256}}" -Architecture "{{FFMPEG_ARCH}}"
+    if ($LASTEXITCODE -ne 0) { throw "Failed to install the verified Windows FFmpeg SDK" }
     # ---- FFmpeg ----
 
     # ---- OpenCV ----
