@@ -332,7 +332,7 @@ Rectangle {
     }
     function inputsAllowed() {
         if (!busy) return true;
-        notify(importing ? qsTr("Reading…") : qsTr("Stop the current task before changing its inputs."));
+        if (importing) notify(qsTr("Reading…"));
         return false;
     }
     function requestAdd(folder) {
@@ -1060,7 +1060,7 @@ Rectangle {
                             visible: root.panel === "help"
                             width: parent.width; unit: root.unit; dark: root.dark
                             text: qsTr("Try a generated demo"); iconName: "play"
-                            enabled: root.inputsAllowed()
+                            enabled: !root.busy
                             onClicked: {
                                 if (!root.inputsAllowed() || !root.queueService) return;
                                 const url = ui_tools.prepare_mobile_demo();
