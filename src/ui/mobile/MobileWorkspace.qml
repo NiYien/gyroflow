@@ -776,13 +776,26 @@ Rectangle {
                 width: parent.width; height: (root.landscape ? 56 : 128) * root.unit
             MobileSlider {
                 id: seek
+                objectName: "mobilePlaybackSeek"
                 unit: root.unit; dark: root.dark
                 x: root.landscape ? transportButtons.width + 12 * root.unit : 0
                 y: root.landscape ? 4 * root.unit : 0
                 width: parent.width - x; height: 48 * root.unit
                 from: 0
-                to: root.host ? Math.max(1, root.host.videoArea.vid.duration) : 1
-                value: !pressed && root.host ? root.host.videoArea.vid.timestamp : 0
+                to: {
+                    if (!root.host) return 0;
+                    const video = root.host.videoArea.vid;
+                    const duration = Math.max(0, video.duration || 0);
+                    const frameDuration = video.frameRate > 0 ? 1000 / video.frameRate : 1;
+                    const lastFrame = video.frameRate > 0 && video.frameCount > 0 ? (video.frameCount - 1) * frameDuration : duration - frameDuration;
+                    return Math.max(0, Math.min(duration - frameDuration, lastFrame));
+                }
+                Binding {
+                    target: seek; property: "value"
+                    value: root.host ? root.host.videoArea.vid.timestamp : 0
+                    when: !seek.pressed
+                    restoreMode: Binding.RestoreNone
+                }
                 enabled: root.previewReady
                 onMoved: if (root.host) root.host.videoArea.vid.seekToTimestamp(value, true)
                 onPressedChanged: { if (pressed) hideControls.stop(); else hideControls.restart(); }

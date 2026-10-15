@@ -10,13 +10,13 @@ QQC.Slider {
     implicitHeight: 44 * unit
     leftPadding: 14 * unit; rightPadding: leftPadding
     background: Rectangle {
-        x: root.leftPadding; y: (root.height - height) / 2
-        width: root.availableWidth; height: 4 * root.unit; radius: height / 2
+        x: root.leftPadding + root.handle.width / 2; y: (root.height - height) / 2
+        width: Math.max(0, root.availableWidth - root.handle.width); height: 4 * root.unit; radius: height / 2
         color: MobileStyle.fill(root.dark)
         Rectangle { width: root.visualPosition * parent.width; height: parent.height; radius: parent.radius; color: MobileStyle.accent(root.dark) }
     }
     handle: Rectangle {
-        x: root.leftPadding + root.visualPosition * root.availableWidth - width / 2
+        x: root.leftPadding + root.visualPosition * (root.availableWidth - width)
         y: (root.height - height) / 2
         width: 28 * root.unit; height: width; radius: width / 2
         color: root.pressed ? "#f2f2f7" : "#ffffff"

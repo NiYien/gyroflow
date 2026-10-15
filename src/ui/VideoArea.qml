@@ -1954,20 +1954,21 @@ Item {
                 fullScreen: root.fullScreen;
                 visible: vid.loaded || !window.isMobileLayout;
                 property bool prevRestrictTrim: false;
-                Component.onCompleted: prevRestrictTrim = restrictTrim;
+                readonly property bool restrictPlaybackToTrim: restrictTrim && !window.useMobileWorkspace;
+                Component.onCompleted: prevRestrictTrim = restrictPlaybackToTrim;
 
                 onTrimRangesChanged: {
                     controller.set_trim_ranges(timeline.trimRanges.map(x => x[0] + ":" + x[1]).join(";"));
-                    restrictTrimChanged();
+                    restrictPlaybackToTrimChanged();
                 }
-                onRestrictTrimChanged: {
-                    if (restrictTrim) {
+                onRestrictPlaybackToTrimChanged: {
+                    if (restrictPlaybackToTrim) {
                         const ranges = timeline.getTrimRanges();
                         vid.setPlaybackRange(ranges[0][0] * vid.duration, ranges[ranges.length - 1][1] * vid.duration);
-                    } else if (prevRestrictTrim != restrictTrim) {
+                    } else if (prevRestrictTrim != restrictPlaybackToTrim) {
                         vid.setPlaybackRange(0, -1);
                     }
-                    prevRestrictTrim = restrictTrim;
+                    prevRestrictTrim = restrictPlaybackToTrim;
                 }
             }
         }
