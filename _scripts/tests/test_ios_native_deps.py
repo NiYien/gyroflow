@@ -89,7 +89,7 @@ class IOSNativeDependenciesTests(unittest.TestCase):
         sdk = self.install()
         binary = deps.mdk_framework(sdk) / 'mdk'
         binary.write_bytes(b'0.39.0 release with the old BRAW reader')
-        with self.assertRaisesRegex(ValueError, 'does not match the BRAW 6 pin'):
+        with self.assertRaisesRegex(ValueError, 'does not match the runtime pin'):
             deps.runtime_frameworks(self.root, {})
 
     def test_packaging_works_without_cargo_frameworks_after_cache_cleanup(self):

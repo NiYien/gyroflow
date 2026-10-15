@@ -426,6 +426,13 @@ impl<'a> VideoTranscoder<'a> {
                 let timestamp_us = ts;
                 let timestamp_ms = timestamp_us as f64 / 1000.0;
 
+                // Export ranges are half-open; reject the end frame before processing or encoding it.
+                // Decode-only analysis retains its existing boundary sampling behavior.
+                if !self.decode_only && end_ms.is_some_and(|end| timestamp_us >= (end * 1000.0).round() as i64) {
+                    status = Status::Finish;
+                    break;
+                }
+
                 if start_ms.is_none() || timestamp_ms >= start_ms.unwrap() {
                     if frame_ts.last_video.is_none() {
                         frame_ts.last_duration_video = 1i64.rescale(time_base, (1, 1000000));

@@ -882,8 +882,13 @@ void MDKPlayer::sync(QSGImageNode *node, QSize newSize, QQuickItem *item, bool f
 
 void MDKPlayer::play() {
     if (!m_videoLoaded || !m_player) return;
-    const int64_t pos = m_playerPosition;
+    m_player->setLoop(9999999);
+    const double sourceDuration = m_overrideFps > 0.0 && m_fps > 0.0 ? m_duration * m_overrideFps / m_fps : m_duration;
+    const bool restartAtEnd = m_fps > 0.0 && sourceDuration > 0.0 && m_playerPosition >= sourceDuration - 1000.0 / m_fps - 1.0;
+    const int64_t pos = restartAtEnd ? 0 : m_playerPosition;
     m_playbackRequested.store(true, std::memory_order_release);
+    // Enabling looping after a paused EOF seek does not restart an exhausted decoder by itself.
+    if (restartAtEnd && !m_isR3dFormat) m_player->seek(0, mdk::SeekFlag::FromStart);
 #if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_ARM_64)
     // Queue the re-anchor while paused. Starting the async decoder first lets
     // its old decode chain race the seek and submit duplicate/out-of-order frames.
@@ -918,6 +923,9 @@ void MDKPlayer::setFrameRate(float fps) {
 
 void MDKPlayer::seekToTimestamp(float timestampMs, bool exact) {
     if (!m_videoLoaded || !m_player) return;
+
+    // A shorter audio track can reach EOF first and loop away from a paused video seek.
+    if (!m_playbackRequested.load(std::memory_order_acquire)) m_player->setLoop(0);
 
     auto flags = exact ? mdk::SeekFlag::FromStart : mdk::SeekFlag::FromStart | mdk::SeekFlag::KeyFrame;
 #if (_WIN32+0)

@@ -1145,6 +1145,33 @@ mod decode_fallback_tests {
     }
 
     #[test]
+    fn trim_ranges_exclude_end_frames_before_encoding() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = fixture(dir.path());
+        let folder = filesystem::path_to_url(dir.path().to_str().unwrap());
+        let mut frames = Vec::new();
+        {
+            let mut proc = FfmpegProcessor::from_file(&input, false, 0, None).unwrap();
+            proc.video_codec = Some("ffv1".into());
+            proc.video.gpu_encoding = false;
+            proc.video.processing_order = ProcessingOrder::PostConversion;
+            // Adjacent ranges must not duplicate their shared boundary; the last range reaches EOF.
+            proc.ranges_ms = vec![(Some(40.0), Some(120.00000000001)),
+                (Some(120.0), Some(200.0)), (Some(280.0), Some(320.0))];
+            proc.on_frame(|timestamp, input, output, _, _| {
+                frames.push(timestamp);
+                *output.unwrap() = input.clone();
+                Ok(())
+            });
+            proc.render(&folder, "trimmed.mkv", (32, 24), None,
+                Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false))).unwrap();
+        }
+        assert_eq!(frames, [40_000, 80_000, 120_000, 160_000, 280_000]);
+        let mut output = format::input(&dir.path().join("trimmed.mkv")).unwrap();
+        assert_eq!(output.packets().filter(|(stream, _)| stream.parameters().medium() == media::Type::Video).count(), 5);
+    }
+
+    #[test]
     fn audio_ranges_share_video_offsets_and_keep_tracks_independent() {
         let mut times = FrameTimestamps::default();
         for range in 0..20 {
@@ -1217,6 +1244,7 @@ mod decode_fallback_tests {
                 });
                 proc.render(&folder, name, (32, 24), None, Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false))).unwrap();
             }
+            assert_eq!(source_frames.len(), if trimmed { 27 } else { 100 });
             let mut segments = Vec::new();
             for (index, &timestamp) in source_frames.iter().enumerate() {
                 if index == 0 || timestamp - source_frames[index - 1] != 40_000 {

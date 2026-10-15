@@ -144,7 +144,15 @@ impl MDKVideoItem {
     pub fn setTimestamp(&mut self, timestamp: f64) { self.m_player.seek_to_timestamp(timestamp, true); self.forceRedraw(); }
 
     pub fn seekToFrame(&mut self, frame: i64, exact: bool) { self.m_player.seek_to_frame(frame, self.currentFrame, exact); self.forceRedraw(); }
-    pub fn seekToFrameDelta(&mut self, frame_delta: i64) { self.m_player.seek_to_frame_delta(frame_delta); self.forceRedraw(); }
+    pub fn seekToFrameDelta(&mut self, frame_delta: i64) {
+        if frame_delta < 0 {
+            // MDK's relative frame seek can land on a keyframe or stall at EOF when stepping backwards.
+            self.setCurrentFrame(self.currentFrame.saturating_add(frame_delta).max(0));
+        } else {
+            self.m_player.seek_to_frame_delta(frame_delta);
+            self.forceRedraw();
+        }
+    }
     pub fn seekToTimestamp(&mut self, timestamp: f64, exact: bool) { self.m_player.seek_to_timestamp(timestamp, exact); self.forceRedraw(); }
 
     pub fn setRotation(&mut self, v: i32) { self.m_player.set_rotation(v); self.forceRedraw(); }
