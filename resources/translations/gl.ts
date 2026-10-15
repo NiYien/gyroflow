@@ -2134,6 +2134,10 @@ Pode aumentar o límite de nitidez na sección Avanzado.</translation>
         <source>Device for rendering</source>
         <translation>Dispositivo para renderizar</translation>
     </message>
+    <message>
+        <source>This folder is not writable. Choose another output folder.</source>
+        <translation>Non se pode escribir neste cartafol. Escolle outro cartafol de saída.</translation>
+    </message>
 </context>
 <context>
     <name>FeedbackDialog</name>
@@ -6791,6 +6795,14 @@ Desactiva a estabilización da lente (Optical SteadyShot) para usar Gyroflow.</t
         <source>Privacy policy</source>
         <translation>Política de privacidade</translation>
     </message>
+    <message>
+        <source>Photo library</source>
+        <translation>Fototeca</translation>
+    </message>
+    <message>
+        <source>Source folder</source>
+        <translation>Cartafol de orixe</translation>
+    </message>
 </context>
 <context>
     <name>MobileWorkspace</name>
@@ -7269,6 +7281,42 @@ Desactiva a estabilización da lente (Optical SteadyShot) para usar Gyroflow.</t
     <message>
         <source>Open a video in preview to use these features.</source>
         <translation>Abre un vídeo na vista previa para usar estas funcións.</translation>
+    </message>
+    <message>
+        <source>Photo library access is unavailable. Check system permissions or choose an output folder.</source>
+        <translation>Non se pode acceder á fototeca. Comproba os permisos do sistema ou escolle un cartafol de saída.</translation>
+    </message>
+    <message>
+        <source>Retry saving to photo library</source>
+        <translation>Tentar gardar de novo na fototeca</translation>
+    </message>
+    <message>
+        <source>Save to folder</source>
+        <translation>Gardar nun cartafol</translation>
+    </message>
+    <message>
+        <source>Saved to folder</source>
+        <translation>Gardado no cartafol</translation>
+    </message>
+    <message>
+        <source>Saved to photo library</source>
+        <translation>Gardado na fototeca</translation>
+    </message>
+    <message>
+        <source>Saving to folder…</source>
+        <translation>Gardando no cartafol…</translation>
+    </message>
+    <message>
+        <source>Saving to photo library…</source>
+        <translation>Gardando na fototeca…</translation>
+    </message>
+    <message>
+        <source>Video exported; saving failed</source>
+        <translation>Vídeo exportado; fallou o gardado</translation>
+    </message>
+    <message>
+        <source>Your video is ready. Retry saving to the photo library or choose an output folder.</source>
+        <translation>O vídeo está listo. Tenta gardalo de novo na fototeca ou escolle un cartafol de saída.</translation>
     </message>
 </context>
 <context>

@@ -259,6 +259,26 @@ pub fn share_ios_file(url: QUrl) -> bool {
         #endif
     })
 }
+
+pub fn save_video_to_gallery(path: &str) -> Result<String, String> {
+    let path = QString::from(path);
+    let result = cpp!(unsafe [path as "QString"] -> QString as "QString" {
+        #ifdef Q_OS_ANDROID
+            QJniObject value = QJniObject::callStaticObjectMethod(
+                "com/niyien/stabilizer/MainActivity", "saveVideoToGallery",
+                "(Ljava/lang/String;)Ljava/lang/String;", QJniObject::fromString(path).object<jstring>());
+            return value.isValid() ? value.toString() : QStringLiteral("error:native_failure");
+        #elif defined(Q_OS_IOS)
+            return gyroflowIosSaveVideo(path);
+        #else
+            return QStringLiteral("error:unsupported_platform");
+        #endif
+    }).to_string();
+    match result.strip_prefix("ok:").filter(|id| !id.is_empty()) {
+        Some(id) => Ok(id.to_owned()),
+        None => Err(result.trim_start_matches("error:").to_owned()),
+    }
+}
 pub fn register_url_handlers() {
     cpp!(unsafe [] {
         #if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)

@@ -149,6 +149,11 @@ Rectangle {
         }
     }
     function rowStatus(row) {
+        if (row.galleryState === "saving") return qsTr("Saving to photo library…");
+        if (row.galleryState === "saving_folder") return qsTr("Saving to folder…");
+        if (row.galleryState === "failed") return qsTr("Video exported; saving failed");
+        if (row.galleryState === "saved") return qsTr("Saved to photo library");
+        if (row.galleryState === "folder") return qsTr("Saved to folder");
         let label = qsTr("Waiting");
         if (row.status === "Rendering") label = row.processing > 0 && row.processing < 1
             ? qsTr("Stabilizing %1%").arg(Math.round(row.processing * 100))
@@ -164,11 +169,17 @@ Rectangle {
         } else if (row.deepMatched) label = qsTr("Deep search complete");
         return label;
     }
+    function refreshDeliveryResults() {
+        root.refresh();
+        if (root.operation && !root.operation.active && root.operation.kind === "export" && !root.engineBusy)
+            root.operation = Logic.observeOperation(root.operation, root.rows, true);
+    }
     function lensLabel(row) {
         if (row.manualLens) return row.lensGroup ? "L" + row.lensGroup : qsTranslate("RenderQueue", "Pending match");
         return row.focalLength > 0 ? Number(row.focalLength).toFixed(1).replace(/\.0$/, "") + " mm" : qsTr("Focal length unknown");
     }
     function rowColor(row) {
+        if (row.galleryState === "failed") return dark ? "#ffb4ab" : "#a92b28";
         if (row.status === "Error") return dark ? "#ffb4ab" : "#a92b28";
         if (row.status === "Skipped") return mutedColor;
         const sync = Logic.parse(row.sync, {});
@@ -497,6 +508,9 @@ Rectangle {
     component JobActions: Column {
         required property var record
         width: parent.width; spacing: 0
+        MobileText { visible: parent.record.galleryState === "failed"; width: parent.width; unit: root.unit; dark: root.dark; wrapMode: Text.WordWrap; text: parent.record.galleryError === "permission_denied" ? qsTr("Photo library access is unavailable. Check system permissions or choose an output folder.") : qsTr("Your video is ready. Retry saving to the photo library or choose an output folder.") }
+        MobileActionRow { visible: parent.record.galleryState === "failed"; width: parent.width; unit: root.unit; dark: root.dark; enabled: !root.busy; iconName: "reset"; text: qsTr("Retry saving to photo library"); onClicked: root.backend.retry_mobile_delivery(parent.record.id, "") }
+        MobileActionRow { visible: parent.record.galleryState === "failed"; width: parent.width; unit: root.unit; dark: root.dark; enabled: !root.busy; iconName: "folder"; text: qsTr("Save to folder"); onClicked: if (root.host) root.host.saveMobileOutputToFolder(parent.record.id) }
         MobileText { unit: root.unit; dark: root.dark; width: parent.width; text: root.rowStatus(parent.record); color: root.rowColor(parent.record); wrapMode: Text.WordWrap }
         MobileText { unit: root.unit; dark: root.dark; width: parent.width; topPadding: 6 * root.unit; visible: text.length > 0 && text !== root.rowStatus(parent.record); text: parent.record.error ? (root.host ? root.host.getReadableError(parent.record.error) : parent.record.error) : root.skipMessage(parent.record.skipReason); secondary: true; wrapMode: Text.WordWrap }
         MobileActionRow { visible: parent.record.status === "Rendering"; width: parent.width; unit: root.unit; dark: root.dark; destructive: true; iconName: "pause"; text: qsTr("Stop this video"); onClicked: root.backend.stop_job(parent.record.id) }
@@ -548,6 +562,10 @@ Rectangle {
     }
     Connections {
         target: root.backend
+        function onMobile_delivery_changed() {
+            // Read the queue after the native callback releases its mutable borrow.
+            Qt.callLater(root.refreshDeliveryResults);
+        }
         function onQueue_changed() { root.refresh(); }
         function onRender_progress(job_id, progress, current_frame, total_frames, finished, start_time, is_conversion) {
             if (root.operation && root.operation.kind !== "deep") root.operation = Logic.touchOperation(root.operation, job_id);

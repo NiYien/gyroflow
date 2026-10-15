@@ -97,12 +97,19 @@ Column {
         MobileTabs {
             id: outputMode
             width: parent.width; unit: root.unit; dark: root.dark
-            model: [qsTranslate("Export", "Same as source file"), qsTranslate("Export", "Fixed path")]
-            currentIndex: root.host && root.host.exportSettings ? root.host.exportSettings.queueOutputMode : 0
-            onActivated: index => { if (root.host && root.host.exportSettings) root.host.exportSettings.queueOutputMode = index; }
+            model: [qsTr("Photo library"), qsTr("Source folder"), qsTranslate("Export", "Fixed path")]
+            currentIndex: root.host && root.host.exportSettings ? (root.host.exportSettings.mobileSaveToGallery ? 0 : root.host.exportSettings.queueOutputMode + 1) : 0
+            onActivated: index => {
+                if (!root.host || !root.host.exportSettings) return;
+                if (index === 2) root.host.exportSettings.browseQueueOutputFolder();
+                else {
+                    root.host.exportSettings.mobileSaveToGallery = index === 0;
+                    if (index === 1) root.host.exportSettings.queueOutputMode = 0;
+                }
+            }
         }
         MobileActionRow {
-            visible: outputMode.currentIndex === 1
+            visible: outputMode.currentIndex === 2
             width: parent.width; unit: root.unit; dark: root.dark; navigation: true; iconName: "folder"
             text: qsTranslate("SettingsSelector", "Output path")
             description: root.host && root.host.exportSettings && root.host.exportSettings.queueFixedOutputPath.toString()

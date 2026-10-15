@@ -2135,6 +2135,10 @@ Voit suurentaa terävyysrajaa Lisäasetukset-osiossa.</translation>
         <source>Device for rendering</source>
         <translation>Laite renderöintiin</translation>
     </message>
+    <message>
+        <source>This folder is not writable. Choose another output folder.</source>
+        <translation>Tähän kansioon ei voi kirjoittaa. Valitse toinen tulostuskansio.</translation>
+    </message>
 </context>
 <context>
     <name>FeedbackDialog</name>
@@ -6791,6 +6795,14 @@ Poista objektiivin stabilointi (Optical SteadyShot) käytöstä, jotta voit käy
         <source>Privacy policy</source>
         <translation>Tietosuojakäytäntö</translation>
     </message>
+    <message>
+        <source>Photo library</source>
+        <translation>Kuvakirjasto</translation>
+    </message>
+    <message>
+        <source>Source folder</source>
+        <translation>Lähdekansio</translation>
+    </message>
 </context>
 <context>
     <name>MobileWorkspace</name>
@@ -7269,6 +7281,42 @@ Poista objektiivin stabilointi (Optical SteadyShot) käytöstä, jotta voit käy
     <message>
         <source>Open a video in preview to use these features.</source>
         <translation>Avaa video esikatseluun käyttääksesi näitä toimintoja.</translation>
+    </message>
+    <message>
+        <source>Photo library access is unavailable. Check system permissions or choose an output folder.</source>
+        <translation>Kuvakirjastoon ei ole pääsyä. Tarkista järjestelmän käyttöoikeudet tai valitse tulostuskansio.</translation>
+    </message>
+    <message>
+        <source>Retry saving to photo library</source>
+        <translation>Yritä tallentaa kuvakirjastoon uudelleen</translation>
+    </message>
+    <message>
+        <source>Save to folder</source>
+        <translation>Tallenna kansioon</translation>
+    </message>
+    <message>
+        <source>Saved to folder</source>
+        <translation>Tallennettu kansioon</translation>
+    </message>
+    <message>
+        <source>Saved to photo library</source>
+        <translation>Tallennettu kuvakirjastoon</translation>
+    </message>
+    <message>
+        <source>Saving to folder…</source>
+        <translation>Tallennetaan kansioon…</translation>
+    </message>
+    <message>
+        <source>Saving to photo library…</source>
+        <translation>Tallennetaan kuvakirjastoon…</translation>
+    </message>
+    <message>
+        <source>Video exported; saving failed</source>
+        <translation>Video viety; tallennus epäonnistui</translation>
+    </message>
+    <message>
+        <source>Your video is ready. Retry saving to the photo library or choose an output folder.</source>
+        <translation>Video on valmis. Yritä tallentaa kuvakirjastoon uudelleen tai valitse tulostuskansio.</translation>
     </message>
 </context>
 <context>

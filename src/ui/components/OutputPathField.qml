@@ -13,6 +13,8 @@ TextField {
     rightPadding: linkBtn.width;
 
     property bool folderOnly: false;
+    property bool syncMobileOutput: false;
+    property bool androidFolderPending: false;
 
     property url fullFileUrl;
     property url folderUrl;
@@ -83,7 +85,42 @@ TextField {
     function selectFolder(folder: url, cb: var, rejectedCb: var): void {
         folderContinuation.begin(cb, rejectedCb);
         outputFolderDialog.currentFolder = root.getFolderForDialog(folder);
-        outputFolderDialog.open();
+        if (Qt.platform.os === "android") {
+            androidFolderPending = true;
+            window.openPicker(1, false, function(urls) {
+                if (urls && urls.length) root.acceptFolder(urls[0]);
+                else { root.androidFolderPending = false; folderContinuation.reject(); }
+            }, outputFolderDialog, folder.toString());
+        } else outputFolderDialog.open();
+    }
+
+    function acceptFolder(folder: url): void {
+        androidFolderPending = false;
+        if (root.syncMobileOutput) {
+            if (!window.exportSettings.applySelectedOutputFolder(folder)) {
+                folderContinuation.reject();
+                return;
+            }
+        } else {
+            filesystem.folder_access_granted(folder);
+            filesystem.save_allowed_folders();
+        }
+        root.setFolder(folder);
+        if (window.videoArea.loadedFileUrl.toString() && !window.vidInfo.hasAccessToInputDirectory && Qt.resolvedUrl(filesystem.get_folder(window.videoArea.loadedFileUrl)) == Qt.resolvedUrl(folder)) {
+            window.vidInfo.hasAccessToInputDirectory = true;
+            settings.setValue("folder-video", filesystem.get_folder(window.videoArea.loadedFileUrl).toString());
+        }
+        folderContinuation.accept(root.folderUrl);
+    }
+
+    Connections {
+        target: filesystem
+        function onPicker_cancelled(): void {
+            if (root.androidFolderPending) {
+                root.androidFolderPending = false;
+                folderContinuation.reject();
+            }
+        }
     }
 
     FolderSelectionContinuation {
@@ -99,8 +136,7 @@ TextField {
         font.pixelSize: 15 * dpiScale;
         onClicked: {
             if (isSandboxed || root.folderOnly) {
-                outputFolderDialog.currentFolder = root.getFolderForDialog(root.folderUrl);
-                outputFolderDialog.open();
+                root.selectFolder(root.folderUrl, null, null);
                 return;
             }
             outputFileDialog.defaultSuffix = root.filename.substring(root.filename.length - 3);
@@ -124,18 +160,12 @@ TextField {
         id: outputFolderDialog;
         title: qsTr("Select file destination");
         onAccepted: {
-            root.folderUrl = selectedFolder;
-            filesystem.folder_access_granted(selectedFolder);
-            Qt.callLater(filesystem.save_allowed_folders);
-            updateText();
-
-            if (window.videoArea.loadedFileUrl.toString() && !window.vidInfo.hasAccessToInputDirectory && Qt.resolvedUrl(filesystem.get_folder(window.videoArea.loadedFileUrl)) == Qt.resolvedUrl(selectedFolder)) {
-                window.vidInfo.hasAccessToInputDirectory = true;
-                settings.setValue("folder-video", filesystem.get_folder(window.videoArea.loadedFileUrl).toString());
-            }
-
-            folderContinuation.accept(root.folderUrl);
+            if (Qt.platform.os !== "android") root.acceptFolder(selectedFolder);
         }
-        onRejected: folderContinuation.reject();
+        onRejected: {
+            root.androidFolderPending = false;
+            if (Qt.platform.os === "android") window.pendingPickerCallback = null;
+            folderContinuation.reject();
+        }
     }
 }

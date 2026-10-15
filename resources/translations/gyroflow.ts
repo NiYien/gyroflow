@@ -1942,6 +1942,10 @@ You can increase the sharpness limit in the Advanced section.</source>
         <source>Device for rendering</source>
         <translation type="unfinished"></translation>
     </message>
+    <message>
+        <source>This folder is not writable. Choose another output folder.</source>
+        <translation>This folder is not writable. Choose another output folder.</translation>
+    </message>
 </context>
 <context>
     <name>FeedbackDialog</name>
@@ -6338,6 +6342,14 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <source>Privacy policy</source>
         <translation>Privacy policy</translation>
     </message>
+    <message>
+        <source>Photo library</source>
+        <translation>Photo library</translation>
+    </message>
+    <message>
+        <source>Source folder</source>
+        <translation>Source folder</translation>
+    </message>
 </context>
 <context>
     <name>MobileWorkspace</name>
@@ -6816,6 +6828,42 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
     <message>
         <source>Open a video in preview to use these features.</source>
         <translation>Open a video in preview to use these features.</translation>
+    </message>
+    <message>
+        <source>Photo library access is unavailable. Check system permissions or choose an output folder.</source>
+        <translation>Photo library access is unavailable. Check system permissions or choose an output folder.</translation>
+    </message>
+    <message>
+        <source>Retry saving to photo library</source>
+        <translation>Retry saving to photo library</translation>
+    </message>
+    <message>
+        <source>Save to folder</source>
+        <translation>Save to folder</translation>
+    </message>
+    <message>
+        <source>Saved to folder</source>
+        <translation>Saved to folder</translation>
+    </message>
+    <message>
+        <source>Saved to photo library</source>
+        <translation>Saved to photo library</translation>
+    </message>
+    <message>
+        <source>Saving to folder…</source>
+        <translation>Saving to folder…</translation>
+    </message>
+    <message>
+        <source>Saving to photo library…</source>
+        <translation>Saving to photo library…</translation>
+    </message>
+    <message>
+        <source>Video exported; saving failed</source>
+        <translation>Video exported; saving failed</translation>
+    </message>
+    <message>
+        <source>Your video is ready. Retry saving to the photo library or choose an output folder.</source>
+        <translation>Your video is ready. Retry saving to the photo library or choose an output folder.</translation>
     </message>
 </context>
 <context>

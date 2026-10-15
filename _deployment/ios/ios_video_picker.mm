@@ -391,3 +391,41 @@ bool gyroflowIosShareFile(const QUrl &url)
     [controller presentViewController:activity animated:YES completion:nil];
     return true;
 }
+
+QString gyroflowIosSaveVideo(const QString &path)
+{
+    // The render worker waits; UIKit and the Qt UI thread remain responsive.
+    if (NSThread.isMainThread) return QStringLiteral("error:wrong_thread");
+    @autoreleasepool {
+        NSURL *file = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path.toUtf8().constData()]];
+        if (!QFileInfo(path).isFile()) return QStringLiteral("error:missing_file");
+        dispatch_semaphore_t completed = dispatch_semaphore_create(0);
+        __block QString result = QStringLiteral("error:save_failed");
+        void (^save)(PHAuthorizationStatus) = ^(PHAuthorizationStatus status) {
+            if (status != PHAuthorizationStatusAuthorized && status != PHAuthorizationStatusLimited) {
+                result = QStringLiteral("error:permission_denied");
+                dispatch_semaphore_signal(completed);
+                return;
+            }
+            __block NSString *identifier = nil;
+            [[PHPhotoLibrary sharedPhotoLibrary] performChanges:^{
+                PHAssetChangeRequest *request = [PHAssetChangeRequest creationRequestForAssetFromVideoAtFileURL:file];
+                identifier = [request.placeholderForCreatedAsset.localIdentifier copy];
+            } completionHandler:^(BOOL success, NSError *error) {
+                if (success && identifier) result = QStringLiteral("ok:") + QString::fromUtf8(identifier.UTF8String);
+                else NSLog(@"NiYien: saving video to Photos failed: %@", error);
+                [identifier release];
+                dispatch_semaphore_signal(completed);
+            }];
+        };
+        dispatch_async(dispatch_get_main_queue(), ^{
+            PHAuthorizationStatus status = [PHPhotoLibrary authorizationStatusForAccessLevel:PHAccessLevelAddOnly];
+            if (status == PHAuthorizationStatusNotDetermined)
+                [PHPhotoLibrary requestAuthorizationForAccessLevel:PHAccessLevelAddOnly handler:save];
+            else save(status);
+        });
+        dispatch_semaphore_wait(completed, DISPATCH_TIME_FOREVER);
+        dispatch_release(completed);
+        return result;
+    }
+}

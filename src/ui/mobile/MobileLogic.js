@@ -52,7 +52,7 @@ function observeOperation(operation, rows, final) {
         const baseline = operation.baseline[id];
         if (row.status === "Rendering" || (row.epoch || 0) !== baseline.epoch) touched[id] = true;
         const completedStage = operation.kind === "export" ? row.lastExport === 4 || row.lastExport === 0 : row.lastExport === 2;
-        if (row.status === "Finished" && completedStage && (touched[id] || baseline.status !== "Finished")) results[id] = "success";
+        if (row.status === "Finished" && completedStage && (touched[id] || baseline.status !== "Finished")) results[id] = row.galleryState === "failed" ? "failed" : "success";
         else if (row.status === "Error" && !/^(file_exists:|convert_format:)/.test(row.error || "")) results[id] = "failed";
         else if (row.status === "Skipped") results[id] = "skipped";
         else if (final && !results[id]) results[id] = operation.stopping ? "cancelled" : "skipped";

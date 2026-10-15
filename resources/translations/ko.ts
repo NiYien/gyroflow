@@ -2135,6 +2135,10 @@ You can increase the sharpness limit in the Advanced section.</source>
         <source>Device for rendering</source>
         <translation>렌더링에 사용할 장치</translation>
     </message>
+    <message>
+        <source>This folder is not writable. Choose another output folder.</source>
+        <translation>이 폴더에 쓸 수 없습니다. 다른 출력 폴더를 선택하세요.</translation>
+    </message>
 </context>
 <context>
     <name>FeedbackDialog</name>
@@ -6791,6 +6795,14 @@ Gyroflow를 사용하려면 렌즈 안정화(광학 SteadyShot)를 비활성화�
         <source>Privacy policy</source>
         <translation>개인정보 처리방침</translation>
     </message>
+    <message>
+        <source>Photo library</source>
+        <translation>사진 보관함</translation>
+    </message>
+    <message>
+        <source>Source folder</source>
+        <translation>원본 폴더</translation>
+    </message>
 </context>
 <context>
     <name>MobileWorkspace</name>
@@ -7269,6 +7281,42 @@ Gyroflow를 사용하려면 렌즈 안정화(광학 SteadyShot)를 비활성화�
     <message>
         <source>Open a video in preview to use these features.</source>
         <translation>이 기능을 사용하려면 미리보기에서 동영상을 여세요.</translation>
+    </message>
+    <message>
+        <source>Photo library access is unavailable. Check system permissions or choose an output folder.</source>
+        <translation>사진 보관함에 접근할 수 없습니다. 시스템 권한을 확인하거나 출력 폴더를 선택하세요.</translation>
+    </message>
+    <message>
+        <source>Retry saving to photo library</source>
+        <translation>사진 보관함에 다시 저장</translation>
+    </message>
+    <message>
+        <source>Save to folder</source>
+        <translation>폴더에 저장</translation>
+    </message>
+    <message>
+        <source>Saved to folder</source>
+        <translation>폴더에 저장됨</translation>
+    </message>
+    <message>
+        <source>Saved to photo library</source>
+        <translation>사진 보관함에 저장됨</translation>
+    </message>
+    <message>
+        <source>Saving to folder…</source>
+        <translation>폴더에 저장 중…</translation>
+    </message>
+    <message>
+        <source>Saving to photo library…</source>
+        <translation>사진 보관함에 저장 중…</translation>
+    </message>
+    <message>
+        <source>Video exported; saving failed</source>
+        <translation>동영상 내보내기 완료, 저장 실패</translation>
+    </message>
+    <message>
+        <source>Your video is ready. Retry saving to the photo library or choose an output folder.</source>
+        <translation>동영상이 준비되었습니다. 사진 보관함에 다시 저장하거나 출력 폴더를 선택하세요.</translation>
     </message>
 </context>
 <context>

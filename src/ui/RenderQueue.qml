@@ -40,6 +40,7 @@ Item {
             select: files ? qsTranslate("MobileFolderPicker", "Add %1 files") : qsTranslate("MobileFolderPicker", "Add this folder"),
             loading: qsTranslate("MobileWorkspace", "Reading…"), empty: qsTranslate("MobileFolderPicker", files ? "No matching files" : "No subfolders"),
             error: qsTranslate("MobileFolderPicker", "Unable to read this folder. Choose the location again."), dark: style === "dark",
+            videoThumbnails: kind === "video",
             suffixes: kind === "gyro" ? ["_mix.bin"] : mobileVideoExtensions.map(extension => "." + extension) };
         window.pendingPickerCallback = callback;
         if (!filesystem.open_native_picker(files ? 3 : 2, files, JSON.stringify(labels))) {
@@ -3124,6 +3125,16 @@ Item {
                 }
             }
             if (foldersWithoutAccess.length > 0) {
+                if (Qt.platform.os === "android" || Qt.platform.os === "ios") {
+                    messageBox(Modal.Info, qsTr("Please confirm the output folder"), [
+                        { text: qsTr("Choose folder"), clicked: function() {
+                            window.outputFile.selectFolder(foldersWithoutAccess[0], function(selected) {
+                                add(selected, urls, crmProxyGyroByProxy);
+                            });
+                        } }
+                    ]);
+                    return;
+                }
                 console.log("Folders without write access:", foldersWithoutAccess);
                 let remaining = foldersWithoutAccess.length;
                 for (const folder of foldersWithoutAccess) {

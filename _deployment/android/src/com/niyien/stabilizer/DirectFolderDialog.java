@@ -39,6 +39,7 @@ final class DirectFolderDialog extends Dialog {
     private final DirectFileSelection selection;
     private final Runnable cancelled;
     private final ExecutorService reader = Executors.newSingleThreadExecutor();
+    private final VideoThumbnailLoader thumbnails = new VideoThumbnailLoader();
     private final List<File> roots = new ArrayList<>();
     private final List<String> volumeNames = new ArrayList<>();
     private File current;
@@ -68,7 +69,7 @@ final class DirectFolderDialog extends Dialog {
         setOnCancelListener(dialog -> {
             if (!completed) { completed = true; cancelled.run(); }
         });
-        setOnDismissListener(dialog -> { ++request; reader.shutdownNow(); });
+        setOnDismissListener(dialog -> { ++request; reader.shutdownNow(); thumbnails.close(); });
     }
 
     private static JSONObject parse(String value) {
@@ -203,7 +204,13 @@ final class DirectFolderDialog extends Dialog {
                     @Override public int getOpacity() { return android.graphics.PixelFormat.TRANSLUCENT; }
                 };
                 icon.setBounds(0, 0, dp(24), dp(24));
-                view.setCompoundDrawablesRelative(file ? null : icon, null, null, null);
+                if (file && labels.optBoolean("videoThumbnails") && VideoThumbnailLoader.supports(entries[position].getName())) {
+                    thumbnails.bind(view, entries[position]);
+                    view.setMinHeight(dp(64));
+                } else {
+                    thumbnails.unbind(view);
+                    view.setCompoundDrawablesRelative(file ? null : icon, null, null, null);
+                }
                 view.setCompoundDrawablePadding(dp(12));
                 return view;
             }
@@ -271,6 +278,7 @@ final class DirectFolderDialog extends Dialog {
     private void browse(File folder) {
         if (!inside(folder, volumeRoot)) return;
         current = folder;
+        thumbnails.cancelRows();
         path.setText(folder.getAbsolutePath());
         up.setEnabled(!folder.equals(volumeRoot));
         select.setEnabled(false);

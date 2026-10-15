@@ -17,6 +17,7 @@ def sources():
     for path in sorted((ROOT / "src/ui/mobile").glob("*.qml")):
         result[path.stem] = sorted(set(json.loads('"' + text + '"') for text in re.findall(r'qsTr\("((?:[^"\\]|\\.)*)"\)', path.read_text(encoding="utf-8"))))
     result["App"] = ["This video is still loading."]
+    result["Export"] = ["This folder is not writable. Choose another output folder."]
     result["RenderQueue"] = ["Search stage %1 of %2", "Scanning segment %1 of %2"]
     result["VideoArea"] = ["Not stabilized yet. Return to Videos and tap Stabilize."]
     feedback = (ROOT / "src/ui/components/FeedbackDialog.qml").read_text(encoding="utf-8")

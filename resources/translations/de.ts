@@ -2135,6 +2135,10 @@ Das untere Bildschärfe-Limit kann bei Bedarf in den erweiterten Einstellungen a
         <source>Device for rendering</source>
         <translation>Gerät zum Rendern</translation>
     </message>
+    <message>
+        <source>This folder is not writable. Choose another output folder.</source>
+        <translation>Dieser Ordner ist nicht beschreibbar. Wählen Sie einen anderen Ausgabeordner.</translation>
+    </message>
 </context>
 <context>
     <name>FeedbackDialog</name>
@@ -6792,6 +6796,14 @@ Deaktivieren Sie die Objektivstabilisierung (Optical SteadyShot), um Gyroflow ve
         <source>Privacy policy</source>
         <translation>Datenschutzerklärung</translation>
     </message>
+    <message>
+        <source>Photo library</source>
+        <translation>Fotomediathek</translation>
+    </message>
+    <message>
+        <source>Source folder</source>
+        <translation>Quellordner</translation>
+    </message>
 </context>
 <context>
     <name>MobileWorkspace</name>
@@ -7270,6 +7282,42 @@ Deaktivieren Sie die Objektivstabilisierung (Optical SteadyShot), um Gyroflow ve
     <message>
         <source>Open a video in preview to use these features.</source>
         <translation>Öffnen Sie ein Video in der Vorschau, um diese Funktionen zu verwenden.</translation>
+    </message>
+    <message>
+        <source>Photo library access is unavailable. Check system permissions or choose an output folder.</source>
+        <translation>Kein Zugriff auf die Fotomediathek. Prüfen Sie die Systemberechtigungen oder wählen Sie einen Ausgabeordner.</translation>
+    </message>
+    <message>
+        <source>Retry saving to photo library</source>
+        <translation>Erneut in Fotomediathek speichern</translation>
+    </message>
+    <message>
+        <source>Save to folder</source>
+        <translation>In Ordner speichern</translation>
+    </message>
+    <message>
+        <source>Saved to folder</source>
+        <translation>Im Ordner gespeichert</translation>
+    </message>
+    <message>
+        <source>Saved to photo library</source>
+        <translation>In Fotomediathek gespeichert</translation>
+    </message>
+    <message>
+        <source>Saving to folder…</source>
+        <translation>In Ordner speichern…</translation>
+    </message>
+    <message>
+        <source>Saving to photo library…</source>
+        <translation>In Fotomediathek speichern…</translation>
+    </message>
+    <message>
+        <source>Video exported; saving failed</source>
+        <translation>Video exportiert; Speichern fehlgeschlagen</translation>
+    </message>
+    <message>
+        <source>Your video is ready. Retry saving to the photo library or choose an output folder.</source>
+        <translation>Ihr Video ist fertig. Speichern Sie es erneut in der Fotomediathek oder wählen Sie einen Ausgabeordner.</translation>
     </message>
 </context>
 <context>

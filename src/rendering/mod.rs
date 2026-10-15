@@ -14,6 +14,7 @@ mod ffmpeg_video;
 mod ffmpeg_video_converter;
 pub mod gpu_codec_blocklist;
 pub mod mdk_processor;
+pub mod mobile_export;
 pub mod optical_correction_smoke;
 pub mod queue_optical;
 pub mod render_queue;

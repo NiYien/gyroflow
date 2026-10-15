@@ -143,7 +143,8 @@ pub fn create_bookmark(url: &str, is_folder: bool, project_url: Option<&str>) ->
             None
         };
         if let Some(url_ref) = url_from_bytes(url) {
-            let opts = CFURLBookmarkCreationOptions(1usize << 11); // kCFURLBookmarkCreationWithSecurityScope
+            // iOS keeps picker grants in minimal bookmarks; explicit security scope is macOS-only.
+            let opts = CFURLBookmarkCreationOptions(if cfg!(target_os = "ios") { 1usize << 9 } else { 1usize << 11 });
             let mut error = std::ptr::null_mut();
             let bookmark_data = CFURL::new_bookmark_data(
                 None,
@@ -206,7 +207,7 @@ pub fn resolve_bookmark(bookmark_data: &str, project_url: Option<&str>) -> (Stri
                 CFData::new(None, decompressed.as_ptr(), decompressed.len() as isize)
             {
                 let mut error = std::ptr::null_mut();
-                let opts = CFURLBookmarkResolutionOptions(1usize << 10); // kCFURLBookmarkResolutionWithSecurityScope
+                let opts = CFURLBookmarkResolutionOptions(if cfg!(target_os = "ios") { 0 } else { 1usize << 10 });
                 let mut is_stale_cf: u8 = 0;
                 let url = CFURL::new_by_resolving_bookmark_data(
                     None,

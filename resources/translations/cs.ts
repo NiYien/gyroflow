@@ -2136,6 +2136,10 @@ Limit ostrosti můžete zvýšit v sekci Pokročilé.</translation>
         <source>Device for rendering</source>
         <translation>Zařízení pro vykreslování</translation>
     </message>
+    <message>
+        <source>This folder is not writable. Choose another output folder.</source>
+        <translation>Do této složky nelze zapisovat. Vyberte jinou výstupní složku.</translation>
+    </message>
 </context>
 <context>
     <name>FeedbackDialog</name>
@@ -6791,6 +6795,14 @@ Chcete-li použít Gyroflow, vypněte stabilizaci objektivu (Optical SteadyShot)
         <source>Privacy policy</source>
         <translation>Zásady ochrany soukromí</translation>
     </message>
+    <message>
+        <source>Photo library</source>
+        <translation>Fotogalerie</translation>
+    </message>
+    <message>
+        <source>Source folder</source>
+        <translation>Zdrojová složka</translation>
+    </message>
 </context>
 <context>
     <name>MobileWorkspace</name>
@@ -7269,6 +7281,42 @@ Chcete-li použít Gyroflow, vypněte stabilizaci objektivu (Optical SteadyShot)
     <message>
         <source>Open a video in preview to use these features.</source>
         <translation>Chcete-li použít tyto funkce, otevřete video v náhledu.</translation>
+    </message>
+    <message>
+        <source>Photo library access is unavailable. Check system permissions or choose an output folder.</source>
+        <translation>Fotogalerie není přístupná. Zkontrolujte systémová oprávnění nebo vyberte výstupní složku.</translation>
+    </message>
+    <message>
+        <source>Retry saving to photo library</source>
+        <translation>Zkusit znovu uložit do fotogalerie</translation>
+    </message>
+    <message>
+        <source>Save to folder</source>
+        <translation>Uložit do složky</translation>
+    </message>
+    <message>
+        <source>Saved to folder</source>
+        <translation>Uloženo do složky</translation>
+    </message>
+    <message>
+        <source>Saved to photo library</source>
+        <translation>Uloženo do fotogalerie</translation>
+    </message>
+    <message>
+        <source>Saving to folder…</source>
+        <translation>Ukládání do složky…</translation>
+    </message>
+    <message>
+        <source>Saving to photo library…</source>
+        <translation>Ukládání do fotogalerie…</translation>
+    </message>
+    <message>
+        <source>Video exported; saving failed</source>
+        <translation>Video exportováno; uložení selhalo</translation>
+    </message>
+    <message>
+        <source>Your video is ready. Retry saving to the photo library or choose an output folder.</source>
+        <translation>Video je připraveno. Zkuste znovu uložit do fotogalerie nebo vyberte výstupní složku.</translation>
     </message>
 </context>
 <context>

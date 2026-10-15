@@ -2136,6 +2136,10 @@ Du kan øge skarphedsgrænsen i sektionen Avanceret.</translation>
         <source>Device for rendering</source>
         <translation>Enhed til behandling</translation>
     </message>
+    <message>
+        <source>This folder is not writable. Choose another output folder.</source>
+        <translation>Denne mappe er skrivebeskyttet. Vælg en anden outputmappe.</translation>
+    </message>
 </context>
 <context>
     <name>FeedbackDialog</name>
@@ -6792,6 +6796,14 @@ Deaktiver objektivstabilisering (Optical SteadyShot) for at bruge Gyroflow.</tra
         <source>Privacy policy</source>
         <translation>Privatlivspolitik</translation>
     </message>
+    <message>
+        <source>Photo library</source>
+        <translation>Fotobibliotek</translation>
+    </message>
+    <message>
+        <source>Source folder</source>
+        <translation>Kildemappe</translation>
+    </message>
 </context>
 <context>
     <name>MobileWorkspace</name>
@@ -7270,6 +7282,42 @@ Deaktiver objektivstabilisering (Optical SteadyShot) for at bruge Gyroflow.</tra
     <message>
         <source>Open a video in preview to use these features.</source>
         <translation>Åbn en video i forhåndsvisningen for at bruge disse funktioner.</translation>
+    </message>
+    <message>
+        <source>Photo library access is unavailable. Check system permissions or choose an output folder.</source>
+        <translation>Fotobiblioteket er ikke tilgængeligt. Tjek systemtilladelserne, eller vælg en outputmappe.</translation>
+    </message>
+    <message>
+        <source>Retry saving to photo library</source>
+        <translation>Prøv at gemme i fotobibliotek igen</translation>
+    </message>
+    <message>
+        <source>Save to folder</source>
+        <translation>Gem i mappe</translation>
+    </message>
+    <message>
+        <source>Saved to folder</source>
+        <translation>Gemt i mappe</translation>
+    </message>
+    <message>
+        <source>Saved to photo library</source>
+        <translation>Gemt i fotobibliotek</translation>
+    </message>
+    <message>
+        <source>Saving to folder…</source>
+        <translation>Gemmer i mappe…</translation>
+    </message>
+    <message>
+        <source>Saving to photo library…</source>
+        <translation>Gemmer i fotobibliotek…</translation>
+    </message>
+    <message>
+        <source>Video exported; saving failed</source>
+        <translation>Video eksporteret; lagring mislykkedes</translation>
+    </message>
+    <message>
+        <source>Your video is ready. Retry saving to the photo library or choose an output folder.</source>
+        <translation>Din video er klar. Prøv at gemme i fotobibliotek igen, eller vælg en outputmappe.</translation>
     </message>
 </context>
 <context>

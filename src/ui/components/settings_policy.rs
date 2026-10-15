@@ -58,6 +58,7 @@ const ALLOW_EXACT: &[&str] = &[
     // only export controls not hidden in Simple mode.
     "queueOutputMode",
     "queueFixedOutputPath",
+    "mobileSaveToGallery",
     // Simple settings exposes a physical-GPU selector. Keep both the current
     // backend descriptor and the stable physical ID so backend ordering can
     // change without losing the user's device choice.

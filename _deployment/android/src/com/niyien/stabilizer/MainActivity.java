@@ -151,6 +151,14 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // Qt's native exit() can destroy Android HWUI mutexes while its workers are alive.
+        // Keep normal Qt cleanup, then let Android terminate the process.
+        try {
+            android.system.Os.setenv("QT_ANDROID_NO_EXIT_CALL", "1", true);
+            Log.i("GyroflowLifecycle", "Qt native exit disabled; Android owns process termination");
+        } catch (android.system.ErrnoException error) {
+            Log.e("GyroflowLifecycle", "Could not configure Qt exit workaround", error);
+        }
         // Configure the decoder before Qt creates its first MDK player.
         // Own each completed frame instead of sampling a decoder surface that can be reused.
         // Preserve the fallback order from qml-video-rs ef7c419.
@@ -279,10 +287,23 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        // Always forward to QtActivity first so Qt's own FileDialog state
-        // machine completes its result-listener cleanup. Our parsing below
-        // is purely additive: when Qt's parser fails (Android 16 + MIUI
-        // fileexplorer scenario), we still surface the picked URIs.
+        // Qt 6.7 persists only read access for directory dialogs. Save the
+        // actual directory grant before Qt emits its accepted callback.
+        if (resultCode == RESULT_OK && data != null
+                && (data.getFlags() & Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) != 0) {
+            int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            for (String value : extractAllPickerUris(data)) {
+                Uri uri = Uri.parse(value);
+                if (!android.provider.DocumentsContract.isTreeUri(uri)) continue;
+                try {
+                    getContentResolver().takePersistableUriPermission(uri, flags);
+                    Log.i(FILE_PICKER_TAG, "persisted picker permission flags=" + flags);
+                } catch (SecurityException error) {
+                    Log.w(FILE_PICKER_TAG, "Could not persist picker permission", error);
+                }
+            }
+        }
+        // Qt still owns its result-listener cleanup; our URI dispatch is additive.
         super.onActivityResult(requestCode, resultCode, data);
 
         if (requestCode == PICKER_REQUEST_STORAGE_ACCESS) {
@@ -321,21 +342,6 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
                     + " type=" + data.getType());
             if (ownPicker) pickerCancelled();
             return;
-        }
-
-        if (requestCode == PICKER_REQUEST_FOLDER) {
-            int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION
-                    | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-            if ((data.getFlags() & Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) != 0) {
-                for (String value : picked) {
-                    try {
-                        getContentResolver().takePersistableUriPermission(Uri.parse(value), flags);
-                        Log.i(FILE_PICKER_TAG, "persisted picker permission flags=" + flags);
-                    } catch (SecurityException error) {
-                        Log.w(FILE_PICKER_TAG, "Could not persist picker permission", error);
-                    }
-                }
-            }
         }
 
         String joined = String.join("\n", picked);
@@ -438,7 +444,17 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
         return error != null ? "error:" + error : "ok";
     }
 
+    public static String saveVideoToGallery(String path) {
+        MainActivity activity = instance;
+        return activity == null ? "error:activity_unavailable" : MobileGallery.save(activity.getApplicationContext(), path);
+    }
+
     private void launchPicker(int mode, boolean allowMultiple, String initialUri) {
+        // Identical folders selected in separate dialogs are separate requests.
+        synchronized (this) {
+            lastDispatchedPickerJoined = null;
+            lastDispatchedPickerAtMs = 0;
+        }
         if ((mode == 2 || mode == 3) && Build.VERSION.SDK_INT >= 30) {
             if (android.os.Environment.isExternalStorageManager()) {
                 showDirectFolderPicker(initialUri);

@@ -2134,6 +2134,10 @@ You can increase the sharpness limit in the Advanced section.</source>
         <source>Device for rendering</source>
         <translation>Dispositivo di rendering</translation>
     </message>
+    <message>
+        <source>This folder is not writable. Choose another output folder.</source>
+        <translation>Impossibile scrivere in questa cartella. Scegli un’altra cartella di destinazione.</translation>
+    </message>
 </context>
 <context>
     <name>FeedbackDialog</name>
@@ -6788,6 +6792,14 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <source>Privacy policy</source>
         <translation>Informativa sulla privacy</translation>
     </message>
+    <message>
+        <source>Photo library</source>
+        <translation>Libreria foto</translation>
+    </message>
+    <message>
+        <source>Source folder</source>
+        <translation>Cartella di origine</translation>
+    </message>
 </context>
 <context>
     <name>MobileWorkspace</name>
@@ -7266,6 +7278,42 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
     <message>
         <source>Open a video in preview to use these features.</source>
         <translation>Apri un video nell’anteprima per usare queste funzioni.</translation>
+    </message>
+    <message>
+        <source>Photo library access is unavailable. Check system permissions or choose an output folder.</source>
+        <translation>La libreria foto non è accessibile. Controlla le autorizzazioni di sistema o scegli una cartella di destinazione.</translation>
+    </message>
+    <message>
+        <source>Retry saving to photo library</source>
+        <translation>Riprova a salvare nella libreria foto</translation>
+    </message>
+    <message>
+        <source>Save to folder</source>
+        <translation>Salva in una cartella</translation>
+    </message>
+    <message>
+        <source>Saved to folder</source>
+        <translation>Salvato nella cartella</translation>
+    </message>
+    <message>
+        <source>Saved to photo library</source>
+        <translation>Salvato nella libreria foto</translation>
+    </message>
+    <message>
+        <source>Saving to folder…</source>
+        <translation>Salvataggio nella cartella…</translation>
+    </message>
+    <message>
+        <source>Saving to photo library…</source>
+        <translation>Salvataggio nella libreria foto…</translation>
+    </message>
+    <message>
+        <source>Video exported; saving failed</source>
+        <translation>Video esportato; salvataggio non riuscito</translation>
+    </message>
+    <message>
+        <source>Your video is ready. Retry saving to the photo library or choose an output folder.</source>
+        <translation>Il video è pronto. Riprova a salvarlo nella libreria foto o scegli una cartella di destinazione.</translation>
     </message>
 </context>
 <context>

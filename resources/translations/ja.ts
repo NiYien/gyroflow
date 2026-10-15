@@ -2137,6 +2137,10 @@ You can increase the sharpness limit in the Advanced section.</source>
         <source>Device for rendering</source>
         <translation>レンダリングデバイス</translation>
     </message>
+    <message>
+        <source>This folder is not writable. Choose another output folder.</source>
+        <translation>このフォルダには書き込めません。別の出力フォルダを選択してください。</translation>
+    </message>
 </context>
 <context>
     <name>FeedbackDialog</name>
@@ -6794,6 +6798,14 @@ Gyroflowを使用するには、レンズの手ぶれ補正（Optical SteadyShot
         <source>Privacy policy</source>
         <translation>プライバシーポリシー</translation>
     </message>
+    <message>
+        <source>Photo library</source>
+        <translation>写真ライブラリ</translation>
+    </message>
+    <message>
+        <source>Source folder</source>
+        <translation>元のフォルダ</translation>
+    </message>
 </context>
 <context>
     <name>MobileWorkspace</name>
@@ -7272,6 +7284,42 @@ Gyroflowを使用するには、レンズの手ぶれ補正（Optical SteadyShot
     <message>
         <source>Open a video in preview to use these features.</source>
         <translation>これらの機能を使うには、プレビューで動画を開いてください。</translation>
+    </message>
+    <message>
+        <source>Photo library access is unavailable. Check system permissions or choose an output folder.</source>
+        <translation>写真ライブラリにアクセスできません。システムの権限を確認するか、出力フォルダを選択してください。</translation>
+    </message>
+    <message>
+        <source>Retry saving to photo library</source>
+        <translation>写真ライブラリへの保存を再試行</translation>
+    </message>
+    <message>
+        <source>Save to folder</source>
+        <translation>フォルダに保存</translation>
+    </message>
+    <message>
+        <source>Saved to folder</source>
+        <translation>フォルダに保存しました</translation>
+    </message>
+    <message>
+        <source>Saved to photo library</source>
+        <translation>写真ライブラリに保存しました</translation>
+    </message>
+    <message>
+        <source>Saving to folder…</source>
+        <translation>フォルダに保存中…</translation>
+    </message>
+    <message>
+        <source>Saving to photo library…</source>
+        <translation>写真ライブラリに保存中…</translation>
+    </message>
+    <message>
+        <source>Video exported; saving failed</source>
+        <translation>動画は書き出されましたが保存に失敗しました</translation>
+    </message>
+    <message>
+        <source>Your video is ready. Retry saving to the photo library or choose an output folder.</source>
+        <translation>動画は生成済みです。写真ライブラリへの保存を再試行するか、出力フォルダを選択してください。</translation>
     </message>
 </context>
 <context>

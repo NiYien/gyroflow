@@ -2135,6 +2135,10 @@ Você pode aumentar o limite de nitidez na seção Avançado.</translation>
         <source>Device for rendering</source>
         <translation>Dispositivo para renderização</translation>
     </message>
+    <message>
+        <source>This folder is not writable. Choose another output folder.</source>
+        <translation>Não é possível gravar nesta pasta. Escolha outra pasta de saída.</translation>
+    </message>
 </context>
 <context>
     <name>FeedbackDialog</name>
@@ -6791,6 +6795,14 @@ Desative a estabilização da lente (Optical SteadyShot) para usar Gyroflow.</tr
         <source>Privacy policy</source>
         <translation>Política de privacidade</translation>
     </message>
+    <message>
+        <source>Photo library</source>
+        <translation>Biblioteca de fotos</translation>
+    </message>
+    <message>
+        <source>Source folder</source>
+        <translation>Pasta de origem</translation>
+    </message>
 </context>
 <context>
     <name>MobileWorkspace</name>
@@ -7269,6 +7281,42 @@ Desative a estabilização da lente (Optical SteadyShot) para usar Gyroflow.</tr
     <message>
         <source>Open a video in preview to use these features.</source>
         <translation>Abra um vídeo na prévia para usar estes recursos.</translation>
+    </message>
+    <message>
+        <source>Photo library access is unavailable. Check system permissions or choose an output folder.</source>
+        <translation>Não é possível acessar a biblioteca de fotos. Verifique as permissões do sistema ou escolha uma pasta de saída.</translation>
+    </message>
+    <message>
+        <source>Retry saving to photo library</source>
+        <translation>Tentar salvar novamente na biblioteca de fotos</translation>
+    </message>
+    <message>
+        <source>Save to folder</source>
+        <translation>Salvar em uma pasta</translation>
+    </message>
+    <message>
+        <source>Saved to folder</source>
+        <translation>Salvo na pasta</translation>
+    </message>
+    <message>
+        <source>Saved to photo library</source>
+        <translation>Salvo na biblioteca de fotos</translation>
+    </message>
+    <message>
+        <source>Saving to folder…</source>
+        <translation>Salvando na pasta…</translation>
+    </message>
+    <message>
+        <source>Saving to photo library…</source>
+        <translation>Salvando na biblioteca de fotos…</translation>
+    </message>
+    <message>
+        <source>Video exported; saving failed</source>
+        <translation>Vídeo exportado; falha ao salvar</translation>
+    </message>
+    <message>
+        <source>Your video is ready. Retry saving to the photo library or choose an output folder.</source>
+        <translation>O vídeo está pronto. Tente salvar novamente na biblioteca de fotos ou escolha uma pasta de saída.</translation>
     </message>
 </context>
 <context>

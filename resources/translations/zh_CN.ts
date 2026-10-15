@@ -2124,6 +2124,10 @@ You can increase the sharpness limit in the Advanced section.</source>
         <source>Device for rendering</source>
         <translation>渲染设备</translation>
     </message>
+    <message>
+        <source>This folder is not writable. Choose another output folder.</source>
+        <translation>无法写入这个文件夹，请选择其他输出文件夹。</translation>
+    </message>
 </context>
 <context>
     <name>FeedbackDialog</name>
@@ -6765,6 +6769,14 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <source>Privacy policy</source>
         <translation>隐私政策</translation>
     </message>
+    <message>
+        <source>Photo library</source>
+        <translation>相册</translation>
+    </message>
+    <message>
+        <source>Source folder</source>
+        <translation>源文件夹</translation>
+    </message>
 </context>
 <context>
     <name>MobileWorkspace</name>
@@ -7243,6 +7255,42 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
     <message>
         <source>Open a video in preview to use these features.</source>
         <translation>请先打开视频预览，再使用这些功能。</translation>
+    </message>
+    <message>
+        <source>Photo library access is unavailable. Check system permissions or choose an output folder.</source>
+        <translation>无法保存到相册，请检查系统权限，或选择输出文件夹。</translation>
+    </message>
+    <message>
+        <source>Retry saving to photo library</source>
+        <translation>重新保存到相册</translation>
+    </message>
+    <message>
+        <source>Save to folder</source>
+        <translation>保存到文件夹</translation>
+    </message>
+    <message>
+        <source>Saved to folder</source>
+        <translation>已保存到文件夹</translation>
+    </message>
+    <message>
+        <source>Saved to photo library</source>
+        <translation>已保存到相册</translation>
+    </message>
+    <message>
+        <source>Saving to folder…</source>
+        <translation>正在保存到文件夹…</translation>
+    </message>
+    <message>
+        <source>Saving to photo library…</source>
+        <translation>正在保存到相册…</translation>
+    </message>
+    <message>
+        <source>Video exported; saving failed</source>
+        <translation>视频已生成，保存失败</translation>
+    </message>
+    <message>
+        <source>Your video is ready. Retry saving to the photo library or choose an output folder.</source>
+        <translation>视频已生成，可以重新保存到相册，或选择输出文件夹。</translation>
     </message>
 </context>
 <context>

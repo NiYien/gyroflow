@@ -2134,6 +2134,10 @@ Anda dapat meningkatkan batas ketajaman di bagian Lanjutan.</translation>
         <source>Device for rendering</source>
         <translation>Alat untuk merender</translation>
     </message>
+    <message>
+        <source>This folder is not writable. Choose another output folder.</source>
+        <translation>Folder ini tidak dapat ditulis. Pilih folder keluaran lain.</translation>
+    </message>
 </context>
 <context>
     <name>FeedbackDialog</name>
@@ -6787,6 +6791,14 @@ Nonaktifkan stabilisasi lensa (Optical SteadyShot) untuk menggunakan Gyroflow.</
         <source>Privacy policy</source>
         <translation>Kebijakan privasi</translation>
     </message>
+    <message>
+        <source>Photo library</source>
+        <translation>Galeri foto</translation>
+    </message>
+    <message>
+        <source>Source folder</source>
+        <translation>Folder sumber</translation>
+    </message>
 </context>
 <context>
     <name>MobileWorkspace</name>
@@ -7265,6 +7277,42 @@ Nonaktifkan stabilisasi lensa (Optical SteadyShot) untuk menggunakan Gyroflow.</
     <message>
         <source>Open a video in preview to use these features.</source>
         <translation>Buka video di pratinjau untuk menggunakan fitur ini.</translation>
+    </message>
+    <message>
+        <source>Photo library access is unavailable. Check system permissions or choose an output folder.</source>
+        <translation>Galeri foto tidak dapat diakses. Periksa izin sistem atau pilih folder keluaran.</translation>
+    </message>
+    <message>
+        <source>Retry saving to photo library</source>
+        <translation>Coba simpan lagi ke galeri foto</translation>
+    </message>
+    <message>
+        <source>Save to folder</source>
+        <translation>Simpan ke folder</translation>
+    </message>
+    <message>
+        <source>Saved to folder</source>
+        <translation>Disimpan ke folder</translation>
+    </message>
+    <message>
+        <source>Saved to photo library</source>
+        <translation>Disimpan ke galeri foto</translation>
+    </message>
+    <message>
+        <source>Saving to folder…</source>
+        <translation>Menyimpan ke folder…</translation>
+    </message>
+    <message>
+        <source>Saving to photo library…</source>
+        <translation>Menyimpan ke galeri foto…</translation>
+    </message>
+    <message>
+        <source>Video exported; saving failed</source>
+        <translation>Video diekspor; gagal menyimpan</translation>
+    </message>
+    <message>
+        <source>Your video is ready. Retry saving to the photo library or choose an output folder.</source>
+        <translation>Video siap. Coba simpan lagi ke galeri foto atau pilih folder keluaran.</translation>
     </message>
 </context>
 <context>

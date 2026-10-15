@@ -18,6 +18,7 @@ TestCase {
         property int editing_job_id: 0
         signal queue_changed()
         signal queue_finished()
+        signal mobile_delivery_changed()
         signal render_progress(int job_id, real progress, int current_frame, int total_frames, bool finished, real start_time, bool is_conversion)
         function get_mobile_queue_snapshot() { return JSON.stringify({ rows: test.samples, workersActive: false, deepActive: false }); }
     }
@@ -108,6 +109,19 @@ TestCase {
         workspace.refresh();
         compare(workspace.rows.length, 32);
         waitForRendering(workspace);
+    }
+    function test_gallery_retry_refresh_is_deferred_and_updates_result_counts() {
+        const original = Object.assign({}, samples[0], { epoch: 0 });
+        samples[0] = Object.assign({}, original, { status: "Finished", lastExport: 4, epoch: 1, galleryState: "failed" });
+        workspace.refresh();
+        workspace.operation = Logic.observeOperation(Logic.beginOperation(99, "export", [original]), samples, true);
+        compare(workspace.taskCounts.failed, 1);
+        samples[0] = Object.assign({}, samples[0], { galleryState: "saved" });
+        fakeBackend.mobile_delivery_changed();
+        compare(workspace.rows[0].galleryState, "failed", "native signal must not synchronously read the borrowed queue");
+        tryVerify(function() { return workspace.rows[0].galleryState === "saved"; });
+        compare(workspace.taskCounts.success, 1);
+        compare(workspace.taskCounts.failed, 0);
     }
     function test_experimental_entry_data() {
         return [{ tag: "android-portrait", os: "android", w: 360, h: 640 },

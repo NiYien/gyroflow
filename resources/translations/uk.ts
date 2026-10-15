@@ -2136,6 +2136,10 @@ You can increase the sharpness limit in the Advanced section.</source>
         <source>Device for rendering</source>
         <translation>Пристрій для рендерингу</translation>
     </message>
+    <message>
+        <source>This folder is not writable. Choose another output folder.</source>
+        <translation>Не можна записувати до цієї папки. Виберіть іншу вихідну папку.</translation>
+    </message>
 </context>
 <context>
     <name>FeedbackDialog</name>
@@ -6792,6 +6796,14 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <source>Privacy policy</source>
         <translation>Політика конфіденційності</translation>
     </message>
+    <message>
+        <source>Photo library</source>
+        <translation>Фотогалерея</translation>
+    </message>
+    <message>
+        <source>Source folder</source>
+        <translation>Початкова папка</translation>
+    </message>
 </context>
 <context>
     <name>MobileWorkspace</name>
@@ -7270,6 +7282,42 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
     <message>
         <source>Open a video in preview to use these features.</source>
         <translation>Відкрийте відео в попередньому перегляді, щоб використовувати ці функції.</translation>
+    </message>
+    <message>
+        <source>Photo library access is unavailable. Check system permissions or choose an output folder.</source>
+        <translation>Немає доступу до фотогалереї. Перевірте системні дозволи або виберіть вихідну папку.</translation>
+    </message>
+    <message>
+        <source>Retry saving to photo library</source>
+        <translation>Повторити збереження до фотогалереї</translation>
+    </message>
+    <message>
+        <source>Save to folder</source>
+        <translation>Зберегти до папки</translation>
+    </message>
+    <message>
+        <source>Saved to folder</source>
+        <translation>Збережено до папки</translation>
+    </message>
+    <message>
+        <source>Saved to photo library</source>
+        <translation>Збережено до фотогалереї</translation>
+    </message>
+    <message>
+        <source>Saving to folder…</source>
+        <translation>Збереження до папки…</translation>
+    </message>
+    <message>
+        <source>Saving to photo library…</source>
+        <translation>Збереження до фотогалереї…</translation>
+    </message>
+    <message>
+        <source>Video exported; saving failed</source>
+        <translation>Відео експортовано; помилка збереження</translation>
+    </message>
+    <message>
+        <source>Your video is ready. Retry saving to the photo library or choose an output folder.</source>
+        <translation>Відео готове. Повторіть збереження до фотогалереї або виберіть вихідну папку.</translation>
     </message>
 </context>
 <context>

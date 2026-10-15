@@ -2136,6 +2136,10 @@ Môžeš zvýšit ostrosť vzorku v pokročilých nastaveniach.</translation>
         <source>Device for rendering</source>
         <translation>Zariadenie na renderovanie</translation>
     </message>
+    <message>
+        <source>This folder is not writable. Choose another output folder.</source>
+        <translation>Do tohto priečinka sa nedá zapisovať. Vyberte iný výstupný priečinok.</translation>
+    </message>
 </context>
 <context>
     <name>FeedbackDialog</name>
@@ -6791,6 +6795,14 @@ Vypnite stabilizáciu objektívu (Optical SteadyShot), aby ste mohli používať
         <source>Privacy policy</source>
         <translation>Zásady ochrany súkromia</translation>
     </message>
+    <message>
+        <source>Photo library</source>
+        <translation>Fotogaléria</translation>
+    </message>
+    <message>
+        <source>Source folder</source>
+        <translation>Zdrojový priečinok</translation>
+    </message>
 </context>
 <context>
     <name>MobileWorkspace</name>
@@ -7269,6 +7281,42 @@ Vypnite stabilizáciu objektívu (Optical SteadyShot), aby ste mohli používať
     <message>
         <source>Open a video in preview to use these features.</source>
         <translation>Ak chcete použiť tieto funkcie, otvorte video v náhľade.</translation>
+    </message>
+    <message>
+        <source>Photo library access is unavailable. Check system permissions or choose an output folder.</source>
+        <translation>Fotogaléria nie je prístupná. Skontrolujte systémové oprávnenia alebo vyberte výstupný priečinok.</translation>
+    </message>
+    <message>
+        <source>Retry saving to photo library</source>
+        <translation>Znova skúsiť uložiť do fotogalérie</translation>
+    </message>
+    <message>
+        <source>Save to folder</source>
+        <translation>Uložiť do priečinka</translation>
+    </message>
+    <message>
+        <source>Saved to folder</source>
+        <translation>Uložené do priečinka</translation>
+    </message>
+    <message>
+        <source>Saved to photo library</source>
+        <translation>Uložené do fotogalérie</translation>
+    </message>
+    <message>
+        <source>Saving to folder…</source>
+        <translation>Ukladanie do priečinka…</translation>
+    </message>
+    <message>
+        <source>Saving to photo library…</source>
+        <translation>Ukladanie do fotogalérie…</translation>
+    </message>
+    <message>
+        <source>Video exported; saving failed</source>
+        <translation>Video exportované; uloženie zlyhalo</translation>
+    </message>
+    <message>
+        <source>Your video is ready. Retry saving to the photo library or choose an output folder.</source>
+        <translation>Video je pripravené. Skúste ho znova uložiť do fotogalérie alebo vyberte výstupný priečinok.</translation>
     </message>
 </context>
 <context>

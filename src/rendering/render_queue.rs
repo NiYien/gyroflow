@@ -2038,6 +2038,12 @@ pub struct RenderQueue {
     // from QML into queue_output_mode / queue_fixed_output_path. Called on every
     // setting change and at panel init; consumed by reapply_queue_output_path.
     set_queue_output_path: qt_method!(fn(&mut self, mode: u32, fixed_path: QString)),
+    set_mobile_gallery_output: qt_method!(fn(&mut self, enabled: bool)),
+    retry_mobile_delivery: qt_method!(fn(&mut self, job_id: u32, folder: QUrl) -> bool),
+    get_mobile_output_url: qt_method!(fn(&self, job_id: u32) -> QUrl),
+    pub mobile_delivery_changed: qt_signal!(),
+    mobile_gallery_output: bool,
+    mobile_deliveries: BTreeMap<u32, super::mobile_export::Delivery>,
     missing_video_output_folder: qt_method!(fn(&self, include_finished: bool) -> QString),
     ios_photo_jobs_need_output_folder: qt_method!(fn(&self) -> bool),
     finish_output_folder_request: qt_method!(fn(&mut self, accepted: bool)),
@@ -2945,12 +2951,75 @@ impl RenderQueue {
     pub fn set_queue_output_path(&mut self, mode: u32, fixed_path: QString) {
         self.queue_output_mode = mode;
         self.queue_fixed_output_path = fixed_path.to_string();
+        if cfg!(any(target_os = "android", target_os = "ios")) { self.reapply_queue_output_path(); }
         ::log::debug!(
             target: "video.render",
             "[queue-output-path] set mode={} fixed='{}'",
             mode,
             self.queue_fixed_output_path
         );
+    }
+
+    pub fn set_mobile_gallery_output(&mut self, enabled: bool) {
+        self.mobile_gallery_output = enabled && cfg!(any(target_os = "android", target_os = "ios"));
+        if cfg!(any(target_os = "android", target_os = "ios")) {
+            static CLEANUP: std::sync::Once = std::sync::Once::new();
+            CLEANUP.call_once(super::mobile_export::cleanup_completed);
+        }
+    }
+
+    fn uses_mobile_gallery(&self) -> bool {
+        self.mobile_gallery_output && matches!(self.export_project, 0 | 4)
+            && self.export_metadata.is_none() && self.export_stmap.is_none()
+    }
+
+    pub fn get_mobile_output_url(&self, job_id: u32) -> QUrl {
+        if cfg!(target_os = "android") {
+            if let Some(delivery) = self.mobile_deliveries.get(&job_id).filter(|d| d.state == "saved") {
+                if let Some(file) = delivery.files.first().filter(|f| !f.gallery_id.is_empty()) {
+                    return QUrl::from(QString::from(file.gallery_id.as_str()));
+                }
+            }
+        }
+        if let Some(url) = self.mobile_deliveries.get(&job_id).and_then(|delivery| delivery.output_url()) {
+            return QUrl::from(QString::from(url));
+        }
+        QUrl::from(QString::from(filesystem::get_file_url(
+            &util::qurl_to_encoded(self.get_job_output_folder(job_id)), &self.get_job_output_filename(job_id).to_string(), false)))
+    }
+
+    pub fn retry_mobile_delivery(&mut self, job_id: u32, folder: QUrl) -> bool {
+        let Some(mut delivery) = self.mobile_deliveries.get(&job_id).cloned() else { return false; };
+        if delivery.state != "failed" || delivery.files.is_empty() { return false; }
+        let folder = util::qurl_to_encoded(folder);
+        if !folder.is_empty() && !filesystem::can_create_file(&folder, &format!("niyien-write-{}.tmp", Self::current_timestamp())) { return false; }
+        delivery.state = if folder.is_empty() { "saving" } else { "saving_folder" }.into();
+        self.mobile_deliveries.insert(job_id, delivery.clone());
+        self.mobile_delivery_changed();
+        let ready = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, delivery: super::mobile_export::Delivery| {
+            if this.mobile_deliveries.get(&job_id).is_none_or(|current| current.epoch != delivery.epoch) { return; }
+            if delivery.state == "folder" {
+                if let Some(url) = delivery.output_url() {
+                    if let Some(job) = this.jobs.get_mut(&job_id) {
+                        job.render_options.output_folder = filesystem::get_folder(url);
+                        job.render_options.output_filename = filesystem::get_filename(url);
+                    }
+                    update_model!(this, job_id, item {
+                        item.output_folder = QString::from(filesystem::get_folder(url));
+                        item.output_filename = QString::from(filesystem::get_filename(url));
+                        item.display_output_path = QString::from(filesystem::display_url(url));
+                    });
+                }
+            }
+            this.mobile_deliveries.insert(job_id, delivery);
+            this.mobile_delivery_changed();
+        });
+        core::run_threaded(move || {
+            if folder.is_empty() { delivery.save_gallery(crate::util::save_video_to_gallery); }
+            else { delivery.copy_to_folder(&folder); }
+            ready(delivery);
+        });
+        true
     }
 
     fn prospective_video_output_folder(&self, job: &Job) -> String {
@@ -2970,6 +3039,7 @@ impl RenderQueue {
         include_finished: bool,
         requested_job: Option<u32>,
     ) -> Option<String> {
+        if self.uses_mobile_gallery() { return None; }
         let queue = self.queue.try_borrow().ok()?;
         queue.iter().find_map(|item| {
             if requested_job.is_some_and(|job_id| item.job_id != job_id)
@@ -2998,6 +3068,7 @@ impl RenderQueue {
     }
 
     fn ios_photo_import_job_needs_output_folder(&self, job_id: u32, is_ios: bool) -> bool {
+        if self.uses_mobile_gallery() { return false; }
         if !is_ios {
             return false;
         }
@@ -3046,6 +3117,7 @@ impl RenderQueue {
     }
 
     pub fn ios_photo_jobs_need_output_folder(&self) -> bool {
+        if self.mobile_gallery_output { return false; }
         self.ios_photo_jobs_need_output_folder_with_platform(cfg!(target_os = "ios"))
     }
 
@@ -3119,21 +3191,27 @@ impl RenderQueue {
     // dispatch. Assigns directly, bypassing the sticky get_output_folder, so a
     // "fixed path -> same as source" switch actually rolls back.
     fn reapply_queue_output_path(&mut self) {
+        let gallery = self.uses_mobile_gallery();
         let mode = self.queue_output_mode;
         let fixed_path = self.queue_fixed_output_path.clone();
         let mut q = self.queue.borrow_mut();
-        for (_job_id, job) in self.jobs.iter_mut() {
+        for (job_id, job) in self.jobs.iter_mut() {
             if job.queue_index >= q.row_count() as usize {
                 continue;
             }
-            if q[job.queue_index].status != JobStatus::Queued {
+            let row = &q[job.queue_index];
+            let retryable_error = cfg!(any(target_os = "android", target_os = "ios"))
+                && row.status == JobStatus::Error && !Self::error_string_is_pending_question(&row.error_string.to_string());
+            if row.status != JobStatus::Queued && !retryable_error {
                 continue;
             }
             let input_url = job.render_options.input_url.clone();
             if input_url.is_empty() {
                 continue;
             }
-            let new_folder = if mode == 1 {
+            let new_folder = if gallery {
+                super::mobile_export::staging_folder(*job_id)
+            } else if mode == 1 {
                 // Fixed path is a picker-granted folder on SAF too, so it is safe
                 // to apply to every job regardless of source scheme.
                 fixed_path.clone()
@@ -8016,6 +8094,7 @@ impl RenderQueue {
             let mut input_file = stab.input_file.read().clone();
             let filename = filesystem::get_filename(&input_file.url);
             let render_options = job.render_options.clone();
+            let save_to_gallery = self.uses_mobile_gallery() && !job_is_deep_match;
 
             progress((
                 0.0,
@@ -8142,11 +8221,42 @@ impl RenderQueue {
                 },
             );
             let in_flight_count = stab.in_flight_count.clone();
+            let delivery_changed = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, delivery: super::mobile_export::Delivery| {
+                if this.mobile_deliveries.get(&job_id).is_none_or(|current| current.epoch != delivery.epoch) { return; }
+                // Once the OS accepts a save, stopping the encoder cannot undo it.
+                // A newer render replaces the delivery epoch and is filtered above.
+                if matches!(delivery.state.as_str(), "saved" | "failed")
+                    && this.jobs.get(&job_id).is_some_and(|job| job.render_epoch.load(SeqCst) != capture_epoch) {
+                    if let Some(job) = this.jobs.get_mut(&job_id) { job.last_finished_export_project = Some(finished_export_project); }
+                    update_model!(this, job_id, item {
+                        item.status = JobStatus::Finished;
+                        item.skip_reason = QString::default();
+                        item.current_frame = item.total_frames;
+                    });
+                }
+                this.mobile_deliveries.insert(job_id, delivery);
+                this.mobile_delivery_changed();
+            });
+            if save_to_gallery {
+                self.mobile_deliveries.insert(job_id, super::mobile_export::Delivery {
+                    epoch: capture_epoch, state: "rendering".into(), ..Default::default()
+                });
+            } else {
+                self.mobile_deliveries.remove(&job_id);
+            }
             core::run_threaded(move || {
                 // §4.10 OpGuard: render queue item worker runs autosync,
                 // recompute, encoding — all heavy shared-state work that must
                 // gate concurrent project-load.
                 let _g = crate::core::OpGuard::enter(&in_flight_count);
+                if save_to_gallery {
+                    if let Err(error) = std::fs::create_dir_all(filesystem::url_to_path(&render_options.output_folder)) {
+                        err(("%1".into(), error.to_string()));
+                        return;
+                    }
+                    super::mobile_export::Delivery { epoch: capture_epoch, state: "rendering".into(), ..Default::default() }
+                        .persist_in(&render_options.output_folder);
+                }
                 // Apply the dynamic local offset before sync: same-file range
                 // reslice + sync_settings + additional_data mirror (worker
                 // thread — parses can take seconds on big files). Failure
@@ -8515,6 +8625,11 @@ impl RenderQueue {
                 // another full decode.
                 let mut render_options = render_options;
                 let mut codec_downgraded = false;
+                let mut delivery = super::mobile_export::Delivery { epoch: capture_epoch, state: "saving".into(), ..Default::default() };
+                let encoding_progress = {
+                    let progress = progress.clone();
+                    move |(p, current, total, finished, conversion)| progress((p, current, total, finished && !save_to_gallery, conversion))
+                };
                 'ranges: for range in ranges_to_render {
                     if cancel_flag.load(SeqCst) {
                         render_ok = false;
@@ -8527,7 +8642,7 @@ impl RenderQueue {
                         }
                         let result = rendering::render(
                             stab.clone(),
-                            progress.clone(),
+                            encoding_progress.clone(),
                             &input_file,
                             &render_options,
                             decoder_index,
@@ -8625,11 +8740,24 @@ impl RenderQueue {
                             break 'ranges;
                         } else {
                             // Render ok
+                            if save_to_gallery {
+                                let filename = super::mobile_export::rendered_filename(
+                                    &render_options.output_filename, render_options.export_trims_separately, num_ranges, range.unwrap_or(0));
+                                delivery.files.push(super::mobile_export::OutputFile {
+                                    url: filesystem::get_file_url(&render_options.output_folder, &filename, false), ..Default::default()
+                                });
+                            }
                             break;
                         }
                     }
                 }
                 if render_ok && !cancel_flag.load(SeqCst) {
+                    if save_to_gallery {
+                        delivery_changed(delivery.clone());
+                        delivery.save_gallery(crate::util::save_video_to_gallery);
+                        delivery_changed(delivery);
+                        progress((1.0, render_frame_count, render_frame_count, true, false));
+                    }
                     let sample = {
                         let mut sample = eta_sample.lock();
                         sample.render_frames = render_frame_count;
@@ -9902,7 +10030,7 @@ impl RenderQueue {
     /// Mobile pages can observe the same queue even when its legacy view is hidden.
     pub fn get_mobile_queue_snapshot(&self) -> QString {
         let video_ids: HashSet<u32> = self.collect_video_job_ids().into_iter().collect();
-        let workers_active = self.jobs.values().any(|job| {
+        let workers_active = self.mobile_deliveries.values().any(|delivery| matches!(delivery.state.as_str(), "saving" | "saving_folder")) || self.jobs.values().any(|job| {
             job.pending_reset_requeue || job.stab.as_ref().is_some_and(|stab| {
                 stab.in_flight_count.load(SeqCst) > 0
             })
@@ -9944,6 +10072,8 @@ impl RenderQueue {
                 "lensPending": self.stabilizer.get_lens_group_manual_edit() && lens_group.is_none(),
                 "outputFolder": item.output_folder.to_string(),
                 "outputFilename": item.output_filename.to_string(),
+                "galleryState": self.mobile_deliveries.get(&item.job_id).map(|delivery| delivery.state.as_str()).unwrap_or(""),
+                "galleryError": self.mobile_deliveries.get(&item.job_id).map(|delivery| delivery.error.as_str()).unwrap_or(""),
             })
         }).collect::<Vec<_>>();
         QString::from(serde_json::json!({
@@ -28244,6 +28374,36 @@ mod tests {
     }
 
     // --- batch-output-path-source-and-reapply ---
+
+    #[test]
+    fn output_path_change_updates_queued_jobs_but_keeps_finished_results() {
+        let mut queue = queue_with_input_job(1, "file:///source/clip.mp4");
+        queue.queue_output_mode = 1;
+        queue.queue_fixed_output_path = "file:///chosen-one/".into();
+        queue.reapply_queue_output_path();
+        assert_eq!(queue.jobs[&1].render_options.output_folder, "file:///chosen-one/");
+        {
+            let mut rows = queue.queue.borrow_mut();
+            let mut row = rows[0].clone();
+            assert_eq!(row.output_folder.to_string(), "file:///chosen-one/");
+            row.status = JobStatus::Finished;
+            rows.change_line(0, row);
+        }
+        queue.queue_fixed_output_path = "file:///chosen-two/".into();
+        queue.reapply_queue_output_path();
+        assert_eq!(queue.jobs[&1].render_options.output_folder, "file:///chosen-one/");
+    }
+
+    #[test]
+    fn mobile_gallery_skips_the_ios_folder_gate_for_video_exports() {
+        let mut queue = queue_with_input_job(1,
+            "file:///private/var/mobile/Containers/Data/Application/ABC/Library/Caches/NiYien/ios-photo-imports/session/clip.mov");
+        queue.mobile_gallery_output = true;
+        queue.export_project = 4;
+        assert_eq!(queue.ios_photo_output_request(Some(1), true), None);
+        queue.export_project = 2;
+        assert_eq!(queue.ios_photo_output_request(Some(1), true), Some(1));
+    }
 
     #[test]
     fn queued_ios_photo_import_requires_output_folder_only_before_export() {

@@ -81,6 +81,12 @@ MenuItem {
         // sett's Component.onCompleted (settings.init) runs first (child before
         // parent), so the persisted queue output-path setting is already restored
         // here — push it into render_queue for the initial state.
+        if (Qt.platform.os === "android" || Qt.platform.os === "ios") {
+            const hadOutputPreference = settings.contains("queueOutputMode") || settings.contains("queueFixedOutputPath");
+            mobileSaveToGallery = settings.value("mobileSaveToGallery", !hadOutputPreference);
+            if (!settings.contains("mobileSaveToGallery")) settings.setValue("mobileSaveToGallery", mobileSaveToGallery);
+        }
+        outputSettingsReady = true;
         root.syncQueueOutputPath();
     }
 
@@ -142,6 +148,13 @@ MenuItem {
     // [queue-batch-streamline T3] 队列输出路径设置
     property alias queueOutputMode: queueOutputModeBox.currentIndex
     property alias queueFixedOutputPath: queueFixedOutputPathField.folderUrl
+    property bool mobileSaveToGallery: false
+    property bool outputSettingsReady: false
+    property bool committingOutputFolder: false
+    onMobileSaveToGalleryChanged: {
+        if (outputSettingsReady) settings.setValue("mobileSaveToGallery", mobileSaveToGallery);
+        syncQueueOutputPath();
+    }
     property alias outCodecOptions: codecOptions.currentText;
     property real originalWidth: outWidth;
     property real originalHeight: outHeight;
@@ -156,21 +169,52 @@ MenuItem {
     property bool canExport: !resolutionWarning.visible && !resolutionWarning2.visible;
 
     function browseQueueOutputFolder(): void {
+        if (Qt.platform.os === "android") {
+            window.outputFile.selectFolder(queueFixedOutputPathField.folderUrl, null, null);
+            return;
+        }
         const dialog = Qt.createQmlObject("import QtQuick.Dialogs; FolderDialog {}", root, "selectQueueOutputFolder");
         if (queueFixedOutputPathField.folderUrl) dialog.currentFolder = queueFixedOutputPathField.folderUrl;
         dialog.accepted.connect(function() {
-            queueFixedOutputPathField.folderUrl = dialog.selectedFolder.toString();
-            filesystem.folder_access_granted(dialog.selectedFolder);
+            if (Qt.platform.os === "android" || Qt.platform.os === "ios") applySelectedOutputFolder(dialog.selectedFolder);
+            else {
+                queueFixedOutputPathField.folderUrl = dialog.selectedFolder.toString();
+                filesystem.folder_access_granted(dialog.selectedFolder);
+                filesystem.save_allowed_folders();
+            }
+            dialog.destroy();
         });
+        dialog.rejected.connect(function() { dialog.destroy(); });
         dialog.open();
+    }
+
+    function applySelectedOutputFolder(folder): bool {
+        if (!folder || !folder.toString()) return false;
+        filesystem.folder_access_granted(folder);
+        if (!filesystem.can_create_file(folder, "niyien-write-check-" + Date.now() + ".tmp")) {
+            window.messageBox(Modal.Error, qsTr("This folder is not writable. Choose another output folder."), [{ text: qsTranslate("App", "Ok") }]);
+            return false;
+        }
+        filesystem.save_allowed_folders();
+        committingOutputFolder = true;
+        mobileSaveToGallery = false;
+        queueFixedOutputPath = folder.toString();
+        queueOutputMode = 1;
+        window.outputFile.setFolder(folder);
+        committingOutputFolder = false;
+        syncQueueOutputPath();
+        return true;
     }
     // Mirror the current render-queue output-path setting (mode + fixed path)
     // into render_queue so start() can re-derive queued jobs' output_folder from
     // it. Both simple and full mode changes funnel through queueOutputModeBox /
     // browseQueueOutputFolder, so this is the single sync choke point.
     function syncQueueOutputPath(): void {
-        if (typeof render_queue !== "undefined")
+        if (committingOutputFolder) return;
+        if (typeof render_queue !== "undefined") {
+            render_queue.set_mobile_gallery_output(mobileSaveToGallery);
             render_queue.set_queue_output_path(queueOutputModeBox.currentIndex, queueFixedOutputPathField.folderUrl);
+        }
     }
 
     function getExportOptions(): var {

@@ -2136,6 +2136,10 @@ You can increase the sharpness limit in the Advanced section.</source>
         <source>Device for rendering</source>
         <translation>Συσκευή αποτύπωσης</translation>
     </message>
+    <message>
+        <source>This folder is not writable. Choose another output folder.</source>
+        <translation>Δεν είναι δυνατή η εγγραφή σε αυτόν τον φάκελο. Επιλέξτε άλλον φάκελο εξόδου.</translation>
+    </message>
 </context>
 <context>
     <name>FeedbackDialog</name>
@@ -6792,6 +6796,14 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <source>Privacy policy</source>
         <translation>Πολιτική απορρήτου</translation>
     </message>
+    <message>
+        <source>Photo library</source>
+        <translation>Βιβλιοθήκη φωτογραφιών</translation>
+    </message>
+    <message>
+        <source>Source folder</source>
+        <translation>Φάκελος προέλευσης</translation>
+    </message>
 </context>
 <context>
     <name>MobileWorkspace</name>
@@ -7270,6 +7282,42 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
     <message>
         <source>Open a video in preview to use these features.</source>
         <translation>Ανοίξτε ένα βίντεο στην προεπισκόπηση για να χρησιμοποιήσετε αυτές τις λειτουργίες.</translation>
+    </message>
+    <message>
+        <source>Photo library access is unavailable. Check system permissions or choose an output folder.</source>
+        <translation>Δεν υπάρχει πρόσβαση στη βιβλιοθήκη φωτογραφιών. Ελέγξτε τα δικαιώματα συστήματος ή επιλέξτε φάκελο εξόδου.</translation>
+    </message>
+    <message>
+        <source>Retry saving to photo library</source>
+        <translation>Επανάληψη αποθήκευσης στη βιβλιοθήκη φωτογραφιών</translation>
+    </message>
+    <message>
+        <source>Save to folder</source>
+        <translation>Αποθήκευση σε φάκελο</translation>
+    </message>
+    <message>
+        <source>Saved to folder</source>
+        <translation>Αποθηκεύτηκε στον φάκελο</translation>
+    </message>
+    <message>
+        <source>Saved to photo library</source>
+        <translation>Αποθηκεύτηκε στη βιβλιοθήκη φωτογραφιών</translation>
+    </message>
+    <message>
+        <source>Saving to folder…</source>
+        <translation>Αποθήκευση σε φάκελο…</translation>
+    </message>
+    <message>
+        <source>Saving to photo library…</source>
+        <translation>Αποθήκευση στη βιβλιοθήκη φωτογραφιών…</translation>
+    </message>
+    <message>
+        <source>Video exported; saving failed</source>
+        <translation>Το βίντεο εξήχθη· η αποθήκευση απέτυχε</translation>
+    </message>
+    <message>
+        <source>Your video is ready. Retry saving to the photo library or choose an output folder.</source>
+        <translation>Το βίντεο είναι έτοιμο. Δοκιμάστε ξανά την αποθήκευση στη βιβλιοθήκη φωτογραφιών ή επιλέξτε φάκελο εξόδου.</translation>
     </message>
 </context>
 <context>

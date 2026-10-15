@@ -2136,6 +2136,10 @@ Możesz zwiększyć limit ostrości w sekcji Zaawansowane.</translation>
         <source>Device for rendering</source>
         <translation>Urządzenie do renderowania</translation>
     </message>
+    <message>
+        <source>This folder is not writable. Choose another output folder.</source>
+        <translation>Nie można zapisywać w tym folderze. Wybierz inny folder wyjściowy.</translation>
+    </message>
 </context>
 <context>
     <name>FeedbackDialog</name>
@@ -6791,6 +6795,14 @@ Wyłącz stabilizację obiektywu (Optical SteadyShot), aby używać Gyroflow.</t
         <source>Privacy policy</source>
         <translation>Polityka prywatności</translation>
     </message>
+    <message>
+        <source>Photo library</source>
+        <translation>Biblioteka zdjęć</translation>
+    </message>
+    <message>
+        <source>Source folder</source>
+        <translation>Folder źródłowy</translation>
+    </message>
 </context>
 <context>
     <name>MobileWorkspace</name>
@@ -7269,6 +7281,42 @@ Wyłącz stabilizację obiektywu (Optical SteadyShot), aby używać Gyroflow.</t
     <message>
         <source>Open a video in preview to use these features.</source>
         <translation>Otwórz film w podglądzie, aby korzystać z tych funkcji.</translation>
+    </message>
+    <message>
+        <source>Photo library access is unavailable. Check system permissions or choose an output folder.</source>
+        <translation>Brak dostępu do biblioteki zdjęć. Sprawdź uprawnienia systemowe lub wybierz folder wyjściowy.</translation>
+    </message>
+    <message>
+        <source>Retry saving to photo library</source>
+        <translation>Ponów zapis w bibliotece zdjęć</translation>
+    </message>
+    <message>
+        <source>Save to folder</source>
+        <translation>Zapisz w folderze</translation>
+    </message>
+    <message>
+        <source>Saved to folder</source>
+        <translation>Zapisano w folderze</translation>
+    </message>
+    <message>
+        <source>Saved to photo library</source>
+        <translation>Zapisano w bibliotece zdjęć</translation>
+    </message>
+    <message>
+        <source>Saving to folder…</source>
+        <translation>Zapisywanie w folderze…</translation>
+    </message>
+    <message>
+        <source>Saving to photo library…</source>
+        <translation>Zapisywanie w bibliotece zdjęć…</translation>
+    </message>
+    <message>
+        <source>Video exported; saving failed</source>
+        <translation>Film wyeksportowany; zapis nie powiódł się</translation>
+    </message>
+    <message>
+        <source>Your video is ready. Retry saving to the photo library or choose an output folder.</source>
+        <translation>Film jest gotowy. Ponów zapis w bibliotece zdjęć lub wybierz folder wyjściowy.</translation>
     </message>
 </context>
 <context>

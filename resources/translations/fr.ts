@@ -2135,6 +2135,10 @@ Vous pouvez augmenter la limite de netteté dans la section Avancé.</translatio
         <source>Device for rendering</source>
         <translation>Périphérique de rendu</translation>
     </message>
+    <message>
+        <source>This folder is not writable. Choose another output folder.</source>
+        <translation>Ce dossier n’est pas accessible en écriture. Choisissez un autre dossier de sortie.</translation>
+    </message>
 </context>
 <context>
     <name>FeedbackDialog</name>
@@ -6791,6 +6795,14 @@ Désactivez la stabilisation de l&apos;objectif (Optical SteadyShot) afin d&apos
         <source>Privacy policy</source>
         <translation>Politique de confidentialité</translation>
     </message>
+    <message>
+        <source>Photo library</source>
+        <translation>Photothèque</translation>
+    </message>
+    <message>
+        <source>Source folder</source>
+        <translation>Dossier source</translation>
+    </message>
 </context>
 <context>
     <name>MobileWorkspace</name>
@@ -7269,6 +7281,42 @@ Désactivez la stabilisation de l&apos;objectif (Optical SteadyShot) afin d&apos
     <message>
         <source>Open a video in preview to use these features.</source>
         <translation>Ouvrez une vidéo dans l’aperçu pour utiliser ces fonctions.</translation>
+    </message>
+    <message>
+        <source>Photo library access is unavailable. Check system permissions or choose an output folder.</source>
+        <translation>La photothèque est inaccessible. Vérifiez les autorisations système ou choisissez un dossier de sortie.</translation>
+    </message>
+    <message>
+        <source>Retry saving to photo library</source>
+        <translation>Réessayer l’enregistrement dans la photothèque</translation>
+    </message>
+    <message>
+        <source>Save to folder</source>
+        <translation>Enregistrer dans un dossier</translation>
+    </message>
+    <message>
+        <source>Saved to folder</source>
+        <translation>Enregistré dans le dossier</translation>
+    </message>
+    <message>
+        <source>Saved to photo library</source>
+        <translation>Enregistré dans la photothèque</translation>
+    </message>
+    <message>
+        <source>Saving to folder…</source>
+        <translation>Enregistrement dans le dossier…</translation>
+    </message>
+    <message>
+        <source>Saving to photo library…</source>
+        <translation>Enregistrement dans la photothèque…</translation>
+    </message>
+    <message>
+        <source>Video exported; saving failed</source>
+        <translation>Vidéo exportée ; échec de l’enregistrement</translation>
+    </message>
+    <message>
+        <source>Your video is ready. Retry saving to the photo library or choose an output folder.</source>
+        <translation>Votre vidéo est prête. Réessayez l’enregistrement dans la photothèque ou choisissez un dossier de sortie.</translation>
     </message>
 </context>
 <context>

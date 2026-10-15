@@ -87,11 +87,17 @@ Rectangle {
     function clearMobileQueue(): void { clearQueueAction.clicked(); }
     function resetMobilePairing(): void { resetPairingAction.clicked(); }
     function openMobileOutput(jobId: int): void {
-        filesystem.open_file_externally(filesystem.get_file_url(render_queue.get_job_output_folder(jobId), render_queue.get_job_output_filename(jobId), false));
+        filesystem.open_file_externally(render_queue.get_mobile_output_url(jobId));
     }
     function shareMobileOutput(jobId: int): bool {
-        const url = filesystem.get_file_url(render_queue.get_job_output_folder(jobId), render_queue.get_job_output_filename(jobId), false);
+        const url = render_queue.get_mobile_output_url(jobId);
         return ui_tools.share_mobile_file(url);
+    }
+    function saveMobileOutputToFolder(jobId: int): void {
+        outputFile.selectFolder("", function(folder) {
+            if (!render_queue.retry_mobile_delivery(jobId, folder) && mobileUI)
+                mobileUI.notify(qsTranslate("MobileWorkspace", "The output file is unavailable. Check the output folder."));
+        });
     }
     function importMobileFiles(urls: var, autoplay: bool): void {
         if (!urls || !urls.length || !videoArea.queue) return;
@@ -182,10 +188,10 @@ Rectangle {
     // failure on Android); the fallback delivers through the same urls_opened
     // bridge, so the callback stays valid either way.
     // mode: 0 = files, 1 = folder tree.
-    function openPicker(mode: int, allowMultiple: bool, callback: var, fallbackDialog: var): void {
+    function openPicker(mode, allowMultiple, callback, fallbackDialog, initialUrl) {
         if (Qt.platform.os === "android") {
             window.pendingPickerCallback = callback;
-            if (filesystem.open_native_picker(mode, allowMultiple, window.lastPickerUrl)) return;
+            if (filesystem.open_native_picker(mode, allowMultiple, initialUrl || window.lastPickerUrl)) return;
         }
         if (fallbackDialog.open2) fallbackDialog.open2(); else fallbackDialog.open();
     }
@@ -198,6 +204,7 @@ Rectangle {
         }, fileDialog);
     }
     function deferIosPhotoQueueOutputCheck(urls: var): bool {
+        if (window.exportSettings && window.exportSettings.mobileSaveToGallery) return true;
         return iosQueueOutputPolicy.deferAddTimeOutputCheck(urls);
     }
     // Index 1 in smoothingAlgorithms corresponds to DefaultAlgo (see src/core/smoothing/mod.rs).
@@ -1049,6 +1056,7 @@ Rectangle {
                     width: parent.width - (isMobileLayout? 0 : renderBtnRow.width + 10 * dpiScale) - 2*x;
                     OutputPathField {
                         id: outputFile;
+                        syncMobileOutput: Qt.platform.os === "android" || Qt.platform.os === "ios";
                         onFolderUrlChanged: {
                             // The parent label is only hidden in Simple mode, so this
                             // handler still fires there on programmatic setFolder calls —
@@ -1315,7 +1323,7 @@ Rectangle {
                                 return;
                             }
                             const exists = filesystem.exists_in_folder(outputFile.folderUrl, outputFile.filename.replace("_%05d", "_00001"));
-                            if ((exists || render_queue.file_exists_in_folder(outputFile.folderUrl, outputFile.filename)) && !allowFile) {
+                            if (!window.exportSettings.mobileSaveToGallery && (exists || render_queue.file_exists_in_folder(outputFile.folderUrl, outputFile.filename)) && !allowFile) {
                                 function overwrite() {
                                     allowFile = true;
                                     renderBtn.render();
@@ -1365,7 +1373,7 @@ Rectangle {
                             }
 
                             videoArea.vid.grabToImage(function(result) {
-                                if (isSandboxed && (!outputFile.folderUrl.toString() || !filesystem.can_create_file(outputFile.folderUrl, outputFile.filename))) {
+                                if (isSandboxed && !window.exportSettings.mobileSaveToGallery && (!outputFile.folderUrl.toString() || !filesystem.can_create_file(outputFile.folderUrl, outputFile.filename))) {
                                     let el = messageBox(Modal.Info, Qt.platform.os === "ios"
                                         ? qsTr("Please confirm the output folder")
                                         : qsTr("Due to file access restrictions, you need to select the destination folder manually.\nClick Ok and select the destination folder."), [

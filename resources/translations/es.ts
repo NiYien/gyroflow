@@ -2134,6 +2134,10 @@ Puedes aumentar el límite de nitidez en la sección Avanzado.</translation>
         <source>Device for rendering</source>
         <translation>Dispositivo de renderizado</translation>
     </message>
+    <message>
+        <source>This folder is not writable. Choose another output folder.</source>
+        <translation>No se puede escribir en esta carpeta. Elige otra carpeta de salida.</translation>
+    </message>
 </context>
 <context>
     <name>FeedbackDialog</name>
@@ -6787,6 +6791,14 @@ Desactive la estabilización de la lente (SteadyShot óptico) para poder utiliza
         <source>Privacy policy</source>
         <translation>Política de privacidad</translation>
     </message>
+    <message>
+        <source>Photo library</source>
+        <translation>Fototeca</translation>
+    </message>
+    <message>
+        <source>Source folder</source>
+        <translation>Carpeta de origen</translation>
+    </message>
 </context>
 <context>
     <name>MobileWorkspace</name>
@@ -7265,6 +7277,42 @@ Desactive la estabilización de la lente (SteadyShot óptico) para poder utiliza
     <message>
         <source>Open a video in preview to use these features.</source>
         <translation>Abre un vídeo en la vista previa para usar estas funciones.</translation>
+    </message>
+    <message>
+        <source>Photo library access is unavailable. Check system permissions or choose an output folder.</source>
+        <translation>No se puede acceder a la fototeca. Comprueba los permisos del sistema o elige una carpeta de salida.</translation>
+    </message>
+    <message>
+        <source>Retry saving to photo library</source>
+        <translation>Reintentar guardar en la fototeca</translation>
+    </message>
+    <message>
+        <source>Save to folder</source>
+        <translation>Guardar en una carpeta</translation>
+    </message>
+    <message>
+        <source>Saved to folder</source>
+        <translation>Guardado en la carpeta</translation>
+    </message>
+    <message>
+        <source>Saved to photo library</source>
+        <translation>Guardado en la fototeca</translation>
+    </message>
+    <message>
+        <source>Saving to folder…</source>
+        <translation>Guardando en la carpeta…</translation>
+    </message>
+    <message>
+        <source>Saving to photo library…</source>
+        <translation>Guardando en la fototeca…</translation>
+    </message>
+    <message>
+        <source>Video exported; saving failed</source>
+        <translation>Vídeo exportado; error al guardar</translation>
+    </message>
+    <message>
+        <source>Your video is ready. Retry saving to the photo library or choose an output folder.</source>
+        <translation>El vídeo está listo. Reintenta guardarlo en la fototeca o elige una carpeta de salida.</translation>
     </message>
 </context>
 <context>

@@ -2132,6 +2132,10 @@ Gelişmiş kısmında keskinlik sınırını artırabilirsiniz.</translation>
         <source>Device for rendering</source>
         <translation>Render cihazı</translation>
     </message>
+    <message>
+        <source>This folder is not writable. Choose another output folder.</source>
+        <translation>Bu klasöre yazılamıyor. Başka bir çıktı klasörü seçin.</translation>
+    </message>
 </context>
 <context>
     <name>FeedbackDialog</name>
@@ -6778,6 +6782,14 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <source>Privacy policy</source>
         <translation>Gizlilik politikası</translation>
     </message>
+    <message>
+        <source>Photo library</source>
+        <translation>Fotoğraf arşivi</translation>
+    </message>
+    <message>
+        <source>Source folder</source>
+        <translation>Kaynak klasör</translation>
+    </message>
 </context>
 <context>
     <name>MobileWorkspace</name>
@@ -7256,6 +7268,42 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
     <message>
         <source>Open a video in preview to use these features.</source>
         <translation>Bu özellikleri kullanmak için önizlemede bir video açın.</translation>
+    </message>
+    <message>
+        <source>Photo library access is unavailable. Check system permissions or choose an output folder.</source>
+        <translation>Fotoğraf arşivine erişilemiyor. Sistem izinlerini kontrol edin veya bir çıktı klasörü seçin.</translation>
+    </message>
+    <message>
+        <source>Retry saving to photo library</source>
+        <translation>Fotoğraf arşivine kaydetmeyi yeniden dene</translation>
+    </message>
+    <message>
+        <source>Save to folder</source>
+        <translation>Klasöre kaydet</translation>
+    </message>
+    <message>
+        <source>Saved to folder</source>
+        <translation>Klasöre kaydedildi</translation>
+    </message>
+    <message>
+        <source>Saved to photo library</source>
+        <translation>Fotoğraf arşivine kaydedildi</translation>
+    </message>
+    <message>
+        <source>Saving to folder…</source>
+        <translation>Klasöre kaydediliyor…</translation>
+    </message>
+    <message>
+        <source>Saving to photo library…</source>
+        <translation>Fotoğraf arşivine kaydediliyor…</translation>
+    </message>
+    <message>
+        <source>Video exported; saving failed</source>
+        <translation>Video dışa aktarıldı; kaydetme başarısız</translation>
+    </message>
+    <message>
+        <source>Your video is ready. Retry saving to the photo library or choose an output folder.</source>
+        <translation>Video hazır. Fotoğraf arşivine kaydetmeyi yeniden deneyin veya bir çıktı klasörü seçin.</translation>
     </message>
 </context>
 <context>
