@@ -152,7 +152,7 @@ impl AudioResampler {
                 }
             }
 
-            self.buffer_frame.set_samples(self.chunk_size);
+            self.buffer_frame.set_samples(self.buffer_frame_offset);
 
             self.buffer_frame_offset = 0;
             Some(&self.buffer_frame)

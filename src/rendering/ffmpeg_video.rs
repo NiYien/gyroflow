@@ -427,11 +427,14 @@ impl<'a> VideoTranscoder<'a> {
                 let timestamp_ms = timestamp_us as f64 / 1000.0;
 
                 if start_ms.is_none() || timestamp_ms >= start_ms.unwrap() {
+                    if frame_ts.last_video.is_none() {
+                        frame_ts.last_duration_video = 1i64.rescale(time_base, (1, 1000000));
+                    }
                     if frame_ts.first.is_none() {
                         frame_ts.first = Some(timestamp_us);
                     }
                     ts -= frame_ts.first.unwrap();
-                    ts += frame_ts.add_video;
+                    ts += frame_ts.range_offset;
 
                     let mut rate_control = RateControl {
                         out_timestamp_us: ts,

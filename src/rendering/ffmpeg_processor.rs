@@ -18,15 +18,117 @@ use super::ffmpeg_video::*;
 use super::*;
 use gyroflow_core::filesystem::{self, FfmpegPathWrapper, FilesystemError};
 
+/// Maps the input timestamps of the current trim range to the output timeline. All streams share the same mapping
+/// (`ts - first + range_offset`), so they stay in sync across trim ranges
 #[derive(Debug, Default)]
 pub struct FrameTimestamps {
+    /// Input timestamp (µs) of the start of the current trim range, set by its first video frame
     pub first: Option<i64>,
+    /// Output timestamp (µs) of the start of the current trim range: where the video of the previous one ended
+    pub range_offset: i64,
+    /// Output timestamp (µs) where the video of the current trim range ended, once it has. Its audio ends there too
+    pub range_end: Option<i64>,
     pub last_video: Option<i64>,
-    pub last_audio: Option<i64>,
-    pub add_audio: i64,
-    pub add_video: i64,
     pub last_duration_video: i64,
-    pub last_duration_audio: i64,
+    /// Audio streams and copied data streams, by input stream index
+    streams: HashMap<usize, StreamTimeline>,
+}
+
+/// The part of a unit (packet or decoded frame) of an audio or data stream that goes in the output
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Placement {
+    /// Output timestamp (µs) of the part
+    pub ts_us: i64,
+    /// Where the part starts in the unit, and its duration (µs). Only units of raw samples are cut, the others are written whole
+    pub skip_us: i64,
+    pub duration_us: i64,
+}
+
+/// Where an audio or data stream is in the output
+#[derive(Debug, Default)]
+struct StreamTimeline {
+    /// Output timestamp (µs) of the last unit written
+    last: Option<i64>,
+    /// Output timestamp (µs) where the last unit written ends
+    end: i64,
+    /// A unit was written in the current trim range
+    in_range: bool,
+    /// The stream went past the end of the current trim range
+    finished: bool,
+}
+
+impl FrameTimestamps {
+    /// The video of the current trim range ended
+    pub fn end_range(&mut self) {
+        self.range_end = Some(self.last_video.unwrap_or_default() + self.last_duration_video);
+    }
+
+    /// The next trim range starts in the output where the video of the previous one ended
+    pub fn start_next_range(&mut self) {
+        self.range_offset = self.last_video.unwrap_or_default() + self.last_duration_video;
+        self.range_end = None;
+        self.first = None;
+        for stream in self.streams.values_mut() {
+            stream.in_range = false;
+            stream.finished = false;
+        }
+    }
+
+    pub fn is_finished(&self, stream_index: usize) -> bool {
+        self.streams.get(&stream_index).is_some_and(|x| x.finished)
+    }
+
+    /// Places a unit (packet or decoded frame) of an audio or data stream in the output, from its input timestamp and duration (µs).
+    /// A stream is written from where it left off (in the previous range, the audio runs a bit past the video), or from the start of the
+    /// range, up to where the video of the range ends. `divisible` units (raw samples) are cut exactly there, the others are written whole
+    /// if they're mostly inside. `None` if nothing of the unit is written, also when it has no timestamp and doesn't follow a written unit
+    pub fn place(&mut self, stream_index: usize, timestamp_us: Option<i64>, duration_us: i64, divisible: bool, start_ms: Option<f64>) -> Option<Placement> {
+        let stream = self.streams.entry(stream_index).or_default();
+        if stream.finished {
+            return None;
+        }
+        let duration_us = duration_us.max(0);
+        let (out_ts, range_start) = match timestamp_us {
+            Some(ts) => {
+                let first = *self.first.get_or_insert(ts);
+                // From the start of the trim range to its first video frame, the input maps to just before `range_offset`
+                let range_start = start_ms.map_or(i64::MIN, |start| (start * 1000.0).round() as i64 - first + self.range_offset);
+                (ts - first + self.range_offset, range_start)
+            }
+            // Continues the unit before it
+            None if stream.in_range => (stream.end, i64::MIN),
+            None => return None
+        };
+        // `end` starts at 0, the start of the output
+        let from = stream.end.max(range_start);
+        let to = self.range_end.unwrap_or(i64::MAX);
+
+        let (skip, duration) = if divisible && duration_us > 0 {
+            let skip = (from - out_ts).clamp(0, duration_us);
+            let end = to.saturating_sub(out_ts).clamp(0, duration_us);
+            stream.finished = out_ts + duration_us >= to;
+            if end <= skip {
+                return None;
+            }
+            (skip, end - skip)
+        } else {
+            // Half a unit of tolerance: rounded timestamps (to µs here, often to ms by the container) don't line up exactly,
+            // and at a range boundary it keeps the unit closest to where the stream left off
+            let middle = out_ts + duration_us / 2;
+            if middle > to {
+                stream.finished = true;
+                return None;
+            }
+            if out_ts < 0 || middle < from || stream.last.is_some_and(|last| out_ts <= last) {
+                return None;
+            }
+            (0, duration_us)
+        };
+        stream.last = Some(out_ts + skip);
+        stream.end = out_ts + skip + duration;
+        stream.in_range = true;
+        Some(Placement { ts_us: out_ts + skip, skip_us: skip, duration_us: duration })
+    }
 }
 
 pub struct FfmpegProcessor<'a> {
@@ -433,6 +535,8 @@ impl<'a> FfmpegProcessor<'a> {
         self.ost_time_bases
             .resize(self.input_context.nb_streams() as _, Rational(0, 0));
         let mut atranscoders = HashMap::new();
+        let mut audio_streams = Vec::new();
+        let mut raw_pcm_streams = vec![None; self.input_context.nb_streams() as usize];
         let mut output_index = 0usize;
 
         let mut start_ms = None;
@@ -534,6 +638,7 @@ impl<'a> FfmpegProcessor<'a> {
                 if self.preserve_other_tracks
                 /*stream.codec().id() == self.audio_codec*/
                 {
+                    raw_pcm_streams[i] = raw_pcm_layout(&stream.parameters());
                     // Direct stream copy
                     let mut ost = octx.add_stream(encoder::find(codec::Id::None))?;
                     ost.set_parameters(stream.parameters());
@@ -553,6 +658,7 @@ impl<'a> FfmpegProcessor<'a> {
                         ).map(|mut audio| { audio.timing = timing.clone(); audio })?,
                     );
                 }
+                audio_streams.push(i);
                 output_index += 1;
             } else if self.preserve_other_tracks && medium == media::Type::Data {
                 // Direct stream copy
@@ -560,6 +666,15 @@ impl<'a> FfmpegProcessor<'a> {
                 ost.set_parameters(stream.parameters());
                 ost.set_avg_frame_rate(stream.avg_frame_rate());
                 output_index += 1;
+            } else {
+                stream_mapping[i] = -1;
+            }
+        }
+        if self.preserve_other_tracks && start_ms.is_none() {
+            // Preserve offsets between tracks when exporting the complete file.
+            let start_time = unsafe { (*self.input_context.as_ptr()).start_time };
+            if start_time != ffi::AV_NOPTS_VALUE {
+                self.frame_ts.first = Some(start_time);
             }
         }
         let mut updated_creation_time = None;
@@ -587,62 +702,81 @@ impl<'a> FfmpegProcessor<'a> {
         octx.set_metadata(metadata);
         // Header will be written after video encoder is initalized, in ffmpeg_video.rs:init_encoder
 
-        let mut video_inited = false;
-        // let mut copied_stream_first_pts = None;
-        // let mut copied_stream_first_dts = None;
-
-        let process_stream = |atranscoders: &mut HashMap<usize, AudioTranscoder>,
-                              octx: &mut format::context::Output,
-                              stream: Stream,
-                              mut packet: ffmpeg_next::Packet,
-                              start_ms: Option<f64>,
-                              end_ms: Option<f64>,
-                              ist_index: usize,
-                              ost_index: isize,
-                              ost_time_base: Rational,
-                              frame_ts: &mut FrameTimestamps|
-         -> Result<bool, Error> {
+        let process_stream = |atranscoders: &mut HashMap<usize, AudioTranscoder>, octx: &mut format::context::Output, mut packet: ffmpeg_next::Packet, start_ms: Option<f64>, ist_index: usize, ost_index: isize, ost_time_base: Rational, frame_ts: &mut FrameTimestamps| -> Result<(), Error> {
+            let ist_time_base = ist_time_bases[ist_index];
             match atranscoders.get_mut(&ist_index) {
                 Some(atranscoder) => {
-                    packet.rescale_ts(stream.time_base(), atranscoder.decoder.time_base());
+                    packet.rescale_ts(ist_time_base, atranscoder.decoder.time_base());
                     measure(&timing, Stage::Decode, || atranscoder.decoder.send_packet(&packet))?;
-                    let status = atranscoder.receive_and_process_decoded_frames(
-                        octx,
-                        ost_time_base,
-                        start_ms,
-                        end_ms,
-                        frame_ts,
-                    )?;
-                    if status == Status::Finish {
-                        return Ok(true);
-                    }
+                    atranscoder.receive_and_process_decoded_frames(octx, ost_time_base, start_ms, frame_ts)?;
                 }
                 None => {
-                    // Direct stream copy
-                    // TODO: Wrong pts, shifted by length of packet, would need to synchronize with first video frame pts
-                    // if copied_stream_first_pts.is_none() {
-                    //     copied_stream_first_pts = packet.pts();
-                    //     copied_stream_first_dts = packet.dts();
-                    // }
+                    // Direct stream copy, on the same output timeline as the video
+                    let timestamp_us = packet.pts().or(packet.dts()).map(|x| x.rescale(ist_time_base, (1, 1000000)));
+                    let raw_samples = raw_pcm_streams[ist_index];
+                    let duration_us = match raw_samples {
+                        Some((sample_size, rate)) => ((packet.size() / sample_size) as i64).rescale((1, rate), (1, 1000000)),
+                        None => packet.duration().rescale(ist_time_base, (1, 1000000))
+                    };
+                    let Some(placement) = frame_ts.place(ist_index, timestamp_us, duration_us, raw_samples.is_some(), start_ms) else {
+                        return Ok(());
+                    };
+                    let mut sample_count = None;
+                    if let Some((sample_size, rate)) = raw_samples {
+                        // Raw samples, cut to the samples that are written
+                        let samples = packet.size() / sample_size;
+                        let skip = (placement.skip_us.rescale((1, 1000000), (1, rate)).max(0) as usize).min(samples);
+                        let count = (placement.duration_us.rescale((1, 1000000), (1, rate)).max(0) as usize).min(samples - skip);
+                        if count == 0 {
+                            return Ok(());
+                        }
+                        unsafe {
+                            use ffmpeg_next::packet::Mut;
+                            let packet = packet.as_mut_ptr();
+                            (*packet).data = (*packet).data.add(skip * sample_size);
+                            (*packet).size = (count * sample_size) as i32;
+                        }
+                        sample_count = Some((count as i64, rate));
+                    }
 
-                    packet.rescale_ts(ist_time_bases[ist_index], ost_time_base);
+                    packet.rescale_ts(ist_time_base, ost_time_base);
+                    if let Some(timestamp_us) = timestamp_us {
+                        // The shift is the same for the whole range, so the packets keep their exact spacing (and pts-dts delay)
+                        let shift = (placement.ts_us - timestamp_us).rescale((1, 1000000), ost_time_base);
+                        packet.set_pts(packet.pts().map(|x| x + shift));
+                        packet.set_dts(packet.dts().map(|x| x + shift));
+                    } else {
+                        let ts = placement.ts_us.rescale((1, 1000000), ost_time_base);
+                        packet.set_pts(Some(ts));
+                        packet.set_dts(Some(ts));
+                    }
+                    if let Some((count, rate)) = sample_count {
+                        packet.set_duration(count.rescale((1, rate), ost_time_base));
+                    }
                     packet.set_position(-1);
                     packet.set_stream(ost_index as _);
-                    // packet.set_pts(packet.pts().map(|x| x - copied_stream_first_pts.unwrap_or_default()));
-                    // packet.set_dts(packet.dts().map(|x| x - copied_stream_first_dts.unwrap_or_default()));
                     measure(&timing, Stage::Mux, || packet.write_interleaved(octx))?;
                 }
             }
-            Ok(false)
+            Ok(())
+        };
+
+        // Wait until the video covers the packet, so a long audio packet cannot pass the trim boundary.
+        let must_wait = |frame_ts: &FrameTimestamps, header_written: bool, packet: &ffmpeg_next::Packet, ist_index: usize, end_ms: Option<f64>| -> bool {
+            !header_written || frame_ts.first.is_none() || (frame_ts.range_end.is_none() && end_ms.is_some() &&
+                packet.pts().or(packet.dts()).is_some_and(|ts| {
+                    let packet_end = ts.saturating_add(packet.duration().max(0))
+                        .rescale(ist_time_bases[ist_index], (1, 1000000));
+                    let video_end = frame_ts.first.unwrap_or_default() + frame_ts.last_video.unwrap_or_default()
+                        - frame_ts.range_offset + frame_ts.last_duration_video;
+                    packet_end > video_end
+                }))
         };
 
         let _wall_timer = WallTimer::new(&timing);
+        let mut pending_packets: Vec<(ffmpeg_next::Packet, usize, isize)> = Vec::new();
         loop {
-            let mut pending_packets: Vec<(Stream, ffmpeg_next::Packet, usize, isize)> = Vec::new();
-
             let mut encoding_video = true;
-            let mut encoding_audio = self.audio_codec != codec::Id::None;
-
             let mut packets = self.input_context.packets();
             for (stream, mut packet) in std::iter::from_fn(|| measure(&timing, Stage::Demux, || packets.next())) {
                 let ist_index = stream.index();
@@ -650,150 +784,96 @@ impl<'a> FfmpegProcessor<'a> {
                 if ost_index < 0 {
                     continue;
                 }
-
                 if ist_index == self.video.input_index {
                     if encoding_video {
-                        {
-                            let decoder =
-                                self.video.decoder.as_mut().ok_or(Error::DecoderNotFound)?;
-                            packet.rescale_ts(stream.time_base(), (1, 1000000)); // rescale to microseconds
-                            measure(&timing, Stage::Decode, || decoder.send_packet(&packet))
-                                .map_err(|e| decoder_error(self.gpu_decoding, "send_packet", e))?;
+                        let decoder = self.video.decoder.as_mut().ok_or(Error::DecoderNotFound)?;
+                        packet.rescale_ts(stream.time_base(), (1, 1000000));
+                        measure(&timing, Stage::Decode, || decoder.send_packet(&packet))
+                            .map_err(|e| decoder_error(self.gpu_decoding, "send_packet", e))?;
+                        let status = self.video.receive_and_process_video_frames(
+                            output_size, bitrate, Some(&mut octx), &mut self.ost_time_bases,
+                            start_ms, end_ms, &mut self.frame_ts,
+                        ).map_err(|e| frame_processing_error(self.gpu_decoding, e))?;
+                        if status == Status::Finish {
+                            encoding_video = false;
+                            self.frame_ts.end_range();
                         }
-
-                        match self.video.receive_and_process_video_frames(
-                            output_size,
-                            bitrate,
-                            Some(&mut octx),
-                            &mut self.ost_time_bases,
-                            start_ms,
-                            end_ms,
-                            &mut self.frame_ts,
-                        ) {
-                            Ok(encoding_status) => {
-                                if self.video.encoder.is_some() {
-                                    video_inited = true;
-                                    if !pending_packets.is_empty() {
-                                        for (stream, packet, ist_index, ost_index) in
-                                            pending_packets.drain(..)
-                                        {
-                                            let ost_time_base =
-                                                self.ost_time_bases[ost_index as usize];
-                                            process_stream(
-                                                &mut atranscoders,
-                                                &mut octx,
-                                                stream,
-                                                packet,
-                                                start_ms,
-                                                end_ms,
-                                                ist_index,
-                                                ost_index,
-                                                ost_time_base,
-                                                &mut self.frame_ts,
-                                            )?;
-                                        }
-                                    }
-                                }
-                                if encoding_status == Status::Finish {
-                                    encoding_video = false;
-                                }
-                                while pause_flag.load(Relaxed) {
-                                    std::thread::sleep(std::time::Duration::from_millis(100));
+                        if self.video.encoder.is_some() {
+                            for (packet, input, output) in std::mem::take(&mut pending_packets) {
+                                if must_wait(&self.frame_ts, true, &packet, input, end_ms) {
+                                    pending_packets.push((packet, input, output));
+                                } else if !self.frame_ts.is_finished(input) {
+                                    process_stream(&mut atranscoders, &mut octx, packet, start_ms, input, output,
+                                        self.ost_time_bases[output as usize], &mut self.frame_ts)?;
                                 }
                             }
-                            Err(e) => {
-                                return Err(frame_processing_error(self.gpu_decoding, e));
-                            }
+                        }
+                        while pause_flag.load(Relaxed) && !cancel_flag.load(Relaxed) {
+                            std::thread::sleep(std::time::Duration::from_millis(100));
                         }
                     }
-                } else if self.audio_codec != codec::Id::None || self.preserve_other_tracks {
-                    if encoding_audio {
-                        if !video_inited {
-                            pending_packets.push((stream, packet, ist_index, ost_index));
-                            continue;
-                        }
-                        let ost_time_base = self.ost_time_bases[ost_index as usize];
-                        if process_stream(
-                            &mut atranscoders,
-                            &mut octx,
-                            stream,
-                            packet,
-                            start_ms,
-                            end_ms,
-                            ist_index,
-                            ost_index,
-                            ost_time_base,
-                            &mut self.frame_ts,
-                        )? {
-                            encoding_audio = false;
-                        }
+                } else if !self.frame_ts.is_finished(ist_index) {
+                    if must_wait(&self.frame_ts, self.video.encoder.is_some(), &packet, ist_index, end_ms) {
+                        pending_packets.push((packet, ist_index, ost_index));
+                    } else {
+                        process_stream(&mut atranscoders, &mut octx, packet, start_ms, ist_index, ost_index,
+                            self.ost_time_bases[ost_index as usize], &mut self.frame_ts)?;
                     }
                 }
-                if (!encoding_video && !encoding_audio) || cancel_flag.load(Relaxed) {
+                if (!encoding_video && audio_streams.iter().all(|i| self.frame_ts.is_finished(*i))) || cancel_flag.load(Relaxed) {
                     break;
                 }
             }
-            if !self.ranges_ms.is_empty() && !cancel_flag.load(Relaxed) {
-                let next_range = self.ranges_ms.remove(0);
-                if let Some(start) = next_range.0 {
-                    start_ms = Some(start);
-                    let position = (start as i64).rescale((1, 1000), rescale::TIME_BASE);
-                    self.input_context.seek(position, ..position)?;
-                    self.frame_ts.add_video = self.frame_ts.last_video.unwrap_or_default()
-                        + self.frame_ts.last_duration_video;
-                    self.frame_ts.add_audio = self.frame_ts.last_audio.unwrap_or_default()
-                        + self.frame_ts.last_duration_audio;
-                    self.frame_ts.first = None;
+
+            // Drain delayed video frames at EOF before deciding where this range ends.
+            if encoding_video && !cancel_flag.load(Relaxed) {
+                let decoder = self.video.decoder.as_mut().ok_or(Error::DecoderNotFound)?;
+                measure(&timing, Stage::Decode, || decoder.send_eof())
+                    .map_err(|e| decoder_error(self.gpu_decoding, "send_eof", e))?;
+                self.video.receive_and_process_video_frames(
+                    output_size, bitrate, Some(&mut octx), &mut self.ost_time_bases,
+                    start_ms, end_ms, &mut self.frame_ts,
+                ).map_err(|e| frame_processing_error(self.gpu_decoding, e))?;
+            }
+            if end_ms.is_some() || !self.ranges_ms.is_empty() {
+                self.frame_ts.end_range();
+            }
+            if self.video.encoder.is_some() {
+                for (packet, input, output) in std::mem::take(&mut pending_packets) {
+                    if !self.frame_ts.is_finished(input) && self.frame_ts.first.is_some() {
+                        process_stream(&mut atranscoders, &mut octx, packet, start_ms, input, output,
+                            self.ost_time_bases[output as usize], &mut self.frame_ts)?;
+                    }
                 }
-                end_ms = next_range.1;
-                continue;
-            } else {
+            }
+            if self.ranges_ms.is_empty() || cancel_flag.load(Relaxed) {
                 break;
             }
+
+            // Seeking must discard the previous range's delayed decoder frames.
+            for transcoder in atranscoders.values_mut() {
+                measure(&timing, Stage::Decode, || transcoder.decoder.send_eof())?;
+                transcoder.receive_and_process_decoded_frames(
+                    &mut octx, self.ost_time_bases[transcoder.ost_index], start_ms, &mut self.frame_ts)?;
+                transcoder.decoder.flush();
+            }
+            self.video.decoder.as_mut().ok_or(Error::DecoderNotFound)?.flush();
+            let next_range = self.ranges_ms.remove(0);
+            start_ms = next_range.0;
+            end_ms = next_range.1;
+            let position = ((start_ms.unwrap_or_default() * 1000.0).round() as i64)
+                .rescale((1, 1000000), rescale::TIME_BASE);
+            self.input_context.seek(position, ..position)?;
+            self.frame_ts.start_next_range();
+            pending_packets.clear();
         }
 
-        // Flush encoders and decoders.
-        {
-            let ost_time_base = self.ost_time_bases[self.video.output_index.unwrap_or_default()];
-            let decoder = self.video
-                .decoder
-                .as_mut()
-                .ok_or(Error::DecoderNotFound)?;
-            measure(&timing, Stage::Decode, || decoder.send_eof())
-                .map_err(|e| decoder_error(self.gpu_decoding, "send_eof", e))?;
-            // self.video.decoder.as_mut().ok_or(Error::DecoderNotFound)?.flush();
-            self.video.receive_and_process_video_frames(
-                output_size,
-                bitrate,
-                Some(&mut octx),
-                &mut self.ost_time_bases,
-                start_ms,
-                end_ms,
-                &mut self.frame_ts,
-            ).map_err(|e| frame_processing_error(self.gpu_decoding, e))?;
-            let encoder = self.video
-                .encoder
-                .as_mut()
-                .ok_or(Error::EncoderNotFound)?;
-            measure(&timing, Stage::Encode, || encoder.send_eof())?;
-            if let Err(e) = self
-                .video
-                .receive_and_process_encoded_packets(&mut octx, ost_time_base)
-            {
-                log::error!("Failed to flush last packet: {e:?}");
-            }
-        }
-        if self.audio_codec != codec::Id::None {
-            for (ost_index, transcoder) in atranscoders.iter_mut() {
-                let ost_time_base = self.ost_time_bases[*ost_index];
-                transcoder.flush(
-                    &mut octx,
-                    ost_time_base,
-                    start_ms,
-                    end_ms,
-                    &mut self.frame_ts,
-                )?;
-            }
+        let encoder = self.video.encoder.as_mut().ok_or(Error::EncoderNotFound)?;
+        measure(&timing, Stage::Encode, || encoder.send_eof())?;
+        self.video.receive_and_process_encoded_packets(
+            &mut octx, self.ost_time_bases[self.video.output_index.unwrap_or_default()])?;
+        for transcoder in atranscoders.values_mut() {
+            transcoder.flush(&mut octx, self.ost_time_bases[transcoder.ost_index], start_ms, &mut self.frame_ts)?;
         }
 
         measure(&timing, Stage::Mux, || octx.write_trailer())?;
@@ -1065,6 +1145,113 @@ mod decode_fallback_tests {
     }
 
     #[test]
+    fn audio_ranges_share_video_offsets_and_keep_tracks_independent() {
+        let mut times = FrameTimestamps::default();
+        for range in 0..20 {
+            let source_start = range * 2_000_000;
+            let output_start = range * 400_000;
+            times.first = Some(source_start);
+            times.last_video = Some(output_start + 360_000);
+            times.last_duration_video = 40_000;
+            times.end_range();
+            let pcm = times.place(1, Some(source_start - 10_000), 430_000, true, Some(source_start as f64 / 1000.0)).unwrap();
+            assert_eq!((pcm.ts_us, pcm.skip_us, pcm.duration_us), (output_start, 10_000, 400_000));
+            let second_track = times.place(2, Some(source_start + 100_000), 300_000, true, None).unwrap();
+            assert_eq!(second_track.ts_us, output_start + 100_000);
+            assert!(times.place(1, Some(source_start + 430_000), 20_000, true, None).is_none());
+            times.start_next_range();
+            assert_eq!(times.range_offset, output_start + 400_000);
+        }
+    }
+
+    #[test]
+    #[ignore = "Requires GYROFLOW_FFMPEG_TEST_BIN pointing to the verified SDK CLI"]
+    fn audio_trim_ranges_preserve_pcm_samples_and_track_timing() {
+        let ffmpeg = std::env::var_os("GYROFLOW_FFMPEG_TEST_BIN").expect("SDK ffmpeg executable");
+        let dir = tempfile::tempdir().unwrap();
+        let folder = filesystem::path_to_url(dir.path().to_str().unwrap());
+        let mut video = b"YUV4MPEG2 W32 H24 F25:1 Ip A1:1 C420\n".to_vec();
+        for index in 0..100u8 {
+            video.extend_from_slice(b"FRAME\n");
+            video.extend(vec![16 + index; 32 * 24]);
+            video.extend(vec![128; 32 * 24 / 2]);
+        }
+        std::fs::write(dir.path().join("video.y4m"), video).unwrap();
+        let pcm: Vec<u8> = (0..192_000i32).flat_map(|i| ((i % 30_000) as i16).to_le_bytes()).collect();
+        std::fs::write(dir.path().join("audio.raw"), pcm).unwrap();
+        let result = std::process::Command::new(ffmpeg).current_dir(dir.path()).args([
+            "-hide_banner", "-loglevel", "error", "-i", "video.y4m",
+            "-f", "s16le", "-ar", "48000", "-ac", "1", "-i", "audio.raw",
+            "-itsoffset", "0.1", "-f", "s16le", "-ar", "48000", "-ac", "1", "-i", "audio.raw",
+            "-map", "0:v", "-map", "1:a", "-map", "2:a", "-c:v", "libx264", "-bf", "2",
+            "-c:a", "copy", "source.mov",
+        ]).output().unwrap();
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        let input = filesystem::path_to_url(dir.path().join("source.mov").to_str().unwrap());
+        let mut source_context = format::input(&dir.path().join("source.mov")).unwrap();
+        let mut source_audio_starts = [None, None];
+        for (stream, packet) in source_context.packets() {
+            if stream.parameters().medium() == media::Type::Audio {
+                source_audio_starts[stream.index() - 1].get_or_insert(packet.pts().unwrap().rescale(stream.time_base(), (1, 48000)));
+            }
+        }
+        assert_eq!(source_audio_starts, [Some(0), Some(4800)]);
+        for (preserve, trimmed) in [(false, true), (true, true), (true, false)] {
+            let name = if !trimmed { "full.mov" } else if preserve { "copy.mov" } else { "transcoded.mov" };
+            let mut source_frames = Vec::new();
+            {
+                let mut proc = FfmpegProcessor::from_file(&input, false, 0, None).unwrap();
+                proc.video_codec = Some("libx264".into());
+                proc.video.gpu_encoding = false;
+                proc.video.processing_order = ProcessingOrder::PostConversion;
+                proc.video.encoder_params.options.set("preset", "ultrafast");
+                proc.audio_codec = codec::Id::PCM_S16LE;
+                proc.preserve_other_tracks = preserve;
+                if trimmed {
+                    proc.ranges_ms = vec![(Some(0.0), Some(360.0)), (Some(1600.0), Some(1960.0)), (Some(2800.0), Some(3160.0))];
+                }
+                proc.on_frame(|timestamp, input, output, _, _| {
+                    source_frames.push(timestamp);
+                    *output.unwrap() = input.clone();
+                    Ok(())
+                });
+                proc.render(&folder, name, (32, 24), None, Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false))).unwrap();
+            }
+            let mut segments = Vec::new();
+            for (index, &timestamp) in source_frames.iter().enumerate() {
+                if index == 0 || timestamp - source_frames[index - 1] != 40_000 {
+                    segments.push((index as i64 * 1920, timestamp * 48 / 1000));
+                }
+            }
+            assert_eq!(segments.len(), if trimmed { 3 } else { 1 });
+            let mut output = format::input(&dir.path().join(name)).unwrap();
+            let mut ends = [None, None];
+            let mut counts = [0usize, 0];
+            for (stream, packet) in output.packets() {
+                if stream.parameters().medium() != media::Type::Audio { continue; }
+                let track = stream.index() - 1;
+                let start = packet.pts().unwrap().rescale(stream.time_base(), (1, 48000));
+                if let Some(end) = ends[track] { assert_eq!(start, end, "track {track}, preserve {preserve}"); }
+                else { assert_eq!(start, if track == 0 { 0 } else { 4800 }, "track {track}, preserve {preserve}, stream start {}", stream.start_time()); }
+                let samples = packet.data().unwrap();
+                for (i, bytes) in samples.chunks_exact(2).enumerate() {
+                    let output_sample = start + i as i64;
+                    let &(segment_start, source_start) = segments.iter().rev().find(|&&(offset, _)| offset <= output_sample).unwrap();
+                    let source_sample = source_start + output_sample - segment_start - (track as i64 * 4800);
+                    assert_eq!(i16::from_le_bytes([bytes[0], bytes[1]]), (source_sample % 30_000) as i16,
+                        "sample {output_sample}, track {track}, preserve {preserve}");
+                }
+                counts[track] += samples.len() / 2;
+                ends[track] = Some(start + (samples.len() / 2) as i64);
+            }
+            let expected_end = source_frames.len() as i64 * 1920;
+            assert_eq!(ends, [Some(expected_end), Some(expected_end + if trimmed { 0 } else { 4800 })]);
+            assert_eq!(counts[0] as i64, expected_end);
+            assert_eq!(counts[1] as i64, expected_end - if trimmed { 4800 } else { 0 });
+        }
+    }
+
+    #[test]
     fn decode_fallback_recreates_pipeline_and_replaces_partial_output() {
         let dir = tempfile::tempdir().unwrap();
         let input = fixture(dir.path());
@@ -1197,6 +1384,21 @@ mod decode_fallback_tests {
             }
         }
     }
+}
+
+/// Size of one sample (all channels) and sample rate of raw PCM, which can be cut at any sample
+fn raw_pcm_layout(params: &codec::Parameters) -> Option<(usize, i32)> {
+    use codec::Id;
+    let bytes = match params.id() {
+        Id::PCM_S8 | Id::PCM_U8 => 1,
+        Id::PCM_S16LE | Id::PCM_S16BE | Id::PCM_U16LE | Id::PCM_U16BE => 2,
+        Id::PCM_S24LE | Id::PCM_S24BE | Id::PCM_U24LE | Id::PCM_U24BE => 3,
+        Id::PCM_S32LE | Id::PCM_S32BE | Id::PCM_U32LE | Id::PCM_U32BE | Id::PCM_F32LE | Id::PCM_F32BE => 4,
+        Id::PCM_S64LE | Id::PCM_S64BE | Id::PCM_F64LE | Id::PCM_F64BE => 8,
+        _ => return None
+    };
+    let (channels, rate) = unsafe { ((*params.as_ptr()).ch_layout.nb_channels, (*params.as_ptr()).sample_rate) };
+    (channels > 0 && rate > 0).then_some((bytes * channels as usize, rate))
 }
 
 /* unsafe extern "C" fn get_hw_format(ctx: *mut ffi::AVCodecContext, pix_fmts: *const ffi::AVPixelFormat) -> ffi::AVPixelFormat {
