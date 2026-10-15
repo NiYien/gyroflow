@@ -83,15 +83,41 @@ class MDKSnapshotTests(unittest.TestCase):
             self.install()
         self.assertFalse((self.root / 'ext/mdk-test-pin/macos/mdk-sdk').exists())
 
+    def test_archive_symlinks_and_hardlinks_are_extracted(self):
+        archive = self.root / 'links.tar'
+        destination = self.root / 'extracted'
+        runtime = 'mdk-sdk/lib/amd64/libmdk.so.0'
+        with tarfile.open(archive, 'w') as bundle:
+            entry = tarfile.TarInfo(runtime)
+            entry.size = len(self.contents)
+            bundle.addfile(entry, io.BytesIO(self.contents))
+            entry = tarfile.TarInfo('mdk-sdk/lib/amd64/libmdk.so')
+            entry.type = tarfile.SYMTYPE
+            entry.linkname = 'libmdk.so.0'
+            bundle.addfile(entry)
+            entry = tarfile.TarInfo('mdk-sdk/lib/amd64/libmdk-copy.so')
+            entry.type = tarfile.LNKTYPE
+            entry.linkname = runtime
+            bundle.addfile(entry)
+        deps.extract(archive, destination)
+        for name in ('libmdk.so.0', 'libmdk.so', 'libmdk-copy.so'):
+            self.assertEqual((destination / 'mdk-sdk/lib/amd64' / name).read_bytes(), self.contents)
+
     def test_archive_link_cannot_escape_extraction_directory(self):
         archive = self.root / 'bad.tar'
-        with tarfile.open(archive, 'w') as bundle:
-            entry = tarfile.TarInfo('mdk-sdk/escape')
-            entry.type = tarfile.SYMTYPE
-            entry.linkname = '../../outside'
-            bundle.addfile(entry)
-        with self.assertRaisesRegex(ValueError, 'Unsafe MDK archive link'):
-            deps.extract(archive, self.root / 'extracted')
+        destination = self.root / 'extracted'
+        for link_type in (tarfile.SYMTYPE, tarfile.LNKTYPE):
+            for target in ('../../outside', '../../extracted-evil/file',
+                           str((destination / 'absolute').resolve())):
+                with self.subTest(link_type=link_type, target=target):
+                    with tarfile.open(archive, 'w') as bundle:
+                        entry = tarfile.TarInfo('mdk-sdk/escape')
+                        entry.type = link_type
+                        entry.linkname = target
+                        bundle.addfile(entry)
+                    with self.assertRaisesRegex(ValueError, 'Unsafe MDK archive link'):
+                        deps.extract(archive, destination)
+                    self.assertFalse(destination.exists())
 
 
 if __name__ == '__main__':
