@@ -257,6 +257,8 @@ deploy *param: assert-linux-x86-64
     if [ "{{param}}" == "docker" ]; then
         sudo docker run -v $PROJECT_DIR:$PROJECT_DIR -v $HOME/.cargo:/root/.cargo debian/eol:buster bash -c "
             set -e
+            # Use the Debian archive mirror that also serves the AppImage dependencies.
+            sed -i 's|http://archive.debian.org/|http://debian.ethz.ch/debian-archive/|g' /etc/apt/sources.list
             apt update
             echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections
             apt install -y sudo dialog apt-utils curl clang python3 git tar unzip zip
