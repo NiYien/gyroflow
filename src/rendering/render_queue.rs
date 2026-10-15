@@ -395,6 +395,8 @@ struct Job {
     // before reset_job exposes it as Queued again.
     manual_camera_project_generation: u64,
     pending_reset_requeue: bool,
+    // Preset parameters are stored immediately; motion data is processed by the render worker.
+    gyro_outdated: Arc<AtomicBool>,
     project_data: Option<String>,
     last_finished_export_project: Option<u32>,
     // Snapshot of stab.gyro.get_offsets() at the most recent .gyroflow write
@@ -5552,6 +5554,7 @@ impl RenderQueue {
                 lens_apply_guard,
                 manual_camera_project_generation: self.manual_camera_generation.load(SeqCst),
                 pending_reset_requeue: false,
+                gyro_outdated: Default::default(),
                 project_data,
                 // Preserved across an edit write-back so the video-export
                 // dispatch still recognizes the row as a re-queueable
@@ -8244,11 +8247,15 @@ impl RenderQueue {
             } else {
                 self.mobile_deliveries.remove(&job_id);
             }
+            let gyro_outdated = job.gyro_outdated.clone();
             core::run_threaded(move || {
                 // §4.10 OpGuard: render queue item worker runs autosync,
                 // recompute, encoding — all heavy shared-state work that must
                 // gate concurrent project-load.
                 let _g = crate::core::OpGuard::enter(&in_flight_count);
+                if !cancel_flag.load(SeqCst) && gyro_outdated.swap(false, SeqCst) {
+                    stab.recompute_gyro();
+                }
                 if save_to_gallery {
                     if let Err(error) = std::fs::create_dir_all(filesystem::url_to_path(&render_options.output_folder)) {
                         err(("%1".into(), error.to_string()));
@@ -11189,7 +11196,7 @@ impl RenderQueue {
             }
             if job.queue_index < q.row_count() as usize {
                 let mut itm = q[job.queue_index].clone();
-                if itm.status == JobStatus::Queued {
+                if Self::can_apply_job_settings(job, &itm) {
                     let mut sync_options = serde_json::Value::default();
                     if let Ok(additional_data) = serde_json::from_str(&additional_data)
                         as serde_json::Result<serde_json::Value>
@@ -11209,6 +11216,13 @@ impl RenderQueue {
                             .get("output_extension")
                             .and_then(|x| x.as_str());
                         job.render_options.update_from_json(new_output_options);
+                        if new_output_options.get("output_width").is_some() || new_output_options.get("output_height").is_some() {
+                            let size = (job.render_options.output_width, job.render_options.output_height);
+                            if size.0 > 0 && size.1 > 0 {
+                                job.base_render_output_size = Some(size);
+                                job.original_output_size = core::rotated_output_dim(size, job.original_video_rotation);
+                            }
+                        }
                         // Bit-depth guard, mirroring add_internal: applying a preset can
                         // turn an already-queued job into the unrenderable
                         // H.264 + GPU + high-bit-depth combination. The source pixel
@@ -11270,26 +11284,8 @@ impl RenderQueue {
                         }
                     }
 
-                    if let Some(ref stab) = job.stab {
-                        let mut is_preset = false;
-                        if let Err(e) = stab.import_gyroflow_data(
-                            &data_vec,
-                            true,
-                            None,
-                            |_| (),
-                            Arc::new(AtomicBool::new(false)),
-                            &mut is_preset,
-                            false,
-                        ) {
-                            ::log::error!("Failed to update queue stab data: {:?}", e);
-                        }
-
-                        Self::update_sync_settings(stab, &sync_options);
-                        job.project_data = Self::get_gyroflow_data_internal(
-                            stab,
-                            &job.additional_data,
-                            &job.render_options,
-                        );
+                    if let Err(e) = Self::apply_job_settings(job, &data_vec, &sync_options) {
+                        ::log::error!("Failed to update queue stab data: {:?}", e);
                     }
                     processing_done(job_id);
 
@@ -11297,6 +11293,25 @@ impl RenderQueue {
                 }
             }
         }
+    }
+
+    fn can_apply_job_settings(job: &Job, item: &RenderQueueItem) -> bool {
+        item.status == JobStatus::Queued && !job.pending_reset_requeue
+            && job.stab.as_ref().is_some_and(|stab| stab.in_flight_count.load(SeqCst) == 0)
+    }
+
+    fn apply_job_settings(job: &mut Job, data: &[u8], sync_options: &serde_json::Value) -> Result<(), core::GyroflowCoreError> {
+        if let Some(stab) = &job.stab {
+            let mut is_preset = false;
+            stab.import_gyroflow_data(data, false, None, |_| (), Arc::new(AtomicBool::new(false)), &mut is_preset, false)?;
+            job.gyro_outdated.store(true, SeqCst);
+            if !stab.set_output_size(job.render_options.output_width, job.render_options.output_height) {
+                stab.init_size();
+            }
+            Self::update_sync_settings(stab, sync_options);
+            job.project_data = Self::get_gyroflow_data_internal(stab, &job.additional_data, &job.render_options);
+        }
+        Ok(())
     }
 
     fn file_exists_in_folder(&self, folder: QUrl, filename: QString) -> bool {
@@ -20589,6 +20604,7 @@ mod tests {
                 lens_apply_guard: Default::default(),
                 manual_camera_project_generation: 0,
                 pending_reset_requeue: false,
+                gyro_outdated: Default::default(),
                 project_data: None,
                 last_finished_export_project: None,
                 last_written_offsets: None,
@@ -20658,6 +20674,7 @@ mod tests {
             lens_apply_guard: Default::default(),
             manual_camera_project_generation: 0,
             pending_reset_requeue: false,
+            gyro_outdated: Default::default(),
             project_data: None,
             last_finished_export_project: None,
             last_written_offsets: None,
@@ -20687,6 +20704,77 @@ mod tests {
         };
         job.base_lens_metadata = Some(JobLensMetadataBackup::from_metadata(&metadata));
         job
+    }
+
+    #[test]
+    fn applied_queue_settings_defer_motion_and_update_output_size() {
+        let mut job = minimal_lens_job(Some(2), None);
+        let stab = Arc::new(StabilizationManager::default());
+        {
+            let mut params = stab.params.write();
+            params.size = (1920, 1080);
+            params.output_size = (1920, 1080);
+            params.fps = 25.0;
+            params.duration_ms = 1000.0;
+            params.frame_count = 25;
+        }
+        {
+            let mut gyro = stab.gyro.write();
+            gyro.file_url = "file:///external_mix.bin".into();
+            gyro.quaternions.insert(0, core::gyro_source::Quat64::identity());
+            gyro.set_offset(500_000, 12.5);
+        }
+        job.stab = Some(stab.clone());
+        job.render_options.output_width = 720;
+        job.render_options.output_height = 720;
+        job.lens_index_override = Some(2);
+        let before = stab.gyro.read().quaternions.clone();
+        RenderQueue::apply_job_settings(&mut job,
+            br#"{"stabilization":{"fov":0.8},"gyro_source":{"integration_method":2}}"#,
+            &serde_json::json!({})).unwrap();
+        assert!(job.gyro_outdated.load(SeqCst));
+        // The stabilizer keeps source-scale geometry while matching the requested aspect ratio.
+        assert_eq!(stab.params.read().output_size, (1080, 1080));
+        assert_eq!(stab.params.read().fov, 0.8);
+        assert_eq!(stab.gyro.read().quaternions, before);
+        assert_eq!(stab.gyro.read().file_url, "file:///external_mix.bin");
+        assert_eq!(stab.gyro.read().get_offsets().get(&500_000), Some(&12.5));
+        assert_eq!(job.lens_index_override, Some(2));
+        let snapshot: serde_json::Value = serde_json::from_str(job.project_data.as_ref().unwrap()).unwrap();
+        assert_eq!(snapshot["output"]["output_width"], 720);
+        assert_eq!(snapshot["output"]["output_height"], 720);
+    }
+
+    #[test]
+    fn applied_queue_settings_skip_active_finished_and_rebuilding_jobs() {
+        let mut job = minimal_lens_job(None, None);
+        let stab = Arc::new(StabilizationManager::default());
+        job.stab = Some(stab.clone());
+        let mut item = RenderQueueItem { status: JobStatus::Queued, ..Default::default() };
+        assert!(RenderQueue::can_apply_job_settings(&job, &item));
+        for status in [JobStatus::Rendering, JobStatus::Finished, JobStatus::Error, JobStatus::Skipped] {
+            item.status = status;
+            assert!(!RenderQueue::can_apply_job_settings(&job, &item));
+        }
+        item.status = JobStatus::Queued;
+        job.pending_reset_requeue = true;
+        assert!(!RenderQueue::can_apply_job_settings(&job, &item));
+        job.pending_reset_requeue = false;
+        stab.in_flight_count.store(1, SeqCst);
+        assert!(!RenderQueue::can_apply_job_settings(&job, &item));
+        stab.in_flight_count.store(0, SeqCst);
+        job.stab = None;
+        assert!(!RenderQueue::can_apply_job_settings(&job, &item));
+    }
+
+    #[test]
+    fn applied_queue_settings_reject_invalid_input_without_marking_motion_dirty() {
+        let mut job = minimal_lens_job(None, None);
+        job.stab = Some(Arc::new(StabilizationManager::default()));
+        job.project_data = Some("unchanged".into());
+        assert!(RenderQueue::apply_job_settings(&mut job, b"invalid", &serde_json::Value::Null).is_err());
+        assert!(!job.gyro_outdated.load(SeqCst));
+        assert_eq!(job.project_data.as_deref(), Some("unchanged"));
     }
 
     #[test]
@@ -21209,6 +21297,7 @@ mod tests {
                 lens_apply_guard: Default::default(),
                 manual_camera_project_generation: 0,
                 pending_reset_requeue: false,
+                gyro_outdated: Default::default(),
                 project_data: None,
                 last_finished_export_project: None,
                 last_written_offsets: None,
@@ -21364,6 +21453,7 @@ mod tests {
                 lens_apply_guard: Default::default(),
                 manual_camera_project_generation: 0,
                 pending_reset_requeue: false,
+                gyro_outdated: Default::default(),
                 project_data: None,
                 last_finished_export_project: None,
                 last_written_offsets: None,
@@ -25979,6 +26069,7 @@ mod tests {
                     lens_apply_guard: Default::default(),
                     manual_camera_project_generation: 0,
                     pending_reset_requeue: false,
+                    gyro_outdated: Default::default(),
                     project_data: None,
                     last_finished_export_project: None,
                     last_written_offsets: None,
@@ -26621,6 +26712,7 @@ mod tests {
                 lens_apply_guard: Default::default(),
                 manual_camera_project_generation: 0,
                 pending_reset_requeue: false,
+                gyro_outdated: Default::default(),
                 project_data: None,
                 last_finished_export_project: None,
                 last_written_offsets: None,
@@ -26757,6 +26849,7 @@ mod tests {
                 lens_apply_guard: Default::default(),
                 manual_camera_project_generation: 0,
                 pending_reset_requeue: false,
+                gyro_outdated: Default::default(),
                 project_data: None,
                 last_finished_export_project: None,
                 last_written_offsets: None,
@@ -27064,6 +27157,7 @@ mod tests {
                 lens_apply_guard: Default::default(),
                 manual_camera_project_generation: 0,
                 pending_reset_requeue: false,
+                gyro_outdated: Default::default(),
                 project_data: None,
                 last_finished_export_project: None,
                 last_written_offsets: None,
@@ -27702,6 +27796,7 @@ mod tests {
             lens_apply_guard: Default::default(),
             manual_camera_project_generation: 0,
             pending_reset_requeue: false,
+            gyro_outdated: Default::default(),
             project_data: None,
             last_finished_export_project: None,
             last_written_offsets: None,
@@ -27815,6 +27910,7 @@ mod tests {
             lens_apply_guard: Default::default(),
             manual_camera_project_generation: 0,
             pending_reset_requeue: false,
+            gyro_outdated: Default::default(),
             project_data: None,
             last_finished_export_project: None,
             last_written_offsets: None,
@@ -28019,6 +28115,7 @@ mod tests {
                 lens_apply_guard: Default::default(),
                 manual_camera_project_generation: 0,
                 pending_reset_requeue: false,
+                gyro_outdated: Default::default(),
                 project_data: None,
                 last_finished_export_project: None,
                 last_written_offsets: None,
@@ -28082,6 +28179,7 @@ mod tests {
                 lens_apply_guard: Default::default(),
                 manual_camera_project_generation: 0,
                 pending_reset_requeue: false,
+                gyro_outdated: Default::default(),
                 project_data: None,
                 last_finished_export_project: None,
                 last_written_offsets: None,
@@ -28353,6 +28451,7 @@ mod tests {
                 lens_apply_guard: Default::default(),
                 manual_camera_project_generation: 0,
                 pending_reset_requeue: false,
+                gyro_outdated: Default::default(),
                 project_data: None,
                 last_finished_export_project: None,
                 last_written_offsets: None,
@@ -32046,6 +32145,7 @@ mod tests {
                 lens_apply_guard: Default::default(),
                 manual_camera_project_generation: 0,
                 pending_reset_requeue: false,
+                gyro_outdated: Default::default(),
                 project_data,
                 last_finished_export_project: Some(4),
                 last_written_offsets: None,
