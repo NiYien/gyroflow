@@ -105,10 +105,10 @@
         <button data-action-nav="dashboard" class="px-3 py-1.5 text-sm rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200">返回 Dashboard</button>
       </header>
 
-      <!-- Mode selector: 3 top-level choices -->
+      <!-- Mode selector -->
       <div class="mb-6">
         <label class="text-sm font-semibold text-slate-600 mb-2 block">操作模式</label>
-        <div class="grid grid-cols-3 gap-2">
+        <div class="grid grid-cols-2 xl:grid-cols-4 gap-2">
           <button data-mode="trigger" class="mode-btn p-3 text-left rounded-md border border-slate-200 bg-white hover:border-blue-400">
             <div class="font-semibold text-sm">① 触发构建</div>
             <div class="text-xs text-slate-500 mt-1">dispatch GitHub Action,不打 tag,不发版</div>
@@ -120,6 +120,10 @@
           <button data-mode="select" class="mode-btn p-3 text-left rounded-md border border-slate-200 bg-white hover:border-blue-400">
             <div class="font-semibold text-sm">③ 选已有源发版</div>
             <div class="text-xs text-slate-500 mt-1">从 Release 或 Action Artifact 选版本推送</div>
+          </button>
+          <button data-mode="ios-upload" class="mode-btn p-3 text-left rounded-md border border-slate-200 bg-white hover:border-blue-400">
+            <div class="font-semibold text-sm">④ 上传已有 iOS IPA</div>
+            <div class="text-xs text-slate-500 mt-1">选择已有构建，补签名并上传 App Store Connect</div>
           </button>
         </div>
       </div>
@@ -160,6 +164,32 @@
         <div class="flex gap-2 items-center">
           <button id="push-tag-btn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">创建并推送 Tag</button>
           <span id="push-tag-result" class="text-sm text-slate-600"></span>
+        </div>
+      </div>
+
+      <!-- Upload an existing iOS artifact -->
+      <div data-mode-panel="ios-upload" class="mode-panel hidden bg-white p-5 rounded-lg shadow-sm">
+        <h2 class="font-semibold mb-2">上传已有 iOS IPA</h2>
+        <p class="text-sm text-slate-500 mb-4">选择之前编译完成的 IPA，未签名或开发签名包会先补分发签名再上传。保留原版本号和构建号，不重新编译。</p>
+        <div class="flex items-center justify-between mb-2">
+          <label for="ios-upload-build" class="text-sm font-semibold text-slate-600">可用的 iOS 构建</label>
+          <button id="ios-upload-builds-refresh" class="text-xs text-blue-600 hover:text-blue-800 disabled:opacity-50">刷新构建列表</button>
+        </div>
+        <select id="ios-upload-build" class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" disabled>
+          <option value="">进入此模式后加载构建</option>
+        </select>
+        <p id="ios-upload-builds-status" class="mt-2 text-xs text-slate-500" role="status"></p>
+        <p class="mt-2 text-xs text-slate-500">只列出仍保留 IPA 的已结束构建。已成功上传的同一个构建不能重复上传；苹果处理与 TestFlight 发布仍在 App Store Connect 完成。</p>
+        <div class="mt-4 flex flex-wrap items-center gap-3">
+          <button id="ios-upload-submit" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed" disabled>上传到 App Store Connect</button>
+          <span id="ios-upload-result" class="text-sm text-slate-600" role="status" aria-live="polite"></span>
+        </div>
+        <div class="mt-6 border-t border-slate-200 pt-4">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-sm font-semibold text-slate-600">近期独立上传记录</h3>
+            <button id="ios-upload-history-refresh" class="text-xs text-blue-600 hover:text-blue-800 disabled:opacity-50">刷新上传状态</button>
+          </div>
+          <div id="ios-upload-history" class="text-sm text-slate-500" role="status">进入此模式后加载记录</div>
         </div>
       </div>
 

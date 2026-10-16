@@ -28,6 +28,8 @@ from .vercel import VercelClient, parse_policy_from_envs
 
 # GitHub Action workflow that does release builds
 APP_BUILD_WORKFLOW_FILE = "release.yml"
+IOS_UPLOAD_WORKFLOW_FILE = "ios-upload.yml"
+IOS_SOURCE_WORKFLOW_PATHS = {".github/workflows/release.yml", ".github/workflows/ios-release.yml"}
 REPO_ROOT = Path(__file__).resolve().parents[3]  # gyroflow/
 
 # Action types that should auto-trigger pan123 publishing after policy push.
@@ -774,6 +776,8 @@ class Api:
             runs = gh.list_repo_workflow_runs(per_page=limit, status="")
             out = []
             for r in runs:
+                if str(r.get("path", "")).split("@", 1)[0] == f".github/workflows/{IOS_UPLOAD_WORKFLOW_FILE}":
+                    continue
                 out.append({
                     "run_id": int(r.get("id", 0) or 0),
                     "run_number": int(r.get("run_number", 0) or 0),
@@ -789,6 +793,87 @@ class Api:
             return {"ok": True, "builds": out}
         except Exception as e:
             return _error(e, "list_action_builds")
+
+    def _ios_source_eligible(self, run: dict, gh) -> bool:
+        return bool(
+            run.get("status") == "completed"
+            and run.get("event") in {"push", "workflow_dispatch"}
+            and str(run.get("path", "")).split("@", 1)[0] in IOS_SOURCE_WORKFLOW_PATHS
+            and str((run.get("head_repository") or {}).get("full_name", "")).lower()
+            == f"{gh.owner}/{gh.repo}".lower()
+        )
+
+    def list_ios_upload_builds(self, limit: int = 20) -> dict:
+        """List completed builds that still have an IPA, including failed uploads."""
+        try:
+            gh = self._github()
+            limit = max(1, min(int(limit), 50))
+            artifacts = gh.list_repo_artifacts(name="niyien-ios", per_page=100)
+            builds, seen = [], set()
+            for artifact in artifacts:
+                if artifact.get("name") != "niyien-ios" or artifact.get("expired"):
+                    continue
+                run_id = int((artifact.get("workflow_run") or {}).get("id", 0) or 0)
+                if not run_id or run_id in seen:
+                    continue
+                seen.add(run_id)
+                run = gh.get_workflow_run(run_id=run_id)
+                if not run or not self._ios_source_eligible(run, gh):
+                    continue
+                builds.append({
+                    "run_id": run_id, "run_number": run.get("run_number", 0),
+                    "name": run.get("name", ""), "title": run.get("display_title", ""),
+                    "branch": run.get("head_branch", ""), "head_sha": run.get("head_sha", ""),
+                    "created_at": run.get("created_at", ""), "conclusion": run.get("conclusion", ""),
+                })
+                if len(builds) >= limit:
+                    break
+            return {"ok": True, "builds": builds}
+        except Exception as e:
+            return _error(e, "list_ios_upload_builds")
+
+    def list_ios_connect_uploads(self) -> dict:
+        """Return recent standalone upload statuses without opening GitHub."""
+        try:
+            gh = self._github()
+            runs = gh.list_repo_workflow_runs(per_page=100, status="")
+            uploads = [{
+                "run_id": run.get("id", 0), "title": run.get("display_title", ""),
+                "status": run.get("status", ""), "conclusion": run.get("conclusion", ""),
+                "created_at": run.get("created_at", ""),
+            } for run in runs if str(run.get("path", "")).split("@", 1)[0]
+                == f".github/workflows/{IOS_UPLOAD_WORKFLOW_FILE}"]
+            return {"ok": True, "uploads": uploads[:10]}
+        except Exception as e:
+            return _error(e, "list_ios_connect_uploads")
+
+    def upload_existing_ios_ipa(self, source_run_id: int) -> dict:
+        """Revalidate the selected artifact and dispatch only the upload workflow."""
+        try:
+            if type(source_run_id) is not int or not 0 < source_run_id <= 9007199254740991:
+                return {"ok": False, "error": "请选择有效的 iOS 构建"}
+            gh = self._github()
+            run = gh.get_workflow_run(run_id=source_run_id)
+            if not run or not self._ios_source_eligible(run, gh):
+                return {"ok": False, "error": "所选来源不是本仓库已结束的 iOS 构建，请刷新列表"}
+            artifacts = [item for item in gh.list_run_artifacts(run_id=source_run_id)
+                         if item.get("name") == "niyien-ios" and not item.get("expired")]
+            if len(artifacts) != 1:
+                return {"ok": False, "error": "该构建的 IPA 产物已过期、被删除或不唯一，请重新选择"}
+            workflows = gh.list_workflows()
+            workflow = next((item for item in workflows if item.get("path")
+                             == f".github/workflows/{IOS_UPLOAD_WORKFLOW_FILE}"), None)
+            if not workflow or workflow.get("state") != "active":
+                return {"ok": False, "error": "独立 iOS 上传工作流尚未启用，请先将 ios-upload.yml 和配套脚本推送到仓库默认分支"}
+            branch = str(gh.get_repo().get("default_branch", "")).strip()
+            if not branch:
+                return {"ok": False, "error": "无法读取仓库默认分支，尚未触发上传"}
+            gh.dispatch_workflow(IOS_UPLOAD_WORKFLOW_FILE, branch,
+                                 inputs={"source_run_id": str(source_run_id)})
+            return {"ok": True, "source_run_id": source_run_id,
+                    "message": f"已提交构建 #{run.get('run_number', source_run_id)} 的 iOS 上传任务；需要时会先补签名，不重新编译。请刷新下方上传记录查看结果。"}
+        except Exception as e:
+            return _error(e, "upload_existing_ios_ipa")
 
     def list_plugin_action_builds(self, limit: int = 20) -> dict:
         """Recent Action runs for the configured plugins owner/repo."""

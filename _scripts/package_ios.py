@@ -48,12 +48,12 @@ def validate_distribution_toolchain(xcode_version, sdk_version, executable_build
             raise ValueError("App Store Connect requires an executable built with iOS SDK 26 or later")
 
 
-def signing_settings(kind, metadata):
+def signing_settings(kind, metadata, *, profile=None, key=None):
     if kind == "unsigned":
         return None
     development = kind == "development"
-    profile = Path(os.environ.get("PROVISIONING_PROFILE", ROOT / "_deployment/ios" / ("NiYien_dev.mobileprovision" if development else "NiYien_dist.mobileprovision")))
-    key = os.environ.get("SIGN_KEY", "F4722C6FA73CC1749FFFDECFD1B04599513757B4" if development else "91B8D990131A6DE4525121FC14D56B39633ED71F")
+    profile = Path(profile or os.environ.get("PROVISIONING_PROFILE", ROOT / "_deployment/ios" / ("NiYien_dev.mobileprovision" if development else "NiYien_dist.mobileprovision")))
+    key = key or os.environ.get("SIGN_KEY", "F4722C6FA73CC1749FFFDECFD1B04599513757B4" if development else "91B8D990131A6DE4525121FC14D56B39633ED71F")
     if not profile.is_file():
         raise ValueError(f"Missing provisioning profile for {metadata['bundle_identifier']}: {profile}")
     data = plistlib.loads(subprocess.check_output(["security", "cms", "-D", "-i", str(profile)]))
@@ -87,6 +87,20 @@ def make_icons(stage, app, metadata):
         run("sips", "-z", size, size, ROOT / "_deployment/ios/NiYienIcon.png", "--out", iconset / item["filename"], stdout=subprocess.DEVNULL)
     run("xcrun", "actool", assets, "--compile", app, "--platform", "iphoneos", "--minimum-deployment-target", metadata["minimum_os_version"], "--app-icon", "AppIcon", "--output-partial-info-plist", stage / "AppIcon.plist")
     return plistlib.loads((stage / "AppIcon.plist").read_bytes())
+
+
+def sign_app(app, stage, signing_info):
+    provision, key, granted = signing_info
+    shutil.copy2(provision, app / "embedded.mobileprovision")
+    keys = ("application-identifier", "com.apple.developer.team-identifier", "get-task-allow", "beta-reports-active", "com.apple.developer.kernel.increased-memory-limit")
+    entitlements = {name: granted[name] for name in keys if name in granted}
+    entitlements["keychain-access-groups"] = [granted["application-identifier"]]
+    entitlement_path = stage / "entitlements.xcent"
+    entitlement_path.write_bytes(plistlib.dumps(entitlements))
+    for framework in sorted((app / "Frameworks").glob("*.framework")):
+        run("codesign", "--force", "--sign", key, framework)
+    run("codesign", "--force", "--generate-entitlement-der", "--sign", key, "--entitlements", entitlement_path, app)
+    run("codesign", "--verify", "--deep", "--strict", "--verbose=2", app)
 
 
 def package(profile, signing):
@@ -137,17 +151,7 @@ def package(profile, signing):
     run("xcrun", "dsymutil", executable, "-o", stage / "NiYien.app.dSYM")
 
     if signing_info:
-        provision, key, granted = signing_info
-        shutil.copy2(provision, app / "embedded.mobileprovision")
-        keys = ("application-identifier", "com.apple.developer.team-identifier", "get-task-allow", "beta-reports-active", "com.apple.developer.kernel.increased-memory-limit")
-        entitlements = {key: granted[key] for key in keys if key in granted}
-        entitlements["keychain-access-groups"] = [granted["application-identifier"]]
-        entitlement_path = stage / "entitlements.xcent"
-        entitlement_path.write_bytes(plistlib.dumps(entitlements))
-        for framework in sorted((app / "Frameworks").glob("*.framework")):
-            run("codesign", "--force", "--sign", key, framework)
-        run("codesign", "--force", "--generate-entitlement-der", "--sign", key, "--entitlements", entitlement_path, app)
-        run("codesign", "--verify", "--deep", "--strict", "--verbose=2", app)
+        sign_app(app, stage, signing_info)
     else:
         print("Unsigned package: a matching provisioning profile is required before installation or upload.", flush=True)
 

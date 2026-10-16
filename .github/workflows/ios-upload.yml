@@ -1,0 +1,157 @@
+name: iOS upload to App Store Connect
+run-name: Upload iOS IPA from run ${{ inputs.source_run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: 'Source build run ID (the number after /actions/runs/ in its URL)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  upload:
+    runs-on: macos-26
+    timeout-minutes: 45
+    concurrency:
+      group: niyien-ios-app-store-upload
+      cancel-in-progress: false
+    env:
+      IOS_UPLOAD_TO_CONNECT: 'true'
+      SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate source build and find IPA artifact
+        id: source
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const id = process.env.SOURCE_RUN_ID;
+            if (!/^[1-9][0-9]*$/.test(id) || !Number.isSafeInteger(Number(id))) {
+              throw new Error('Enter the numeric run ID from the source build URL, not its run number.');
+            }
+            const {data: run} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: Number(id)});
+            const paths = ['.github/workflows/release.yml', '.github/workflows/ios-release.yml'];
+            if (run.status !== 'completed' || !['push', 'workflow_dispatch'].includes(run.event)
+                || run.head_repository?.full_name !== `${context.repo.owner}/${context.repo.repo}`
+                || !paths.includes(run.path.split('@')[0])) {
+              throw new Error('Select a completed release or historical iOS release run from this repository.');
+            }
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts,
+              {...context.repo, run_id: Number(id), per_page: 100});
+            const matches = artifacts.filter(artifact => artifact.name === 'niyien-ios' && !artifact.expired);
+            if (matches.length !== 1) {
+              throw new Error('The run must contain one unexpired niyien-ios artifact with its IPA and receipt.');
+            }
+            core.setOutput('artifact_id', String(matches[0].id));
+            core.exportVariable('SOURCE_COMMIT', run.head_sha);
+            await core.summary.addHeading('Selected iOS build')
+              .addLink(`Source run ${id}`, run.html_url)
+              .addRaw(`\n\nCommit: ${run.head_sha}\n`).write();
+
+      - name: Download the selected IPA and receipt
+        uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ steps.source.outputs.artifact_id }}
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+          path: target/ios-source
+
+      - name: Test iOS build and upload helpers
+        run: python3 -B -m unittest discover -s _scripts/tests -p 'test_ios*.py'
+
+      - name: Verify IPA and check required configuration
+        id: config
+        env:
+          IOS_CERTIFICATES: ${{ secrets.IOS_CERTIFICATES }}
+          IOS_CERTIFICATE_PWD: ${{ secrets.IOS_CERTIFICATE_PWD }}
+          MACOS_CERTIFICATES: ${{ secrets.MACOS_CERTIFICATES }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          MACOS_ACCOUNT_USER: ${{ secrets.MACOS_ACCOUNT_USER }}
+          MACOS_ACCOUNT_PASS: ${{ secrets.MACOS_ACCOUNT_PASS }}
+          IOS_PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
+          IOS_SIGNING_FINGERPRINT: ${{ vars.IOS_SIGNING_FINGERPRINT }}
+          APPSTORE_ISSUER_ID: ${{ vars.APPSTORE_ISSUER_ID || secrets.APPSTORE_ISSUER_ID || secrets.MACOS_ITCONNECT_ISSUER }}
+          APPSTORE_API_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID || secrets.APPSTORE_API_KEY_ID || secrets.MACOS_ITCONNECT_KEY_ID }}
+          APPSTORE_API_PRIVATE_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY || secrets.MACOS_ITCONNECT_KEY }}
+        run: python3 _scripts/ios_upload_existing.py check-config
+
+      - name: Install Apple Distribution certificate
+        if: steps.config.outputs.needs_signing == 'true'
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.IOS_CERTIFICATES || secrets.MACOS_CERTIFICATES }}
+          p12-password: ${{ secrets.IOS_CERTIFICATE_PWD || secrets.MACOS_CERTIFICATE_PWD }}
+
+      - name: Download App Store provisioning profiles
+        if: steps.config.outputs.needs_signing == 'true' && steps.config.outputs.profile_mode == 'api'
+        id: provisioning
+        uses: apple-actions/download-provisioning-profiles@v3
+        with:
+          bundle-id: ${{ steps.config.outputs.bundle_identifier }}
+          profile-type: IOS_APP_STORE
+          issuer-id: ${{ vars.APPSTORE_ISSUER_ID || secrets.APPSTORE_ISSUER_ID || secrets.MACOS_ITCONNECT_ISSUER }}
+          api-key-id: ${{ vars.APPSTORE_API_KEY_ID || secrets.APPSTORE_API_KEY_ID || secrets.MACOS_ITCONNECT_KEY_ID }}
+          api-private-key: ${{ secrets.APPSTORE_API_PRIVATE_KEY || secrets.MACOS_ITCONNECT_KEY }}
+
+      - name: Select matching provisioning profile
+        if: steps.config.outputs.needs_signing == 'true'
+        env:
+          IOS_PROVISIONING_PROFILES: ${{ steps.provisioning.outputs.profiles }}
+          IOS_PROFILE_MODE: ${{ steps.config.outputs.profile_mode }}
+          IOS_PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
+          IOS_SIGNING_FINGERPRINT: ${{ vars.IOS_SIGNING_FINGERPRINT }}
+        run: python3 _scripts/ios_ci.py prepare-signing
+
+      - name: Prepare signed IPA without rebuilding
+        id: package
+        run: python3 _scripts/ios_upload_existing.py prepare
+
+      - name: Save the exact upload IPA and receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: niyien-ios-connect
+          compression-level: 0
+          if-no-files-found: error
+          path: |
+            _deployment/_binaries/ios-upload/*.ipa
+            _deployment/_binaries/ios-upload/ios/build-receipt.json
+
+      - name: Upload using existing Apple account
+        if: steps.config.outputs.upload_mode == 'account'
+        env:
+          MACOS_ACCOUNT_USER: ${{ secrets.MACOS_ACCOUNT_USER }}
+          MACOS_ACCOUNT_PASS: ${{ secrets.MACOS_ACCOUNT_PASS }}
+        run: python3 _scripts/ios_upload_existing.py upload-account
+
+      - name: Upload using App Store Connect API
+        if: steps.config.outputs.upload_mode == 'api'
+        uses: apple-actions/upload-testflight-build@v5
+        with:
+          app-path: ${{ steps.package.outputs.ipa_path }}
+          app-type: ios
+          issuer-id: ${{ vars.APPSTORE_ISSUER_ID || secrets.APPSTORE_ISSUER_ID || secrets.MACOS_ITCONNECT_ISSUER }}
+          api-key-id: ${{ vars.APPSTORE_API_KEY_ID || secrets.APPSTORE_API_KEY_ID || secrets.MACOS_ITCONNECT_KEY_ID }}
+          api-private-key: ${{ secrets.APPSTORE_API_PRIVATE_KEY || secrets.MACOS_ITCONNECT_KEY }}
+          backend: appstore-api
+
+      - name: Summarize uploaded version
+        uses: actions/github-script@v7
+        env:
+          IPA_VERSION: ${{ steps.package.outputs.version }}
+          IPA_BUILD: ${{ steps.package.outputs.build_number }}
+          IPA_RESIGNED: ${{ steps.config.outputs.needs_signing }}
+        with:
+          script: |
+            await core.summary.addHeading('Uploaded to App Store Connect')
+              .addTable([['Version', 'Build', 'Re-signed'],
+                [process.env.IPA_VERSION, process.env.IPA_BUILD, process.env.IPA_RESIGNED]])
+              .addRaw('\nThe original version and build number were preserved. Check Apple processing in App Store Connect.\n')
+              .write();

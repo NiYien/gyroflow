@@ -47,7 +47,7 @@ def upload_requested(environment, root=ROOT):
     return parse_boolean(environment.get("IOS_UPLOAD_TO_CONNECT", "false"))
 
 
-def check_config(environment, root=ROOT):
+def check_config(environment, root=ROOT, require_signing=True):
     reference = environment.get("GITHUB_REF", "")
     if reference.startswith("refs/tags/") and not re.fullmatch(r"refs/tags/v[0-9]+\.[0-9]+\.[0-9]+", reference):
         raise ValueError("Release tags must use v<major>.<minor>.<patch>")
@@ -58,14 +58,14 @@ def check_config(environment, root=ROOT):
     present = lambda name: bool(environment.get(name, "").strip())
     missing = []
     for primary, fallback in (("IOS_CERTIFICATES", "MACOS_CERTIFICATES"), ("IOS_CERTIFICATE_PWD", "MACOS_CERTIFICATE_PWD")):
-        if not present(primary) and not present(fallback):
+        if require_signing and not present(primary) and not present(fallback):
             missing.append(f"{fallback} (or {primary})")
     has_account = present("MACOS_ACCOUNT_USER") and present("MACOS_ACCOUNT_PASS")
     missing_api = [name for name, alias in API_CONFIGURATION.items() if not present(name) and not present(alias)]
     has_api = not missing_api
     if not has_account and not has_api:
         missing.append("MACOS_ACCOUNT_USER + MACOS_ACCOUNT_PASS, or " + ", ".join(missing_api))
-    if not has_api and not present("IOS_PROVISIONING_PROFILE"):
+    if require_signing and not has_api and not present("IOS_PROVISIONING_PROFILE"):
         missing.append("IOS_PROVISIONING_PROFILE (or complete App Store Connect API credentials)")
     if missing:
         raise ValueError("Configure GitHub Actions secrets/variables: " + ", ".join(missing))
@@ -171,9 +171,16 @@ def write_github_values(filename, values):
 def upload_account(environment, root=ROOT, runner=subprocess.run):
     if not upload_requested(environment, root):
         raise ValueError("App Store Connect upload is disabled for this run")
+    ipa = prepare_artifact(root)["ipa_path"]
+    upload_ipa_account(environment, ipa, root, runner)
+
+
+def upload_ipa_account(environment, ipa, root=ROOT, runner=subprocess.run):
+    """Upload an IPA that the caller has already validated."""
+    if not upload_requested(environment, root):
+        raise ValueError("App Store Connect upload is disabled for this run")
     if not environment.get("MACOS_ACCOUNT_USER", "").strip() or not environment.get("MACOS_ACCOUNT_PASS", "").strip():
         raise ValueError("MACOS_ACCOUNT_USER and MACOS_ACCOUNT_PASS are required for account upload")
-    ipa = prepare_artifact(root)["ipa_path"]
     result = runner(["xcrun", "altool", "--upload-app", "--file", ipa, "--type", "ios",
                      "--username", environment["MACOS_ACCOUNT_USER"], "--password", "@env:MACOS_ACCOUNT_PASS"],
                     env={**os.environ, **environment}, check=False)

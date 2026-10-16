@@ -575,7 +575,7 @@ document.querySelectorAll('[data-action-nav]').forEach(btn => {
 // ---- Publish view logic ----
 
 const publishState = {
-  mode: null,       // 'trigger' | 'tag' | 'select'
+  mode: null,       // 'trigger' | 'tag' | 'select' | 'ios-upload'
   source: null,     // 'release' | 'artifact' (only for mode=select)
   selected: null,   // selected release/artifact entry
   // Lookup map cached at startup. `null` means "not loaded / load failed"
@@ -1253,12 +1253,130 @@ function refreshReleasePlanChecklist() {
   }
 }
 
+// Upload an existing iOS build without entering a run ID.
+const iosUploadState = { builds: [], loading: false, submitting: false, historyLoading: false, submittedRunId: null };
+
+function refreshIosUploadControls() {
+  const select = document.getElementById('ios-upload-build');
+  const busy = iosUploadState.loading || iosUploadState.submitting;
+  const selected = iosUploadState.builds.find(build => String(build.run_id) === select.value);
+  select.disabled = busy || !iosUploadState.builds.length;
+  document.getElementById('ios-upload-builds-refresh').disabled = busy;
+  document.getElementById('ios-upload-submit').disabled = busy || !selected
+    || selected.run_id === iosUploadState.submittedRunId;
+}
+
+async function loadIosUploadBuilds() {
+  if (iosUploadState.loading || iosUploadState.submitting) return;
+  iosUploadState.loading = true;
+  iosUploadState.builds = [];
+  iosUploadState.submittedRunId = null;
+  const select = document.getElementById('ios-upload-build');
+  const status = document.getElementById('ios-upload-builds-status');
+  select.replaceChildren();
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = '请选择一个已有构建';
+  select.appendChild(placeholder);
+  status.textContent = '正在查找仍保留 IPA 的构建…';
+  refreshIosUploadControls();
+  try {
+    const result = await pywebview.api.list_ios_upload_builds();
+    if (!result.ok) throw new Error(result.error);
+    iosUploadState.builds = result.builds || [];
+    for (const build of iosUploadState.builds) {
+      const option = document.createElement('option');
+      option.value = String(build.run_id);
+      option.textContent = `#${build.run_number} · ${build.title || build.name} · ${build.branch} · ${fmtRelativeTime(build.created_at)}`;
+      select.appendChild(option);
+    }
+    status.textContent = iosUploadState.builds.length
+      ? `找到 ${iosUploadState.builds.length} 个可选构建，版本号以所选 IPA 为准。`
+      : '没有找到可用 IPA。请先触发一次包含 iOS 的构建；已过期或已删除的产物不会显示。';
+  } catch (error) {
+    status.textContent = `加载构建失败：${error.message || error}`;
+  } finally {
+    iosUploadState.loading = false;
+    refreshIosUploadControls();
+  }
+}
+
+async function loadIosUploadHistory() {
+  if (iosUploadState.historyLoading) return;
+  iosUploadState.historyLoading = true;
+  const button = document.getElementById('ios-upload-history-refresh');
+  const container = document.getElementById('ios-upload-history');
+  button.disabled = true;
+  container.textContent = '正在读取上传状态…';
+  try {
+    const result = await pywebview.api.list_ios_connect_uploads();
+    if (!result.ok) throw new Error(result.error);
+    const uploads = result.uploads || [];
+    if (!uploads.length) {
+      container.textContent = '暂无独立上传记录。新提交的任务可能需要稍等片刻再刷新。';
+      return;
+    }
+    container.innerHTML = uploads.map(upload => {
+      let status = '排队中';
+      let color = 'text-slate-600';
+      if (upload.status === 'in_progress') status = '正在签名或上传';
+      if (upload.status === 'completed') {
+        status = ({ success: '已上传，等待苹果处理', failure: '上传失败', cancelled: '已取消',
+          timed_out: '上传超时', skipped: '已跳过' })[upload.conclusion] || '未完成上传';
+        color = upload.conclusion === 'success' ? 'text-emerald-600' : 'text-red-600';
+      }
+      const sourceId = String(upload.title).match(/^Upload iOS IPA from run ([0-9]+)$/)?.[1];
+      const source = iosUploadState.builds.find(build => String(build.run_id) === sourceId);
+      const title = source ? `构建 #${source.run_number} · ${source.title || source.name}` : upload.title;
+      return `<div class="py-2 border-b border-slate-100"><div>${escapeHtml(title)}</div>
+        <div class="text-xs mt-1"><span class="${color}">${escapeHtml(status)}</span>
+        · ${escapeHtml(fmtRelativeTime(upload.created_at))}</div></div>`;
+    }).join('');
+  } catch (error) {
+    container.textContent = `读取上传状态失败：${error.message || error}`;
+  } finally {
+    iosUploadState.historyLoading = false;
+    button.disabled = false;
+  }
+}
+
+document.getElementById('ios-upload-builds-refresh')?.addEventListener('click', loadIosUploadBuilds);
+document.getElementById('ios-upload-history-refresh')?.addEventListener('click', loadIosUploadHistory);
+document.getElementById('ios-upload-build')?.addEventListener('change', () => {
+  document.getElementById('ios-upload-result').textContent = '';
+  refreshIosUploadControls();
+});
+document.getElementById('ios-upload-submit')?.addEventListener('click', async () => {
+  if (iosUploadState.submitting || iosUploadState.loading) return;
+  const selected = iosUploadState.builds.find(build => String(build.run_id) === document.getElementById('ios-upload-build').value);
+  if (!selected || selected.run_id === iosUploadState.submittedRunId) return;
+  iosUploadState.submitting = true;
+  refreshIosUploadControls();
+  const resultEl = document.getElementById('ios-upload-result');
+  resultEl.textContent = '正在提交上传任务…';
+  resultEl.className = 'text-sm text-slate-600';
+  try {
+    const result = await pywebview.api.upload_existing_ios_ipa(selected.run_id);
+    if (!result.ok) throw new Error(result.error);
+    iosUploadState.submittedRunId = selected.run_id;
+    resultEl.textContent = result.message;
+    resultEl.className = 'text-sm text-emerald-600';
+    await loadIosUploadHistory();
+  } catch (error) {
+    resultEl.textContent = `提交未成功确认：${error.message || error}。请先刷新上传状态，确认是否已启动再重试。`;
+    resultEl.className = 'text-sm text-red-600';
+  } finally {
+    iosUploadState.submitting = false;
+    refreshIosUploadControls();
+  }
+});
+
 // Mode switcher
 document.querySelectorAll('.mode-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     const mode = btn.dataset.mode;
     publishState.mode = mode;
-    document.getElementById('ios-connect-option')?.classList.toggle('hidden', mode === 'select');
+    document.getElementById('ios-connect-option')?.classList.toggle('hidden', !['trigger', 'tag'].includes(mode));
     document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b === btn));
     document.querySelectorAll('.mode-panel').forEach(p => {
       p.classList.toggle('hidden', p.dataset.modePanel !== mode);
@@ -1266,6 +1384,10 @@ document.querySelectorAll('.mode-btn').forEach(btn => {
     if (mode === 'select' && !publishState.source) {
       // Default to release when first entering mode=select
       document.querySelector('.source-btn[data-source="release"]').click();
+    }
+    if (mode === 'ios-upload') {
+      loadIosUploadBuilds();
+      loadIosUploadHistory();
     }
   });
 });
