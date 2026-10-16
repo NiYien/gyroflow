@@ -101,7 +101,7 @@ def extract_ipa(ipa, stage):
 def verify_distribution(app, metadata, stage):
     run("codesign", "--verify", "--deep", "--strict", "--verbose=2", app)
     certificate_prefix = stage / "signer-"
-    run("codesign", "--display", "--extract-certificates", certificate_prefix, app)
+    run("codesign", "--display", f"--extract-certificates={certificate_prefix}", app)
     fingerprint = hashlib.sha1(Path(str(certificate_prefix) + "0").read_bytes()).hexdigest()
     _, _, granted = signing_settings("distribution", metadata,
                                     profile=app / "embedded.mobileprovision", key=fingerprint)

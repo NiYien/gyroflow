@@ -203,9 +203,10 @@ class ExistingIPAUploadTests(unittest.TestCase):
         (self.root / 'signer-0').write_bytes(certificate)
         granted = {'application-identifier': 'TEAM.com.niyien.stabilizer',
                    'com.apple.developer.team-identifier': 'TEAM', 'get-task-allow': False}
-        with patch.object(upload, 'run'), patch.object(upload, 'signing_settings', return_value=(None, None, granted)) as settings:
+        with patch.object(upload, 'run') as command, patch.object(upload, 'signing_settings', return_value=(None, None, granted)) as settings:
             with patch.object(upload.subprocess, 'check_output', return_value=plistlib.dumps(granted)):
                 upload.verify_distribution(app, self.receipt, self.root)
+            command.assert_any_call('codesign', '--display', f'--extract-certificates={self.root / "signer-"}', app)
             settings.assert_called_once_with('distribution', self.receipt, profile=app / 'embedded.mobileprovision',
                                              key=hashlib.sha1(certificate).hexdigest())
             for actual in [{**granted, 'get-task-allow': True}, {**granted, 'application-identifier': 'OTHER.app'}]:
