@@ -67,6 +67,11 @@ jobs:
         with:
           fetch-depth: ${{ matrix.targets.type == 'ios' && '0' || '1' }}
 
+      - name: Prepare shared mobile version
+        if: matrix.targets.type == 'android' || matrix.targets.type == 'ios'
+        shell: bash
+        run: ${{ matrix.targets.type == 'android' && 'python' || 'python3' }} _scripts/mobile_version.py --prepare-ci
+
       - name: Test iOS build helpers
         if: matrix.targets.type == 'ios'
         run: python3 -B -m unittest discover -s _scripts/tests -p 'test_ios*.py'

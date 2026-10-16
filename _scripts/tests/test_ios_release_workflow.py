@@ -62,6 +62,16 @@ class IOSReleaseWorkflowTests(unittest.TestCase):
                 with self.subTest(platform=platform, step=step):
                     self.assertEqual(self.enabled(step, platform), platform == 'ios')
 
+    def test_mobile_version_is_prepared_for_both_platforms_before_metadata_or_build(self):
+        step = 'Prepare shared mobile version'
+        for platform in self.platforms:
+            self.assertEqual(self.enabled(step, platform), platform in ('android', 'ios'))
+        self.assertIn('_scripts/mobile_version.py --prepare-ci', self.steps[step])
+        self.assertLess(self.build.index('actions/checkout@v4'), self.build.index('name: ' + step))
+        for command in ['name: Test iOS build helpers', 'name: Check iOS configuration',
+                        'just android deploy', 'name: Build IPA']:
+            self.assertLess(self.build.index('name: ' + step), self.build.index(command))
+
     def test_signing_and_upload_steps_require_both_ios_and_checked_option(self):
         signing = ['Install Apple Distribution certificate', 'Select matching provisioning profile']
         for platform in self.platforms:
