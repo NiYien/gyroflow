@@ -2878,6 +2878,7 @@ Rectangle {
     }
 
     Connections {
+        id: appUpdateConnections;
         target: controller;
         function onError(text: string, arg: string, callback: string): void {
             text = getReadableError(qsTr(text).arg(arg));
@@ -2959,12 +2960,10 @@ Rectangle {
         function onApp_update_error(message: string): void {
             window.closeAppUpdateDialog();
             // Mirrors INSTALL_PERMISSION_REQUIRED_ERROR in src/distribution.rs:
-            // Android opened the "install unknown apps" settings page; the
-            // downloaded APK stays cached, so a retry needs no re-download.
+            // Android resumes installation after permission is granted. Keep the
+            // ready dialog available if the user returns without granting it.
             if (message === "install-permission-required") {
-                appUpdateDialog = messageBox(Modal.Info, qsTr("Please allow Gyroflow to install apps in the system settings page that just opened, then press Install again."), [
-                    { text: qsTr("Close") }
-                ]);
+                appUpdateConnections.onApp_update_ready("", "android", appUpdateReadyMessage);
                 return;
             }
             appUpdateDialog = messageBox(Modal.Error, qsTr("Update failed: %1").arg(message), [

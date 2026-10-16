@@ -79,6 +79,9 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
     private static final String UPDATE_TAG = "GyroflowNiYienUpdate";
     // Must match the <provider android:authorities=...> entry in AndroidManifest.xml.
     private static final String UPDATE_PROVIDER_AUTHORITY = "com.niyien.stabilizer.updateprovider";
+    private static final int UPDATE_REQUEST_INSTALL_PERMISSION = 0x6713;
+    private static final String PENDING_UPDATE_APK = "pendingUpdateApk";
+    private String pendingUpdateApk;
 
     private static MainActivity instance;
 
@@ -176,6 +179,9 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
         }
         super.onCreate(savedInstanceState);
         instance = this;
+        if (savedInstanceState != null) {
+            pendingUpdateApk = savedInstanceState.getString(PENDING_UPDATE_APK);
+        }
         forceShowSystemBars("onCreate");
         applyOrientationPolicy();
         applySystemBarInsets();
@@ -184,6 +190,12 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
         if (intent != null && intent.getAction() != null) {
             processIntent(intent);
         }
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        outState.putString(PENDING_UPDATE_APK, pendingUpdateApk);
+        super.onSaveInstanceState(outState);
     }
 
     @Override
@@ -305,6 +317,23 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
         }
         // Qt still owns its result-listener cleanup; our URI dispatch is additive.
         super.onActivityResult(requestCode, resultCode, data);
+
+        if (requestCode == UPDATE_REQUEST_INSTALL_PERMISSION) {
+            String path = pendingUpdateApk;
+            pendingUpdateApk = null;
+            // Settings does not return a reliable result code; check the actual grant.
+            if (path != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    && getPackageManager().canRequestPackageInstalls()) {
+                String status = installApk(path);
+                if (status.startsWith("error:")) {
+                    new android.app.AlertDialog.Builder(this)
+                            .setMessage(status.substring("error:".length()))
+                            .setPositiveButton(android.R.string.ok, null)
+                            .show();
+                }
+            }
+            return;
+        }
 
         if (requestCode == PICKER_REQUEST_STORAGE_ACCESS) {
             String options = pendingFolderOptions;
@@ -582,24 +611,21 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                     && !activity.getPackageManager().canRequestPackageInstalls()) {
-                // Guide the user to the per-app "install unknown apps" grant;
-                // the Rust side maps "needs-permission" to a dedicated dialog
-                // and the cached APK stays ready for a retry after granting.
+                // Keep the APK until settings returns, including Activity recreation.
                 Intent settings = new Intent(
                         android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                         Uri.parse("package:" + activity.getPackageName()));
-                settings.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                String settingsError = startActivityOnUiThreadBlocking(activity, settings);
+                String settingsError = startActivityOnUiThreadBlocking(activity, settings, path);
                 Log.i(UPDATE_TAG, "install blocked: unknown-sources not granted, opened settings"
                         + (settingsError != null ? " (settings open failed: " + settingsError + ")" : ""));
-                return "needs-permission";
+                return settingsError == null ? "needs-permission" : "error:" + settingsError;
             }
             Uri uri = androidx.core.content.FileProvider.getUriForFile(
                     activity, UPDATE_PROVIDER_AUTHORITY, apk);
             Intent install = new Intent(Intent.ACTION_VIEW);
             install.setDataAndType(uri, "application/vnd.android.package-archive");
             install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
-            String error = startActivityOnUiThreadBlocking(activity, install);
+            String error = startActivityOnUiThreadBlocking(activity, install, null);
             if (error != null) {
                 return "error:" + error;
             }
@@ -615,14 +641,20 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
     // startActivity must run on the UI thread; block the (Rust worker) caller
     // briefly so dispatch failures propagate back into the returned status
     // instead of vanishing in a fire-and-forget runnable.
-    private static String startActivityOnUiThreadBlocking(MainActivity activity, Intent intent) {
+    private static String startActivityOnUiThreadBlocking(MainActivity activity, Intent intent, String pendingApk) {
         final java.util.concurrent.atomic.AtomicReference<String> failure =
                 new java.util.concurrent.atomic.AtomicReference<>();
         final java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
         activity.runOnUiThread(() -> {
             try {
-                activity.startActivity(intent);
+                if (pendingApk != null) {
+                    activity.pendingUpdateApk = pendingApk;
+                    activity.startActivityForResult(intent, UPDATE_REQUEST_INSTALL_PERMISSION);
+                } else {
+                    activity.startActivity(intent);
+                }
             } catch (Throwable t) {
+                if (pendingApk != null) activity.pendingUpdateApk = null;
                 Log.e(UPDATE_TAG, "startActivity failed", t);
                 failure.set(t.toString());
             } finally {
