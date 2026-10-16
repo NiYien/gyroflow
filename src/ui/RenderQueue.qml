@@ -1424,11 +1424,136 @@ Item {
         }
     }
 
+    Item {
+        id: gyroFilesPanel;
+        objectName: "queueGyroFiles";
+        x: 10 * dpiScale;
+        anchors.top: progressRow.bottom;
+        anchors.topMargin: visible ? 5 * dpiScale : 0;
+        width: parent.width - 20 * dpiScale;
+        visible: root.gyroFilesInfo.length > 0;
+        height: visible ? gyroSummary.height + gyroFileList.height : 0;
+        property bool expanded: false;
+        readonly property var counts: {
+            let pending = 0;
+            let failed = 0;
+            for (const info of root.gyroFilesInfo) {
+                if (info.error) failed++;
+                else if (!info.parsed) pending++;
+            }
+            return { pending: pending, failed: failed };
+        }
+        onVisibleChanged: if (!visible) expanded = false;
+
+        QQC.ItemDelegate {
+            id: gyroSummary;
+            objectName: "queueGyroSummary";
+            width: parent.width;
+            height: summaryColumn.implicitHeight + 16 * dpiScale;
+            leftPadding: 10 * dpiScale;
+            rightPadding: 10 * dpiScale;
+            topPadding: 8 * dpiScale;
+            bottomPadding: 8 * dpiScale;
+            text: qsTranslate("MobileWorkspace", "Gyroscope data") + " · " + root.gyroFilesInfo.length;
+            contentItem: Column {
+                id: summaryColumn;
+                spacing: 4 * dpiScale;
+                BasicText {
+                    width: parent.width;
+                    leftPadding: 0;
+                    textFormat: Text.PlainText;
+                    text: (gyroFilesPanel.expanded ? "▾  " : "▸  ") + gyroSummary.text;
+                    font.bold: true;
+                    elide: Text.ElideRight;
+                }
+                BasicText {
+                    width: parent.width;
+                    leftPadding: 0;
+                    visible: text.length > 0;
+                    textFormat: Text.PlainText;
+                    text: {
+                        let parts = [];
+                        if (gyroFilesPanel.counts.pending) parts.push(qsTranslate("MobileWorkspace", "Reading…") + " (" + gyroFilesPanel.counts.pending + ")");
+                        if (gyroFilesPanel.counts.failed) parts.push(qsTr("Failed to load the gyro file.") + " (" + gyroFilesPanel.counts.failed + ")");
+                        return parts.join(" · ");
+                    }
+                    color: gyroFilesPanel.counts.failed ? root.errorStatusColor : styleTextColor;
+                    wrapMode: Text.Wrap;
+                }
+            }
+            background: Rectangle {
+                color: styleButtonColor;
+                opacity: gyroSummary.hovered || gyroSummary.activeFocus ? 0.6 : 0.3;
+                radius: 4 * dpiScale;
+            }
+            onClicked: gyroFilesPanel.expanded = !gyroFilesPanel.expanded;
+        }
+
+        ListView {
+            id: gyroFileList;
+            objectName: "queueGyroFileList";
+            y: gyroSummary.height;
+            width: parent.width;
+            height: gyroFilesPanel.visible && gyroFilesPanel.expanded ? Math.min(contentHeight, 180 * dpiScale, root.height * 0.25) : 0;
+            visible: height > 0;
+            clip: true;
+            boundsBehavior: Flickable.StopAtBounds;
+            model: root.gyroFilesInfo;
+            QQC.ScrollIndicator.vertical: QQC.ScrollIndicator { }
+            delegate: Item {
+                required property var modelData;
+                required property int index;
+                width: gyroFileList.width;
+                height: 32 * dpiScale;
+                Rectangle {
+                    x: 10 * dpiScale;
+                    anchors.verticalCenter: parent.verticalCenter;
+                    width: 4 * dpiScale;
+                    height: 16 * dpiScale;
+                    radius: 2 * dpiScale;
+                    color: root.gyroColors[index % root.gyroColors.length];
+                }
+                BasicText {
+                    x: 22 * dpiScale;
+                    anchors.verticalCenter: parent.verticalCenter;
+                    width: Math.max(0, gyroFileState.x - x - 10 * dpiScale);
+                    leftPadding: 0;
+                    textFormat: Text.PlainText;
+                    text: modelData.filename || "";
+                    elide: Text.ElideMiddle;
+                }
+                BasicText {
+                    id: gyroFileState;
+                    anchors.right: parent.right;
+                    anchors.rightMargin: 10 * dpiScale;
+                    anchors.verticalCenter: parent.verticalCenter;
+                    width: Math.min(implicitWidth, parent.width * 0.5);
+                    leftPadding: 0;
+                    textFormat: Text.PlainText;
+                    text: modelData.error ? qsTr("Failed to load the gyro file.")
+                        : !modelData.parsed ? qsTranslate("MobileWorkspace", "Reading…")
+                        : modelData.duration_ms > 0 ? Util.timeToStr(modelData.duration_ms / 1000) : "—";
+                    color: modelData.error ? root.errorStatusColor : styleTextColor;
+                    elide: Text.ElideRight;
+                }
+                MouseArea {
+                    anchors.fill: parent;
+                    acceptedButtons: Qt.NoButton;
+                    hoverEnabled: true;
+                    ToolTip {
+                        visible: parent.containsMouse;
+                        text: (modelData.path || modelData.filename || "") + "\n" + gyroFileState.text;
+                    }
+                }
+            }
+        }
+    }
+
     // T7: Pairing mode banner
     Rectangle {
         id: pairingBanner;
         x: 10 * dpiScale;
-        anchors.top: progressRow.bottom;
+        anchors.top: gyroFilesPanel.bottom;
         anchors.topMargin: 5 * dpiScale;
         width: parent.width - 20 * dpiScale;
         height: 0;
