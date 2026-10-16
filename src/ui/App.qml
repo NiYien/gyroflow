@@ -2053,11 +2053,6 @@ Rectangle {
                         id: simpleExperimentalContent;
                         width: parent.width;
                         spacing: 10 * dpiScale;
-                        BasicText {
-                            width: parent.width;
-                            wrapMode: Text.WordWrap;
-                            text: qsTr("These features are experimental and may not be stable yet.");
-                        }
                     }
                 }
                 Hr { id: simpleExperimentalHr; width: parent ? parent.width : 0; visible: simpleExperimentalSection.visible; }

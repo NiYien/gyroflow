@@ -1042,10 +1042,6 @@ Rectangle {
                     Column {
                         visible: root.panel === "experimental"
                         width: parent.width; spacing: 16 * root.unit
-                        MobileText {
-                            width: parent.width; unit: root.unit; dark: root.dark; secondary: true; wrapMode: Text.WordWrap
-                            text: qsTranslate("App", "These features are experimental and may not be stable yet.")
-                        }
                         MobileText { width: parent.width; unit: root.unit; dark: root.dark; secondary: true; wrapMode: Text.WordWrap; text: qsTr("Changes apply to all videos.") }
                         MobileText { visible: root.hasExperimentalPreview; width: parent.width; unit: root.unit; dark: root.dark; wrapMode: Text.WrapAnywhere; text: root.previewRecord ? root.previewRecord.filename : "" }
                         MobileGroup {
