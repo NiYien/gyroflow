@@ -53,7 +53,7 @@ class ExistingIPAUploadTests(unittest.TestCase):
 
     def test_old_runner_paths_and_old_versions_are_supported(self):
         ipa, receipt = upload.read_source(self.source, self.commit, self.root)
-        self.assertEqual(ipa, self.ipa)
+        self.assertEqual(ipa, self.ipa.resolve())
         self.assertEqual((receipt['version'], receipt['build_number']), ('1.0.2', '154.1'))
 
     def test_modified_ipa_and_mismatched_source_commit_are_rejected(self):
