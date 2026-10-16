@@ -49,10 +49,14 @@ def install_inputs():
                     if not (CACHE / member).resolve().is_relative_to(CACHE.resolve()):
                         raise RuntimeError('Unsafe archive member: ' + member)
                 package.extractall(CACHE)
+        elif sys.platform == 'win32':
+            # Windows tar may lack the LZMA codec required by the RED SDK.
+            seven_zip = shutil.which('7z')
+            if not seven_zip:
+                raise RuntimeError('7-Zip (7z.exe) is required on PATH to extract the RED SDK')
+            subprocess.run([seven_zip, 'x', '-y', '-aoa', str(archive), '-o' + str(CACHE)], check=True)
         else:
-            # Both macOS and Windows ship libarchive with 7z support.
-            tar = str(Path(os.environ['SystemRoot']) / 'System32/tar.exe') if sys.platform == 'win32' else '/usr/bin/tar'
-            subprocess.run([tar, '-xf', str(archive), '-C', str(CACHE)], check=True)
+            subprocess.run(['/usr/bin/tar', '-xf', str(archive), '-C', str(CACHE)], check=True)
         if not (CACHE / sentinel).is_file():
             raise RuntimeError('Incomplete SDK package: ' + name)
         stamp.write_text(expected)

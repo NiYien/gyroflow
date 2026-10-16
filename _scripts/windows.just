@@ -335,6 +335,7 @@ deploy:
     }
 
     cargo build --profile deploy --target $Target
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     $TargetDir   = resolve-path "{{ProjectDir}}\_deployment\_binaries\win64"
     $QtDir       = resolve-path "{{QtPath}}\.."
@@ -448,7 +449,7 @@ deploy:
     xcopy /Y "$CargoTarget\mdk.dll"                                      "$TargetDir\"
     xcopy /Y "$CargoTarget\mdk-braw.dll"                                 "$TargetDir\"
     xcopy /Y "$CargoTarget\mdk-r3d.dll"                                  "$TargetDir\"
-    echo F | xcopy /Y "$CargoTarget\gyroflow.exe"                        "$TargetDir\Gyroflow.exe"
+    Copy-Item -LiteralPath "$CargoTarget\gyroflow.exe" -Destination "$TargetDir\Gyroflow.exe" -Force -ErrorAction Stop
     xcopy /Y "$ProjectDir\_deployment\windows\Gyroflow_with_console.bat" "$TargetDir\"
     # xcopy /Y /E "$ProjectDir\resources\camera_presets\*"                 "$TargetDir\camera_presets\"
     mkdir "$TargetDir\camera_presets\" -Force
@@ -506,6 +507,13 @@ deploy:
     if ($LASTEXITCODE -ne 0) { throw "Failed to unpack BRAW runtime" }
     Remove-Item tmp.tar.gz, tmp.tar -Force
 
+    if (-not (Test-Path -LiteralPath "$TargetDir\Gyroflow.exe" -PathType Leaf)) {
+        throw "Cannot package Windows application: Gyroflow.exe is missing from $TargetDir"
+    }
+    if ((Get-Item -LiteralPath "$TargetDir\Gyroflow.exe").Length -eq 0) {
+        throw "Cannot package Windows application: Gyroflow.exe is empty in $TargetDir"
+    }
+
     $PackageName = "{{ArtifactPrefix}}-{{NameSuffix}}.zip"
     $PackagePath = "$ProjectDir\_deployment\_binaries\$PackageName"
     # Rebuild the archive from scratch. `7z a` only adds and updates entries; it
@@ -515,6 +523,7 @@ deploy:
     # the dmg with `hdiutil -ov`).
     Remove-Item $PackagePath -Force -ErrorAction SilentlyContinue
     7z a $PackagePath $TargetDir\*
+    if ($LASTEXITCODE -ne 0) { throw "Failed to create Windows package: $PackagePath" }
 
     if ("{{Arch}}" -eq "x86_64") {
         # Current release matrix produces gyroflow-niyien-windows64-setup.exe.
