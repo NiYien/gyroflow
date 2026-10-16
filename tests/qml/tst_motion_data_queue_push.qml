@@ -48,6 +48,7 @@ TestCase {
         signal optical_correction_changed();
         property bool loading_gyro_in_progress: false;
         property bool video_loading_in_progress: false;
+        property bool sync_in_progress: false;
         property bool gyro_has_raw_imu: true;
         property bool gyro_has_quaternions: false;
         property bool gyro_has_accurate_timestamps: false;
@@ -111,6 +112,7 @@ TestCase {
         id: windowStub;
         property bool isSimpleMode: true;
         property bool useMobileWorkspace: false;
+        property QtObject mobileUI: QtObject { property bool hasExperimentalPreview: false; }
         property var motionData: testCase.motion;
         function runQueueOutputAction(callback) { callback(); }
         property var videoArea: QtObject {
@@ -166,7 +168,10 @@ TestCase {
         renderQueueStub.processingSettings = null;
         windowStub.isSimpleMode = true;
         windowStub.useMobileWorkspace = false;
+        windowStub.mobileUI.hasExperimentalPreview = false;
+        windowStub.videoArea.vid.loaded = true;
         controllerStub.translationRequested = true;
+        controllerStub.sync_in_progress = false;
         controllerStub.translationReference = 1.0;
         controllerStub.translationSmoothness = 1.0;
         controllerStub.translationAlongAxis = true;
@@ -199,6 +204,62 @@ TestCase {
             if (found) return found;
         }
         return null;
+    }
+
+    function test_mobile_batch_choices_reach_queue_without_a_preview() {
+        windowStub.useMobileWorkspace = true;
+        windowStub.videoArea.vid.loaded = false;
+        motion.restoreOpticalControls(false);
+        const translation = controlMatching(motion.experimentalControls, x => x.text === "Translation stabilization");
+        const reconstruction = controlMatching(motion.experimentalControls, x => x.text === "Reconstruct in-camera stabilization");
+        const analyze = controlMatching(motion.experimentalControls, x => x.iconName === "spinner");
+        verify(translation && reconstruction && analyze);
+        verify(translation.enabled && reconstruction.enabled);
+        verify(!analyze.enabled);
+        translation.checked = false;
+        reconstruction.checked = true;
+        wait(0);
+        compare(lastPush().translation, false);
+        compare(lastPush().reconstruction, true);
+        translation.checked = true;
+        reconstruction.checked = false;
+        wait(0);
+        compare(lastPush().translation, true);
+        compare(lastPush().reconstruction, false);
+        windowStub.videoArea.vid.loaded = true;
+        verify(!analyze.enabled, "An old loaded video must not enable analysis from the list");
+        windowStub.mobileUI.hasExperimentalPreview = true;
+        verify(analyze.enabled);
+    }
+
+    function test_analysis_button_requires_a_visible_video_context_data() {
+        return [{ tag: "desktop-simple", mobile: false, simple: true },
+                { tag: "desktop-full", mobile: false, simple: false },
+                { tag: "mobile", mobile: true, simple: true }];
+    }
+    function test_analysis_button_requires_a_visible_video_context(data) {
+        windowStub.useMobileWorkspace = data.mobile;
+        windowStub.isSimpleMode = data.simple;
+        motion.opened = true;
+        motion.restoreOpticalControls(false);
+        const analyze = controlMatching(motion.experimentalControls, x => x.iconName === "spinner");
+        verify(analyze !== null);
+        windowStub.videoArea.vid.loaded = false;
+        verify(!analyze.visible);
+        windowStub.videoArea.vid.loaded = true;
+        if (data.mobile) {
+            verify(!analyze.visible, "A retained video is not an active mobile preview");
+            windowStub.mobileUI.hasExperimentalPreview = true;
+        }
+        verify(analyze.visible);
+        verify(analyze.enabled);
+        controllerStub.sync_in_progress = true;
+        verify(analyze.visible);
+        verify(!analyze.enabled);
+        controllerStub.sync_in_progress = false;
+        if (data.mobile) windowStub.mobileUI.hasExperimentalPreview = false;
+        else windowStub.videoArea.vid.loaded = false;
+        verify(!analyze.visible);
     }
 
     function test_translation_edits_survive_a_restart_and_reach_the_queue() {

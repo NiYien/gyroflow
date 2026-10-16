@@ -726,9 +726,20 @@ MenuItem {
         spacing: 5 * dpiScale;
         visible: opticalcb.checked || translationcb.checked || stabcb.checked;
         Button {
+            id: analyzeButton;
             text: qsTr("Analyze");
             iconName: "spinner";
-            enabled: !controller.sync_in_progress && window.videoArea.vid.loaded;
+            width: mobileStyle ? Math.max(120 * dpiScale, Math.ceil(analyzeTextMetrics.advanceWidth)
+                + icon.width + spacing + leftPadding + rightPadding) : implicitWidth;
+            TextMetrics {
+                id: analyzeTextMetrics;
+                text: analyzeButton.text;
+                font: analyzeButton.font;
+            }
+            // A loaded video may belong to an earlier preview after returning to the mobile list.
+            visible: window.videoArea.vid.loaded
+                && (!window.useMobileWorkspace || !!window.mobileUI && window.mobileUI.hasExperimentalPreview);
+            enabled: visible && !controller.sync_in_progress;
             onClicked: root.analyzeOpticalModes();
         }
         LinkButton {

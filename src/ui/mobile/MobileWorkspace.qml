@@ -76,9 +76,9 @@ Rectangle {
     readonly property bool busy: importing || engineBusy || !!(operation && operation.active) || experimentalAnalyzing || experimentalSaving
     readonly property bool hasExperimentalPreview: page === "preview" && previewReady && !!(host && host.videoArea.vid.loaded)
         && !!backend && backend.editing_job_id === previewJobId && previewJobId > 0
-    readonly property bool canEditExperimental: hasExperimentalPreview && !busy
+    readonly property bool canEditExperimental: !!host && !busy
         && !host.videoArea.queueEditLoading && !host.controller.video_loading_in_progress && !host.controller.loading_gyro_in_progress
-    readonly property bool canApplyExperimental: canEditExperimental
+    readonly property bool canApplyExperimental: hasExperimentalPreview && canEditExperimental
         && !(host.motionData && host.motionData.opticalEditsPending)
     property string summary: ""
     property string deepStage: ""
@@ -1044,9 +1044,9 @@ Rectangle {
                         width: parent.width; spacing: 16 * root.unit
                         MobileText {
                             width: parent.width; unit: root.unit; dark: root.dark; secondary: true; wrapMode: Text.WordWrap
-                            text: root.hasExperimentalPreview ? qsTranslate("App", "These features are experimental and may not be stable yet.")
-                                : qsTr("Open a video in preview to use these features.")
+                            text: qsTranslate("App", "These features are experimental and may not be stable yet.")
                         }
+                        MobileText { width: parent.width; unit: root.unit; dark: root.dark; secondary: true; wrapMode: Text.WordWrap; text: qsTr("Changes apply to all videos.") }
                         MobileText { visible: root.hasExperimentalPreview; width: parent.width; unit: root.unit; dark: root.dark; wrapMode: Text.WrapAnywhere; text: root.previewRecord ? root.previewRecord.filename : "" }
                         MobileGroup {
                             width: parent.width; unit: root.unit; dark: root.dark
@@ -1068,7 +1068,7 @@ Rectangle {
                         MobileButton {
                             objectName: "mobileApplyExperimental"
                             width: parent.width; unit: root.unit; dark: root.dark; emphasized: true
-                            text: qsTr("Apply to this video")
+                            text: root.platformOs === "android" ? qsTranslate("App", "Save") : qsTr("Apply to this video")
                             enabled: root.canApplyExperimental
                             onClicked: root.applyExperimentalToVideo()
                         }

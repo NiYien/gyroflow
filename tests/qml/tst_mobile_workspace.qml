@@ -129,6 +129,8 @@ TestCase {
             { tag: "android-landscape", os: "android", w: 800, h: 360 }];
     }
     function test_experimental_entry(data) {
+        workspace.host = previewService;
+        previewService.videoArea.vid.loaded = false;
         workspace.platformOs = data.os;
         workspace.width = data.w; workspace.height = data.h;
         workspace.showPanel("settings");
@@ -142,9 +144,10 @@ TestCase {
         verify(point.x >= 0 && point.x + entry.width <= workspace.width);
         mouseClick(entry, entry.width / 2, entry.height / 2);
         compare(workspace.panel, "experimental");
-        verify(!workspace.canEditExperimental);
+        verify(workspace.canEditExperimental);
         verify(!findChild(workspace, "mobileApplyExperimental").enabled);
-        verify(!workspace.experimentalContent.enabled);
+        verify(workspace.experimentalContent.enabled);
+        compare(findChild(workspace, "mobileApplyExperimental").text, data.os === "android" ? "Save" : "Apply to this video");
         workspace.back(false);
         compare(workspace.panel, "settings");
         compare(previewService.saveCalls, 0);
@@ -176,7 +179,8 @@ TestCase {
         compare(workspace.notice, "Changes saved to this video.");
         compare(workspace.rows.length, 32);
         workspace.returnToList();
-        verify(!workspace.canEditExperimental);
+        verify(workspace.canEditExperimental);
+        verify(!workspace.canApplyExperimental);
         workspace.applyExperimentalToVideo();
         compare(previewService.saveCalls, 1);
     }
@@ -194,9 +198,35 @@ TestCase {
         compare(previewService.saveCalls, 0);
         previewService.motionData.opticalEditsPending = false;
         fakeBackend.editing_job_id = 8;
-        verify(!workspace.canEditExperimental);
+        verify(workspace.canEditExperimental);
+        verify(!workspace.canApplyExperimental);
         workspace.applyExperimentalToVideo();
         compare(previewService.saveCalls, 0);
+    }
+    function test_experimental_batch_settings_guard_busy_and_loading_without_preview() {
+        workspace.host = previewService;
+        previewService.videoArea.vid.loaded = false;
+        workspace.showPanel("experimental");
+        verify(workspace.canEditExperimental);
+        verify(!workspace.canApplyExperimental);
+        workspace.applyExperimentalToVideo();
+        compare(previewService.saveCalls, 0);
+        for (const field of ["video_loading_in_progress", "loading_gyro_in_progress", "sync_in_progress"]) {
+            previewService.controller[field] = true;
+            verify(!workspace.canEditExperimental, field);
+            previewService.controller[field] = false;
+            verify(workspace.canEditExperimental, field);
+        }
+        previewService.videoArea.queueEditLoading = true;
+        verify(!workspace.canEditExperimental);
+        previewService.videoArea.queueEditLoading = false;
+        workspace.engineBusy = true;
+        verify(!workspace.canEditExperimental);
+        workspace.engineBusy = false;
+        verify(workspace.canEditExperimental);
+        samples = [];
+        workspace.refresh();
+        verify(workspace.canEditExperimental, "Settings can be selected before adding videos");
     }
     function test_experimental_analysis_can_be_cancelled_and_blocks_navigation() {
         prepareExperimentalPreview();
