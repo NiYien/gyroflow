@@ -5455,6 +5455,11 @@ If you need more accuracy, increase the number of iterations in &quot;Advanced&q
         <source>Max zoom speed</source>
         <translation>Maksimum zum hızı</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="451"/>
+        <source>Pitch locking is not available when using gravity vectors.</source>
+        <translation>Yerçekimi vektörleri kullanılırken pitch kilitleme kullanılamaz.</translation>
+    </message>
 </context>
 <context>
     <name>Statistics</name>
@@ -5915,6 +5920,16 @@ Biraz kamera sarsıntısı gerektirir; çok yumuşak hareket hiç senkronizasyon
         <location filename="../../src/ui/menu/VideoInformation.qml" line="63"/>
         <source>Off</source>
         <translation>Kapalı</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="58"/>
+        <source>Focal length (35mm equivalent)</source>
+        <translation>Odak uzaklığı (35 mm eşdeğeri)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="59"/>
+        <source>Focus distance</source>
+        <translation>Odaklama mesafesi</translation>
     </message>
 </context>
 <context>

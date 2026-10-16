@@ -2904,7 +2904,7 @@ Vuoi inviare il tuo profilo?</translation>
     <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="258"/>
         <source>frames</source>
-        <translation>frames</translation>
+        <translation>fotogrammi</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="264"/>
@@ -3611,7 +3611,7 @@ Chiudi e riapri Final Cut Pro prima di usare l’effetto.</translation>
     <message>
         <location filename="../../src/ui/menu/Stabilization.qml" line="285"/>
         <source>No smoothing</source>
-        <translation>No smoothing</translation>
+        <translation>Nessuno smussamento</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/Stabilization.qml" line="286"/>
@@ -4302,7 +4302,7 @@ Controlla e riprova.</translation>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2488"/>
         <source>Rendering: %1</source>
-        <translation>Rendering: %1</translation>
+        <translation>Rendering in corso: %1</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2576"/>
@@ -4741,7 +4741,7 @@ Scegliere il frame rate: </translation>
     <message>
         <location filename="../../src/ui/SettingsSelector.qml" line="98"/>
         <source>Frame rate</source>
-        <translation>Frame rate</translation>
+        <translation>Frequenza dei fotogrammi</translation>
     </message>
     <message>
         <location filename="../../src/ui/SettingsSelector.qml" line="99"/>
@@ -5083,17 +5083,17 @@ Scegliere il frame rate: </translation>
     <message>
         <location filename="../../src/ui/menu/Stabilization.qml" line="290"/>
         <source>Pitch smoothness</source>
-        <translation>Pitch smoothness</translation>
+        <translation>Fluidità del pitch</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/Stabilization.qml" line="291"/>
         <source>Yaw smoothness</source>
-        <translation>Yaw smoothness</translation>
+        <translation>Fluidità dello yaw</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/Stabilization.qml" line="292"/>
         <source>Roll smoothness</source>
-        <translation>Roll smoothness</translation>
+        <translation>Fluidità del roll</translation>
     </message>
     <message>
         <location filename="../../src/ui/components/TutorialQueueRow.qml" line="223"/>
@@ -5101,7 +5101,7 @@ Scegliere il frame rate: </translation>
         <location filename="../../src/ui/menu/Stabilization.qml" line="293"/>
         <location filename="../../src/ui/RenderQueue.qml" line="2505"/>
         <source>Smoothness</source>
-        <translation>Smoothness</translation>
+        <translation>Fluidità</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/Stabilization.qml" line="294"/>
@@ -5460,6 +5460,11 @@ Per una maggiore precisione, aumenta il numero di iterazioni in &quot;Avanzate&q
         <source>Max zoom speed</source>
         <translation>Velocità massima dello zoom</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="451"/>
+        <source>Pitch locking is not available when using gravity vectors.</source>
+        <translation>Il blocco del pitch non è disponibile quando si usano i vettori di gravità.</translation>
+    </message>
 </context>
 <context>
     <name>Statistics</name>
@@ -5815,7 +5820,7 @@ Richiede un po' di vibrazione della fotocamera; un movimento molto fluido potreb
     <message>
         <location filename="../../src/ui/menu/VideoInformation.qml" line="35"/>
         <source>Frame rate</source>
-        <translation>Frame rate</translation>
+        <translation>Frequenza dei fotogrammi</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/VideoInformation.qml" line="36"/>
@@ -5921,6 +5926,16 @@ Richiede un po' di vibrazione della fotocamera; un movimento molto fluido potreb
         <location filename="../../src/ui/menu/VideoInformation.qml" line="63"/>
         <source>Off</source>
         <translation>Disattivo</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="58"/>
+        <source>Focal length (35mm equivalent)</source>
+        <translation>Lunghezza focale (equivalente a 35 mm)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="59"/>
+        <source>Focus distance</source>
+        <translation>Distanza di messa a fuoco</translation>
     </message>
 </context>
 <context>
@@ -6754,7 +6769,7 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
     </message>
     <message>
         <source>Smoothness</source>
-        <translation>Smoothness</translation>
+        <translation>Fluidità</translation>
     </message>
     <message>
         <source>Stabilization</source>

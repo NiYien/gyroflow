@@ -75,6 +75,56 @@
     "Some videos could not be imported: %1": "Některá videa se nepodařilo importovat: %1|Nogle videoer kunne ikke importeres: %1|Einige Videos konnten nicht importiert werden: %1|Δεν ήταν δυνατή η εισαγωγή ορισμένων βίντεο: %1|No se pudieron importar algunos vídeos: %1|Joitakin videoita ei voitu tuoda: %1|Certaines vidéos n’ont pas pu être importées : %1|Non se puideron importar algúns vídeos: %1|Beberapa video tidak dapat diimpor: %1|Impossibile importare alcuni video: %1|一部の動画を読み込めませんでした: %1|일부 동영상을 가져올 수 없습니다: %1|Noen videoer kunne ikke importeres: %1|Nie można zaimportować niektórych filmów: %1|Não foi possível importar alguns vídeos: %1|Não foi possível importar alguns vídeos: %1|Не удалось импортировать некоторые видео: %1|Niektoré videá sa nepodarilo importovať: %1|Bazı videolar içe aktarılamadı: %1|Не вдалося імпортувати деякі відео: %1|部分视频无法导入：%1|部分影片無法匯入：%1",
     "Unable to open the photo library.": "Knihovnu fotek nelze otevřít.|Fotobiblioteket kunne ikke åbnes.|Die Fotomediathek konnte nicht geöffnet werden.|Δεν ήταν δυνατό το άνοιγμα της βιβλιοθήκης φωτογραφιών.|No se pudo abrir la fototeca.|Kuvakirjastoa ei voitu avata.|Impossible d’ouvrir la photothèque.|Non se puido abrir a fototeca.|Tidak dapat membuka pustaka foto.|Impossibile aprire la libreria foto.|写真ライブラリを開けませんでした。|사진 보관함을 열 수 없습니다.|Kunne ikke åpne bildebiblioteket.|Nie można otworzyć biblioteki zdjęć.|Não foi possível abrir a fototeca.|Não foi possível abrir a biblioteca de fotos.|Не удалось открыть медиатеку фото.|Knižnicu fotiek sa nepodarilo otvoriť.|Fotoğraf arşivi açılamadı.|Не вдалося відкрити бібліотеку фото.|无法打开照片图库。|無法開啟照片圖庫。",
     "The demo could not be prepared. Please try again.": "Ukázku se nepodařilo připravit. Zkuste to znovu.|Demoen kunne ikke forberedes. Prøv igen.|Die Demo konnte nicht vorbereitet werden. Bitte erneut versuchen.|Δεν ήταν δυνατή η προετοιμασία της επίδειξης. Δοκιμάστε ξανά.|No se pudo preparar la demostración. Inténtalo de nuevo.|Esittelyä ei voitu valmistella. Yritä uudelleen.|La démonstration n’a pas pu être préparée. Réessayez.|Non se puido preparar a demostración. Téntao de novo.|Demo tidak dapat disiapkan. Coba lagi.|Impossibile preparare la demo. Riprova.|デモを準備できませんでした。もう一度お試しください。|데모를 준비할 수 없습니다. 다시 시도하세요.|Demoen kunne ikke klargjøres. Prøv igjen.|Nie można przygotować demonstracji. Spróbuj ponownie.|Não foi possível preparar a demonstração. Tente novamente.|Não foi possível preparar a demonstração. Tente novamente.|Не удалось подготовить демонстрацию. Попробуйте ещё раз.|Ukážku sa nepodarilo pripraviť. Skúste znova.|Demo hazırlanamadı. Lütfen tekrar deneyin.|Не вдалося підготувати демонстрацію. Спробуйте ще раз.|无法准备演示，请重试。|無法準備示範，請重試。",
-    "The output file is unavailable. Check the output folder.": "Výstupní soubor není dostupný. Zkontrolujte výstupní složku.|Outputfilen er ikke tilgængelig. Tjek outputmappen.|Die Ausgabedatei ist nicht verfügbar. Prüfen Sie den Ausgabeordner.|Το αρχείο εξόδου δεν είναι διαθέσιμο. Ελέγξτε τον φάκελο εξόδου.|El archivo de salida no está disponible. Revisa la carpeta de salida.|Tulostiedosto ei ole käytettävissä. Tarkista tuloskansio.|Le fichier de sortie est indisponible. Vérifiez le dossier de sortie.|O ficheiro de saída non está dispoñible. Comproba o cartafol de saída.|File output tidak tersedia. Periksa folder output.|Il file di output non è disponibile. Controlla la cartella di output.|出力ファイルが見つかりません。出力フォルダを確認してください。|출력 파일을 사용할 수 없습니다. 출력 폴더를 확인하세요.|Utdatafilen er utilgjengelig. Sjekk utdatamappen.|Plik wyjściowy jest niedostępny. Sprawdź folder wyjściowy.|O ficheiro de saída não está disponível. Verifique a pasta de saída.|O arquivo de saída não está disponível. Verifique a pasta de saída.|Выходной файл недоступен. Проверьте папку вывода.|Výstupný súbor nie je dostupný. Skontrolujte výstupný priečinok.|Çıktı dosyası kullanılamıyor. Çıktı klasörünü kontrol edin.|Вихідний файл недоступний. Перевірте папку виводу.|输出文件不可用，请检查输出文件夹。|輸出檔案無法使用，請檢查輸出資料夾。"
+    "The output file is unavailable. Check the output folder.": "Výstupní soubor není dostupný. Zkontrolujte výstupní složku.|Outputfilen er ikke tilgængelig. Tjek outputmappen.|Die Ausgabedatei ist nicht verfügbar. Prüfen Sie den Ausgabeordner.|Το αρχείο εξόδου δεν είναι διαθέσιμο. Ελέγξτε τον φάκελο εξόδου.|El archivo de salida no está disponible. Revisa la carpeta de salida.|Tulostiedosto ei ole käytettävissä. Tarkista tuloskansio.|Le fichier de sortie est indisponible. Vérifiez le dossier de sortie.|O ficheiro de saída non está dispoñible. Comproba o cartafol de saída.|File output tidak tersedia. Periksa folder output.|Il file di output non è disponibile. Controlla la cartella di output.|出力ファイルが見つかりません。出力フォルダを確認してください。|출력 파일을 사용할 수 없습니다. 출력 폴더를 확인하세요.|Utdatafilen er utilgjengelig. Sjekk utdatamappen.|Plik wyjściowy jest niedostępny. Sprawdź folder wyjściowy.|O ficheiro de saída não está disponível. Verifique a pasta de saída.|O arquivo de saída não está disponível. Verifique a pasta de saída.|Выходной файл недоступен. Проверьте папку вывода.|Výstupný súbor nie je dostupný. Skontrolujte výstupný priečinok.|Çıktı dosyası kullanılamıyor. Çıktı klasörünü kontrol edin.|Вихідний файл недоступний. Перевірте папку виводу.|输出文件不可用，请检查输出文件夹。|輸出檔案無法使用，請檢查輸出資料夾。",
+    "Focal length (35mm equivalent)": "Ohnisková vzdálenost (ekvivalent 35 mm)|Brændvidde (35 mm-ækvivalent)|Brennweite (35-mm-Äquivalent)|Εστιακή απόσταση (ισοδύναμο 35 mm)|Distancia focal (equivalente a 35 mm)|Polttoväli (35 mm:n vastaavuus)|Distance focale (équivalent 35 mm)|Distancia focal (equivalente a 35 mm)|Panjang fokus (ekuivalen 35 mm)|Lunghezza focale (equivalente a 35 mm)|焦点距離（35mm判換算）|초점 거리 (35mm 환산)|Brennvidde (35 mm-ekvivalent)|Ogniskowa (odpowiednik 35 mm)|Distância focal (equivalente a 35 mm)|Distância focal (equivalente a 35 mm)|Фокусное расстояние (эквивалент 35 мм)|Ohnisková vzdialenosť (ekvivalent 35 mm)|Odak uzaklığı (35 mm eşdeğeri)|Фокусна відстань (еквівалент 35 мм)|35mm 等效焦距|35mm 等效焦距",
+    "Focus distance": "Zaostřovací vzdálenost|Fokusafstand|Fokusentfernung|Απόσταση εστίασης|Distancia de enfoque|Tarkennusetäisyys|Distance de mise au point|Distancia de enfoque|Jarak fokus|Distanza di messa a fuoco|合焦距離|초점 맞춤 거리|Fokusavstand|Odległość ostrzenia|Distância de focagem|Distância de foco|Дистанция фокусировки|Zaostrovacia vzdialenosť|Odaklama mesafesi|Відстань фокусування|对焦距离|對焦距離",
+    "Pitch locking is not available when using gravity vectors.": "Při použití vektorů gravitace není uzamčení náklonu dostupné.|Pitch-låsning er ikke tilgængelig ved brug af tyngdekraftsvektorer.|Bei Verwendung von Gravitationsvektoren ist die Neigungssperre (Pitch) nicht verfügbar.|Το κλείδωμα κλίσης δεν είναι διαθέσιμο όταν χρησιμοποιούνται διανύσματα βαρύτητας.|El bloqueo de elevación no está disponible al usar vectores de gravedad.|Pystykallistuksen lukitus ei ole käytettävissä painovoimavektoreita käytettäessä.|Le verrouillage du tangage n’est pas disponible lors de l’utilisation des vecteurs de gravité.|O bloqueo de pitch non está dispoñible ao usar vectores gravitacionais.|Penguncian pitch tidak tersedia saat menggunakan vektor gravitasi.|Il blocco del pitch non è disponibile quando si usano i vettori di gravità.|重力ベクトルを使用している場合、ピッチをロックすることはできません。|중력 벡터를 사용할 때는 피치를 잠글 수 없습니다.|Pitch-låsing er ikke tilgjengelig når gravitasjonsvektorer brukes.|Blokada osi pitch nie jest dostępna podczas korzystania z wektorów grawitacji.|O bloqueio da inclinação não está disponível ao utilizar vetores de gravidade.|O bloqueio de inclinação não está disponível ao usar vetores de gravidade.|Блокировка тангажа недоступна при использовании векторов гравитации.|Pri použití vektorov gravitácie nie je uzamknutie náklonu (pitch) dostupné.|Yerçekimi vektörleri kullanılırken pitch kilitleme kullanılamaz.|Блокування нахилу (pitch) недоступне під час використання гравітаційних векторів.|使用重力向量时无法锁定俯仰角度。|使用重力向量時無法鎖定俯仰角度。"
+  },
+  "english_fallbacks": {
+    "de": {
+      "Plain 3D": "Reines 3D",
+      "Rendering: %1": "Rendern: %1",
+      "Keyframes": "Schlüsselbilder",
+      "Video && Gyro": "Video && Gyroskop"
+    },
+    "fr": {
+      "Alt+Scroll": "Alt+Défilement",
+      "Ctrl+Scroll": "Ctrl+Défilement"
+    },
+    "es": {
+      "Alt+Scroll": "Alt+Desplazamiento",
+      "Ctrl+Scroll": "Ctrl+Desplazamiento"
+    },
+    "it": {
+      "Smoothness": "Fluidità",
+      "Pitch smoothness": "Fluidità del pitch",
+      "Yaw smoothness": "Fluidità dello yaw",
+      "Roll smoothness": "Fluidità del roll",
+      "No smoothing": "Nessuno smussamento",
+      "Frame rate": "Frequenza dei fotogrammi",
+      "frames": "fotogrammi",
+      "Rendering: %1": "Rendering in corso: %1"
+    },
+    "pt": {
+      "Scroll": "Deslocamento",
+      "Option+Scroll": "Option+Deslocamento",
+      "Alt+Scroll": "Alt+Deslocamento",
+      "Ctrl+Scroll": "Ctrl+Deslocamento"
+    },
+    "pt_BR": {
+      "Alt+Scroll": "Alt+Rolar",
+      "Ctrl+Scroll": "Ctrl+Rolar"
+    },
+    "ru": {
+      "Plain 3D": "Простое 3D",
+      "Additional 3D rotation": "Дополнительное 3D-вращение",
+      "Ease in": "Плавный вход",
+      "Ease out": "Плавный выход",
+      "Pitch": "Тангаж",
+      "Yaw": "Рыскание",
+      "Roll": "Крен",
+      "Alt+Scroll": "Alt+Прокрутка",
+      "Ctrl+Scroll": "Ctrl+Прокрутка"
+    }
   }
 }

@@ -5463,6 +5463,11 @@ Jeśli potrzebujesz większej dokładności, zwiększ liczbę iteracji w &quot;Z
         <source>Max zoom speed</source>
         <translation>Maksymalna prędkość zoomu</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="451"/>
+        <source>Pitch locking is not available when using gravity vectors.</source>
+        <translation>Blokada osi pitch nie jest dostępna podczas korzystania z wektorów grawitacji.</translation>
+    </message>
 </context>
 <context>
     <name>Statistics</name>
@@ -5924,6 +5929,16 @@ Wymaga pewnych drgań kamery; bardzo płynny ruch może nie dać żadnych punkt�
         <location filename="../../src/ui/menu/VideoInformation.qml" line="63"/>
         <source>Off</source>
         <translation>Wył.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="58"/>
+        <source>Focal length (35mm equivalent)</source>
+        <translation>Ogniskowa (odpowiednik 35 mm)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="59"/>
+        <source>Focus distance</source>
+        <translation>Odległość ostrzenia</translation>
     </message>
 </context>
 <context>

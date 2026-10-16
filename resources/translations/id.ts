@@ -5459,6 +5459,11 @@ Jika Anda memerlukan akurasi lebih, tingkatkan jumlah iterasi di &quot;Advanced&
         <source>Max zoom speed</source>
         <translation>Kecepatan zoom maksimum</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="451"/>
+        <source>Pitch locking is not available when using gravity vectors.</source>
+        <translation>Penguncian pitch tidak tersedia saat menggunakan vektor gravitasi.</translation>
+    </message>
 </context>
 <context>
     <name>Statistics</name>
@@ -5920,6 +5925,16 @@ Membutuhkan sedikit guncangan kamera; gerakan yang sangat halus mungkin tidak me
         <location filename="../../src/ui/menu/VideoInformation.qml" line="63"/>
         <source>Off</source>
         <translation>Nonaktif</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="58"/>
+        <source>Focal length (35mm equivalent)</source>
+        <translation>Panjang fokus (ekuivalen 35 mm)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="59"/>
+        <source>Focus distance</source>
+        <translation>Jarak fokus</translation>
     </message>
 </context>
 <context>

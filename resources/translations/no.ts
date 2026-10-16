@@ -5463,6 +5463,11 @@ Hvis du trenger mer nøyaktighet, øk antall iterasjoner i &quot;Avansert&quot; 
         <source>Max zoom speed</source>
         <translation>Maks. zoomhastighet</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="451"/>
+        <source>Pitch locking is not available when using gravity vectors.</source>
+        <translation>Pitch-låsing er ikke tilgjengelig når gravitasjonsvektorer brukes.</translation>
+    </message>
 </context>
 <context>
     <name>Statistics</name>
@@ -5924,6 +5929,16 @@ Krever noe kamerarystelse; svært jevn bevegelse gir kanskje ingen synkroniserin
         <location filename="../../src/ui/menu/VideoInformation.qml" line="63"/>
         <source>Off</source>
         <translation>Av</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="58"/>
+        <source>Focal length (35mm equivalent)</source>
+        <translation>Brennvidde (35 mm-ekvivalent)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="59"/>
+        <source>Focus distance</source>
+        <translation>Fokusavstand</translation>
     </message>
 </context>
 <context>

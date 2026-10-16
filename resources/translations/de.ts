@@ -3622,7 +3622,7 @@ Schließen und öffnen Sie Final Cut Pro erneut, bevor Sie den Effekt verwenden.
     <message>
         <location filename="../../src/ui/menu/Stabilization.qml" line="287"/>
         <source>Plain 3D</source>
-        <translation>Plain 3D</translation>
+        <translation>Reines 3D</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/Stabilization.qml" line="288"/>
@@ -4304,7 +4304,7 @@ Bitte prüfen und erneut versuchen.</translation>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2488"/>
         <source>Rendering: %1</source>
-        <translation>Rendering: %1</translation>
+        <translation>Rendern: %1</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2576"/>
@@ -4793,7 +4793,7 @@ Bitte Bildrate in FPS angeben: </translation>
     <message>
         <location filename="../../src/ui/SettingsSelector.qml" line="109"/>
         <source>Keyframes</source>
-        <translation>Keyframes</translation>
+        <translation>Schlüsselbilder</translation>
     </message>
     <message>
         <location filename="../../src/ui/SettingsSelector.qml" line="110"/>
@@ -5463,6 +5463,11 @@ Wenn Sie mehr Genauigkeit benötigen, erhöhen Sie die Anzahl der Iterationen un
         <source>Max zoom speed</source>
         <translation>Maximale Zoomgeschwindigkeit</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="451"/>
+        <source>Pitch locking is not available when using gravity vectors.</source>
+        <translation>Bei Verwendung von Gravitationsvektoren ist die Neigungssperre (Pitch) nicht verfügbar.</translation>
+    </message>
 </context>
 <context>
     <name>Statistics</name>
@@ -5925,6 +5930,16 @@ Benötigt etwas Kameraverwacklung; bei sehr gleichmäßiger Bewegung entstehen m
         <source>Off</source>
         <translation>Aus</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="58"/>
+        <source>Focal length (35mm equivalent)</source>
+        <translation>Brennweite (35-mm-Äquivalent)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="59"/>
+        <source>Focus distance</source>
+        <translation>Fokusentfernung</translation>
+    </message>
 </context>
 <context>
     <name>Tabs</name>
@@ -5946,7 +5961,7 @@ Benötigt etwas Kameraverwacklung; bei sehr gleichmäßiger Bewegung entstehen m
     <message>
         <location filename="../../src/ui/App.qml" line="1483"/>
         <source>Video &amp;&amp; Gyro</source>
-        <translation>Video &amp;&amp; Gyro</translation>
+        <translation>Video &amp;&amp; Gyroskop</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1483"/>

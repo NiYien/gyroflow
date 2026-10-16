@@ -3097,7 +3097,7 @@ Do you want to submit your profile?</source>
         <location filename="../../src/ui/menu/MotionData.qml" line="336"/>
         <location filename="../../src/ui/menu/MotionData.qml" line="387"/>
         <source>Pitch</source>
-        <translation>Pitch</translation>
+        <translation>Тангаж</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="340"/>
@@ -3108,13 +3108,13 @@ Do you want to submit your profile?</source>
         <location filename="../../src/ui/menu/MotionData.qml" line="344"/>
         <location filename="../../src/ui/menu/MotionData.qml" line="395"/>
         <source>Roll</source>
-        <translation>Roll</translation>
+        <translation>Крен</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="352"/>
         <location filename="../../src/ui/menu/MotionData.qml" line="403"/>
         <source>Yaw</source>
-        <translation>Yaw</translation>
+        <translation>Рыскание</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="366"/>
@@ -3623,7 +3623,7 @@ Close and reopen Final Cut Pro before using the effect.</source>
     <message>
         <location filename="../../src/ui/menu/Stabilization.qml" line="287"/>
         <source>Plain 3D</source>
-        <translation>Plain 3D</translation>
+        <translation>Простое 3D</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/Stabilization.qml" line="288"/>
@@ -5252,7 +5252,7 @@ Please provide frame rate: </source>
     <message>
         <location filename="../../src/ui/menu/Stabilization.qml" line="947"/>
         <source>Additional 3D rotation</source>
-        <translation>Additional 3D rotation</translation>
+        <translation>Дополнительное 3D-вращение</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/Stabilization.qml" line="951"/>
@@ -5462,6 +5462,11 @@ If you need more accuracy, increase the number of iterations in &quot;Advanced&q
         <location filename="../../src/ui/menu/Stabilization.qml" line="774"/>
         <source>Max zoom speed</source>
         <translation>Максимальная скорость зума</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="451"/>
+        <source>Pitch locking is not available when using gravity vectors.</source>
+        <translation>Блокировка тангажа недоступна при использовании векторов гравитации.</translation>
     </message>
 </context>
 <context>
@@ -5924,6 +5929,16 @@ Needs some camera shake; very smooth motion may produce no sync points.</source>
         <source>Off</source>
         <translation>Выкл</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="58"/>
+        <source>Focal length (35mm equivalent)</source>
+        <translation>Фокусное расстояние (эквивалент 35 мм)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="59"/>
+        <source>Focus distance</source>
+        <translation>Дистанция фокусировки</translation>
+    </message>
 </context>
 <context>
     <name>Tabs</name>
@@ -6034,12 +6049,12 @@ Are you sure you want to continue?</source>
     <message>
         <location filename="../../src/ui/components/Timeline.qml" line="400"/>
         <source>Ease in</source>
-        <translation>Ease in</translation>
+        <translation>Плавный вход</translation>
     </message>
     <message>
         <location filename="../../src/ui/components/Timeline.qml" line="407"/>
         <source>Ease out</source>
-        <translation>Ease out</translation>
+        <translation>Плавный выход</translation>
     </message>
     <message>
         <location filename="../../src/ui/components/Timeline.qml" line="425"/>
@@ -6204,7 +6219,7 @@ Are you sure you want to continue?</source>
     <message>
         <location filename="../../src/ui/components/Timeline.qml" line="1055"/>
         <source>Ctrl+Scroll</source>
-        <translation>Ctrl+Scroll</translation>
+        <translation>Ctrl+Прокрутка</translation>
     </message>
     <message>
         <location filename="../../src/ui/components/Timeline.qml" line="1052"/>
@@ -6265,7 +6280,7 @@ Are you sure you want to continue?</source>
     <message>
         <location filename="../../src/ui/components/Timeline.qml" line="1054"/>
         <source>Alt+Scroll</source>
-        <translation>Alt+Scroll</translation>
+        <translation>Alt+Прокрутка</translation>
     </message>
     <message>
         <location filename="../../src/ui/components/Timeline.qml" line="907"/>

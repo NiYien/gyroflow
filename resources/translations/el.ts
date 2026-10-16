@@ -5464,6 +5464,11 @@ If you need more accuracy, increase the number of iterations in &quot;Advanced&q
         <source>Max zoom speed</source>
         <translation>Μέγιστη ταχύτητα ζουμ</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="451"/>
+        <source>Pitch locking is not available when using gravity vectors.</source>
+        <translation>Το κλείδωμα κλίσης δεν είναι διαθέσιμο όταν χρησιμοποιούνται διανύσματα βαρύτητας.</translation>
+    </message>
 </context>
 <context>
     <name>Statistics</name>
@@ -5925,6 +5930,16 @@ Needs some camera shake; very smooth motion may produce no sync points.</source>
         <location filename="../../src/ui/menu/VideoInformation.qml" line="63"/>
         <source>Off</source>
         <translation>Ανενεργό</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="58"/>
+        <source>Focal length (35mm equivalent)</source>
+        <translation>Εστιακή απόσταση (ισοδύναμο 35 mm)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="59"/>
+        <source>Focus distance</source>
+        <translation>Απόσταση εστίασης</translation>
     </message>
 </context>
 <context>

@@ -5462,6 +5462,11 @@ Se precisar de mais precisão, aumente o número de iterações em “Avançado�
         <source>Max zoom speed</source>
         <translation>Velocidade máxima do zoom</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="451"/>
+        <source>Pitch locking is not available when using gravity vectors.</source>
+        <translation>O bloqueio de inclinação não está disponível ao usar vetores de gravidade.</translation>
+    </message>
 </context>
 <context>
     <name>Statistics</name>
@@ -5924,6 +5929,16 @@ Requer alguma vibração da câmera; um movimento muito suave pode não gerar po
         <source>Off</source>
         <translation>Desativado</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="58"/>
+        <source>Focal length (35mm equivalent)</source>
+        <translation>Distância focal (equivalente a 35 mm)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="59"/>
+        <source>Focus distance</source>
+        <translation>Distância de foco</translation>
+    </message>
 </context>
 <context>
     <name>Tabs</name>
@@ -6205,7 +6220,7 @@ Você tem certeza que quer continuar?</translation>
     <message>
         <location filename="../../src/ui/components/Timeline.qml" line="1055"/>
         <source>Ctrl+Scroll</source>
-        <translation>Ctrl+Scroll</translation>
+        <translation>Ctrl+Rolar</translation>
     </message>
     <message>
         <location filename="../../src/ui/components/Timeline.qml" line="1052"/>
@@ -6266,7 +6281,7 @@ Você tem certeza que quer continuar?</translation>
     <message>
         <location filename="../../src/ui/components/Timeline.qml" line="1054"/>
         <source>Alt+Scroll</source>
-        <translation>Alt+Scroll</translation>
+        <translation>Alt+Rolar</translation>
     </message>
     <message>
         <location filename="../../src/ui/components/Timeline.qml" line="907"/>

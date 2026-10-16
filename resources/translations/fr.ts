@@ -5462,6 +5462,11 @@ Si vous avez besoin de plus de précision, augmentez le nombre d&apos;itération
         <source>Max zoom speed</source>
         <translation>Vitesse maximale du zoom</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="451"/>
+        <source>Pitch locking is not available when using gravity vectors.</source>
+        <translation>Le verrouillage du tangage n’est pas disponible lors de l’utilisation des vecteurs de gravité.</translation>
+    </message>
 </context>
 <context>
     <name>Statistics</name>
@@ -5924,6 +5929,16 @@ Nécessite un peu de tremblement de la caméra ; un mouvement très fluide peut 
         <source>Off</source>
         <translation>Désactivé</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="58"/>
+        <source>Focal length (35mm equivalent)</source>
+        <translation>Distance focale (équivalent 35 mm)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="59"/>
+        <source>Focus distance</source>
+        <translation>Distance de mise au point</translation>
+    </message>
 </context>
 <context>
     <name>Tabs</name>
@@ -6205,7 +6220,7 @@ Cette fonctionnalité est expérimentale, les résultats peuvent ne pas du tout 
     <message>
         <location filename="../../src/ui/components/Timeline.qml" line="1055"/>
         <source>Ctrl+Scroll</source>
-        <translation>Ctrl+Scroll</translation>
+        <translation>Ctrl+Défilement</translation>
     </message>
     <message>
         <location filename="../../src/ui/components/Timeline.qml" line="1052"/>
@@ -6266,7 +6281,7 @@ Cette fonctionnalité est expérimentale, les résultats peuvent ne pas du tout 
     <message>
         <location filename="../../src/ui/components/Timeline.qml" line="1054"/>
         <source>Alt+Scroll</source>
-        <translation>Alt+Scroll</translation>
+        <translation>Alt+Défilement</translation>
     </message>
     <message>
         <location filename="../../src/ui/components/Timeline.qml" line="907"/>

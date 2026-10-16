@@ -56,6 +56,7 @@ def main():
     plans = []
     errors = []
     for language in data['languages']:
+        localized_fallbacks = data.get('english_fallbacks', {}).get(language, {})
         path = DIRECTORY / (language + '.ts')
         original = path.read_bytes()
         raw = original.decode('utf-8')
@@ -76,13 +77,15 @@ def main():
         for key in active:
             translation = known.get(key)
             text = translation.text if translation is not None else None
-            fallback = key[1] in ENGLISH_FALLBACKS and text == key[1]
+            fallback = text == key[1] and (key[1] in ENGLISH_FALLBACKS or key[1] in localized_fallbacks)
             needs = key not in known or translation is None or translation.get('type') in ('unfinished', 'vanished', 'obsolete') or not text or fallback
             if not needs:
                 if placeholders(text) != placeholders(key[1]):
                     errors.append(f'{language}: placeholders differ {key}')
                 continue
-            replacement = supplied.get(key[1], {}).get(language)
+            replacement = localized_fallbacks.get(key[1])
+            if replacement is None:
+                replacement = supplied.get(key[1], {}).get(language)
             if replacement is None:
                 replacement = reusable.get(key[1])
             if replacement is None:

@@ -5462,6 +5462,11 @@ Jos tarvitset lisää tarkkuutta, lisää iteraatioiden määrää alla olevassa
         <source>Max zoom speed</source>
         <translation>Zoomauksen enimmäisnopeus</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="451"/>
+        <source>Pitch locking is not available when using gravity vectors.</source>
+        <translation>Pystykallistuksen lukitus ei ole käytettävissä painovoimavektoreita käytettäessä.</translation>
+    </message>
 </context>
 <context>
     <name>Statistics</name>
@@ -5923,6 +5928,16 @@ Vaatii jonkin verran kameran tärinää; hyvin tasainen liike ei välttämättä
         <location filename="../../src/ui/menu/VideoInformation.qml" line="63"/>
         <source>Off</source>
         <translation>Pois</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="58"/>
+        <source>Focal length (35mm equivalent)</source>
+        <translation>Polttoväli (35 mm:n vastaavuus)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="59"/>
+        <source>Focus distance</source>
+        <translation>Tarkennusetäisyys</translation>
     </message>
 </context>
 <context>

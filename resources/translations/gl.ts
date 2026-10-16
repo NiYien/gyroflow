@@ -5462,6 +5462,11 @@ O &quot;filtro gaussiano&quot; pode crear bordos negros na imaxe.</translation>
         <source>Max zoom speed</source>
         <translation>Velocidade máxima de zoom</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="451"/>
+        <source>Pitch locking is not available when using gravity vectors.</source>
+        <translation>O bloqueo de pitch non está dispoñible ao usar vectores gravitacionais.</translation>
+    </message>
 </context>
 <context>
     <name>Statistics</name>
@@ -5923,6 +5928,16 @@ Precisa algo de vibración da cámara; un movemento moi suave pode non xerar pun
         <location filename="../../src/ui/menu/VideoInformation.qml" line="63"/>
         <source>Off</source>
         <translation>Desactivado</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="58"/>
+        <source>Focal length (35mm equivalent)</source>
+        <translation>Distancia focal (equivalente a 35 mm)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="59"/>
+        <source>Focus distance</source>
+        <translation>Distancia de enfoque</translation>
     </message>
 </context>
 <context>

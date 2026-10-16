@@ -5464,6 +5464,11 @@ If you need more accuracy, increase the number of iterations in &quot;Advanced&q
         <source>Max zoom speed</source>
         <translation>ズームの最大速度</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="451"/>
+        <source>Pitch locking is not available when using gravity vectors.</source>
+        <translation>重力ベクトルを使用している場合、ピッチをロックすることはできません。</translation>
+    </message>
 </context>
 <context>
     <name>Statistics</name>
@@ -5926,6 +5931,16 @@ Needs some camera shake; very smooth motion may produce no sync points.</source>
         <location filename="../../src/ui/menu/VideoInformation.qml" line="63"/>
         <source>Off</source>
         <translation>オフ</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="58"/>
+        <source>Focal length (35mm equivalent)</source>
+        <translation>焦点距離（35mm判換算）</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="59"/>
+        <source>Focus distance</source>
+        <translation>合焦距離</translation>
     </message>
 </context>
 <context>

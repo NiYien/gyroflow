@@ -5463,6 +5463,11 @@ Pokud potřebujete větší přesnost, zvyšte počet iterací v části „Pokr
         <source>Max zoom speed</source>
         <translation>Maximální rychlost zoomu</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="451"/>
+        <source>Pitch locking is not available when using gravity vectors.</source>
+        <translation>Při použití vektorů gravitace není uzamčení náklonu dostupné.</translation>
+    </message>
 </context>
 <context>
     <name>Statistics</name>
@@ -5924,6 +5929,16 @@ Vyžaduje určité chvění kamery; velmi plynulý pohyb nemusí poskytnout žá
         <location filename="../../src/ui/menu/VideoInformation.qml" line="63"/>
         <source>Off</source>
         <translation>Vypnuto</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="58"/>
+        <source>Focal length (35mm equivalent)</source>
+        <translation>Ohnisková vzdálenost (ekvivalent 35 mm)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="59"/>
+        <source>Focus distance</source>
+        <translation>Zaostřovací vzdálenost</translation>
     </message>
 </context>
 <context>
