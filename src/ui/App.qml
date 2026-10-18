@@ -2247,40 +2247,24 @@ Rectangle {
 
     // Simple-mode batch sync dispatch (queue mode). Shared by simpleAutoSyncBtn and by
     // RenderQueue's match-then-sync orchestration. Keeps the anamorphic confirmation.
-    // batch-lens-group-missing-data-gate: hard pre-dispatch gate. Every batch
-    // dispatch path must pass this check before mutating any state. Returns true
-    // when processing may proceed; otherwise shows the per-lens-group detail
-    // modal ([Go to settings] / [Cancel], deliberately no "process anyway")
-    // and returns false. The predicate lives in Rust
-    // (RenderQueue::get_lens_groups_missing_data_json); it only fires when
-    // manual lens-group edit is ON and a job's assigned group cannot build a
-    // correct lens profile. GYROFLOW_LENS_DATA_GATE=0 disables it.
-    function lensDataGatePasses(): bool {
-        let res = { jobs: [] };
-        try { res = JSON.parse(render_queue.get_lens_groups_missing_data_json()); } catch (e) { }
+    // Keep the existing missing-data check, but let the user process the valid
+    // jobs. Nothing is skipped until the user chooses to continue.
+    function lensDataGatePasses(intent: string, onContinue: var): bool {
+        let res = { jobs: [], ready_count: 0 };
+        try { res = JSON.parse(render_queue.get_lens_groups_missing_data_json(intent)); } catch (e) { }
         const jobs = res.jobs || [];
         if (!jobs.length) return true;
-        // Group hits by lens number: lens_index -> reason set. The modal lists
-        // only the lens numbers and what they lack — no per-file detail.
-        let groups = {};
-        for (const j of jobs) {
-            if (!groups[j.lens_index]) groups[j.lens_index] = {};
-            for (const r of (j.reasons || [])) groups[j.lens_index][r] = true;
+        if (!res.ready_count) {
+            messageBox(Modal.Warning, qsTr("%1 video(s) have problems. No videos can be processed.").arg(jobs.length), [
+                { text: qsTr("Ok"), accent: true },
+            ]);
+            return false;
         }
-        let lines = [];
-        for (const k of Object.keys(groups).map(Number).sort((a, b) => a - b)) {
-            let reasonWords = [];
-            if (groups[k]["focal"])      reasonWords.push(qsTr("missing focal length"));
-            // "sensor" replaces "focal" rather than joining it: with no
-            // pixels-per-mm scale for the camera, typing a focal length here
-            // changes nothing, so naming the focal length would send the user
-            // after an action that cannot work.
-            if (groups[k]["sensor"])     reasonWords.push(qsTr("missing sensor data for this camera model"));
-            if (groups[k]["anamorphic"]) reasonWords.push(qsTr("missing anamorphic parameters"));
-            lines.push("L" + (k + 1) + ": " + reasonWords.join(", "));
-        }
-        messageBox(Modal.Warning, qsTr("Lens data is not set up correctly. Set the missing data in \"%1\" first, then process again.").arg(qsTr("Sensor && Lens").replace("&&", "&")) + "\n\n" + lines.join("\n"), [
-            { text: qsTr("Go to settings"), accent: true, clicked: function() { window.navigateToLensGroupConfig(); } },
+        messageBox(Modal.Warning, qsTr("%1 video(s) have problems and will be skipped.").arg(jobs.length), [
+            { text: qsTr("Continue processing"), accent: true, clicked: function() {
+                render_queue.skip_lens_data_jobs(JSON.stringify(jobs.map(function(job) { return job.job_id; })));
+                onContinue();
+            } },
             { text: qsTr("Cancel") },
         ]);
         return false;
@@ -2337,7 +2321,7 @@ Rectangle {
     }
     function runSimpleBatchSync(): void {
         if (window.motionData) window.motionData.syncQueueOpticalSettingsForProcessing();
-        if (!lensDataGatePasses()) return;
+        if (!lensDataGatePasses("sync", function() { window.runSimpleBatchSync(); })) return;
         // queue-stuck-state-recovery: the batch-sync entry point returns without
         // a word when nothing is dispatchable. This is the single choke point for
         // all three callers (the syncDirty branch, the re-export confirmation and
@@ -2367,7 +2351,7 @@ Rectangle {
     function runSimpleBatchExport(): void {
         if (window.motionData) window.motionData.syncQueueOpticalSettingsForProcessing();
         if (!queueVideoOutputFolderGatePasses(false)) return;
-        if (!lensDataGatePasses()) return;
+        if (!lensDataGatePasses("export", function() { window.runSimpleBatchExport(); })) return;
         if (render_queue.has_crm_proxy_jobs()) {
             window.showCanonCrmProjectOnlyMessage();
             return;
@@ -2389,20 +2373,19 @@ Rectangle {
                 if (kind === "video") {
                     if (window.motionData) window.motionData.syncQueueOpticalSettingsForProcessing();
                     if (!window.queueVideoOutputFolderGatePasses(true)) return;
-                    // Mirror runSimpleBatchExport's lens-data gate + CRM-proxy guard
-                    // + export_project, but requeue already-rendered video exports
-                    // for re-render. This branch dispatches inline (not via
-                    // runSimpleBatchExport), so the gate needs its own call here.
-                    if (!window.lensDataGatePasses()) return;
-                    if (render_queue.has_crm_proxy_jobs()) {
-                        window.showCanonCrmProjectOnlyMessage();
-                        return;
+                    function proceed() {
+                        if (render_queue.has_crm_proxy_jobs()) {
+                            window.showCanonCrmProjectOnlyMessage();
+                            return;
+                        }
+                        window.runQueueOutputAction(function() {
+                            render_queue.export_project = 4;
+                            render_queue.prepare_video_exports_for_rerender();
+                            render_queue.start();
+                        });
                     }
-                    window.runQueueOutputAction(function() {
-                        render_queue.export_project = 4;
-                        render_queue.prepare_video_exports_for_rerender();
-                        render_queue.start();
-                    });
+                    if (!window.lensDataGatePasses("reexport", proceed)) return;
+                    proceed();
                 } else if (kind === "plugins") {
                     window.runSimpleBatchSync();
                 }

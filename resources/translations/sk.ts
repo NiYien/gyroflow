@@ -1172,6 +1172,21 @@ Skúste iný výstupný kodek (H.265/HEVC zvládne viac prípadov než H.264/AVC
         <source>Choose folder</source>
         <translation>Vybrať priečinok</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2258"/>
+        <source>%1 video(s) have problems. No videos can be processed.</source>
+        <translation>%1 videí má problémy. Žiadne videá nie je možné spracovať.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2263"/>
+        <source>%1 video(s) have problems and will be skipped.</source>
+        <translation>%1 videí má problémy a bude preskočených.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2264"/>
+        <source>Continue processing</source>
+        <translation>Pokračovať v spracovaní</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4711,6 +4726,13 @@ Prosím nastav snímkovú frekvenciu:</translation>
         <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
         <source>Please confirm the output folder</source>
         <translation>Potvrďte výstupný priečinok</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="202"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="212"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2940"/>
+        <source>Skipped - incomplete lens data</source>
+        <translation>Preskočené - neúplné údaje objektívu</translation>
     </message>
 </context>
 <context>

@@ -1170,6 +1170,21 @@ Prova un altro codec di output (H.265/HEVC copre più casi di H.264/AVC), riduci
         <source>Choose folder</source>
         <translation>Scegli cartella</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2258"/>
+        <source>%1 video(s) have problems. No videos can be processed.</source>
+        <translation>%1 video presentano problemi. Nessun video può essere elaborato.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2263"/>
+        <source>%1 video(s) have problems and will be skipped.</source>
+        <translation>%1 video presentano problemi e verranno saltati.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2264"/>
+        <source>Continue processing</source>
+        <translation>Continua l’elaborazione</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4708,6 +4723,13 @@ Scegliere il frame rate: </translation>
         <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
         <source>Please confirm the output folder</source>
         <translation>Conferma la cartella di output</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="202"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="212"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2940"/>
+        <source>Skipped - incomplete lens data</source>
+        <translation>Saltato - dati obiettivo incompleti</translation>
     </message>
 </context>
 <context>

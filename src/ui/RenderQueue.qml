@@ -2937,6 +2937,7 @@ Item {
                             : dlg.skipReason === "calibration" ? qsTr("Skipped - calibration pair")
                             : dlg.skipReason === "plugin_only" ? qsTr("Plugin only - video export skipped")
                             : dlg.skipReason === "image_stabilization" ? qsTr("Skipped - in-camera stabilization is on")
+                            : dlg.skipReason === "lens_data" ? qsTr("Skipped - incomplete lens data")
                             : "";
                         color: root.skippedStatusColor;
                         font.pixelSize: basicTextSize;

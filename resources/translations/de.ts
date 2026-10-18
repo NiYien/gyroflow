@@ -1171,6 +1171,21 @@ Versuchen Sie einen anderen Ausgabe-Codec (H.265/HEVC deckt mehr Fälle ab als H
         <source>Choose folder</source>
         <translation>Ordner auswählen</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2258"/>
+        <source>%1 video(s) have problems. No videos can be processed.</source>
+        <translation>%1 Video(s) haben Probleme. Es können keine Videos verarbeitet werden.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2263"/>
+        <source>%1 video(s) have problems and will be skipped.</source>
+        <translation>%1 Video(s) haben Probleme und werden übersprungen.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2264"/>
+        <source>Continue processing</source>
+        <translation>Verarbeitung fortsetzen</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4710,6 +4725,13 @@ Bitte Bildrate in FPS angeben: </translation>
         <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
         <source>Please confirm the output folder</source>
         <translation>Bitte bestätigen Sie den Ausgabeordner</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="202"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="212"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2940"/>
+        <source>Skipped - incomplete lens data</source>
+        <translation>Übersprungen - unvollständige Objektivdaten</translation>
     </message>
 </context>
 <context>

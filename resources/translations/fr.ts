@@ -1171,6 +1171,21 @@ Essayez un autre codec de sortie (H.265/HEVC gère plus de cas que H.264/AVC), r
         <source>Choose folder</source>
         <translation>Choisir un dossier</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2258"/>
+        <source>%1 video(s) have problems. No videos can be processed.</source>
+        <translation>%1 vidéo(s) présentent des problèmes. Aucune vidéo ne peut être traitée.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2263"/>
+        <source>%1 video(s) have problems and will be skipped.</source>
+        <translation>%1 vidéo(s) présentent des problèmes et seront ignorées.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2264"/>
+        <source>Continue processing</source>
+        <translation>Continuer le traitement</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4710,6 +4725,13 @@ S'il vous plait, indiquez le nombre d'images par seconde :</translation>
         <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
         <source>Please confirm the output folder</source>
         <translation>Veuillez confirmer le dossier de sortie</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="202"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="212"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2940"/>
+        <source>Skipped - incomplete lens data</source>
+        <translation>Ignorée - données d’objectif incomplètes</translation>
     </message>
 </context>
 <context>

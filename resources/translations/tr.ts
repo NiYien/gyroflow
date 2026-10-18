@@ -1168,6 +1168,21 @@ Farklı bir çıkış kodeki deneyin (H.265/HEVC, H.264/AVC&apos;den daha fazla 
         <source>Choose folder</source>
         <translation>Klasör seç</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2258"/>
+        <source>%1 video(s) have problems. No videos can be processed.</source>
+        <translation>%1 videoda sorun var. İşlenebilecek video yok.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2263"/>
+        <source>%1 video(s) have problems and will be skipped.</source>
+        <translation>%1 videoda sorun var ve bu videolar atlanacak.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2264"/>
+        <source>Continue processing</source>
+        <translation>İşlemeye devam et</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4704,6 +4719,13 @@ Lütfen frame rate'i belirtin: </translation>
         <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
         <source>Please confirm the output folder</source>
         <translation>Çıktı klasörünü onaylayın</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="202"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="212"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2940"/>
+        <source>Skipped - incomplete lens data</source>
+        <translation>Atlandı - lens verileri eksik</translation>
     </message>
 </context>
 <context>

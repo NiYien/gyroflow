@@ -2268,7 +2268,8 @@ pub struct RenderQueue {
         qt_method!(fn(&mut self, indices_json: String)),
     // batch-lens-group-missing-data-gate: pre-dispatch check for the batch
     // lens-data gate. Empty jobs list = dispatch may proceed.
-    get_lens_groups_missing_data_json: qt_method!(fn(&self) -> QString),
+    get_lens_groups_missing_data_json: qt_method!(fn(&self, intent: String) -> QString),
+    skip_lens_data_jobs: qt_method!(fn(&mut self, job_ids_json: String)),
     manual_set_calibration_pair: qt_method!(fn(&mut self, job_id: u32, gyro_index: usize)),
     get_manual_pair_gyro_index: qt_method!(fn(&self, job_id: u32) -> i32),
     // Deep gyro match (2026-06-11): single-job coarse-offset search against
@@ -6399,6 +6400,8 @@ impl RenderQueue {
                         }
                         JobStatus::Skipped => match item.skip_reason.to_string().as_str() {
                             "plugin_only" => Some((item.job_id, "plugin_only")),
+                            // The batch dialog rechecks lens data before dispatch.
+                            "lens_data" => Some((item.job_id, "lens_data")),
                             // Re-judge with the admission predicate. Still no
                             // motion data -> the skip is still true, leave it.
                             "no_gyro" => {
@@ -6429,11 +6432,12 @@ impl RenderQueue {
         let count = |reason: &str| candidates.iter().filter(|(_, r)| *r == reason).count();
         ::log::info!(
             target: "app",
-            "[queue-render-skip] revived {} stuck job(s) for {intent} dispatch: plugin_only={} no_gyro={} error={}",
+            "[queue-render-skip] revived {} stuck job(s) for {intent} dispatch: plugin_only={} no_gyro={} error={} lens_data={}",
             candidates.len(),
             count("plugin_only"),
             count("no_gyro"),
-            count("error")
+            count("error"),
+            count("lens_data")
         );
 
         candidates.len() as i32
@@ -16915,19 +16919,58 @@ impl RenderQueue {
         })
     }
 
-    // batch-lens-group-missing-data-gate: pre-dispatch check for the batch
-    // lens-data gate. Returns {"jobs":[{job_id, filename, lens_index, reasons}]};
-    // an empty list means the dispatch may proceed. Only evaluates when the
+    // Return missing-data jobs and the valid-job count for this dispatch.
+    // An empty jobs list means the dispatch may proceed. Only evaluates when the
     // manual lens-group edit mode is on. Lens-number resolution mirrors
     // deep_match_needs_lens_choice; CalibrationPair jobs are excluded via
     // collect_video_job_ids. The per-config predicate lives in
     // niyien_lens_presets::lens_group_missing_reasons (unit-tested there).
-    fn get_lens_groups_missing_data_json(&self) -> QString {
+    fn get_lens_groups_missing_data_json(&self, intent: String) -> QString {
         if !lens_data_gate_enabled() {
             return QString::from(r#"{"jobs":[]}"#);
         }
         let manual_edit = core::settings::get_bool("lens_group_manual_edit", false);
-        QString::from(self.lens_groups_missing_data_impl(manual_edit).to_string())
+        QString::from(self.lens_data_dispatch_impl(manual_edit, &intent).to_string())
+    }
+
+    fn lens_data_dispatch_impl(&self, manual_edit: bool, intent: &str) -> serde_json::Value {
+        let video_ids: HashSet<u32> = self.collect_video_job_ids().into_iter().collect();
+        let candidate_ids: HashSet<u32> = self.queue.borrow().iter().filter_map(|item| {
+            let job = self.jobs.get(&item.job_id)?;
+            let finished_is_actionable = item.status == JobStatus::Finished
+                && job.last_finished_export_project == Some(if intent == "reexport" { 4 } else { 2 });
+            if !video_ids.contains(&item.job_id)
+                || item.total_frames <= 0
+                || !(item.status == JobStatus::Queued || finished_is_actionable)
+                || (intent != "sync" && job.plugin_only)
+                || job_lacks_sync_motion(job)
+                || self.job_is_stabilization_blocked(item.job_id)
+            {
+                return None;
+            }
+            Some(item.job_id)
+        }).collect();
+        let missing = self.lens_groups_missing_data_impl(manual_edit);
+        let jobs: Vec<_> = missing["jobs"].as_array().into_iter().flatten()
+            .filter(|job| job["job_id"].as_u64().is_some_and(|id| candidate_ids.contains(&(id as u32))))
+            .cloned()
+            .collect();
+        serde_json::json!({ "ready_count": candidate_ids.len() - jobs.len(), "jobs": jobs })
+    }
+
+    fn skip_lens_data_jobs(&mut self, job_ids_json: String) {
+        let Ok(job_ids) = serde_json::from_str::<Vec<u32>>(&job_ids_json) else { return; };
+        for job_id in job_ids {
+            update_model!(self, job_id, item {
+                if matches!(item.status, JobStatus::Queued | JobStatus::Finished) {
+                    item.status = JobStatus::Skipped;
+                    item.skip_reason = QString::from("lens_data");
+                    ::log::info!(target: "video.render", "[queue-render-skip] job={job_id} reason=lens_data");
+                }
+            });
+        }
+        self.queue_changed();
+        self.progress_changed();
     }
 
     // Settings-free core of get_lens_groups_missing_data_json so tests can drive
@@ -24417,6 +24460,133 @@ mod tests {
         }
         let v = queue.deep_match_needs_lens_choice_impl(1, true);
         assert_eq!(v["state"], "ok");
+    }
+
+    #[test]
+    fn lens_data_dispatch_counts_only_jobs_for_the_requested_action() {
+        let mut queue = lens_data_dispatch_queue();
+        let result = queue.lens_data_dispatch_impl(true, "sync");
+        assert_eq!(result["jobs"][0]["job_id"], 1);
+        assert_eq!(result["jobs"].as_array().unwrap().len(), 1);
+        assert_eq!(result["ready_count"], 1);
+
+        let job_id = 2;
+        update_model!(queue, job_id, item { item.status = JobStatus::Finished; });
+        queue.jobs.get_mut(&2).unwrap().last_finished_export_project = Some(4);
+        assert_eq!(queue.lens_data_dispatch_impl(true, "sync")["ready_count"], 0);
+        assert_eq!(queue.lens_data_dispatch_impl(true, "export")["ready_count"], 0);
+        assert_eq!(queue.lens_data_dispatch_impl(true, "reexport")["ready_count"], 1);
+
+        queue.jobs.get_mut(&2).unwrap().last_finished_export_project = Some(2);
+        assert_eq!(queue.lens_data_dispatch_impl(true, "sync")["ready_count"], 1);
+        assert_eq!(queue.lens_data_dispatch_impl(true, "export")["ready_count"], 1);
+        assert_eq!(queue.lens_data_dispatch_impl(true, "reexport")["ready_count"], 0);
+    }
+
+    fn lens_data_dispatch_queue() -> RenderQueue {
+        let mut queue = recovery_queue(&[
+            (1, JobStatus::Queued, "", "", false),
+            (2, JobStatus::Queued, "", "", false),
+        ]);
+        *queue.stabilizer.lens_group_config.write() = niyien_lens_presets::default_lens_group_configs();
+        queue.stabilizer.lens_group_config.write()[0].focal_length_mm = Some(50.0);
+        for job_id in [1, 2] {
+            add_motion_to_job(&mut queue, job_id, false);
+            queue.jobs.get_mut(&job_id).unwrap().lens_index_override = Some(0);
+        }
+        set_sensor_scale(&queue, 2, 168.0);
+        queue
+    }
+
+    #[test]
+    fn lens_data_dispatch_all_invalid_and_all_valid_leave_the_queue_unchanged() {
+        let queue = lens_data_dispatch_queue();
+        set_sensor_scale(&queue, 1, 168.0);
+        let result = queue.lens_data_dispatch_impl(true, "sync");
+        assert!(result["jobs"].as_array().unwrap().is_empty());
+        assert_eq!(result["ready_count"], 2);
+
+        queue.jobs[&1].stab.as_ref().unwrap().gyro.read().file_metadata.write().unit_pixel_focal_length = None;
+        queue.jobs[&2].stab.as_ref().unwrap().gyro.read().file_metadata.write().unit_pixel_focal_length = None;
+        let result = queue.lens_data_dispatch_impl(true, "sync");
+        assert_eq!(result["jobs"].as_array().unwrap().len(), 2);
+        assert_eq!(result["ready_count"], 0);
+        assert!(queue.queue.borrow().iter().all(|item| item.status == JobStatus::Queued && item.skip_reason.is_empty()));
+        assert!(queue.lens_data_dispatch_impl(false, "sync")["jobs"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn lens_data_dispatch_does_not_offer_continue_for_an_unprocessable_remaining_job() {
+        let mut queue = lens_data_dispatch_queue();
+        queue.jobs.get_mut(&2).unwrap().plugin_only = true;
+        assert_eq!(queue.lens_data_dispatch_impl(true, "export")["ready_count"], 0);
+        assert_eq!(queue.lens_data_dispatch_impl(true, "sync")["ready_count"], 1);
+        queue.jobs.get_mut(&2).unwrap().plugin_only = false;
+        queue.jobs[&2].stab.as_ref().unwrap().gyro.write().clear();
+        assert_eq!(queue.lens_data_dispatch_impl(true, "sync")["ready_count"], 0);
+        let job_id = 2;
+        update_model!(queue, job_id, item { item.status = JobStatus::Skipped; });
+        assert_eq!(queue.lens_data_dispatch_impl(true, "sync")["ready_count"], 0);
+    }
+
+    #[test]
+    fn lens_data_dispatch_skip_excludes_only_the_problem_job_and_can_be_retried() {
+        let mut queue = lens_data_dispatch_queue();
+        queue.jobs.get_mut(&1).unwrap().additional_data = "{\"offsets\":{\"1000\":42}}".into();
+        queue.jobs[&1].stab.as_ref().unwrap().gyro.write().set_offset(1000, 42.0);
+        queue.skip_lens_data_jobs("[1,999]".into());
+        assert_eq!(queue.queue.borrow()[0].status, JobStatus::Skipped);
+        assert_eq!(queue.queue.borrow()[0].skip_reason.to_string(), "lens_data");
+        assert_eq!(queue.queue.borrow()[1].status, JobStatus::Queued);
+        assert!(queue.lens_data_dispatch_impl(true, "sync")["jobs"].as_array().unwrap().is_empty());
+        assert_eq!(queue.select_next_queued_job().0, Some(2));
+        assert_eq!(queue.jobs[&1].additional_data, "{\"offsets\":{\"1000\":42}}");
+        assert_eq!(queue.jobs[&1].stab.as_ref().unwrap().gyro.read().get_offsets().get(&1000), Some(&42.0));
+
+        assert_eq!(queue.revive_stuck_jobs("sync".into()), 1);
+        assert_eq!(queue.lens_data_dispatch_impl(true, "sync")["jobs"][0]["job_id"], 1);
+        set_sensor_scale(&queue, 1, 168.0);
+        assert!(queue.lens_data_dispatch_impl(true, "sync")["jobs"].as_array().unwrap().is_empty());
+        assert_eq!(queue.jobs[&1].stab.as_ref().unwrap().gyro.read().get_offsets().get(&1000), Some(&42.0));
+    }
+
+    #[test]
+    fn lens_data_dispatch_skips_survive_sync_export_and_reexport_preparation() {
+        for intent in ["sync", "export", "reexport"] {
+            let mut queue = lens_data_dispatch_queue();
+            let finished_type = if intent == "reexport" { 4 } else { 2 };
+            for job_id in [1, 2] {
+                update_model!(queue, job_id, item { item.status = JobStatus::Finished; });
+                queue.jobs.get_mut(&job_id).unwrap().last_finished_export_project = Some(finished_type);
+            }
+            queue.skip_lens_data_jobs("[1]".into());
+            match intent {
+                "sync" => {
+                    queue.pause_flag.store(true, SeqCst);
+                    queue.start_batch_autosync();
+                }
+                "export" => queue.prepare_finished_jobs_for_video_export(),
+                _ => queue.prepare_video_exports_for_rerender(),
+            }
+            assert_eq!(queue.queue.borrow()[0].status, JobStatus::Skipped, "{intent}");
+            assert_eq!(queue.queue.borrow()[1].status, JobStatus::Queued, "{intent}");
+            assert_eq!(queue.select_next_queued_job().0, Some(2), "{intent}");
+        }
+    }
+
+    #[test]
+    fn lens_data_dispatch_skip_does_not_touch_active_or_other_skipped_jobs() {
+        let mut queue = lens_data_dispatch_queue();
+        let job_id = 1;
+        update_model!(queue, job_id, item { item.status = JobStatus::Rendering; });
+        let job_id = 2;
+        update_model!(queue, job_id, item {
+            item.status = JobStatus::Skipped;
+            item.skip_reason = QString::from("user_stopped");
+        });
+        queue.skip_lens_data_jobs("[1,2]".into());
+        assert_eq!(queue.queue.borrow()[0].status, JobStatus::Rendering);
+        assert_eq!(queue.queue.borrow()[1].skip_reason.to_string(), "user_stopped");
     }
 
     #[test]

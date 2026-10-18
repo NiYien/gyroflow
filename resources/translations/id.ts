@@ -1170,6 +1170,21 @@ Coba codec keluaran lain (H.265/HEVC menangani lebih banyak kasus daripada H.264
         <source>Choose folder</source>
         <translation>Pilih folder</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2258"/>
+        <source>%1 video(s) have problems. No videos can be processed.</source>
+        <translation>%1 video bermasalah. Tidak ada video yang dapat diproses.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2263"/>
+        <source>%1 video(s) have problems and will be skipped.</source>
+        <translation>%1 video bermasalah dan akan dilewati.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2264"/>
+        <source>Continue processing</source>
+        <translation>Lanjutkan pemrosesan</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4707,6 +4722,13 @@ Silakan masukan frame rate: </translation>
         <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
         <source>Please confirm the output folder</source>
         <translation>Konfirmasikan folder keluaran</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="202"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="212"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2940"/>
+        <source>Skipped - incomplete lens data</source>
+        <translation>Dilewati - data lensa tidak lengkap</translation>
     </message>
 </context>
 <context>

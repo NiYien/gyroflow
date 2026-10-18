@@ -186,6 +186,21 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="2258"/>
+        <source>%1 video(s) have problems. No videos can be processed.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2263"/>
+        <source>%1 video(s) have problems and will be skipped.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2264"/>
+        <source>Continue processing</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Experimental features</source>
         <translation type="unfinished"></translation>
     </message>
@@ -3482,6 +3497,13 @@ Close and reopen Final Cut Pro before using the effect.</source>
 </context>
 <context>
     <name>RenderQueue</name>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2940"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="202"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="212"/>
+        <source>Skipped - incomplete lens data</source>
+        <translation type="unfinished"></translation>
+    </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="96"/>
         <source>%1 video(s) cannot be exported directly. Use &quot;%2&quot; instead.</source>

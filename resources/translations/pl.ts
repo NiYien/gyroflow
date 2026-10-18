@@ -1172,6 +1172,21 @@ Spróbuj innego kodeka wyjściowego (H.265/HEVC obsługuje więcej przypadków n
         <source>Choose folder</source>
         <translation>Wybierz folder</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2258"/>
+        <source>%1 video(s) have problems. No videos can be processed.</source>
+        <translation>%1 filmów ma problemy. Nie można przetworzyć żadnego filmu.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2263"/>
+        <source>%1 video(s) have problems and will be skipped.</source>
+        <translation>%1 filmów ma problemy i zostanie pominiętych.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2264"/>
+        <source>Continue processing</source>
+        <translation>Kontynuuj przetwarzanie</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4711,6 +4726,13 @@ Podaj ilość klatek na sekundę: </translation>
         <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
         <source>Please confirm the output folder</source>
         <translation>Potwierdź folder wyjściowy</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="202"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="212"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2940"/>
+        <source>Skipped - incomplete lens data</source>
+        <translation>Pominięto - niepełne dane obiektywu</translation>
     </message>
 </context>
 <context>

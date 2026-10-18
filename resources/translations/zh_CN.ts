@@ -1160,6 +1160,21 @@ Try a different output codec (H.265/HEVC handles more cases than H.264/AVC), low
         <source>Choose folder</source>
         <translation>选择文件夹</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2258"/>
+        <source>%1 video(s) have problems. No videos can be processed.</source>
+        <translation>有 %1 个视频存在问题，暂无可处理的视频。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2263"/>
+        <source>%1 video(s) have problems and will be skipped.</source>
+        <translation>有 %1 个视频存在问题，本次将跳过。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2264"/>
+        <source>Continue processing</source>
+        <translation>继续处理</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4661,6 +4676,13 @@ Please provide frame rate: </source>
         <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
         <source>Please confirm the output folder</source>
         <translation>请确认输出文件夹</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="202"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="212"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2940"/>
+        <source>Skipped - incomplete lens data</source>
+        <translation>已跳过 - 镜头数据不完整</translation>
     </message>
 </context>
 <context>

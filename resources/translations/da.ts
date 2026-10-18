@@ -1172,6 +1172,21 @@ Prøv en anden output-codec (H.265/HEVC klarer flere tilfælde end H.264/AVC), s
         <source>Choose folder</source>
         <translation>Vælg mappe</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2258"/>
+        <source>%1 video(s) have problems. No videos can be processed.</source>
+        <translation>%1 video(er) har problemer. Ingen videoer kan behandles.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2263"/>
+        <source>%1 video(s) have problems and will be skipped.</source>
+        <translation>%1 video(er) har problemer og springes over.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2264"/>
+        <source>Continue processing</source>
+        <translation>Fortsæt behandlingen</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4711,6 +4726,13 @@ Angiv venligst billedhastighed: </translation>
         <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
         <source>Please confirm the output folder</source>
         <translation>Bekræft outputmappen</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="202"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="212"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2940"/>
+        <source>Skipped - incomplete lens data</source>
+        <translation>Sprunget over - ufuldstændige objektivdata</translation>
     </message>
 </context>
 <context>

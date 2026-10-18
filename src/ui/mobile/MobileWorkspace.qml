@@ -199,6 +199,7 @@ Rectangle {
         if (row.skipReason === "calibration") return qsTr("Calibration pair");
         if (row.skipReason === "plugin_only") return qsTr("Plugin stabilization only");
         if (row.skipReason === "image_stabilization") return qsTr("In-camera stabilization on");
+        if (row.skipReason === "lens_data") return qsTranslate("RenderQueue", "Skipped - incomplete lens data");
         if (row.error) return host ? host.getReadableError(row.error) : row.error;
         return qsTr("Skip reason not recorded");
     }
@@ -208,6 +209,7 @@ Rectangle {
         if (reason === "no_gyro") return qsTr("No gyroscope data. Add a recording or try Deep search.");
         if (reason === "plugin_only") return qsTr("This format supports stabilization for editing plugins only.");
         if (reason === "calibration") return qsTranslate("RenderQueue", "Skipped - calibration pair");
+        if (reason === "lens_data") return qsTranslate("RenderQueue", "Skipped - incomplete lens data");
         if (reason === "image_stabilization") return qsTranslate("App", "In-camera stabilization was on when these videos were recorded, so they cannot be stabilized. Turn off stabilization in the camera and on the lens, then record again.");
         return qsTr("Skip reason not recorded");
     }

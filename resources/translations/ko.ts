@@ -1171,6 +1171,21 @@ Try a different output codec (H.265/HEVC handles more cases than H.264/AVC), low
         <source>Choose folder</source>
         <translation>폴더 선택</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2258"/>
+        <source>%1 video(s) have problems. No videos can be processed.</source>
+        <translation>%1개 동영상에 문제가 있습니다. 처리할 수 있는 동영상이 없습니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2263"/>
+        <source>%1 video(s) have problems and will be skipped.</source>
+        <translation>%1개 동영상에 문제가 있어 건너뜁니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2264"/>
+        <source>Continue processing</source>
+        <translation>처리 계속</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -4710,6 +4725,13 @@ Please provide frame rate: </source>
         <location filename="../../src/ui/RenderQueue.qml" line="3115"/>
         <source>Please confirm the output folder</source>
         <translation>출력 폴더를 확인해 주세요</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="202"/>
+        <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="212"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2940"/>
+        <source>Skipped - incomplete lens data</source>
+        <translation>건너뜀 - 렌즈 데이터 불완전</translation>
     </message>
 </context>
 <context>
