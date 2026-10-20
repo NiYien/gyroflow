@@ -929,6 +929,48 @@ mod tests {
     }
 
     #[test]
+    fn manual_kinefinity_ff_3k_uses_slate_format_without_an_oversampling_flag() {
+        let tmp = tempfile::tempdir().unwrap();
+        let database = serde_json::json!({
+            "models": { "MAVO LF": { "sw": 36.0, "kinefinity": {
+                "sensor_size": [6016,4016],
+                "native_format": "FULL",
+                "oversampling": [{"format":"FULL", "output":[2944,2000], "source":[5888,3984]}],
+                "readout": [{"format":"FULL", "height":3172, "ms":-17.0}]
+            }}}
+        });
+        std::fs::write(tmp.path().join("kinefinity.json"), database.to_string()).unwrap();
+        let catalog = ManualCameraCatalog::load(tmp.path().to_str().unwrap()).unwrap();
+        let selection = ManualCameraSelection::new("KINEFINITY", "MAVO LF");
+        let mut manual_input = input((2944, 2000), 48.0);
+        manual_input.additional_data = serde_json::json!({"image_format":"FF", "sensor_fps":48.0});
+        let full = catalog.resolve(&selection, &manual_input).unwrap();
+        assert_eq!(full.camera_identifier.camera_setting, "FULL");
+        assert!((full.crop_factor - 6016.0 / 5888.0).abs() < 1e-9);
+        assert!((full.unit_pixel_focal_length - 6016.0 / 72.0).abs() < 1e-9);
+        assert!((full.frame_readout_time - 17.0 * 3984.0 / 3172.0).abs() < 1e-9);
+        assert!(full.readout_estimated);
+        let metadata = crate::gyro_source::FileMetadata {
+            unit_pixel_focal_length: Some(full.unit_pixel_focal_length),
+            ..Default::default()
+        };
+        let config = crate::niyien_lens_presets::LensGroupConfig {
+            focal_length_mm: Some(50.0),
+            ..Default::default()
+        };
+        let lens = crate::niyien_lens_presets::build_lens_profile(
+            &metadata, (2944, 2000), Some(&config), None, None,
+        ).unwrap();
+        assert!((lens.fisheye_params.camera_matrix[0][0] - 50.0 * 6016.0 / 72.0).abs() < 1e-6);
+        assert!(lens.lens_group_override);
+        manual_input.additional_data = serde_json::json!({"image_format":"FF", "oversampling":false});
+        let crop = catalog.resolve(&selection, &manual_input).unwrap();
+        assert!((crop.unit_pixel_focal_length / full.unit_pixel_focal_length - 2.0).abs() < 1e-9);
+        manual_input.additional_data = serde_json::json!({});
+        assert!(catalog.resolve(&selection, &manual_input).is_none());
+    }
+
+    #[test]
     fn manual_kinefinity_uses_shared_scan_geometry_and_recording_fps() {
         let tmp = tempfile::tempdir().unwrap();
         let database = serde_json::json!({
