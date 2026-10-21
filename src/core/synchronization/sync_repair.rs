@@ -272,6 +272,30 @@ pub struct BatchSyncConfirmationResult {
 }
 
 impl BatchSyncConfirmationResult {
+    /// Keep individually valid sync points when the whole-batch check fails.
+    /// This does not establish a new clock reference or relax point quality gates.
+    pub fn retain_individual_sync_results(&mut self) {
+        if self.batch_status != BatchSyncBatchStatus::AllYellow {
+            return;
+        }
+        for video in &mut self.videos {
+            let mut discarded = Vec::new();
+            for mut point in std::mem::take(&mut video.discarded_points) {
+                if point.diagnostic.insufficient_cross_video_support {
+                    point.diagnostic.insufficient_cross_video_support = false;
+                    video.confirmed_points.push(point);
+                } else {
+                    discarded.push(point);
+                }
+            }
+            video.discarded_points = discarded;
+            if !video.confirmed_points.is_empty() {
+                video.color = BatchSyncVideoColor::Green;
+            }
+        }
+        self.update_batch_status();
+    }
+
     pub fn video_state(&self, job_id: u32) -> Option<&BatchSyncVideoState> {
         self.videos.iter().find(|video| video.job_id == job_id)
     }
@@ -493,16 +517,15 @@ fn confirm_batch_sync_points_internal(
                 windows.push((None, untimed));
             }
 
-            // One best band per window (existing enumeration + rank_cmp over
-            // band-space offsets), deduped by support set across overlapping
-            // windows.
+            // Keep ranked alternatives until the drift gate has accepted one.
+            // A larger rejected group must not discard an anchored smaller group.
             struct WindowBand {
                 range: Option<(f64, f64)>,
                 band: CoarseConsistencyBand,
                 offset_ms: f64,
                 center_ms: Option<f64>,
             }
-            let mut window_bands: Vec<WindowBand> = Vec::new();
+            let mut window_bands: Vec<Vec<WindowBand>> = Vec::new();
             let mut seen_support: BTreeSet<Vec<u32>> = BTreeSet::new();
             for (range, jobs) in windows {
                 let mut band_points: Vec<BatchSyncPoint> = Vec::new();
@@ -513,41 +536,45 @@ fn confirm_batch_sync_points_internal(
                         band_points.push(q);
                     }
                 }
-                let best = coarse_consistency_bands(&band_points)
+                let mut bands: Vec<_> = coarse_consistency_bands(&band_points)
                     .into_iter()
                     .filter(|band| band.job_ids.len() >= required_band_job_count)
-                    .max_by(|a, b| a.rank_cmp(b));
-                let Some(band) = best else { continue };
-                if !seen_support.insert(band.job_ids.iter().copied().collect()) {
-                    continue;
-                }
-                // Band value: per-job median of in-band offsets, then the
-                // median across jobs (one vote per video — the same merge
-                // operator the relay consensus uses). Center: median capture
-                // time of the band's jobs.
-                let in_band: HashSet<usize> = band.point_ids.iter().copied().collect();
-                let mut job_offsets: Vec<f64> = Vec::new();
-                let mut job_times: Vec<f64> = Vec::new();
-                for job_id in &band.job_ids {
-                    let mut offs: Vec<f64> = subset_by_job[job_id]
-                        .iter()
-                        .filter(|p| in_band.contains(&p.id))
-                        .map(|p| p.band_offset_ms())
-                        .collect();
-                    if offs.is_empty() {
-                        continue;
+                    .collect();
+                bands.sort_by(|a, b| a.rank_cmp(b));
+                bands.reverse();
+                let mut candidates = Vec::new();
+                for band in bands {
+                    // Band value: per-job median of in-band offsets, then the
+                    // median across jobs (one vote per video — the same merge
+                    // operator the relay consensus uses). Center: median capture
+                    // time of the band's jobs.
+                    let in_band: HashSet<usize> = band.point_ids.iter().copied().collect();
+                    let mut job_offsets: Vec<f64> = Vec::new();
+                    let mut job_times: Vec<f64> = Vec::new();
+                    for job_id in &band.job_ids {
+                        let mut offs: Vec<f64> = subset_by_job[job_id]
+                            .iter()
+                            .filter(|p| in_band.contains(&p.id))
+                            .map(|p| p.band_offset_ms())
+                            .collect();
+                        if offs.is_empty() {
+                            continue;
+                        }
+                        offs.sort_by(|a, b| cmp_f64(*a, *b));
+                        job_offsets.push(median_of_sorted(&offs));
+                        if let Some(t) = job_time[job_id] {
+                            job_times.push(t);
+                        }
                     }
-                    offs.sort_by(|a, b| cmp_f64(*a, *b));
-                    job_offsets.push(median_of_sorted(&offs));
-                    if let Some(t) = job_time[job_id] {
-                        job_times.push(t);
-                    }
+                    job_offsets.sort_by(|a, b| cmp_f64(*a, *b));
+                    job_times.sort_by(|a, b| cmp_f64(*a, *b));
+                    let offset_ms = median_of_sorted(&job_offsets);
+                    let center_ms = range.map(|_| median_of_sorted(&job_times));
+                    candidates.push(WindowBand { range, band, offset_ms, center_ms });
                 }
-                job_offsets.sort_by(|a, b| cmp_f64(*a, *b));
-                job_times.sort_by(|a, b| cmp_f64(*a, *b));
-                let offset_ms = median_of_sorted(&job_offsets);
-                let center_ms = range.map(|_| median_of_sorted(&job_times));
-                window_bands.push(WindowBand { range, band, offset_ms, center_ms });
+                if !candidates.is_empty() {
+                    window_bands.push(candidates);
+                }
             }
 
             // Untimed bucket: accepted unconditionally (legacy behaviour — no
@@ -559,17 +586,22 @@ fn confirm_batch_sync_points_internal(
                 .filter(|r| r.session_id == session_id)
                 .map(|r| (r.created_at_ms, r.wall_clock_offset_ms))
                 .collect();
-            let mut waiting: Vec<WindowBand> = Vec::new();
-            for wb in window_bands {
-                match wb.center_ms {
-                    None => accepted_bands.push(AcceptedLocalBand {
+            let mut waiting: Vec<Vec<WindowBand>> = Vec::new();
+            for candidates in window_bands {
+                if candidates[0].center_ms.is_none() {
+                    let wb = candidates.into_iter().next().unwrap();
+                    if !seen_support.insert(wb.band.job_ids.iter().copied().collect()) {
+                        continue;
+                    }
+                    accepted_bands.push(AcceptedLocalBand {
                         band: wb.band,
                         session_id,
                         window_range_ms: None,
                         center_created_at_ms: None,
                         offset_ms: wb.offset_ms,
-                    }),
-                    Some(_) => waiting.push(wb),
+                    });
+                } else {
+                    waiting.push(candidates);
                 }
             }
             while !waiting.is_empty() {
@@ -580,14 +612,14 @@ fn confirm_batch_sync_points_internal(
                         .iter()
                         .enumerate()
                         .max_by(|(_, a), (_, b)| {
-                            a.band
+                            a[0].band
                                 .job_ids
                                 .len()
-                                .cmp(&b.band.job_ids.len())
+                                .cmp(&b[0].band.job_ids.len())
                                 .then_with(|| {
                                     cmp_f64(
-                                        b.center_ms.unwrap_or(0.0),
-                                        a.center_ms.unwrap_or(0.0),
+                                        b[0].center_ms.unwrap_or(0.0),
+                                        a[0].center_ms.unwrap_or(0.0),
                                     )
                                 })
                         })
@@ -598,24 +630,54 @@ fn confirm_batch_sync_points_internal(
                         .iter()
                         .enumerate()
                         .min_by(|(_, a), (_, b)| {
-                            let da = nearest_ref_dist(a.center_ms.unwrap_or(0.0), &chain_refs);
-                            let db = nearest_ref_dist(b.center_ms.unwrap_or(0.0), &chain_refs);
+                            let da = nearest_ref_dist(a[0].center_ms.unwrap_or(0.0), &chain_refs);
+                            let db = nearest_ref_dist(b[0].center_ms.unwrap_or(0.0), &chain_refs);
                             cmp_f64(da, db)
                         })
                         .map(|(i, _)| i)
                         .unwrap()
                 };
-                let wb = waiting.swap_remove(pick);
-                let center = wb.center_ms.unwrap_or(0.0);
-                let nearest = chain_refs
-                    .iter()
-                    .copied()
-                    .min_by(|a, b| cmp_f64((a.0 - center).abs(), (b.0 - center).abs()));
-                match nearest {
-                    Some((ref_t, ref_v)) => {
-                        let budget = super::batch_clock::drift_budget_ms(center - ref_t);
-                        let actual = (wb.offset_ms - ref_v).abs();
-                        if actual <= budget {
+                let mut first_rejection = None;
+                for wb in waiting.swap_remove(pick) {
+                    let support: Vec<_> = wb.band.job_ids.iter().copied().collect();
+                    if seen_support.contains(&support) {
+                        break;
+                    }
+                    let center = wb.center_ms.unwrap_or(0.0);
+                    let nearest = chain_refs
+                        .iter()
+                        .copied()
+                        .min_by(|a, b| cmp_f64((a.0 - center).abs(), (b.0 - center).abs()));
+                    match nearest {
+                        Some((ref_t, ref_v)) => {
+                            let budget = super::batch_clock::drift_budget_ms(center - ref_t);
+                            let actual = (wb.offset_ms - ref_v).abs();
+                            if actual <= budget {
+                                seen_support.insert(support);
+                                chain_refs.push((center, wb.offset_ms));
+                                accepted_bands.push(AcceptedLocalBand {
+                                    band: wb.band,
+                                    session_id,
+                                    window_range_ms: wb.range,
+                                    center_created_at_ms: Some(center),
+                                    offset_ms: wb.offset_ms,
+                                });
+                                break;
+                            } else {
+                                first_rejection.get_or_insert(RejectedLocalBand {
+                                    session_id,
+                                    center_created_at_ms: center,
+                                    offset_ms: wb.offset_ms,
+                                    support_job_ids: wb.band.job_ids.clone(),
+                                    ref_created_at_ms: ref_t,
+                                    ref_offset_ms: ref_v,
+                                    budget_ms: budget,
+                                    actual_ms: actual,
+                                });
+                            }
+                        }
+                        None => {
+                            seen_support.insert(support);
                             chain_refs.push((center, wb.offset_ms));
                             accepted_bands.push(AcceptedLocalBand {
                                 band: wb.band,
@@ -624,29 +686,12 @@ fn confirm_batch_sync_points_internal(
                                 center_created_at_ms: Some(center),
                                 offset_ms: wb.offset_ms,
                             });
-                        } else {
-                            rejected_bands.push(RejectedLocalBand {
-                                session_id,
-                                center_created_at_ms: center,
-                                offset_ms: wb.offset_ms,
-                                support_job_ids: wb.band.job_ids.clone(),
-                                ref_created_at_ms: ref_t,
-                                ref_offset_ms: ref_v,
-                                budget_ms: budget,
-                                actual_ms: actual,
-                            });
+                            break;
                         }
                     }
-                    None => {
-                        chain_refs.push((center, wb.offset_ms));
-                        accepted_bands.push(AcceptedLocalBand {
-                            band: wb.band,
-                            session_id,
-                            window_range_ms: wb.range,
-                            center_created_at_ms: Some(center),
-                            offset_ms: wb.offset_ms,
-                        });
-                    }
+                }
+                if let Some(rejected) = first_rejection {
+                    rejected_bands.push(rejected);
                 }
             }
         }
@@ -1682,6 +1727,79 @@ mod tests {
         let rejected = &result.rejected_bands[0];
         assert!(rejected.actual_ms > rejected.budget_ms);
         assert_eq!(rejected.ref_offset_ms, -1500.0);
+    }
+
+    #[test]
+    fn rejected_larger_band_does_not_discard_anchor_compatible_results() {
+        let refs = [super::super::batch_clock::ConfirmedLocalOffset {
+            source: super::super::batch_clock::ConfirmedOffsetSource::Anchor,
+            session_id: 0,
+            created_at_ms: 0.0,
+            wall_clock_offset_ms: -13940.0,
+            support_videos: 0,
+            generation: 1,
+        }];
+        // Feedback 20261021-ee59fcec: the later, larger group was 4765.9ms
+        // from the deep-match anchor. Its rejection also discarded the earlier
+        // group, despite that group agreeing with the anchor.
+        let mut points: Vec<_> = (1..=19)
+            .map(|id| timed_point(id, f64::from(id) / 100.0, -13940.0, 0.9))
+            .collect();
+        points.extend((20..=45).map(|id| {
+            timed_point(id, 1.4 + f64::from(id - 20) / 100.0, -9174.1, 0.9)
+        }));
+        let result = confirm_batch_sync_points_for_jobs_with_refs(points, 1..=45, &refs);
+        assert_eq!(result.batch_status, BatchSyncBatchStatus::Mixed);
+        for id in 1..=19 {
+            assert_eq!(result.video_state(id).unwrap().color, BatchSyncVideoColor::Green);
+        }
+        for id in 20..=45 {
+            assert_eq!(result.video_state(id).unwrap().color, BatchSyncVideoColor::Yellow);
+        }
+        assert_eq!(result.accepted_bands.len(), 1);
+        assert_eq!(result.accepted_bands[0].offset_ms, -13940.0);
+        assert!(!result.rejected_bands.is_empty());
+    }
+
+    #[test]
+    fn whole_batch_failure_keeps_individually_valid_results_only() {
+        let mut result = confirm_batch_sync_points_for_jobs(
+            vec![
+                point(1, 1000.0, -1500.0, 0.9),
+                point(1, 5000.0, -1502.0, 0.9),
+                point(2, 1000.0, -6500.0, 0.9),
+                point(3, 1000.0, -1500.0, 0.0),
+            ],
+            [1, 2, 3, 4],
+        );
+        assert_eq!(result.batch_status, BatchSyncBatchStatus::AllYellow);
+        result.retain_individual_sync_results();
+        assert_eq!(result.video_state(1).unwrap().confirmed_points.len(), 2);
+        assert_eq!(result.video_state(2).unwrap().confirmed_points.len(), 1);
+        for id in [1, 2] {
+            assert_eq!(result.video_state(id).unwrap().color, BatchSyncVideoColor::Green);
+        }
+        for id in [3, 4] {
+            assert_eq!(result.video_state(id).unwrap().color, BatchSyncVideoColor::Yellow);
+        }
+        assert!(result.accepted_bands.is_empty());
+    }
+
+    #[test]
+    fn individual_result_retention_does_not_change_mixed_confirmation() {
+        let mut result = confirm_batch_sync_points_for_jobs(
+            vec![
+                point(1, 1000.0, -1500.0, 0.9),
+                point(2, 1000.0, -1510.0, 0.9),
+                point(3, 1000.0, -1505.0, 0.9),
+                point(4, 1000.0, -6500.0, 0.9),
+            ],
+            [1, 2, 3, 4],
+        );
+        assert_eq!(result.batch_status, BatchSyncBatchStatus::Mixed);
+        let before = result.clone();
+        result.retain_individual_sync_results();
+        assert_eq!(result, before);
     }
 
     #[test]

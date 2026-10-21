@@ -4732,6 +4732,11 @@ Proporcione taxa de fotogramas: </translation>
         <source>Skipped - incomplete lens data</source>
         <translation>Omitido - datos do obxectivo incompletos</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="922"/>
+        <source>Batch sync verification may be inaccurate. Individual sync results have been kept. Please check the stabilization.</source>
+        <translation>A verificación da sincronización por lotes pode ser imprecisa. Conserváronse os resultados individuais. Comproba a estabilización.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

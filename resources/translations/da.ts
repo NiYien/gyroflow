@@ -4734,6 +4734,11 @@ Angiv venligst billedhastighed: </translation>
         <source>Skipped - incomplete lens data</source>
         <translation>Sprunget over - ufuldstændige objektivdata</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="922"/>
+        <source>Batch sync verification may be inaccurate. Individual sync results have been kept. Please check the stabilization.</source>
+        <translation>Kontrollen af batchsynkronisering kan være unøjagtig. De enkelte synkroniseringsresultater er bevaret. Kontrollér stabiliseringen.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

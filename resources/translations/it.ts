@@ -4731,6 +4731,11 @@ Scegliere il frame rate: </translation>
         <source>Skipped - incomplete lens data</source>
         <translation>Saltato - dati obiettivo incompleti</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="922"/>
+        <source>Batch sync verification may be inaccurate. Individual sync results have been kept. Please check the stabilization.</source>
+        <translation>La verifica della sincronizzazione in serie potrebbe essere imprecisa. I risultati individuali sono stati conservati. Controlla la stabilizzazione.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

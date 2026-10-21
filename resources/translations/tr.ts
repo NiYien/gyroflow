@@ -4727,6 +4727,11 @@ Lütfen frame rate'i belirtin: </translation>
         <source>Skipped - incomplete lens data</source>
         <translation>Atlandı - lens verileri eksik</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="922"/>
+        <source>Batch sync verification may be inaccurate. Individual sync results have been kept. Please check the stabilization.</source>
+        <translation>Toplu eşitleme doğrulaması hatalı olabilir. Her videonun eşitleme sonuçları korundu. Lütfen sabitleme sonucunu kontrol edin.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

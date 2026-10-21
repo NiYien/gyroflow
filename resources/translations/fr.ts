@@ -4733,6 +4733,11 @@ S'il vous plait, indiquez le nombre d'images par seconde :</translation>
         <source>Skipped - incomplete lens data</source>
         <translation>Ignorée - données d’objectif incomplètes</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="922"/>
+        <source>Batch sync verification may be inaccurate. Individual sync results have been kept. Please check the stabilization.</source>
+        <translation>La vérification de la synchronisation par lot peut être imprécise. Les résultats individuels ont été conservés. Vérifiez la stabilisation.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

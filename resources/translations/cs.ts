@@ -4734,6 +4734,11 @@ Zadejte prosím frekvenci snímku: </translation>
         <source>Skipped - incomplete lens data</source>
         <translation>Přeskočeno - neúplná data objektivu</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="922"/>
+        <source>Batch sync verification may be inaccurate. Individual sync results have been kept. Please check the stabilization.</source>
+        <translation>Ověření hromadné synchronizace může být nepřesné. Výsledky jednotlivých videí byly zachovány. Zkontrolujte stabilizaci.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

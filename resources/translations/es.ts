@@ -4732,6 +4732,11 @@ Por favor, indique la velocidad del fotograma: </translation>
         <source>Skipped - incomplete lens data</source>
         <translation>Omitido - datos de lente incompletos</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="922"/>
+        <source>Batch sync verification may be inaccurate. Individual sync results have been kept. Please check the stabilization.</source>
+        <translation>La verificación de la sincronización por lotes puede ser imprecisa. Se han conservado los resultados individuales. Comprueba la estabilización.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

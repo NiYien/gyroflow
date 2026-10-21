@@ -235,6 +235,7 @@ enum BatchSyncPromptKind {
     None,
     Repair,
     AllYellow,
+    VerificationWarning,
     FinishedWithYellow,
 }
 impl std::fmt::Display for BatchSyncPromptKind {
@@ -243,6 +244,7 @@ impl std::fmt::Display for BatchSyncPromptKind {
             Self::None => "none",
             Self::Repair => "repair",
             Self::AllYellow => "all_yellow",
+            Self::VerificationWarning => "verification_warning",
             Self::FinishedWithYellow => "finished_with_yellow",
         })
     }
@@ -4404,7 +4406,7 @@ impl RenderQueue {
             refs.len(),
             self.batch_clock.generation()
         );
-        let result = confirm_batch_sync_points_for_jobs_with_refs(
+        let mut result = confirm_batch_sync_points_for_jobs_with_refs(
             candidates,
             self.batch_sync_job_ids.iter().copied(),
             &refs,
@@ -4432,6 +4434,17 @@ impl RenderQueue {
             );
         }
 
+        let verification_warning = result.batch_status == BatchSyncBatchStatus::AllYellow;
+        if verification_warning {
+            // A failed batch check is advisory. Keep points that already passed
+            // the individual quality and consistency checks, including their T1 file.
+            result.retain_individual_sync_results();
+            ::log::warn!(
+                target: "sync",
+                "[batch-clock] whole-batch verification failed; retaining individual sync results"
+            );
+        }
+
         for video in &result.videos {
             let job_id = video.job_id;
             if self.skip_stabilization_blocked_job(job_id) {
@@ -4448,12 +4461,10 @@ impl RenderQueue {
                 BatchSyncVideoColor::Green => "green",
                 BatchSyncVideoColor::Yellow => "yellow",
             };
-            let message = match (result.batch_status, video.color) {
-                (BatchSyncBatchStatus::AllYellow, _) => {
-                    "No reliable batch sync result. Check gyro split or batch matching."
-                }
+            let message = match (verification_warning, video.color) {
+                (true, BatchSyncVideoColor::Green) => "Sync complete.",
                 (_, BatchSyncVideoColor::Yellow) => "Sync is not confirmed.",
-                (_, BatchSyncVideoColor::Green) => "Sync confirmed.",
+                (false, BatchSyncVideoColor::Green) => "Sync confirmed.",
             };
             ::log::debug!(
                 "[batch_sync_status_write] job={} color={} confirmed_points={} discarded_points={} repair_round={} expected={} cache_has={}",
@@ -4472,6 +4483,7 @@ impl RenderQueue {
                     "discarded_points": video.discarded_points.len(),
                     "repair_round": repair_round,
                     "message": message,
+                    "verification_warning": verification_warning,
                 }).to_string());
                 // Atomically transition to Finished alongside sync_status so QML's
                 // hasSyncStatus binding sees "yellow"/"green" before isFinished
@@ -4602,7 +4614,7 @@ impl RenderQueue {
                 }
                 // Emit dev-time tutorial mock-data capture (env-gated; no-op by default).
                 self.tutorial_capture_dump(video.job_id);
-            } else if video.color == BatchSyncVideoColor::Yellow {
+            } else if video.color == BatchSyncVideoColor::Yellow && !verification_warning {
                 // T2 Yellow: clear `offsets` field in the on-disk .gyroflow but
                 // leave stab.gyro untouched so the user can manually re-sync from
                 // the in-memory state. Skip when T1 never wrote or wrote empty.
@@ -4653,24 +4665,28 @@ impl RenderQueue {
 
         self.batch_sync_repair_prompt_pending = false;
         let mut repair_round_queued = false;
-        self.batch_sync_prompt_kind = match result.batch_status {
-            BatchSyncBatchStatus::Empty | BatchSyncBatchStatus::AllGreen => BatchSyncPromptKind::None,
-            BatchSyncBatchStatus::AllYellow => BatchSyncPromptKind::AllYellow,
-            BatchSyncBatchStatus::Mixed => {
-                if self.batch_sync_user_confirmed_repair {
-                    if self.batch_sync_repair_round >= 2 {
-                        BatchSyncPromptKind::FinishedWithYellow
-                    } else {
-                        if self.queue_yellow_batch_sync_repair_jobs(&result.videos) {
-                            repair_round_queued = true;
-                            BatchSyncPromptKind::None
-                        } else {
+        self.batch_sync_prompt_kind = if verification_warning {
+            BatchSyncPromptKind::VerificationWarning
+        } else {
+            match result.batch_status {
+                BatchSyncBatchStatus::Empty | BatchSyncBatchStatus::AllGreen => BatchSyncPromptKind::None,
+                BatchSyncBatchStatus::AllYellow => BatchSyncPromptKind::AllYellow,
+                BatchSyncBatchStatus::Mixed => {
+                    if self.batch_sync_user_confirmed_repair {
+                        if self.batch_sync_repair_round >= 2 {
                             BatchSyncPromptKind::FinishedWithYellow
+                        } else {
+                            if self.queue_yellow_batch_sync_repair_jobs(&result.videos) {
+                                repair_round_queued = true;
+                                BatchSyncPromptKind::None
+                            } else {
+                                BatchSyncPromptKind::FinishedWithYellow
+                            }
                         }
+                    } else {
+                        self.batch_sync_repair_prompt_pending = true;
+                        BatchSyncPromptKind::Repair
                     }
-                } else {
-                    self.batch_sync_repair_prompt_pending = true;
-                    BatchSyncPromptKind::Repair
                 }
             }
         };
@@ -22666,8 +22682,8 @@ mod tests {
 
         assert_eq!(batch_status(&queue, 1)["color"], "yellow");
         assert_eq!(batch_status(&queue, 2)["color"], "yellow");
-        assert_eq!(batch_status(&queue, 3)["color"], "yellow");
-        assert_eq!(queue.batch_sync_prompt_kind.to_string(), "all_yellow");
+        assert_eq!(batch_status(&queue, 3)["color"], "green");
+        assert_eq!(queue.batch_sync_prompt_kind.to_string(), "verification_warning");
     }
 
     #[test]
@@ -23006,7 +23022,7 @@ mod tests {
     }
 
     #[test]
-    fn render_queue_batch_sync_reports_all_yellow_without_repair_prompt() {
+    fn render_queue_batch_sync_failure_is_advisory_without_repair_prompt() {
         let mut queue = RenderQueue::default();
         add_eta_job(&mut queue, 1, 0);
         add_eta_job(&mut queue, 2, 1);
@@ -23015,10 +23031,80 @@ mod tests {
         queue.record_batch_sync_points(1, vec![sync_candidate(1, 1000.0, 0.0, 0.9)]);
         queue.record_batch_sync_points(2, vec![sync_candidate(2, 1000.0, 5000.0, 0.9)]);
 
-        assert_eq!(batch_status(&queue, 1)["color"], "yellow");
-        assert_eq!(batch_status(&queue, 2)["color"], "yellow");
-        assert_eq!(queue.batch_sync_prompt_kind.to_string(), "all_yellow");
+        assert_eq!(batch_status(&queue, 1)["color"], "green");
+        assert_eq!(batch_status(&queue, 2)["color"], "green");
+        assert_eq!(queue.batch_sync_prompt_kind.to_string(), "verification_warning");
         assert!(!queue.batch_sync_repair_prompt_pending);
+    }
+
+    #[test]
+    fn batch_sync_verification_failure_preserves_written_offsets_and_green_results() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut queue = RenderQueue::default();
+        let mut originals = Vec::new();
+        for (index, (job_id, offset)) in [(1, -1500.0), (2, -6500.0)].into_iter().enumerate() {
+            add_eta_job(&mut queue, job_id, index);
+            let job = queue.jobs.get_mut(&job_id).unwrap();
+            job.render_options.output_folder = filesystem::path_to_url(&dir.path().to_string_lossy());
+            job.render_options.output_filename = format!("clip{job_id}.mp4");
+            let (_, url) = RenderQueue::build_export_project_payload(
+                &job.additional_data, &job.render_options, &queue.default_suffix.to_string(),
+            );
+            let offsets = BTreeMap::from([(((1000.0 - offset) * 1000.0) as i64, offset)]);
+            RenderQueue::write_gyroflow_with_offsets_override(
+                job.stab.as_ref().unwrap(), "{}", &url, &offsets,
+            ).unwrap();
+            job.last_written_offsets = Some(offsets.clone());
+            originals.push((job_id, url.clone(), filesystem::read_to_string(&url).unwrap(), offsets));
+        }
+        queue.register_batch_sync_jobs([1, 2]);
+        queue.record_batch_sync_points(1, vec![sync_candidate(1, 1000.0, -1500.0, 0.9)]);
+        queue.record_batch_sync_points(2, vec![sync_candidate(2, 1000.0, -6500.0, 0.9)]);
+
+        assert_eq!(queue.batch_sync_prompt_kind.to_string(), "verification_warning");
+        for (job_id, url, original, offsets) in originals {
+            assert_eq!(batch_status(&queue, job_id)["color"], "green");
+            assert_eq!(batch_status(&queue, job_id)["verification_warning"], true);
+            assert_eq!(filesystem::read_to_string(&url).unwrap(), original);
+            let job = &queue.jobs[&job_id];
+            assert_eq!(job.last_written_offsets.as_ref(), Some(&offsets));
+            assert_eq!(job.stab.as_ref().unwrap().gyro.read().get_offsets(), &offsets);
+            assert_eq!(queue.batch_sync_confirmed_points[&job_id].len(), 1);
+        }
+    }
+
+    #[test]
+    fn batch_sync_verification_failure_keeps_previously_green_points() {
+        use gyroflow_core::synchronization::batch_clock::ConfirmedOffsetSource;
+        let mut queue = RenderQueue::default();
+        for (index, id) in (1..=4).enumerate() {
+            add_eta_job(&mut queue, id, index);
+        }
+        queue.register_batch_sync_jobs(1..=4);
+        queue.batch_sync_points = (1..=4).map(|id| {
+            let offset = if id == 4 { -6500.0 } else { -1500.0 };
+            gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate {
+                video_created_at_ms: Some(f64::from(id) * 1000.0),
+                wall_clock_offset_ms: Some(offset),
+                ..sync_candidate(id, 1000.0, offset, 0.9)
+            }
+        }).collect();
+        queue.update_batch_sync_confirmation_from_points();
+        let preserved: Vec<_> = (1..=3).map(|id| {
+            assert_eq!(batch_status(&queue, id)["color"], "green");
+            (id, queue.batch_sync_confirmed_points[&id].clone(),
+                queue.jobs[&id].stab.as_ref().unwrap().gyro.read().get_offsets().clone())
+        }).collect();
+
+        queue.batch_clock.register_initial(ConfirmedOffsetSource::Anchor, 0, 0.0, 10000.0);
+        queue.update_batch_sync_confirmation_from_points();
+
+        assert_eq!(queue.batch_sync_prompt_kind.to_string(), "verification_warning");
+        for (id, points, offsets) in preserved {
+            assert_eq!(batch_status(&queue, id)["color"], "green");
+            assert_eq!(queue.batch_sync_confirmed_points[&id], points);
+            assert_eq!(queue.jobs[&id].stab.as_ref().unwrap().gyro.read().get_offsets(), &offsets);
+        }
     }
 
     #[test]

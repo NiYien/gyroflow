@@ -4734,6 +4734,11 @@ Podaj ilość klatek na sekundę: </translation>
         <source>Skipped - incomplete lens data</source>
         <translation>Pominięto - niepełne dane obiektywu</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="922"/>
+        <source>Batch sync verification may be inaccurate. Individual sync results have been kept. Please check the stabilization.</source>
+        <translation>Weryfikacja synchronizacji zbiorczej może być niedokładna. Zachowano wyniki poszczególnych filmów. Sprawdź stabilizację.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

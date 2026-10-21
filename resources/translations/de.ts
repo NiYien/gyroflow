@@ -4733,6 +4733,11 @@ Bitte Bildrate in FPS angeben: </translation>
         <source>Skipped - incomplete lens data</source>
         <translation>Übersprungen - unvollständige Objektivdaten</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="922"/>
+        <source>Batch sync verification may be inaccurate. Individual sync results have been kept. Please check the stabilization.</source>
+        <translation>Die Prüfung der Stapelsynchronisierung ist möglicherweise ungenau. Die einzelnen Synchronisierungsergebnisse wurden beibehalten. Bitte prüfen Sie die Stabilisierung.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

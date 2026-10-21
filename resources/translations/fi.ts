@@ -4733,6 +4733,11 @@ Anna kuvanopeus:</translation>
         <source>Skipped - incomplete lens data</source>
         <translation>Ohitettu - puutteelliset objektiivitiedot</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="922"/>
+        <source>Batch sync verification may be inaccurate. Individual sync results have been kept. Please check the stabilization.</source>
+        <translation>Eräsynkronoinnin tarkistus voi olla epätarkka. Yksittäiset synkronointitulokset on säilytetty. Tarkista vakautus.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

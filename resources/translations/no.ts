@@ -4734,6 +4734,11 @@ Vennligst oppgi bildefrekvens:</translation>
         <source>Skipped - incomplete lens data</source>
         <translation>Hoppet over - ufullstendige objektivdata</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="922"/>
+        <source>Batch sync verification may be inaccurate. Individual sync results have been kept. Please check the stabilization.</source>
+        <translation>Kontrollen av gruppesynkronisering kan være unøyaktig. De enkelte synkroniseringsresultatene er beholdt. Kontroller stabiliseringen.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

@@ -4733,6 +4733,11 @@ Forneça a taxa de quadros:</translation>
         <source>Skipped - incomplete lens data</source>
         <translation>Ignorado - dados da lente incompletos</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="922"/>
+        <source>Batch sync verification may be inaccurate. Individual sync results have been kept. Please check the stabilization.</source>
+        <translation>A verificação da sincronização em lote pode ser imprecisa. Os resultados individuais foram mantidos. Verifique a estabilização.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

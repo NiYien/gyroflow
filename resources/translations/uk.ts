@@ -4734,6 +4734,11 @@ Please provide frame rate: </source>
         <source>Skipped - incomplete lens data</source>
         <translation>Пропущено - неповні дані об’єктива</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="922"/>
+        <source>Batch sync verification may be inaccurate. Individual sync results have been kept. Please check the stabilization.</source>
+        <translation>Перевірка пакетної синхронізації може бути неточною. Індивідуальні результати синхронізації збережено. Перевірте стабілізацію.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

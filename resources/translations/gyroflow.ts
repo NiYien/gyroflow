@@ -3498,6 +3498,11 @@ Close and reopen Final Cut Pro before using the effect.</source>
 <context>
     <name>RenderQueue</name>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="922"/>
+        <source>Batch sync verification may be inaccurate. Individual sync results have been kept. Please check the stabilization.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2940"/>
         <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="202"/>
         <location filename="../../src/ui/mobile/MobileWorkspace.qml" line="212"/>

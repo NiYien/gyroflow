@@ -915,6 +915,13 @@ Item {
                     { text: qsTr("Repair"), accent: true, clicked: () => render_queue.confirm_batch_sync_repair() },
                     { text: qsTr("Skip"), clicked: () => render_queue.skip_batch_sync_repair() }
                 ]);
+            } else if (kind === "verification_warning") {
+                root._batchSyncInFlight = false;
+                window.syncDirty = false;
+                window.deepMatchStabilizePending = false;
+                messageBox(Modal.Warning, qsTr("Batch sync verification may be inaccurate. Individual sync results have been kept. Please check the stabilization."), [
+                    { text: qsTr("Ok") }
+                ]);
             } else if (kind === "all_yellow") {
                 // Replaced the old 3-section calibration-video guide (2026-06-12
                 // UX feedback): deep match is now the primary recovery path
@@ -2917,7 +2924,7 @@ Item {
                     }
                     BasicText {
                         visible: dlg.hasSyncStatus;
-                        text: dlg.syncColor === "green" ? qsTr("Sync confirmed")
+                        text: dlg.syncColor === "green" ? (dlg.syncStatus.verification_warning ? qsTr("Sync complete") : qsTr("Sync confirmed"))
                             : dlg.syncDonePending ? qsTr("Sync complete")
                             : qsTr("Sync not confirmed");
                         color: dlg.syncColor === "green" ? root.finishedStatusColor

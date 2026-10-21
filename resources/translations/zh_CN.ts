@@ -4684,6 +4684,11 @@ Please provide frame rate: </source>
         <source>Skipped - incomplete lens data</source>
         <translation>已跳过 - 镜头数据不完整</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="922"/>
+        <source>Batch sync verification may be inaccurate. Individual sync results have been kept. Please check the stabilization.</source>
+        <translation>批量同步校验可能有误，已保留各视频的同步结果，请检查防抖效果。</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

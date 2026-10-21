@@ -4733,6 +4733,11 @@ Please provide frame rate: </source>
         <source>Skipped - incomplete lens data</source>
         <translation>건너뜀 - 렌즈 데이터 불완전</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="922"/>
+        <source>Batch sync verification may be inaccurate. Individual sync results have been kept. Please check the stabilization.</source>
+        <translation>일괄 동기화 검증이 부정확할 수 있습니다. 각 동영상의 동기화 결과는 유지되었습니다. 안정화 결과를 확인해 주세요.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>
