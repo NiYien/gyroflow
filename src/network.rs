@@ -330,6 +330,60 @@ where
     call_with_retry_config(label, retries, base, attempt)
 }
 
+/// Retry the complete plugin download, discarding partial bodies between attempts.
+pub fn download_plugin(label: &str, url: &str) -> Result<Vec<u8>, ureq::Error> {
+    let timeout = body_timeout_config();
+    call_with_plugin_retry(label, || download_plugin_attempt(label, get(url), timeout))
+}
+
+fn download_plugin_attempt(
+    label: &str,
+    request: ureq::RequestBuilder<ureq::typestate::WithoutBody>,
+    timeout: Option<Duration>,
+) -> Result<Vec<u8>, ureq::Error> {
+    use std::io::Read;
+    use ureq::ResponseExt;
+
+    let started = Instant::now();
+    // ureq 3.3 also checks RecvResponse while reading the body. Use one total
+    // transfer budget so its shorter header timeout cannot abort the download.
+    let response = request
+        .config()
+        .timeout_recv_response(None)
+        .timeout_recv_body(None)
+        .timeout_global(timeout)
+        .build()
+        .call()?;
+    let expected = response.body().content_length();
+    log::info!(
+        target: "update",
+        "download {label} response status={} host={:?} content_length={expected:?} timeout={timeout:?}",
+        response.status(),
+        response.get_uri().host().unwrap_or_default(),
+    );
+    let mut downloaded = Vec::new();
+    if let Err(error) = response
+        .into_body()
+        .into_reader()
+        .read_to_end(&mut downloaded)
+    {
+        log::warn!(
+            target: "update",
+            "download {label} body failed bytes={} content_length={expected:?} elapsed_ms={} error={error:?}",
+            downloaded.len(),
+            started.elapsed().as_millis(),
+        );
+        return Err(ureq::Error::Io(error));
+    }
+    log::info!(
+        target: "update",
+        "download {label} complete bytes={} elapsed_ms={}",
+        downloaded.len(),
+        started.elapsed().as_millis(),
+    );
+    Ok(downloaded)
+}
+
 /// Best-effort cold-edge prewarm for a download URL. Sends a tiny ranged
 /// `bytes=0-0` GET to trigger the 123 direct-link CDN's cold origin fetch so a
 /// subsequent full download is more likely to hit a warm edge. Never affects
@@ -386,6 +440,7 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::Mutex;
+    use std::time::Duration;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -567,6 +622,134 @@ mod tests {
         server.join().unwrap();
 
         assert_eq!(body, "ok");
+    }
+
+    fn plugin_download_server(
+        responses: Vec<(&'static str, Duration, &'static [u8])>,
+    ) -> (String, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/plugin.zip", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let mut workers = Vec::new();
+            for (headers, delay, body) in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                workers.push(std::thread::spawn(move || {
+                    let mut request = [0_u8; 1024];
+                    stream.read(&mut request).unwrap();
+                    stream.write_all(headers.as_bytes()).unwrap();
+                    std::thread::sleep(delay);
+                    let _ = stream.write_all(body);
+                }));
+            }
+            for worker in workers {
+                worker.join().unwrap();
+            }
+        });
+        (url, server)
+    }
+
+    const PLUGIN_OK_HEADERS: &str =
+        "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\n";
+    const PLUGIN_SHORT_HEADERS: &str =
+        "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\n";
+
+    #[test]
+    fn plugin_download_allows_body_after_header_timeout() {
+        let (url, server) = plugin_download_server(vec![(
+            PLUGIN_OK_HEADERS,
+            Duration::from_millis(250),
+            b"zip",
+        )]);
+        let request = super::get(&url)
+            .config()
+            .timeout_recv_response(Some(Duration::from_millis(100)))
+            .build();
+        let result = super::download_plugin_attempt("test", request, Some(Duration::from_secs(2)));
+        server.join().unwrap();
+        assert_eq!(result.unwrap(), b"zip");
+    }
+
+    #[test]
+    fn plugin_download_bounds_total_transfer_time() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/plugin.zip", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 1024];
+            stream.read(&mut request).unwrap();
+            stream.write_all(PLUGIN_SHORT_HEADERS.as_bytes()).unwrap();
+            for _ in 0..6 {
+                std::thread::sleep(Duration::from_millis(80));
+                if stream.write_all(b"x").is_err() {
+                    break;
+                }
+            }
+        });
+        let result = super::download_plugin_attempt(
+            "test",
+            super::get(&url),
+            Some(Duration::from_millis(200)),
+        );
+        server.join().unwrap();
+        assert!(format!("{:?}", result.unwrap_err()).contains("Timeout(Global)"));
+    }
+
+    #[test]
+    fn plugin_download_retries_short_body_without_appending_partial_data() {
+        let (url, server) = plugin_download_server(vec![
+            (PLUGIN_SHORT_HEADERS, Duration::ZERO, b"bad"),
+            (PLUGIN_OK_HEADERS, Duration::ZERO, b"zip"),
+        ]);
+        let result = super::download_plugin("test", &url);
+        server.join().unwrap();
+        assert_eq!(result.unwrap(), b"zip");
+    }
+
+    #[test]
+    fn plugin_download_retries_body_timeout() {
+        let (url, server) = plugin_download_server(vec![
+            (PLUGIN_OK_HEADERS, Duration::from_millis(400), b"bad"),
+            (PLUGIN_OK_HEADERS, Duration::ZERO, b"zip"),
+        ]);
+        let mut attempts = 0;
+        let result = super::call_with_retry_config("test", 1, Duration::from_millis(1), || {
+            attempts += 1;
+            super::download_plugin_attempt("test", super::get(&url), Some(Duration::from_millis(200)))
+        });
+        server.join().unwrap();
+        assert_eq!(result.unwrap(), b"zip");
+        assert_eq!(attempts, 2);
+    }
+
+    #[test]
+    fn plugin_download_stops_after_body_retry_budget() {
+        let (url, server) =
+            plugin_download_server(vec![(PLUGIN_SHORT_HEADERS, Duration::ZERO, b"bad"); 3]);
+        let mut attempts = 0;
+        let result = super::call_with_retry_config("test", 2, Duration::from_millis(1), || {
+            attempts += 1;
+            super::download_plugin_attempt("test", super::get(&url), Some(Duration::from_secs(2)))
+        });
+        server.join().unwrap();
+        assert!(result.is_err());
+        assert_eq!(attempts, 3);
+    }
+
+    #[test]
+    fn plugin_download_does_not_retry_not_found() {
+        let (url, server) = plugin_download_server(vec![(
+            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            Duration::ZERO,
+            b"",
+        )]);
+        let mut attempts = 0;
+        let result = super::call_with_retry_config("test", 2, Duration::from_millis(1), || {
+            attempts += 1;
+            super::download_plugin_attempt("test", super::get(&url), Some(Duration::from_secs(2)))
+        });
+        server.join().unwrap();
+        assert!(matches!(result, Err(ureq::Error::StatusCode(404))));
+        assert_eq!(attempts, 1);
     }
 
     struct ProxyEnvGuard(Vec<(&'static str, Option<String>)>);

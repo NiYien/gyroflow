@@ -1832,41 +1832,62 @@ fn recover_finalcut_install(
 }
 
 fn install_finalcut(plugins_base: String) -> io::Result<String> {
+    let started = std::time::Instant::now();
+    let mut stage = "prepare";
+    ::log::info!(target: "plugin", "[nle finalcut] install start plugins_base={plugins_base:?}");
+    let result = install_finalcut_inner(plugins_base, &mut stage);
+    match &result {
+        Ok(version) => ::log::info!(
+            target: "plugin",
+            "[nle finalcut] install complete version={version:?} elapsed_ms={}",
+            started.elapsed().as_millis(),
+        ),
+        Err(error) => ::log::error!(
+            target: "plugin",
+            "[nle finalcut] install failed stage={stage} elapsed_ms={} error={error:?}",
+            started.elapsed().as_millis(),
+        ),
+    }
+    result
+}
+
+fn install_finalcut_inner(plugins_base: String, stage: &mut &'static str) -> io::Result<String> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME is unavailable"))?;
     let _installation_lock = FinalCutAppInstallTransaction::acquire_lock(&home)?;
+    *stage = "recover_previous_install";
     recover_pending_finalcut_transaction()?;
     let download_url = finalcut_download_url(&plugins_base);
+    *stage = "download";
     crate::network::prewarm_url(&download_url);
-    let mut response = crate::network::call_with_plugin_retry("plugin:finalcut", || {
-        crate::network::get(&download_url).call()
-    })
-    .map_err(|error| {
-        io::Error::new(
-            io::ErrorKind::Other,
-            format!("Failed to download {download_url}: {error}"),
-        )
-    })?
-    .into_body()
-    .into_reader();
-    use std::io::Read;
-    let mut downloaded = Vec::new();
-    response.read_to_end(&mut downloaded)?;
+    let downloaded =
+        crate::network::download_plugin("plugin:finalcut", &download_url).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                format!("Failed to download {download_url}: {error}"),
+            )
+        })?;
+    *stage = "unwrap_download";
     let delivery = unwrap_finalcut_delivery(downloaded)?;
 
+    *stage = "extract";
     let temporary = tempfile::tempdir()?;
     let archive = temporary.path().join(FINALCUT_ASSET_NAME);
     let extracted = temporary.path().join("extracted");
     std::fs::create_dir(&extracted)?;
     std::fs::write(&archive, delivery)?;
     extract_finalcut_archive(&archive, &extracted)?;
+    *stage = "validate_package";
     let source_app = validate_finalcut_extracted_root(&extracted)?;
     validate_finalcut_universal_binaries(&source_app)?;
     validate_finalcut_trust(&source_app)?;
+    *stage = "template_preflight";
     run_finalcut_template_preflight(&source_app)?;
     let destination = Path::new("/Applications").join(source_app.file_name().unwrap());
+    *stage = "registration_preflight";
     preflight_finalcut_registration_repair(&destination)?;
+    *stage = "install_app";
     let transaction = match install_finalcut_app_privileged(&source_app, &destination) {
         Ok(transaction) => transaction,
         Err(error) => {
@@ -1881,8 +1902,10 @@ fn install_finalcut(plugins_base: String) -> io::Result<String> {
     let latest = latest_plugin_info();
     let mut template_was_updated = false;
     let setup = (|| {
+        *stage = "install_template";
         run_finalcut_template_installer(installed_app)?;
         template_was_updated = true;
+        *stage = "register_plugin";
         register_finalcut_xpc_allow_retired(
             installed_app,
             &[finalcut_xpc_path(&transaction.companion)],
@@ -1903,6 +1926,7 @@ fn install_finalcut(plugins_base: String) -> io::Result<String> {
             ),
         ));
     }
+    *stage = "verify_install";
     let detection = detect_finalcut_at(
         installed_app,
         &transaction.template,
@@ -1932,6 +1956,7 @@ fn install_finalcut(plugins_base: String) -> io::Result<String> {
             ),
         ));
     }
+    *stage = "commit_install";
     commit_finalcut_app_transaction(&transaction)?;
     remember_installed_plugin("finalcut", &detection.version, &latest);
     Ok(detection.version)
