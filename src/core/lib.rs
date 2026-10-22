@@ -194,6 +194,141 @@ fn emit_max_zoom_load_snapshot(
     );
 }
 
+// What one Max-Zoom limiter step found
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum MaxZoomStep {
+    // Frames above the limit got weaker smoothing; smoothing and zoom have to be recomputed
+    Relaxed,
+    // No frame is above its limit
+    Converged,
+    // The last relaxation didn't bring the frames any closer to the limit, or nothing is left to relax
+    Stalled { frames: u32 },
+}
+
+// The Max-Zoom limiter weakens the smoothing of the frames above the limit until the zoom fits.
+//
+// The crop a frame needs (1 / fov) is the crop it needs with no smoothing at all (the floor, `floor_fovs`) plus
+// the part the smoothing adds, and only that part can shrink. A step multiplies the smoothing limit of each frame
+// above the limit by the factor that brings that part down to what the limit leaves of it, assuming
+// part ~ limit^e. The exponent e is measured per frame from the frame's previous step. How fast the part falls
+// differs a lot between motions: the slowest smoothing rate doesn't scale with the limit (e < 1), while the
+// zero-phase passes leave little lag on steady motion so mostly curvature remains (e near 2 and above). The
+// exponent grows as the smoothing weakens, so the measured one is the smaller and a step can overshoot the limit
+// somewhat; a measured value below 1 counts as 1 (a lag proportional to the limit), so the near-flat response
+// of strong smoothing can't send the factor towards 0. A frame's first step has nothing measured and uses the
+// original rule, fov / fov_limit. The threshold schedule caps every step, so the loop still crosses the limit
+// where the estimate approaches it from above.
+//
+// A frame whose floor is above the limit can't reach it with any smoothing; the closest it gets is the floor, so
+// nothing of the part may stay and its limit factor goes to 0, no smoothing. That's where a limit just above the
+// floor ends up too, so lowering the limit past the floor doesn't jump back to stronger smoothing and more zoom.
+// The loop stops when a step didn't reduce how far the frames are above the limit.
+struct MaxZoomLimiter {
+    max_zoom_param: f64,
+    scaling_factor: f64,
+    floor_fovs: Vec<f64>,
+    prev_excess: f64,
+    // Per frame stepped last time: the smoothing's part of the crop then and the factor applied
+    last_steps: BTreeMap<usize, (f64, f64)>,
+}
+
+impl MaxZoomLimiter {
+    fn new(max_zoom_param: f64, scaling_factor: f64, floor_fovs: Vec<f64>) -> Self {
+        Self {
+            max_zoom_param,
+            scaling_factor,
+            floor_fovs,
+            prev_excess: f64::INFINITY,
+            last_steps: BTreeMap::new(),
+        }
+    }
+
+    fn fov_limit(&self, params: &ComputeParams, frame: usize) -> f64 {
+        let ts = crate::timestamp_at_frame(frame as i32, params.scaled_fps);
+        let mut zoom_limit = params
+            .keyframes
+            .value_at_video_timestamp(&KeyframeType::MaxZoom, ts)
+            .unwrap_or(self.max_zoom_param)
+            / 100.0;
+
+        if params.video_speed_affects_zooming_limit
+            && (params.video_speed != 1.0
+                || params.keyframes.is_keyframed(&KeyframeType::VideoSpeed))
+        {
+            let vid_speed = params
+                .keyframes
+                .value_at_video_timestamp(&KeyframeType::VideoSpeed, ts)
+                .unwrap_or(params.video_speed)
+                .abs();
+            zoom_limit *= (1.0 + ((vid_speed - 1.0) / 4.0)).min(1.8);
+        }
+
+        1.0 / (zoom_limit * self.scaling_factor)
+    }
+
+    // Scans `params.fovs` and, unless the loop should stop, weakens the smoothing of the frames above the limit
+    fn step(&mut self, params: &mut ComputeParams, iter: usize) -> MaxZoomStep {
+        let thresholds = [0.95, 0.9, 0.85, 0.8];
+        let threshold = *thresholds.get(iter).unwrap_or(thresholds.last().unwrap());
+
+        let mut above_count: u32 = 0;
+        let mut excess = 0.0;
+        let mut steps = BTreeMap::new();
+        for (i, fov) in params.fovs.iter().enumerate() {
+            let fov_limit = self.fov_limit(params, i);
+            if *fov >= fov_limit {
+                continue;
+            }
+            above_count = above_count.saturating_add(1);
+            excess += (fov_limit / *fov).ln();
+            let floor = self.floor_fovs.get(i).copied().unwrap_or(f64::INFINITY);
+            // The smoothing's part of the crop, and what the limit leaves of it
+            let part = 1.0 / *fov - 1.0 / floor;
+            if part <= 0.0 {
+                // No more crop than without smoothing, weaker smoothing can't reduce it
+                continue;
+            }
+            let allowed = (1.0 / fov_limit - 1.0 / floor).max(0.0);
+            let factor = match self.last_steps.get(&i) {
+                Some(&(last_part, last_factor)) => {
+                    let exponent = (part / last_part).ln() / last_factor.ln();
+                    (allowed / part).powf(1.0 / exponent.max(1.0))
+                }
+                None => *fov / fov_limit,
+            };
+            steps.insert(i, (part, factor.min(threshold)));
+        }
+
+        if above_count == 0 {
+            return MaxZoomStep::Converged;
+        }
+        if steps.is_empty() || excess >= self.prev_excess {
+            return MaxZoomStep::Stalled { frames: above_count };
+        }
+        self.prev_excess = excess;
+        for (&i, &(_, factor)) in &steps {
+            params.smoothing_fov_limit_per_frame[i] *= factor;
+        }
+        self.last_steps = steps;
+        MaxZoomStep::Relaxed
+    }
+
+    // Handles a step that ends the loop
+    fn stop(&self, params: &mut ComputeParams, iter: usize, step: MaxZoomStep, path: &str) {
+        if iter == 0 {
+            // Nothing was relaxed
+            params.smoothing_fov_limit_per_frame.clear();
+        }
+        if let MaxZoomStep::Stalled { frames } = step {
+            log::warn!(
+                target: "stab",
+                "Max Zoom limit unreachable{path}: {frames} frames remain above limit after {} iterations; consider raising max_zoom",
+                iter + 1
+            );
+        }
+    }
+}
+
 // Outcome of `StabilizationManager::wait_until_idle`. Callers MUST match on
 // this — a `Timeout` variant means shared state mutation is unsafe.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1757,6 +1892,32 @@ impl StabilizationManager {
 
         zooming::calculate_fovs(compute_params, &timestamps, method.into())
     }
+    // The fovs the zoom needs with no smoothing at all, the floor the Max-Zoom limiter relaxes towards (see
+    // `MaxZoomLimiter`). Horizon lock stays, weaker smoothing doesn't remove it. Translation stabilization is left
+    // out: its crop doesn't follow the smoothing, and a lower floor only makes the limiter's steps more cautious
+    fn max_zoom_floor_fovs(
+        compute_params: &ComputeParams,
+        gyro: &RwLock<GyroSource>,
+        horizon_lock: smoothing::horizon::HorizonLock,
+        params: &RwLock<StabilizationParams>,
+    ) -> Vec<f64> {
+        let floor_gyro = {
+            let gyro = gyro.read();
+            let (quats, max_angles) = gyro.recompute_smoothness(
+                &smoothing::none::None::default(),
+                horizon_lock,
+                compute_params,
+            );
+            let mut floor_gyro = gyro.clone();
+            floor_gyro.smoothed_quaternions = quats;
+            floor_gyro.max_angles = max_angles;
+            floor_gyro
+        };
+        let mut floor_params = compute_params.clone();
+        floor_params.gyro = Arc::new(RwLock::new(floor_gyro));
+        floor_params.apply_optical_translation = false;
+        Self::recompute_adaptive_zoom_static(&floor_params, params).0
+    }
     pub fn recompute_adaptive_zoom(&self) {
         let mut params = stabilization::ComputeParams::from_manager(self);
         params.calculate_camera_fovs();
@@ -1835,61 +1996,17 @@ impl StabilizationManager {
                 for _ in params.fovs.iter() {
                     params.smoothing_fov_limit_per_frame.push(1.0);
                 }
-                let thresholds = [0.95, 0.9, 0.85, 0.8];
-                // §5 non-convergence stall detect: 3-iter ring of `above_count`.
-                // When the count stays strictly constant across 3 iterations and
-                // the loop hasn't converged (count > 0), the limiter is making
-                // zero progress — break out with one warn line so users get a
-                // hint to raise max_zoom. Note `any_above_limit = false` (line
-                // below) takes precedence so a converged loop never warns.
-                let mut above_count_ring: [u32; 3] = [u32::MAX, u32::MAX, u32::MAX];
+                let floor_fovs = Self::max_zoom_floor_fovs(
+                    &params,
+                    &self.gyro,
+                    self.smoothing.read().horizon_lock.clone(),
+                    &self.params,
+                );
+                let mut limiter = MaxZoomLimiter::new(max_zoom_param, scaling_factor, floor_fovs);
                 for iter in 0..max_zoom_iters {
-                    let mut any_above_limit = false;
-                    let mut above_count: u32 = 0;
-                    for (i, fov) in params.fovs.iter().enumerate() {
-                        let ts = crate::timestamp_at_frame(i as i32, params.scaled_fps);
-                        let mut zoom_limit = params
-                            .keyframes
-                            .value_at_video_timestamp(&KeyframeType::MaxZoom, ts)
-                            .unwrap_or(max_zoom_param)
-                            / 100.0;
-
-                        if params.video_speed_affects_zooming_limit
-                            && (params.video_speed != 1.0
-                                || params.keyframes.is_keyframed(&KeyframeType::VideoSpeed))
-                        {
-                            let vid_speed = params
-                                .keyframes
-                                .value_at_video_timestamp(&KeyframeType::VideoSpeed, ts)
-                                .unwrap_or(params.video_speed)
-                                .abs();
-                            zoom_limit *= (1.0 + ((vid_speed - 1.0) / 4.0)).min(1.8);
-                        }
-
-                        let fov_limit = 1.0 / (zoom_limit * scaling_factor);
-                        if *fov < fov_limit {
-                            any_above_limit = true;
-                            above_count = above_count.saturating_add(1);
-                            params.smoothing_fov_limit_per_frame[i] *= (*fov / fov_limit)
-                                .min(*thresholds.get(iter).unwrap_or(thresholds.last().unwrap()));
-                        }
-                    }
-                    if !any_above_limit {
-                        if iter == 0 {
-                            params.smoothing_fov_limit_per_frame.clear();
-                        }
-                        break;
-                    }
-                    above_count_ring[iter % 3] = above_count;
-                    if iter >= 2
-                        && above_count > 0
-                        && above_count_ring.iter().min() == above_count_ring.iter().max()
-                    {
-                        log::warn!(
-                            target: "stab",
-                            "Max Zoom limit unreachable: {above_count} frames remain above limit after {} iterations; consider raising max_zoom",
-                            iter + 1
-                        );
+                    let step = limiter.step(&mut params, iter);
+                    if step != MaxZoomStep::Relaxed {
+                        limiter.stop(&mut params, iter, step, "");
                         break;
                     }
 
@@ -2269,43 +2386,14 @@ impl StabilizationManager {
                     for _ in params.fovs.iter() {
                         params.smoothing_fov_limit_per_frame.push(1.0);
                     }
-                    let thresholds = [0.95, 0.9, 0.85, 0.8];
-                    let mut above_count_ring: [u32; 3] = [u32::MAX, u32::MAX, u32::MAX];
+                    let horizon_lock = smoothing.read().horizon_lock.clone();
+                    let floor_fovs = Self::max_zoom_floor_fovs(&params, &gyro, horizon_lock, &stabilization_params);
+                    if current_compute_id.load(SeqCst) != compute_id { return cb((compute_id, true)); }
+                    let mut limiter = MaxZoomLimiter::new(max_zoom_param, scaling_factor, floor_fovs);
                     for iter in 0..max_zoom_iters {
-                        let mut any_above_limit = false;
-                        let mut above_count: u32 = 0;
-                        for (i, fov) in params.fovs.iter().enumerate() {
-                            let ts = crate::timestamp_at_frame(i as i32, params.scaled_fps);
-                            let mut zoom_limit = params.keyframes.value_at_video_timestamp(&KeyframeType::MaxZoom, ts).unwrap_or(max_zoom_param) / 100.0;
-
-                            if params.video_speed_affects_zooming_limit && (params.video_speed != 1.0 || params.keyframes.is_keyframed(&KeyframeType::VideoSpeed)) {
-                                let vid_speed = params.keyframes.value_at_video_timestamp(&KeyframeType::VideoSpeed, ts).unwrap_or(params.video_speed).abs();
-                                zoom_limit *= (1.0 + ((vid_speed - 1.0) / 4.0)).min(1.8);
-                            }
-
-                            let fov_limit = 1.0 / (zoom_limit * scaling_factor);
-                            if *fov < fov_limit {
-                                any_above_limit = true;
-                                above_count = above_count.saturating_add(1);
-                                params.smoothing_fov_limit_per_frame[i] *= (*fov / fov_limit).min(*thresholds.get(iter).unwrap_or(thresholds.last().unwrap()));
-                            }
-                        }
-                        if !any_above_limit {
-                            if iter == 0 {
-                                params.smoothing_fov_limit_per_frame.clear();
-                            }
-                            break;
-                        }
-                        above_count_ring[iter % 3] = above_count;
-                        if iter >= 2
-                            && above_count > 0
-                            && above_count_ring.iter().min() == above_count_ring.iter().max()
-                        {
-                            log::warn!(
-                                target: "stab",
-                                "Max Zoom limit unreachable (async): {above_count} frames remain above limit after {} iterations; consider raising max_zoom",
-                                iter + 1
-                            );
+                        let step = limiter.step(&mut params, iter);
+                        if step != MaxZoomStep::Relaxed {
+                            limiter.stop(&mut params, iter, step, " (async)");
                             break;
                         }
 
@@ -7603,14 +7691,112 @@ mod tests {
             production
                 .matches("let thresholds = [0.95, 0.9, 0.85, 0.8];")
                 .count(),
-            2
+            1
         );
         assert_eq!(
             production
                 .matches("params.smoothing_fov_limit_per_frame[i] *=")
                 .count(),
+            1
+        );
+        // One step per iteration in each of the synchronous and async paths
+        assert_eq!(
+            production
+                .matches("limiter.step(&mut params, iter)")
+                .count(),
             2
         );
+    }
+
+    fn max_zoom_step_params(fovs: Vec<f64>) -> ComputeParams {
+        ComputeParams {
+            smoothing_fov_limit_per_frame: vec![1.0; fovs.len()],
+            fovs,
+            scaled_fps: 30.0,
+            video_speed: 1.0,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn max_zoom_step_sizes_from_the_measured_response() {
+        // Limit 100% at scaling 1: fov_limit = 1.0. Where reachable the floor is crop 0.8, so 0.2 of the
+        // smoothing's part of the crop may stay
+        let mut params = max_zoom_step_params(vec![0.8, 1.0, 0.5, 0.995, 0.7]);
+        let mut limiter = MaxZoomLimiter::new(100.0, 1.0, vec![1.25, 1.25, 0.9, 1.25, 1.25]);
+        assert_eq!(limiter.step(&mut params, 0), MaxZoomStep::Relaxed);
+        // First step: the original fov / fov_limit capped by the threshold; the frame at the limit is left alone
+        assert_eq!(params.smoothing_fov_limit_per_frame, vec![0.8, 1.0, 0.5, 0.95, 0.7]);
+
+        // The smoothing's part of the crop responds as limit^2 on frame 0 and as limit^0.5 on frame 4
+        let part0 = (1.0 / 0.8 - 0.8) * 0.8f64.powi(2);
+        let part4 = (1.0 / 0.7 - 0.8) * 0.7f64.sqrt();
+        params.fovs = vec![1.0 / (0.8 + part0), 1.0, 0.5, 1.0, 1.0 / (0.8 + part4)];
+        assert_eq!(limiter.step(&mut params, 1), MaxZoomStep::Relaxed);
+        let limits = &params.smoothing_fov_limit_per_frame;
+        // Measured exponent 2: lands on the limit
+        assert!((limits[0] - 0.8 * (0.2 / part0).sqrt()).abs() < 1e-9, "{limits:?}");
+        // A measured exponent below 1 counts as 1
+        assert!((limits[4] - 0.7 * (0.2 / part4)).abs() < 1e-9, "{limits:?}");
+        // Above the limit even without smoothing: no smoothing left
+        assert_eq!(limits[2], 0.0);
+        // Back under the limit: not stepped again
+        assert_eq!(limits[3], 0.95);
+
+        // Without a floor every frame counts as reachable
+        let mut params = max_zoom_step_params(vec![0.8, 1.0, 0.5, 0.995]);
+        let mut limiter = MaxZoomLimiter::new(100.0, 1.0, Vec::new());
+        assert_eq!(limiter.step(&mut params, 1), MaxZoomStep::Relaxed);
+        assert_eq!(params.smoothing_fov_limit_per_frame, vec![0.8, 1.0, 0.5, 0.9]);
+    }
+
+    #[test]
+    fn max_zoom_step_stops_when_weaker_smoothing_cannot_help() {
+        let mut params = max_zoom_step_params(vec![1.0, 1.1]);
+        let mut limiter = MaxZoomLimiter::new(100.0, 1.0, vec![1.25, 1.25]);
+        assert_eq!(limiter.step(&mut params, 0), MaxZoomStep::Converged);
+
+        // A step that didn't shrink the excess ends the loop without relaxing again
+        let mut params = max_zoom_step_params(vec![0.8, 0.9]);
+        let mut limiter = MaxZoomLimiter::new(100.0, 1.0, vec![1.25, 1.25]);
+        assert_eq!(limiter.step(&mut params, 0), MaxZoomStep::Relaxed);
+        let relaxed = params.smoothing_fov_limit_per_frame.clone();
+        params.fovs = vec![0.8, 0.95];
+        assert_eq!(limiter.step(&mut params, 1), MaxZoomStep::Relaxed);
+        let relaxed_again = params.smoothing_fov_limit_per_frame.clone();
+        assert!(relaxed_again[1] < relaxed[1]);
+        params.fovs = vec![0.75, 0.95];
+        assert_eq!(limiter.step(&mut params, 2), MaxZoomStep::Stalled { frames: 2 });
+        assert_eq!(params.smoothing_fov_limit_per_frame, relaxed_again);
+    }
+
+    #[test]
+    fn max_zoom_below_the_floor_ends_at_the_floor() {
+        // Pure roll ramp: without smoothing the zoom is about 100.37%. Limits below that end there, with no
+        // smoothing, like a limit just above it does; they never fall back to stronger smoothing and more zoom
+        let floor = {
+            let manager = manager_for_recompute_regression((1.5, 1.0), 51.0, 5);
+            let compute = stabilization::ComputeParams::from_manager(&manager);
+            let horizon_lock = manager.smoothing.read().horizon_lock.clone();
+            let fovs = StabilizationManager::max_zoom_floor_fovs(&compute, &manager.gyro, horizon_lock, &manager.params);
+            fovs.into_iter().reduce(f64::min).unwrap()
+        };
+        for (max_zoom, iterations) in [(100.75, 5), (100.5, 5), (100.2, 5), (70.0, 5), (51.0, 12)] {
+            let blocking = manager_for_recompute_regression((1.5, 1.0), max_zoom, iterations);
+            blocking.recompute_blocking();
+            let threaded = manager_for_recompute_regression((1.5, 1.0), max_zoom, iterations);
+            run_threaded_recompute(&threaded);
+            assert_eq!(recompute_signature(&threaded), recompute_signature(&blocking), "max_zoom={max_zoom}");
+            assert_recompute_output_is_finite(&blocking, &format!("max_zoom={max_zoom}"));
+
+            let scaling_factor = 1.5;
+            let min_fov = blocking.params.read().fovs.iter().copied().reduce(f64::min).unwrap();
+            let fov_limit = 1.0 / ((max_zoom / 100.0) * scaling_factor);
+            assert!(min_fov >= fov_limit.min(floor) - 1e-9, "max_zoom={max_zoom} min_fov={min_fov} floor={floor}");
+            if fov_limit > floor {
+                assert!((min_fov - floor).abs() < 1e-6, "max_zoom={max_zoom} min_fov={min_fov} floor={floor}");
+            }
+        }
     }
 
     #[test]

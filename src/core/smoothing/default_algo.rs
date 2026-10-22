@@ -11,6 +11,10 @@
 // 8. Smooth distance
 // 9. Normalize distance again and change range to 0.5 - 1.0
 // 10. Perform plain 3D smoothing, on the last smoothed quaternions, with varying alpha, interpolated between 1s and 0.1s smoothness based on previously calculated velocity multiplied by the distance
+// Without per-axis smoothing, the roll about the optical axis (twist) is a separate channel in all of the above:
+// its alpha follows the roll velocity alone and its max velocity is not scaled by the lens FOV, because a roll moves
+// the frame corners by angle * half diagonal and needs cos + aspect * sin of zoom at any focal length.
+// The remaining rotation (swing) keeps the total velocity and the FOV scaling.
 
 use std::collections::BTreeMap;
 
@@ -21,6 +25,7 @@ use nalgebra::*;
 const MAX_VELOCITY: f64 = 500.0;
 // Use 120 diagonal FOV as reference. Anything below (long focal length) scales the smoothness down. Anything above (short focal length) scales the smoothness up.
 // This is needed, because the same rotation at long focal length will be much larger actual image rotation than at short focal length.
+// It applies to pan and tilt only; the roll channel is focal length independent (see the notes above).
 const FOV_REFERENCE: f64 = 120.0;
 const RAD_TO_DEG: f64 = 180.0 / std::f64::consts::PI;
 
@@ -363,7 +368,11 @@ impl SmoothingAlgorithm for DefaultAlgo {
             } else {
                 velocity.insert(
                     *timestamp,
-                    Vector3::from_element(dist.angle() * rad_to_deg_per_sec),
+                    Vector3::new(
+                        dist.angle() * rad_to_deg_per_sec,
+                        twist_z(&dist).angle() * rad_to_deg_per_sec,
+                        0.0,
+                    ),
                 );
             }
             prev_quat = *quat;
@@ -404,8 +413,13 @@ impl SmoothingAlgorithm for DefaultAlgo {
                     .unwrap_or(1.0)
             };
 
-            if let Some(fov_limit_ratio) = compute_params.smoothing_fov_limit_per_frame.get(frame) {
+            let mut fov_limit = 1.0;
+            // Samples past the last frame (end pad, gyro beyond the video) take the last frame's limit, like the
+            // ones before the first frame take the first frame's
+            let limits = &compute_params.smoothing_fov_limit_per_frame;
+            if let Some(fov_limit_ratio) = limits.get(frame.min(limits.len().saturating_sub(1))) {
                 fov_ratio *= *fov_limit_ratio;
+                fov_limit = *fov_limit_ratio;
             }
 
             // Calculate max velocity
@@ -416,21 +430,25 @@ impl SmoothingAlgorithm for DefaultAlgo {
                 max_velocity[2] *= smoothness_roll * fov_ratio;
             } else {
                 max_velocity[0] *= smoothness * fov_ratio;
+                // Roll channel: no lens FOV factor, the Max Zoom limit still relaxes it
+                max_velocity[1] *= smoothness * fov_limit;
             }
 
             // Doing this to get similar max zoom as without second pass
             if self.second_pass {
                 max_velocity[0] *= 0.5;
+                max_velocity[1] *= 0.5;
                 if self.per_axis {
-                    max_velocity[1] *= 0.5;
                     max_velocity[2] *= 0.5;
                 }
             }
 
-            vel[0] /= max_velocity[0];
+            // A Max Zoom limit of 0 means no smoothing: saturate the ratio, the factor then clamps to 1
+            let normalize = |v: f64, max: f64| if max > 0.0 { v / max } else { f64::MAX };
+            vel[0] = normalize(vel[0], max_velocity[0]);
+            vel[1] = normalize(vel[1], max_velocity[1]);
             if self.per_axis {
-                vel[1] /= max_velocity[1];
-                vel[2] /= max_velocity[2];
+                vel[2] = normalize(vel[2], max_velocity[2]);
             }
         }
 
@@ -459,8 +477,9 @@ impl SmoothingAlgorithm for DefaultAlgo {
                     );
                     q *= quat_rot;
                 } else {
-                    let val = alpha_smoothness * (1.0 - ratio[0]) + alpha_0_1s * ratio[0];
-                    q = q.slerp(x, val.min(1.0));
+                    let swing = alpha_smoothness * (1.0 - ratio[0]) + alpha_0_1s * ratio[0];
+                    let roll = alpha_smoothness * (1.0 - ratio[1]) + alpha_0_1s * ratio[1];
+                    q = split_step(&q, x, swing.min(1.0), roll.min(1.0));
                 }
                 (*ts, q)
             })
@@ -495,8 +514,9 @@ impl SmoothingAlgorithm for DefaultAlgo {
                     );
                     q *= quat_rot;
                 } else {
-                    let val = alpha_smoothness * (1.0 - ratio[0]) + alpha_0_1s * ratio[0];
-                    q = q.slerp(&x, val.min(1.0));
+                    let swing = alpha_smoothness * (1.0 - ratio[0]) + alpha_0_1s * ratio[0];
+                    let roll = alpha_smoothness * (1.0 - ratio[1]) + alpha_0_1s * ratio[1];
+                    q = split_step(&q, &x, swing.min(1.0), roll.min(1.0));
                 }
                 (ts, q)
             })
@@ -527,11 +547,19 @@ impl SmoothingAlgorithm for DefaultAlgo {
                     max_distance[2] = euler.2.abs();
                 }
             } else {
-                distance.insert(*ts, Vector3::from_element(dist.angle()));
+                let roll = twist_z(&dist).angle();
+                distance.insert(*ts, Vector3::new(dist.angle(), roll, 0.0));
                 if dist.angle() > max_distance[0] {
                     max_distance[0] = dist.angle();
                 }
+                if roll > max_distance[1] {
+                    max_distance[1] = roll;
+                }
             }
+        }
+        if !self.per_axis {
+            // Footage without any roll keeps a finite roll channel
+            max_distance[1] = max_distance[1].max(1e-15);
         }
 
         // Normalize distance and discard under 0.5
@@ -539,6 +567,12 @@ impl SmoothingAlgorithm for DefaultAlgo {
             dist[0] /= max_distance[0];
             if dist[0] < 0.5 {
                 dist[0] = 0.0;
+            }
+            if !self.per_axis {
+                dist[1] /= max_distance[1];
+                if dist[1] < 0.5 {
+                    dist[1] = 0.0;
+                }
             }
             if self.per_axis {
                 dist[1] /= max_distance[1];
@@ -569,6 +603,9 @@ impl SmoothingAlgorithm for DefaultAlgo {
             if dist[0] > max_distance[0] {
                 max_distance[0] = dist[0];
             }
+            if !self.per_axis && dist[1] > max_distance[1] {
+                max_distance[1] = dist[1];
+            }
             if self.per_axis {
                 if dist[1] > max_distance[1] {
                     max_distance[1] = dist[1];
@@ -579,10 +616,18 @@ impl SmoothingAlgorithm for DefaultAlgo {
             }
         }
 
+        if !self.per_axis {
+            max_distance[1] = max_distance[1].max(1e-15);
+        }
+
         // Normalize distance and change range to 0.5 - 1.0
         for (_ts, dist) in distance.iter_mut() {
             dist[0] /= max_distance[0];
             dist[0] = (dist[0] + 1.0) / 2.0;
+            if !self.per_axis {
+                dist[1] /= max_distance[1];
+                dist[1] = (dist[1] + 1.0) / 2.0;
+            }
             if self.per_axis {
                 dist[1] /= max_distance[1];
                 dist[1] = (dist[1] + 1.0) / 2.0;
@@ -620,9 +665,11 @@ impl SmoothingAlgorithm for DefaultAlgo {
                     );
                     q *= quat_rot;
                 } else {
-                    let val = alpha_smoothness * (1.0 - vel_ratio[0] * dist_ratio[0])
+                    let swing = alpha_smoothness * (1.0 - vel_ratio[0] * dist_ratio[0])
                         + alpha_0_1s * vel_ratio[0] * dist_ratio[0];
-                    q = q.slerp(&x, val.min(1.0));
+                    let roll = alpha_smoothness * (1.0 - vel_ratio[1] * dist_ratio[1])
+                        + alpha_0_1s * vel_ratio[1] * dist_ratio[1];
+                    q = split_step(&q, &x, swing.min(1.0), roll.min(1.0));
                 }
                 (ts, q)
             })
@@ -660,9 +707,11 @@ impl SmoothingAlgorithm for DefaultAlgo {
                     );
                     q *= quat_rot;
                 } else {
-                    let val = alpha_smoothness * (1.0 - vel_ratio[0] * dist_ratio[0])
+                    let swing = alpha_smoothness * (1.0 - vel_ratio[0] * dist_ratio[0])
                         + alpha_0_1s * vel_ratio[0] * dist_ratio[0];
-                    q = q.slerp(&x, val.min(1.0));
+                    let roll = alpha_smoothness * (1.0 - vel_ratio[1] * dist_ratio[1])
+                        + alpha_0_1s * vel_ratio[1] * dist_ratio[1];
+                    q = split_step(&q, &x, swing.min(1.0), roll.min(1.0));
                 }
                 (ts, q)
             })
@@ -730,5 +779,130 @@ fn trim_pad(padded: TimeQuat, first_ts: i64, last_ts: i64) -> TimeQuat {
         .into_iter()
         .filter(|(ts, _)| *ts >= first_ts && *ts <= last_ts)
         .collect()
+}
+
+// Rotation about the local z (optical) axis contained in `q`, so that q = swing * twist.
+fn twist_z(q: &Quat64) -> Quat64 {
+    let (w, k) = (q.quaternion().w, q.quaternion().k);
+    let n = (w * w + k * k).sqrt();
+    if n < 1e-15 {
+        Quat64::identity()
+    } else {
+        Quat64::new_unchecked(Quaternion::new(w / n, 0.0, 0.0, k / n))
+    }
+}
+
+// Move `q` towards `x` by fraction `f_swing` of the swing and `f_roll` of the twist.
+fn split_step(q: &Quat64, x: &Quat64, f_swing: f64, f_roll: f64) -> Quat64 {
+    let delta = q.inverse() * x;
+    let twist = twist_z(&delta);
+    let swing = delta * twist.inverse();
+    q * swing.powf(f_swing) * twist.powf(f_roll)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RATE_HZ: f64 = 200.0;
+    const DURATION_S: f64 = 6.0;
+
+    fn motion(f: impl Fn(f64) -> Quat64) -> TimeQuat {
+        (0..(RATE_HZ * DURATION_S) as i64)
+            .map(|i| ((i as f64 * 1e6 / RATE_HZ) as i64, f(i as f64 / RATE_HZ)))
+            .collect()
+    }
+
+    fn smooth_at_fov(quats: &TimeQuat, diagonal_fov: f64) -> TimeQuat {
+        let algo = DefaultAlgo {
+            trim_range_only: false,
+            ..Default::default()
+        };
+        let params = ComputeParams {
+            scaled_fps: 50.0,
+            scaled_duration_ms: DURATION_S * 1000.0,
+            camera_diagonal_fovs: vec![diagonal_fov],
+            ..Default::default()
+        };
+        algo.smooth(quats, DURATION_S * 1000.0, &params)
+    }
+
+    fn max_difference_deg(a: &TimeQuat, b: &TimeQuat) -> f64 {
+        a.values()
+            .zip(b.values())
+            .map(|(x, y)| (x.inverse() * y).angle().to_degrees())
+            .fold(0.0, f64::max)
+    }
+
+    // Accumulated rotation about the optical axis, away from the padded ends.
+    fn roll_rms_deg(quats: &TimeQuat) -> f64 {
+        let values: Vec<_> = quats.values().collect();
+        let mut roll = 0.0;
+        let mut path = Vec::new();
+        for pair in values.windows(2) {
+            let twist = twist_z(&(pair[0].inverse() * pair[1]));
+            roll += 2.0 * twist.quaternion().k.atan2(twist.quaternion().w);
+            path.push(roll.to_degrees());
+        }
+        let inner = &path[path.len() / 6..path.len() * 5 / 6];
+        let mean = inner.iter().sum::<f64>() / inner.len() as f64;
+        (inner.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / inner.len() as f64).sqrt()
+    }
+
+    fn roll(deg: f64) -> Quat64 {
+        Quat64::from_axis_angle(&Vector3::z_axis(), deg.to_radians())
+    }
+
+    fn pan(deg: f64) -> Quat64 {
+        Quat64::from_axis_angle(&Vector3::y_axis(), deg.to_radians())
+    }
+
+    #[test]
+    fn roll_smoothing_does_not_depend_on_focal_length() {
+        let quats = motion(|t| {
+            roll(20.0 * (std::f64::consts::TAU * 0.4 * t).sin() + 0.5 * (std::f64::consts::TAU * 2.0 * t).sin())
+        });
+        let long_lens = smooth_at_fov(&quats, 40.0);
+        let wide_lens = smooth_at_fov(&quats, 120.0);
+        assert!(max_difference_deg(&long_lens, &wide_lens) < 1e-9);
+    }
+
+    #[test]
+    fn panning_does_not_relax_roll() {
+        let jitter = |t: f64| 0.5 * (std::f64::consts::TAU * 2.0 * t).sin();
+        let still = smooth_at_fov(&motion(|t| roll(jitter(t))), 120.0);
+        let panning = smooth_at_fov(&motion(|t| pan(60.0 * t) * roll(jitter(t))), 120.0);
+        let (still_rms, panning_rms) = (roll_rms_deg(&still), roll_rms_deg(&panning));
+        assert!(panning_rms < still_rms * 1.25 + 1e-3, "still {still_rms} panning {panning_rms}");
+    }
+
+    #[test]
+    fn pan_smoothing_still_scales_with_focal_length() {
+        let quats = motion(|t| pan(20.0 * (std::f64::consts::TAU * 0.4 * t).sin()));
+        let long_lens = smooth_at_fov(&quats, 40.0);
+        let wide_lens = smooth_at_fov(&quats, 120.0);
+        assert!(max_difference_deg(&long_lens, &wide_lens) > 0.1);
+    }
+
+    #[test]
+    fn zero_max_zoom_limit_turns_smoothing_off() {
+        let quats = motion(|t| pan(20.0 * (std::f64::consts::TAU * 0.4 * t).sin()) * roll(t * 30.0));
+        for per_axis in [false, true] {
+            let algo = DefaultAlgo {
+                trim_range_only: false,
+                per_axis,
+                ..Default::default()
+            };
+            let params = ComputeParams {
+                scaled_fps: 50.0,
+                scaled_duration_ms: DURATION_S * 1000.0,
+                camera_diagonal_fovs: vec![90.0],
+                smoothing_fov_limit_per_frame: vec![0.0; (50.0 * DURATION_S) as usize],
+                ..Default::default()
+            };
+            let smoothed = algo.smooth(&quats, DURATION_S * 1000.0, &params);
+            assert!(max_difference_deg(&smoothed, &quats) < 1e-9, "per_axis={per_axis}");
+        }
+    }
 }
 

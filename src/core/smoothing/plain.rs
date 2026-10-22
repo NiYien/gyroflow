@@ -194,9 +194,9 @@ impl SmoothingAlgorithm for Plain {
                 let mut scale = 1.0;
 
                 let frame = compute_params.frame_at_gyro_timestamp(*x.0 as f64 / 1000.0);
-                if let Some(fov_limit_ratio) =
-                    compute_params.smoothing_fov_limit_per_frame.get(frame)
-                {
+                // Samples past the last frame take its limit, like the ones before the first take the first's
+                let limits = &compute_params.smoothing_fov_limit_per_frame;
+                if let Some(fov_limit_ratio) = limits.get(frame.min(limits.len().saturating_sub(1))) {
                     scale *= *fov_limit_ratio;
                 }
                 (*x.0, scale)
@@ -223,7 +223,8 @@ impl SmoothingAlgorithm for Plain {
                 let mut alpha = *alpha_per_timestamp.get(x.0).unwrap_or(&alpha);
 
                 if let Some(scaler) = scalers.get(x.0) {
-                    alpha /= *scaler;
+                    // Weakest smoothing follows the raw quaternion; a factor above 1 would overshoot it
+                    alpha = (alpha / *scaler).min(1.0);
                 }
                 q = q.slerp(x.1, alpha);
                 (*x.0, q)
@@ -239,7 +240,8 @@ impl SmoothingAlgorithm for Plain {
                 let mut alpha = *alpha_per_timestamp.get(x.0).unwrap_or(&alpha);
 
                 if let Some(scaler) = scalers.get(x.0) {
-                    alpha /= *scaler;
+                    // Weakest smoothing follows the raw quaternion; a factor above 1 would overshoot it
+                    alpha = (alpha / *scaler).min(1.0);
                 }
 
                 q = q.slerp(x.1, alpha);
