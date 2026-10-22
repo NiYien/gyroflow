@@ -994,6 +994,8 @@ void MDKPlayer::stopProcessingPlayer(uint64_t id) {
 void MDKPlayer::initProcessingPlayer(uint64_t id, uint64_t width, uint64_t height, bool yuv, std::string custom_decoder, const std::vector<std::pair<uint64_t, uint64_t>> &ranges, VideoProcessCb &&cb) { // ms
     m_processingPlayers[id] = std::make_unique<mdk::Player>();
     auto player = m_processingPlayers[id].get();
+    const auto sourceInfo = custom_decoder == "R3D" || custom_decoder.rfind("R3D:", 0) == 0
+        ? std::make_shared<SourceVideoInfo>() : nullptr;
     if (!custom_decoder.empty()) {
         player->setDecoders(MediaType::Video, { custom_decoder });
     } else {
@@ -1019,7 +1021,7 @@ void MDKPlayer::initProcessingPlayer(uint64_t id, uint64_t width, uint64_t heigh
         }
     };
 
-    player->onFrame<mdk::VideoFrame>([cb, finish, width, height, id, range_id = std::move(range_id), finished, yuv, ranges, this](mdk::VideoFrame &v, int) -> int {
+    player->onFrame<mdk::VideoFrame>([cb, finish, width, height, id, range_id = std::move(range_id), finished, sourceInfo, yuv, ranges, this](mdk::VideoFrame &v, int) -> int {
         if (*finished) return 0;
         if (!v || v.timestamp() == mdk::TimestampEOS) { // AOT frame(1st frame, seek end 1st frame) is not valid, but format is valid. eof frame format is invalid
             finish(-1);
@@ -1035,6 +1037,10 @@ void MDKPlayer::initProcessingPlayer(uint64_t id, uint64_t width, uint64_t heigh
         auto md = m_processingPlayers[id]->mediaInfo();
         if (!md.video.empty()) {
             auto vmd = md.video[0];
+            if (sourceInfo && sourceInfo->ready.load(std::memory_order_acquire)) {
+                vmd.codec.width = sourceInfo->width;
+                vmd.codec.height = sourceInfo->height;
+            }
 
             auto frame_num = std::ceil(std::round(v.timestamp() * vmd.codec.frame_rate * 100) / 100.0);
 
@@ -1102,8 +1108,18 @@ void MDKPlayer::initProcessingPlayer(uint64_t id, uint64_t width, uint64_t heigh
     });
     player->setVideoSurfaceSize(64, 64);
 
-    player->prepare(ranges[0].first, [finish](int64_t position, bool *) {
-        if (position >= 0) return true;
+    player->prepare(ranges[0].first, [this, player, sourceInfo, finish](int64_t position, bool *) {
+        if (position >= 0) {
+            // Native RED streams replace codec dimensions with scaled output after decoding.
+            // Nikon's MP4-backed R3D/NEV keeps its existing container-size fallback.
+            if (sourceInfo) {
+                const auto info = player->mediaInfo();
+                if (info.metadata.count("camera_model_id") && !info.video.empty()
+                    && info.video[0].codec.width > 0 && info.video[0].codec.height > 0)
+                    captureSourceVideoInfo(sourceInfo, info);
+            }
+            return true;
+        }
         // Opening can fail without delivering any frame, including an EOS frame.
         // Wake the processing caller so it can stop and release this player.
         qWarning() << "MDK processing prepare failed:" << position;
