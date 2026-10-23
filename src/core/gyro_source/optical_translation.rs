@@ -352,43 +352,34 @@ fn reference_layer_motion(segment: &[TranslationSample], depths: &[f64], referen
     blend_motion(segment, &measured)
 }
 
-/// Position minus its Gaussian average, with time and position reflected at both ends so that a constant velocity
-/// stays unchanged. Fades in and out over 0.25 s and is zero at both ends. `None` when cancelled.
+/// Position minus its Gaussian-weighted local straight line (weighted least squares over ±3σ, taken at the sample), so a
+/// constant velocity stays unchanged. Where the range ends the line is fitted to the side there is: the end samples keep
+/// their own deviation from the motion around them instead of being pinned to the line through them. `None` when
+/// cancelled.
 fn high_pass(times: &[f64], positions: &[nalgebra::Vector3<f64>], sigma: f64, cancelled: &dyn Fn() -> bool) -> Option<Vec<nalgebra::Vector3<f64>>> {
-    let last = times.len() - 1;
+    let radius = 3.0 * sigma;
     let mut request = Vec::with_capacity(times.len());
     for i in 0..times.len() {
         if cancelled() { return None; }
-        if i == 0 || i == last {
-            request.push(nalgebra::Vector3::zeros());
-            continue;
-        }
-        let mut sum = nalgebra::Vector3::zeros();
-        let mut weight_sum = 0.0;
-        let radius = 3.0 * sigma;
-        let gaussian = |dt: f64| (-0.5 * (dt / sigma).powi(2)).exp();
         let left = times.partition_point(|time| *time < times[i] - radius);
         let right = times.partition_point(|time| *time <= times[i] + radius);
+        // Weighted moments about this sample, of the positions relative to it
+        let (mut s0, mut s1, mut s2) = (0.0, 0.0, 0.0);
+        let (mut m0, mut m1) = (nalgebra::Vector3::zeros(), nalgebra::Vector3::zeros());
         for j in left..right {
-            let weight = gaussian(times[j] - times[i]);
-            sum += positions[j] * weight;
-            weight_sum += weight;
+            let dt = times[j] - times[i];
+            let weight = (-0.5 * (dt / sigma).powi(2)).exp();
+            let relative = positions[j] - positions[i];
+            s0 += weight;
+            s1 += weight * dt;
+            s2 += weight * dt * dt;
+            m0 += relative * weight;
+            m1 += relative * (weight * dt);
         }
-        // Reflect both time and position so a constant velocity stays unchanged.
-        let reflected_left_end = times.partition_point(|time| *time <= radius - times[i]);
-        for j in 1..reflected_left_end {
-            let weight = gaussian(-times[j] - times[i]);
-            sum += (positions[0] * 2.0 - positions[j]) * weight;
-            weight_sum += weight;
-        }
-        let reflected_right_start = times.partition_point(|time| *time < 2.0 * times[last] - times[i] - radius);
-        for j in reflected_right_start..last {
-            let weight = gaussian(2.0 * times[last] - times[j] - times[i]);
-            sum += (positions[last] * 2.0 - positions[j]) * weight;
-            weight_sum += weight;
-        }
-        let ramp = 1.0_f64.min(times[i] / 0.25).min((times[last] - times[i]) / 0.25).max(0.0);
-        request.push((positions[i] - sum / weight_sum) * ramp);
+        let det = s0 * s2 - s1 * s1;
+        // A lone sample has no line: its weighted mean is itself
+        let line = if det > 0.0 { (m0 * s2 - m1 * s1) / det } else { m0 / s0 };
+        request.push(-line);
     }
     Some(request)
 }
@@ -520,6 +511,10 @@ impl OpticalTranslation {
             }).collect();
             let age_cap = (track_age_k.is_finite() && track_age_k > 0.0).then(|| track_age_k * median(&mut ages));
             let times: Vec<_> = segment.iter().map(|sample| time_difference_s(sample.timestamp_us, segment[0].timestamp_us)).collect();
+            // The ±3σ window within half the segment: beyond it the local line is one straight line through all of it, and
+            // motion slower than the segment is long can't be told from the camera's own movement
+            let length_cap = times.last().copied().unwrap_or_default() / 6.0;
+            let sigma_cap = Some(age_cap.map_or(length_cap, |cap| cap.min(length_cap)));
             let far_fallback = auto && !segment.iter().any(|s| s.auto_beta.is_finite() && s.auto_beta > 0.0 && s.weight > 0.0);
             // Analysed before the automatic reference existed: hold the far layer until analysed again
             if far_fallback { far_fallback_segments += 1; }
@@ -539,16 +534,16 @@ impl OpticalTranslation {
                 position
             }).collect();
             let sigma = if auto {
-                let Some((sigma, over)) = auto_sigma(&times, &positions, &geometry[start..end], age_cap, &config, self.settings.along_axis, cancelled) else { return false; };
+                let Some((sigma, over)) = auto_sigma(&times, &positions, &geometry[start..end], sigma_cap, &config, self.settings.along_axis, cancelled) else { return false; };
                 log::debug!(target: "stab.translation", "translation auto segment={} samples={} sigma_s={} over_budget_time={} reference={}",
                     segment[0].segment, segment.len(), sigma, over, if far_fallback { "far" } else { "auto" });
                 sigma
             } else {
-                age_cap.map_or(requested_sigma, |cap| requested_sigma.min(cap))
+                sigma_cap.map_or(requested_sigma, |cap| requested_sigma.min(cap))
             }.max(0.001);
             smoothness.push(sigma);
-            let last = segment.len() - 1;
-            let fixed: Vec<_> = (0..segment.len()).map(|i| i == 0 || i == last).collect();
+            // The ends are as free as the rest: an analysed range is what gets rendered, there is nothing past it to meet
+            let fixed = vec![false; segment.len()];
             let curve_start = curve.len();
             let Some(request) = high_pass(&times, &positions, sigma, cancelled) else { return false; };
             curve.extend(segment.iter().zip(&request).map(|(sample, shift)|
@@ -587,18 +582,20 @@ impl OpticalTranslation {
         true
     }
 
-    /// Returns normalized image-plane motion and expansion to remove from the output.
-    /// Returns zero outside the analysed ranges and in their gaps.
+    /// Returns normalized image-plane motion and expansion to remove from the output. Before the first sample of the
+    /// analysed ranges, after their last and between two of them, the nearest end holds.
     pub fn shift_at(&self, timestamp_ms: f64) -> nalgebra::Vector3<f64> {
         let timestamp_us = timestamp_ms * 1000.0;
-        if !timestamp_us.is_finite() { return nalgebra::Vector3::zeros(); }
+        if !timestamp_us.is_finite() || self.curve.is_empty() { return nalgebra::Vector3::zeros(); }
         let right = self.curve.partition_point(|point| point.timestamp_us as f64 <= timestamp_us);
-        if right == 0 { return nalgebra::Vector3::zeros(); }
+        if right == 0 { return self.curve[0].shift; }
         let left = &self.curve[right - 1];
-        if timestamp_us == left.timestamp_us as f64 { return left.shift; }
-        if right == self.curve.len() { return nalgebra::Vector3::zeros(); }
+        if timestamp_us == left.timestamp_us as f64 || right == self.curve.len() { return left.shift; }
         let next = &self.curve[right];
-        if left.segment != next.segment { return nalgebra::Vector3::zeros(); }
+        if left.segment != next.segment {
+            let nearer_left = timestamp_us - left.timestamp_us as f64 <= next.timestamp_us as f64 - timestamp_us;
+            return if nearer_left { left.shift } else { next.shift };
+        }
         let fraction = (timestamp_us - left.timestamp_us as f64) / (next.timestamp_us as i128 - left.timestamp_us as i128) as f64;
         left.shift * (1.0 - fraction) + next.shift * fraction
     }
@@ -941,16 +938,17 @@ mod tests {
     }
 
     #[test]
-    fn shift_fades_to_zero_at_segment_ends() {
+    fn shift_at_the_range_ends_keeps_the_deviation_from_the_local_line() {
+        // A 3 Hz wobble on a constant velocity: the line takes the velocity at the ends too, so the samples there are
+        // corrected for the wobble like those in the middle at the same phase, and nothing holds them at zero
         let t = built(walk(1.0, 100.0), Default::default(), 2.0);
-        assert_eq!(t.shift_at(0.0).norm(), 0.0);
-        assert_eq!(t.shift_at(299.0 / 30.0 * 1000.0).norm(), 0.0);
-        assert_eq!(t.shift_at(-50.0).norm(), 0.0);
-        assert_eq!(t.shift_at(11_000.0).norm(), 0.0);
-        let peak = (90..210).map(|i| t.shift_at(i as f64 / 30.0 * 1000.0).norm()).fold(0.0, f64::max);
-        for i in (0..5).chain(295..300) {
-            assert!(t.shift_at(i as f64 / 30.0 * 1000.0).norm() <= 1.5 * peak);
+        let at = |i: usize| t.shift_at(i as f64 / 30.0 * 1000.0);
+        for (end, middle) in [(2, 152), (3, 153), (296, 146), (299, 149)] {
+            assert!((at(end) - at(middle)).norm() <= 0.25 * at(middle).norm(), "{end}: {} vs {}", at(end), at(middle));
         }
+        // Outside the samples the nearest end holds
+        assert_eq!(t.shift_at(-50.0), at(0));
+        assert_eq!(t.shift_at(11_000.0), at(299));
     }
 
     #[test]
@@ -1037,9 +1035,10 @@ mod tests {
                 }
                 position
             }).collect();
+            let cap = times.last().unwrap() / 6.0;
             let sigma = if auto {
-                auto_sigma(&times, &positions, &geometry, None, &TranslationConfig::resolved(), true, &|| false).unwrap().0.max(0.001)
-            } else { 1.0 };
+                auto_sigma(&times, &positions, &geometry, Some(cap), &TranslationConfig::resolved(), true, &|| false).unwrap().0.max(0.001)
+            } else { 1.0_f64.min(cap) };
             assert_eq!(t.effective_smoothness_s(), sigma);
             let request = high_pass(&times, &positions, sigma, &|| false).unwrap();
             assert!(request.iter().any(|r| r.xy().norm() > 1e-3 && r.z.abs() > 1e-4), "lateral and axial motion are both exercised");
@@ -1189,20 +1188,42 @@ mod tests {
     }
 
     #[test]
-    fn translation_range_boundary_uses_the_ramp_without_scaling_retained_rotation() {
-        let samples = (0..3).map(|i| TranslationSample {
+    fn translation_smoothness_stays_within_a_sixth_of_the_segment() {
+        // Ten seconds: neither the requested smoothness nor the strongest automatic one passes 10 s / 6
+        let samples = walk(1.0, 100.0);
+        let length = (samples.last().unwrap().timestamp_us - samples[0].timestamp_us) as f64 / 1e6;
+        let manual = built(samples.clone(), OpticalTranslationSettings { smoothness_s: 5.0, ..Default::default() }, 2.0);
+        assert!((manual.effective_smoothness_s() - length / 6.0).abs() < 1e-12, "{}", manual.effective_smoothness_s());
+        let small: Vec<_> = samples.iter().map(|s| TranslationSample { layer_motion: [s.layer_motion[0] * 1e-3, 0.0], ..*s }).collect();
+        let auto = built(small, OpticalTranslationSettings { auto: true, ..Default::default() }, 2.0);
+        assert!(auto.effective_smoothness_s() <= length / 6.0 + 1e-12, "{}", auto.effective_smoothness_s());
+        // Below the cap the request stands
+        assert_eq!(built(samples, OpticalTranslationSettings { smoothness_s: 1.0, ..Default::default() }, 2.0).effective_smoothness_s(), 1.0);
+    }
+
+    #[test]
+    fn translation_range_ends_follow_the_one_sided_line() {
+        // 1.2 s of samples, positions 0 except 0.5 at 0.1 s from the layer motion: within the budget the curve is the
+        // request itself, and the first sample takes the line fitted to the side after it
+        let samples: Vec<_> = (0..13).map(|i| TranslationSample {
             timestamp_us: i * 100_000,
-            position: [if i == 1 { 1.0 } else { 0.0 }, 0.0, 0.0],
-            ref_inv_depth: 1.0, confidence: 1.0, track_age_s: 100.0, segment: 0,
-            layer_motion: [match i { 1 => 1.0, 2 => -1.0, _ => 0.0 }, 0.0], far_beta: 1.0, weight: 1.0, ..geometry_sample()
+            position: [0.0; 3], ref_inv_depth: 1.0, confidence: 1.0, track_age_s: 100.0, segment: 0,
+            layer_motion: [match i { 1 => 0.5, 2 => -0.5, _ => 0.0 }, 0.0], far_beta: 1.0, weight: 1.0, ..geometry_sample()
         }).collect();
-        let t = built(samples, OpticalTranslationSettings { smoothness_s: 0.1, ..Default::default() }, 0.0);
-        // Three real position samples plus their point reflections give this residual.
-        let residual = 1.0 - (1.0 - 2.0 * (-2.0_f64).exp()) /
-            (1.0 + 2.0 * (-0.5_f64).exp() + 2.0 * (-2.0_f64).exp() + 2.0 * (-4.5_f64).exp());
-        let got = t.shift_at(100.0).x;
-        let want = residual * 0.4;
-        assert!((got - want).abs() < 1e-12, "got {got} want {want}");
+        let sigma = 0.09;
+        let t = built(samples, OpticalTranslationSettings { smoothness_s: sigma, ..Default::default() }, 0.0);
+        assert_eq!(t.effective_smoothness_s(), sigma);
+        let positions = [0.0, 0.5, 0.0, 0.0];
+        let (mut s0, mut s1, mut s2, mut m0, mut m1) = (0.0, 0.0, 0.0, 0.0, 0.0);
+        for (k, p) in positions.iter().enumerate() {
+            let dt = k as f64 * 0.1;
+            if dt > 3.0 * sigma { continue; }
+            let w = (-0.5 * (dt / sigma).powi(2)).exp();
+            s0 += w; s1 += w * dt; s2 += w * dt * dt; m0 += w * p; m1 += w * dt * p;
+        }
+        let want = -(m0 * s2 - m1 * s1) / (s0 * s2 - s1 * s1);
+        assert!((t.shift_at(0.0).x - want).abs() < 1e-12, "{} vs {want}", t.shift_at(0.0).x);
+        assert!(want.abs() > 0.01, "the end is not held at zero");
     }
 
     fn naive_zero_confidence_weight_sum(mut distance_us: i128, interval_us: i128) -> f64 {
@@ -1241,24 +1262,51 @@ mod tests {
     }
 
     #[test]
-    fn dense_endpoint_compensation_matches_the_unoptimized_discrete_formula() {
-        let mut samples = vec![
-            TranslationSample { timestamp_us: 0, position: [0.0; 3], ref_inv_depth: 1.0, confidence: 1.0, track_age_s: 100.0, segment: 0, ..geometry_sample() },
-            TranslationSample { timestamp_us: 1, position: [1.0, 0.0, 0.0], ref_inv_depth: 1.0, confidence: 1.0, track_age_s: 100.0, segment: 0, ..geometry_sample() },
-            TranslationSample { timestamp_us: 1_000_000, position: [0.0; 3], ref_inv_depth: 1.0, confidence: 1.0, track_age_s: 100.0, segment: 0, ..geometry_sample() },
-        ];
-        for (s, motion) in samples.iter_mut().zip([0.0, 1.0, -1.0]) {
-            s.layer_motion = [motion, 0.0]; s.far_beta = 1.0; s.weight = 1.0;
+    fn high_pass_matches_a_direct_weighted_least_squares_line() {
+        // Uneven times, a lone sample far from the others, and a constant velocity that has to come out as nothing
+        let mut times = vec![0.0, 0.004, 0.011, 0.05, 0.051, 0.12, 0.2, 0.33, 0.34, 0.5];
+        times.push(5.0);
+        let positions: Vec<_> = times.iter().enumerate().map(|(i, t)| nalgebra::Vector3::new(
+            0.3 * t + 0.01 * (i as f64 * 1.7).sin(), -0.2 * t + 0.02 * (i as f64 * 0.9).cos(), 0.05 * t * t)).collect();
+        let sigma = 0.1;
+        let request = high_pass(&times, &positions, sigma, &|| false).unwrap();
+        for i in 0..times.len() {
+            let (mut a, mut b) = (nalgebra::Matrix2::<f64>::zeros(), nalgebra::Matrix2x3::<f64>::zeros());
+            for j in 0..times.len() {
+                // The window as high_pass takes it
+                if times[j] < times[i] - 3.0 * sigma || times[j] > times[i] + 3.0 * sigma { continue; }
+                let dt = times[j] - times[i];
+                let w = (-0.5 * (dt / sigma).powi(2)).exp();
+                let x = nalgebra::Vector2::new(1.0, dt);
+                a += x * x.transpose() * w;
+                b += x * positions[j].transpose() * w;
+            }
+            let line = match a.try_inverse() { Some(inverse) => (inverse * b).row(0).transpose(), None => positions[i] };
+            assert!((request[i] - (positions[i] - line)).norm() < 1e-9, "{i}: {} vs {}", request[i], positions[i] - line);
         }
-        let t = built(samples, OpticalTranslationSettings { smoothness_s: 0.001, ..Default::default() }, 0.0);
-        let g1 = (-0.5 * (1.0_f64 / 1000.0).powi(2)).exp();
-        let g2 = (-0.5 * (2.0_f64 / 1000.0).powi(2)).exp();
-        let residual = 1.0 - (1.0 - g2) / (1.0 + g1 + g2);
-        let want = residual * (1.0 / 250_000.0);
-        let got = t.shift_at(0.001).x;
-        assert!((got - want).abs() < 1e-12 * want.abs(), "got {got} want {want}");
-        assert_eq!(t.shift_at(0.0).norm(), 0.0);
-        assert_eq!(t.shift_at(1000.0).norm(), 0.0);
+        assert_eq!(request[times.len() - 1], nalgebra::Vector3::zeros(), "a lone sample is its own line");
+        let steady: Vec<_> = times.iter().map(|t| nalgebra::Vector3::new(0.3 * t, -0.2 * t, 0.0)).collect();
+        assert!(high_pass(&times, &steady, sigma, &|| false).unwrap().iter().all(|r| r.norm() < 1e-12), "a constant velocity stays");
+    }
+
+    #[test]
+    fn high_pass_of_even_samples_is_the_gaussian_average_away_from_the_ends() {
+        let times: Vec<_> = (0..200).map(|i| i as f64 / 50.0).collect();
+        let positions: Vec<_> = times.iter().map(|t| nalgebra::Vector3::new((t * 7.0).sin(), (t * 3.0).cos(), t * t)).collect();
+        // No sample sits on the window's edge, where rounding could take it on one side only
+        let sigma = 0.31;
+        let request = high_pass(&times, &positions, sigma, &|| false).unwrap();
+        for i in 50..150 {
+            let (mut sum, mut weights) = (nalgebra::Vector3::zeros(), 0.0);
+            for j in 0..times.len() {
+                let dt = times[j] - times[i];
+                if dt.abs() > 3.0 * sigma { continue; }
+                let w = (-0.5 * (dt / sigma).powi(2)).exp();
+                sum += positions[j] * w;
+                weights += w;
+            }
+            assert!((request[i] - (positions[i] - sum / weights)).norm() < 1e-9, "{i}");
+        }
     }
 
     #[test]

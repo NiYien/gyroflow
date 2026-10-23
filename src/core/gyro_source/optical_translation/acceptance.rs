@@ -607,14 +607,12 @@ fn translation_joint_target_study() {
             target[i] = target[i - 1] + retained_rotation(&output_orientation(&virt, times_ms[i - 1]), &output_orientation(&virt, times_ms[i]));
         }
         let times: Vec<f64> = times_ms.iter().map(|t| (t - times_ms[0]) / 1000.0).collect();
-        let last = times[n - 1];
         let request: Vec<_> = (0..n).map(|i| {
-            let ramp = 1.0_f64.min(times[i] / 0.25).min((last - times[i]) / 0.25).max(0.0);
-            let d = (p[i] - target[i]) * ramp;
+            let d = p[i] - target[i];
             nalgebra::Vector3::new(d.x, d.y, 0.0)
         }).collect();
         let geometry: Vec<_> = samples.iter().map(|s| s.geometry().unwrap()).collect();
-        let fixed: Vec<_> = (0..n).map(|i| i == 0 || i == n - 1).collect();
+        let fixed = vec![false; n];
         let config = TranslationConfig::resolved();
         let sigma = result.effective_smoothness_s();
         let planned = super::smoothing::constrain(&times, &request, &geometry, &fixed, sigma, config.max_shift * 0.5, config.max_axial_shift() * 0.5, false, &|| false);
