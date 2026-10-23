@@ -22,6 +22,7 @@ mod base;
 pub use base::{OpticalBaseMode, BlendConfig};
 #[cfg(test)] pub(crate) mod synthetic;
 pub mod translation;
+pub mod residual_rotation;
 mod image_space;
 #[cfg(feature = "use-opencv")]
 pub mod pipeline;
@@ -179,6 +180,8 @@ pub struct OpticalMeasurements {
     pub translation_requested: bool,
     pub translation_samples: Vec<TranslationSample>,
     pub(crate) translation_replay: Option<TranslationReplay>,
+    /// Pairs kept for the residual rotation: a file with motion data analyzed with the correction requested
+    pub(crate) residual_replay: Option<ResidualReplay>,
     /// Actual analysis cadence in motion-data time, after integer frame sampling.
     pub scaled_fps: f64,
     /// Of the quaternions they were measured against, see `OpticalCorrection::quats_checksum`
@@ -397,6 +400,258 @@ impl TranslationReplay {
     }
 }
 
+/// Points kept per frame pair for the residual rotation, half of them from each half of the tracks
+const RESIDUAL_POINTS_PER_PAIR: usize = 256;
+/// Memory of the kept points beyond which only every other kept pair stays (and only every other one is kept on)
+const RESIDUAL_MEMORY_BYTES: usize = 128 << 20;
+
+/// Per half of the tracks and equal-area cell (`residual_cell`), how many points were tracked in a pair
+const RESIDUAL_CELL_COUNT: usize = residual_rotation::CELLS.0 * residual_rotation::CELLS.1;
+type TrackedCounts = [u16; 2 * RESIDUAL_CELL_COUNT];
+
+/// What the residual rotation (`residual_rotation`) needs from the tracking, kept while the analysis runs: every
+/// pair's timing, and for every `step`-th pair a subsample of its points even over the frame and the two halves of the
+/// tracks, with how many points each cell had before subsampling. `step` doubles whenever the points kept would take
+/// more than `RESIDUAL_MEMORY_BYTES`
+pub(crate) struct ResidualStore {
+    kept: Vec<(Pair, TrackedCounts)>,
+    timing: Vec<(usize, Frame, Frame)>,
+    step: usize,
+    bytes: usize,
+    cap: usize,
+}
+
+impl ResidualStore {
+    fn new() -> Self { Self::with_cap(RESIDUAL_MEMORY_BYTES) }
+    fn with_cap(cap: usize) -> Self { Self { kept: Vec::new(), timing: Vec::new(), step: 1, bytes: 0, cap } }
+
+    fn pair_bytes(p: &Pair) -> usize {
+        p.obs.len() * std::mem::size_of::<Observation>() + std::mem::size_of::<Pair>() + std::mem::size_of::<TrackedCounts>()
+    }
+
+    fn push(&mut self, seq: usize, a: Frame, b: Frame, obs: &[Observation], size: (u32, u32)) {
+        self.timing.push((seq, a, b));
+        if seq % self.step != 0 { return; }
+        let mut tracked = [0u16; 2 * RESIDUAL_CELL_COUNT];
+        for o in obs {
+            let k = (o.id % 2) as usize * RESIDUAL_CELL_COUNT + residual_cell(o.a, size) as usize;
+            tracked[k] = tracked[k].saturating_add(1);
+        }
+        let pair = Pair { seq, a, b, obs: residual_subsample(obs, size) };
+        self.bytes += Self::pair_bytes(&pair);
+        self.kept.push((pair, tracked));
+        while self.bytes > self.cap {
+            self.step *= 2;
+            let step = self.step;
+            self.kept.retain(|(p, _)| p.seq % step == 0);
+            // Thinned only a few times over a clip: give the room back
+            self.kept.shrink_to_fit();
+            self.bytes = self.kept.iter().map(|(p, _)| Self::pair_bytes(p)).sum();
+        }
+    }
+}
+
+/// The equal-area cell of a tracked position, row-major over `residual_rotation::CELLS`
+fn residual_cell(pos: [f32; 2], size: (u32, u32)) -> u16 {
+    let (cw, ch) = residual_rotation::CELLS;
+    let cx = ((pos[0] / size.0.max(1) as f32 * cw as f32).floor() as i64).clamp(0, cw as i64 - 1);
+    let cy = ((pos[1] / size.1.max(1) as f32 * ch as f32).floor() as i64).clamp(0, ch as i64 - 1);
+    (cy * cw as i64 + cx) as u16
+}
+
+/// Up to `RESIDUAL_POINTS_PER_PAIR` points, half from each half of the tracks (id parity), taken one per cell in turn so
+/// the whole frame is covered; in id order within a cell
+fn residual_subsample(obs: &[Observation], size: (u32, u32)) -> Vec<Observation> {
+    let (cw, ch) = residual_rotation::CELLS;
+    let mut out = Vec::with_capacity(RESIDUAL_POINTS_PER_PAIR.min(obs.len()));
+    for half in 0..2u32 {
+        let mut cells: Vec<Vec<&Observation>> = vec![Vec::new(); cw * ch];
+        let mut sorted: Vec<&Observation> = obs.iter().filter(|o| o.id % 2 == half).collect();
+        sorted.sort_by_key(|o| o.id);
+        for o in sorted { cells[residual_cell(o.a, size) as usize].push(o); }
+        let quota = RESIDUAL_POINTS_PER_PAIR / 2;
+        let (mut taken, mut round) = (0, 0);
+        while taken < quota {
+            let mut any = false;
+            for cell in &cells {
+                if let Some(o) = cell.get(round) {
+                    any = true;
+                    if taken < quota { out.push(**o); taken += 1; }
+                }
+            }
+            if !any { break; }
+            round += 1;
+        }
+    }
+    out.sort_by_key(|o| o.id);
+    out
+}
+
+/// The kept pairs, to measure the residual rotation once the reconstruction and the translation are known: no second
+/// decode or tracking pass is needed
+pub(crate) struct ResidualReplay {
+    /// A copy of the analysis' own: the reconstruction is put into its motion data
+    params: ComputeParams,
+    /// The kept pairs, each with its points tracked per half and cell before subsampling
+    kept: Vec<(Pair, TrackedCounts)>,
+    timing: Vec<(usize, Frame, Frame)>,
+    track_size: (u32, u32),
+    horizontal_readout: bool,
+    focal_px: f64,
+    /// Analysis cadence, pairs per second
+    fps: f64,
+    /// Analyzed ranges, video milliseconds
+    ranges_ms: Vec<(f64, f64)>,
+}
+
+impl ResidualReplay {
+    /// Every kept point, measured against the uncorrected quaternions with the reconstruction that applies
+    fn points(&mut self, reconstruction: Option<&crate::gyro_source::OpticalStabReconstruction>) -> Vec<residual_rotation::ResidualPoint> {
+        if let Some(r) = reconstruction {
+            let mut r = r.clone();
+            r.enabled = true;
+            r.applies = true;
+            self.params.gyro.write().optical_stab = Some(r);
+            self.params.apply_optical_stab = true;
+        }
+        let params = &self.params;
+        let per_pair: Vec<Vec<residual_rotation::ResidualPoint>> = self.kept.par_iter().map(|(pair, _)| {
+            let derived = OpticalMotionAnalysis::derive_pair(params, pair, &None, self.track_size, self.horizontal_readout);
+            let cells: HashMap<u32, u16> = pair.obs.iter().map(|o| (o.id, residual_cell(o.a, self.track_size))).collect();
+            let gyro = params.gyro.read();
+            derived.iter().map(|d| residual_rotation::ResidualPoint {
+                pair: pair.seq as u32, half: (d.id % 2) as u8, cell: cells[&d.id], ta_ms: d.ta_ms, tb_ms: d.tb_ms, p: d.p, r: d.r,
+                rb: *gyro.org_quat_at_timestamp(d.tb_ms).to_rotation_matrix().matrix(),
+            }).collect()
+        }).collect();
+        per_pair.into_iter().flatten().collect()
+    }
+
+    /// The motion one half of the tracks shows in a render with `render`'s settings: per pair the similarity fit of its
+    /// points' projections (960 px wide output, 16 px margins, at least 20 points), integrated; pitch and yaw over the
+    /// output focal length of each frame. Each kept point counts for the points its cell had before subsampling, so the
+    /// fit sees the picture with the density of all the tracks: the subsample is even over the frame, and where layers
+    /// of the picture move differently (parallax) an even one would weigh them by area instead of by what's visible
+    fn held_out(&self, render: &ComputeParams, half: u32) -> residual_rotation::HeldOutMotion {
+        let (ow, oh) = (render.output_width.max(1) as f64, render.output_height.max(1) as f64);
+        let s = 960.0 / ow;
+        let h960 = (oh * s).round();
+        let centre = (480.0, h960 / 2.0);
+        let to_source = |p: [f32; 2]| (p[0] * render.width as f32 / self.track_size.0.max(1) as f32, p[1] * render.height as f32 / self.track_size.1.max(1) as f32);
+        let kept: HashMap<usize, &(Pair, TrackedCounts)> = self.kept.iter().map(|k| (k.0.seq, k)).collect();
+        let rates: Vec<[f64; 3]> = self.timing.par_iter().map(|(seq, a, b)| {
+            let Some((pair, tracked)) = kept.get(seq).copied() else { return [f64::NAN; 3] };
+            let obs: Vec<&Observation> = pair.obs.iter().filter(|o| o.id % 2 == half).collect();
+            let cells: Vec<usize> = obs.iter().map(|o| residual_cell(o.a, self.track_size) as usize).collect();
+            let mut in_subsample = [0u32; RESIDUAL_CELL_COUNT];
+            for c in &cells { in_subsample[*c] += 1; }
+            let tracked = &tracked[half as usize * RESIDUAL_CELL_COUNT..];
+            let density: Vec<f64> = cells.iter().map(|c| tracked[*c].max(1) as f64 / in_subsample[*c] as f64).collect();
+            let pa: Vec<(f32, f32)> = obs.iter().map(|o| to_source(o.a)).collect();
+            let pb: Vec<(f32, f32)> = obs.iter().map(|o| to_source(o.b)).collect();
+            let oa = crate::stabilization::undistort_points_with_rolling_shutter(&pa, a.timestamp_ms, Some(a.index), render, 1.0, true, false);
+            let ob = crate::stabilization::undistort_points_with_rolling_shutter(&pb, b.timestamp_ms, Some(b.index), render, 1.0, true, false);
+            let inside = |p: (f64, f64)| p.0.is_finite() && p.1.is_finite() && p.0 > 16.0 && p.0 < 944.0 && p.1 > 16.0 && p.1 < h960 - 16.0;
+            let (mut va, mut vb, mut prior) = (Vec::new(), Vec::new(), Vec::new());
+            for ((x, y), w) in oa.iter().zip(&ob).zip(&density) {
+                let (x, y) = ((x.0 as f64 * s, x.1 as f64 * s), (y.0 as f64 * s, y.1 as f64 * s));
+                if inside(x) && inside(y) { va.push(x); vb.push(y); prior.push(*w); }
+            }
+            if va.len() < 20 { return [f64::NAN; 3]; }
+            residual_rotation::fit_similarity(&va, &vb, centre, &prior)
+        }).collect();
+        let path = |c: usize| residual_rotation::cumulative(&rates.iter().map(|r| r[c]).collect::<Vec<_>>());
+        let (roll, x, y) = (path(0), path(1), path(2));
+        let f960 = self.focal_960();
+        let mut times_ms = Vec::with_capacity(self.timing.len() + 1);
+        let mut frames = Vec::with_capacity(self.timing.len() + 1);
+        if let Some((_, a, _)) = self.timing.first() { times_ms.push(a.mid_ms); frames.push(a.index); }
+        for (_, _, b) in &self.timing { times_ms.push(b.mid_ms); frames.push(b.index); }
+        let out = (0..times_ms.len()).map(|i| {
+            let fov = render.fovs.get(frames[i]).copied().filter(|f| *f > 0.0).unwrap_or(1.0);
+            let fout = f960 / fov;
+            [y[i] / fout, x[i] / fout, roll[i]]
+        }).collect();
+        residual_rotation::HeldOutMotion { times_ms, out, fps: self.fps }
+    }
+
+    /// The tracking's focal length in pixels of a 960 px wide picture
+    fn focal_960(&self) -> f64 { self.focal_px * 960.0 / self.track_size.0.max(1) as f64 }
+
+    /// The whole measurement: points with the reconstruction, the dominant layer of `translation` taken out, the
+    /// strength from the two halves' motion in `render` (the current settings without this correction), the final δ
+    /// on the motion data timeline
+    pub(crate) fn measure(mut self, reconstruction: Option<&crate::gyro_source::OpticalStabReconstruction>,
+        translation: Option<&crate::gyro_source::OpticalTranslation>, render: &ComputeParams, quats_checksum: u64,
+        context_checksum: u64, cancel: &dyn Fn() -> bool) -> Result<crate::gyro_source::OpticalResidualRotation, String> {
+        use crate::gyro_source::optical_residual;
+        let started = std::time::Instant::now();
+        let mut points = self.points(reconstruction);
+        points.sort_by_key(|p| p.pair);
+        let measured_frames = { let mut s: Vec<u32> = points.iter().map(|p| p.pair).collect(); s.dedup(); s.len() };
+        if cancel() { return Err("Cancelled".into()); }
+        let halves_ok = points.iter().any(|p| p.half == 0) && points.iter().any(|p| p.half == 1);
+        let mut result = optical_residual::OpticalResidualRotation {
+            version: optical_residual::VERSION, enabled: true, quats_checksum, context_checksum,
+            reconstruction_checksum: reconstruction.map_or(0, |r| r.measurement_checksum()),
+            translation_checksum: optical_residual::translation_fingerprint(translation),
+            frames: self.timing.len(), measured_frames, spacing_us: residual_rotation::GRID_MS * 1000.0, tau_s: residual_rotation::TAUS_S[0],
+            ..Default::default()
+        };
+        let Some(mut problem) = residual_rotation::ResidualProblem::new(points, self.focal_px).filter(|_| halves_ok && measured_frames >= 2) else {
+            ::log::info!("Residual rotation: not enough tracked points ({measured_frames} pairs), strength zero");
+            return Ok(result);
+        };
+        let gyro = self.params.gyro.read();
+        let grid_t: Vec<f64> = (0..problem.nodes).map(|k| problem.grid_ms(k)).collect();
+        if let Some(t) = translation {
+            let samples: Vec<residual_rotation::DominantSample> = t.samples.iter().map(|s| {
+                let q = UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(s.camera_to_world[0] as f64, s.camera_to_world[1] as f64, s.camera_to_world[2] as f64, s.camera_to_world[3] as f64));
+                residual_rotation::DominantSample { time_ms: s.timestamp_us as f64 / 1000.0, segment: s.segment,
+                    motion: [s.layer_motion[0] as f64 * s.auto_beta as f64, s.layer_motion[1] as f64 * s.auto_beta as f64],
+                    camera_to_world: *q.to_rotation_matrix().matrix() }
+            }).collect();
+            problem.subtract_dominant(&residual_rotation::dominant_chain(&samples, &grid_t));
+        }
+        let orientation: Vec<Matrix3<f64>> = grid_t.iter().map(|t| *gyro.org_quat_at_timestamp(*t).to_rotation_matrix().matrix()).collect();
+        let held = [self.held_out(render, 0), self.held_out(render, 1)];
+        if cancel() { return Err("Cancelled".into()); }
+        let selected = residual_rotation::select_strength(&problem, [&held[0], &held[1]], &orientation, self.focal_960(), cancel);
+        if cancel() { return Err("Cancelled".into()); }
+        let Some(selection) = selected else {
+            ::log::info!("Residual rotation: the held-out motion is too short to score or one half shows none, strength zero");
+            return Ok(result);
+        };
+        result.sigma_deg = selection.sigma_deg;
+        result.tau_s = selection.tau_s;
+        result.scores = selection.scores;
+        let to_gyro_ms = |t: f64| t - gyro.offset_at_video_timestamp(t);
+        let t_first = grid_t.first().copied().unwrap_or_default();
+        let t_last = grid_t.last().copied().unwrap_or_default();
+        result.ranges_us = self.ranges_ms.iter().filter_map(|(a, b)| {
+            let (a, b) = (a.max(t_first), b.min(t_last));
+            (b > a).then(|| (to_gyro_ms(a) * 1000.0, to_gyro_ms(b) * 1000.0))
+        }).collect();
+        result.start_us = to_gyro_ms(t_first) * 1000.0;
+        if selection.sigma_deg > 0.0 {
+            let d = problem.estimate(selection.sigma_deg.to_radians(), selection.tau_s).ok_or_else(|| "The residual rotation could not be solved".to_string())?;
+            // From the video grid onto a uniform one on the motion data timeline
+            let d_w: Vec<[f32; 3]> = (0..problem.nodes).map(|k| {
+                let tg = result.start_us / 1000.0 + k as f64 * residual_rotation::GRID_MS;
+                let tv = tg + gyro.offset_at_gyro_timestamp(tg);
+                let v = Vector3::from_fn(|c, _| residual_rotation::interp(tv, &grid_t, |i| d[i][c]));
+                [v.x as f32, v.y as f32, v.z as f32]
+            }).collect();
+            result.d_w = optical_residual::quantize(&d_w);
+            let inside: Vec<f64> = grid_t.iter().zip(&d).filter(|(t, _)| self.ranges_ms.iter().any(|(a, b)| **t >= *a && **t <= *b)).map(|(_, v)| v.norm_squared()).collect();
+            result.rms_deg = (inside.iter().sum::<f64>() / inside.len().max(1) as f64).sqrt().to_degrees();
+        }
+        ::log::info!("Residual rotation: sigma={}deg tau={}s rms={:.4}deg pairs={}/{} nodes={} in {} ms",
+            result.sigma_deg, result.tau_s, result.rms_deg, measured_frames, result.frames, problem.nodes, started.elapsed().as_millis());
+        Ok(result)
+    }
+}
+
 /// Time scale (Gaussian sigma) over which the automatic reference pools the dominant layer of neighbouring samples:
 /// the window of the offline estimate it was validated with (target/translation-e0, 2026-10-09)
 const AUTO_DOMINANT_SIGMA_S: f64 = 1.0;
@@ -504,6 +759,7 @@ pub struct OpticalMotionAnalysis {
     vision: Option<TimeQuat>,
     translation: Option<TranslationState>,
     translation_replay: Option<VecDeque<Pair>>,
+    residual: Option<ResidualStore>,
     stab_requested: bool,
     stab_next_seq: usize,
     stab_pairs: Vec<sensor::SensorPair>,
@@ -537,9 +793,7 @@ impl OpticalMotionAnalysis {
             // Without motion data in the file (also after an analysis of such a file: its orientation is only in the
             // correction) the analysis measures the motion itself
             let vision = (!gyro.file_metadata.read().has_motion()).then(TimeQuat::new);
-            if gyro.optical_correction.take().is_some() {
-                gyro.integrate();
-            }
+            gyro.strip_rotation_corrections();
             if vision.is_some() {
                 gyro.quaternions.clear();
             } else if gyro.quaternions.len() < 2 {
@@ -565,6 +819,8 @@ impl OpticalMotionAnalysis {
                 scaled_fps / every_nth_frame as f64);
             let translation = (vision.is_none() && ui.translation_enabled).then(TranslationState::new);
             let translation_replay = (translation.is_some() && ui.stab_enabled).then(VecDeque::new);
+            // With motion data the correction is the residual rotation, measured from a subsample of the tracks
+            let residual = (vision.is_none() && ui.correction_enabled).then(ResidualStore::new);
             Ok(Self {
                 params, fps_scale, scaled_fps, quats_checksum, context_checksum, horizontal_readout,
                 every_nth_frame, hp_min, hp_max,
@@ -588,6 +844,7 @@ impl OpticalMotionAnalysis {
                 vision,
                 translation,
                 translation_replay,
+                residual,
                 base: base::VisionBase::new(OpticalBaseMode::resolved(), BlendConfig::resolved()),
                 sg_cache: HashMap::new(),
                 cancel: CancelCheck { flag: cancel_flag, generation: (stab.optical_generation.clone(), generation), latched: Arc::new(AtomicBool::new(false)) },
@@ -667,6 +924,7 @@ impl OpticalMotionAnalysis {
         let continuous = self.continuous(index, ts_ms);
         if continuous && !obs.is_empty() {
             if let Some(a) = self.last {
+                if let Some(store) = &mut self.residual { store.push(self.next_seq, a, frame, &obs, size); }
                 self.pairs.push_back(Pair { seq: self.next_seq, a, b: frame, obs });
                 self.next_seq += 1;
                 if self.vision.is_some() { self.chain_vision(); }
@@ -708,6 +966,17 @@ impl OpticalMotionAnalysis {
             },
             None => (self.quats_checksum, Vec::new()),
         };
+        let residual_replay = self.residual.take().map(|store| {
+            ::log::info!("Residual rotation kept {} of {} pairs (every {}), {} points, {:.1} MB",
+                store.kept.len(), store.timing.len(), store.step, store.kept.iter().map(|(p, _)| p.obs.len()).sum::<usize>(), store.bytes as f64 / 1048576.0);
+            let mut params = self.params.clone();
+            params.gyro = Arc::new(parking_lot::RwLock::new(self.params.gyro.read().clone()));
+            let scale = self.fps_scale.unwrap_or(1.0);
+            ResidualReplay { params, kept: store.kept, timing: store.timing, track_size: self.track_size,
+                horizontal_readout: self.horizontal_readout, focal_px: self.focal_px,
+                fps: self.scaled_fps / self.every_nth_frame as f64,
+                ranges_ms: self.sequencer.ranges_ms.iter().map(|(a, b)| (a / scale, b / scale)).collect() }
+        });
         let translation_replay = self.translation_replay.take().map(|mut pairs| {
             pairs.append(&mut self.pairs);
             TranslationReplay { params: self.params, pairs, track_size: self.track_size,
@@ -721,6 +990,7 @@ impl OpticalMotionAnalysis {
             translation_requested: self.translation.is_some(),
             translation_samples: self.translation.map(TranslationState::finish).unwrap_or_default(),
             translation_replay,
+            residual_replay,
             scaled_fps: self.scaled_fps / self.every_nth_frame as f64,
             quats_checksum,
             context_checksum: self.context_checksum,
@@ -2094,6 +2364,198 @@ mod tests {
         assert!(outcome.error.is_none());
         assert_eq!(outcome.finish().unwrap().frames, 200);
     }
+
+    #[test]
+    fn residual_subsample_balances_the_frame_and_the_halves() {
+        use std::collections::HashSet;
+        let size = (960, 540);
+        let obs: Vec<Observation> = (0..2000u32).map(|id| {
+            let (x, y) = (((id * 7919) % 960) as f32, ((id * 104_729) % 540) as f32);
+            Observation { id, a: [x, y], b: [x + 1.0, y], texture: f32::NAN }
+        }).collect();
+        let kept = residual_subsample(&obs, size);
+        assert_eq!(kept.len(), RESIDUAL_POINTS_PER_PAIR);
+        for half in 0..2 {
+            let mine: Vec<_> = kept.iter().filter(|o| o.id % 2 == half).collect();
+            assert_eq!(mine.len(), RESIDUAL_POINTS_PER_PAIR / 2);
+            let cells: HashSet<u16> = mine.iter().map(|o| residual_cell(o.a, size)).collect();
+            let occupied: HashSet<u16> = obs.iter().filter(|o| o.id % 2 == half).map(|o| residual_cell(o.a, size)).collect();
+            assert_eq!(cells.len(), occupied.len().min(RESIDUAL_POINTS_PER_PAIR / 2), "one per cell before a second");
+        }
+        assert_eq!(residual_subsample(&obs[..100], size).len(), 100, "fewer points than the quota: all of them");
+    }
+
+    #[test]
+    fn residual_store_keeps_evenly_spaced_pairs_within_its_memory() {
+        let frame = |i: usize| Frame { index: i, timestamp_ms: i as f64 * 40.0, start_ms: i as f64 * 40.0, per_px_ms: 0.0, mid_ms: i as f64 * 40.0 };
+        let obs: Vec<Observation> = (0..300u32).map(|id| Observation { id, a: [(id % 30) as f32 * 30.0, (id / 30) as f32 * 50.0], b: [0.0; 2], texture: f32::NAN }).collect();
+        let per_pair = RESIDUAL_POINTS_PER_PAIR * std::mem::size_of::<Observation>() + std::mem::size_of::<Pair>() + std::mem::size_of::<TrackedCounts>();
+        let mut store = ResidualStore::with_cap(per_pair * 10);
+        for seq in 0..100 { store.push(seq, frame(seq), frame(seq + 1), &obs, (960, 540)); }
+        assert_eq!(store.timing.len(), 100, "every pair's timing is kept");
+        assert!(store.bytes <= per_pair * 10);
+        assert!(store.kept.iter().all(|(p, _)| p.seq % store.step == 0));
+        assert!(store.kept.windows(2).all(|w| w[1].0.seq - w[0].0.seq == store.step), "evenly spaced");
+        assert!(store.kept.len() >= 5);
+    }
+
+    /// Ten minutes at 60 fps with a thousand tracks a frame: the points kept stay within `RESIDUAL_MEMORY_BYTES`,
+    /// thinned to every other pair, every pair's timing kept
+    #[test]
+    fn residual_store_of_a_ten_minute_clip_stays_within_its_memory() {
+        let frame = |i: usize| Frame { index: i, timestamp_ms: i as f64 * 1000.0 / 60.0, start_ms: i as f64 * 1000.0 / 60.0, per_px_ms: 0.0, mid_ms: i as f64 * 1000.0 / 60.0 };
+        let obs: Vec<Observation> = (0..1000u32).map(|id| Observation { id, a: [((id * 7919) % 960) as f32, ((id * 104_729) % 540) as f32], b: [0.0; 2], texture: f32::NAN }).collect();
+        let mut store = ResidualStore::new();
+        let pairs = 10 * 60 * 60;
+        for seq in 0..pairs { store.push(seq, frame(seq), frame(seq + 1), &obs, (960, 540)); }
+        let allocated: usize = store.kept.iter().map(|(p, _)| p.obs.capacity() * std::mem::size_of::<Observation>()).sum::<usize>()
+            + store.kept.capacity() * std::mem::size_of::<(Pair, TrackedCounts)>();
+        eprintln!("residual store: {} of {} pairs (every {}), {:.1} MB", store.kept.len(), pairs, store.step, allocated as f64 / 1048576.0);
+        assert!(allocated <= RESIDUAL_MEMORY_BYTES);
+        assert_eq!(store.timing.len(), pairs);
+        assert_eq!(store.step, 2);
+        assert_eq!(store.kept.len(), pairs / 2);
+    }
+
+    /// The picture of `analysis_fixture` rotates by the motion data and an `error_deg`, 7 Hz wobble on top that the
+    /// motion data misses; every id seen in every frame
+    #[cfg(feature = "use-opencv")]
+    fn residual_body(t: f64) -> crate::Quat64 {
+        crate::Quat64::from_euler_angles(0.3f64.to_radians() * (std::f64::consts::TAU * 1.1 * t).sin(),
+            0.3f64.to_radians() * (std::f64::consts::TAU * 0.7 * t).sin(), 0.0)
+    }
+    #[cfg(feature = "use-opencv")]
+    fn residual_error(error_deg: f64, t: f64) -> crate::Quat64 {
+        crate::Quat64::from_euler_angles(error_deg.to_radians() * (std::f64::consts::TAU * 7.0 * t).sin(),
+            0.5 * error_deg.to_radians() * (std::f64::consts::TAU * 5.0 * t).cos(), 0.0)
+    }
+    /// Tracking noise of 0.1 px per coordinate (Box-Muller over a hash of the frame and id): without it every
+    /// strength scores within rounding of the others and the choice among them is arbitrary
+    #[cfg(feature = "use-opencv")]
+    fn residual_noise(frame: usize, id: u32) -> [f64; 2] {
+        let mut x = (frame as u64) << 32 | id as u64;
+        let mut next = || {
+            x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = x;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            ((z ^ (z >> 31)) >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let (u1, u2) = (next().max(1e-300), next());
+        let r = 0.1 * (-2.0 * u1.ln()).sqrt();
+        [r * (std::f64::consts::TAU * u2).cos(), r * (std::f64::consts::TAU * u2).sin()]
+    }
+    #[cfg(feature = "use-opencv")]
+    fn residual_observations(error_deg: f64, ids: impl Fn(u32) -> bool + Copy) -> impl Fn(usize) -> Vec<(u32, [f32; 2])> {
+        move |frame| {
+            let t = frame as f64 / 30.0;
+            let observed = residual_body(t) * residual_error(error_deg, t);
+            (0..400).filter(|id| ids(*id)).map(|id| {
+                let u = (id % 20) as f64 * 48.0 + 24.0;
+                let v = (id / 20) as f64 * 27.0 + 13.5;
+                let world = Vector3::new((u - 480.0) * 5.0 / 500.0, (270.0 - v) * 5.0 / 500.0, -5.0);
+                let (p, n) = (project(observed.inverse() * world), residual_noise(frame, id));
+                (id, [p[0] + n[0] as f32, p[1] + n[1] as f32])
+            }).collect()
+        }
+    }
+    /// `analysis_fixture` with the integration a file carrying quaternions loads with, so taking a correction off
+    /// and integrating again gives back the motion data
+    #[cfg(feature = "use-opencv")]
+    fn residual_fixture() -> StabilizationManager {
+        let stab = analysis_fixture(120, residual_body);
+        stab.gyro.write().integration_method = 0;
+        stab
+    }
+    #[cfg(feature = "use-opencv")]
+    fn residual_scene(error_deg: f64, translation: bool) -> (StabilizationManager, OpticalMeasurements) {
+        let stab = residual_fixture();
+        { let mut ui = stab.optical_ui.write(); ui.correction_enabled = true; ui.translation_enabled = translation; }
+        let m = analyze_pairs(&stab, 120, residual_observations(error_deg, |_| true));
+        (stab, m)
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn residual_rotation_corrects_what_the_motion_data_missed() {
+        let (stab, m) = residual_scene(0.05, false);
+        assert!(m.residual_replay.is_some());
+        let before = stab.gyro.read().quaternions.clone();
+        stab.set_optical_measurements(m).unwrap();
+        stab.recompute_blocking();
+        let gyro = stab.gyro.read();
+        let r = gyro.optical_residual.as_ref().unwrap();
+        assert!(r.sigma_deg > 0.0 && r.applies, "selected {} deg", r.sigma_deg);
+        assert!(gyro.optical_correction.is_none(), "with motion data the residual rotation replaces the band-fitted one");
+        // Against the picture's own orientation in the middle of the clip
+        let error = |quats: &TimeQuat| -> f64 {
+            let mut s = Vec::new();
+            for ms in (1000..3000).step_by(5) {
+                let truth = residual_body(ms as f64 / 1000.0) * residual_error(0.05, ms as f64 / 1000.0);
+                s.push(GyroSource::clamped_quat_at_gyro_timestamp(quats, ms as f64).angle_to(&truth).powi(2));
+            }
+            (s.iter().sum::<f64>() / s.len() as f64).sqrt()
+        };
+        let (was, is) = (error(&before), error(&gyro.quaternions));
+        eprintln!("residual rotation: sigma {} deg tau {} s, picture error {:.5} -> {:.5} deg", r.sigma_deg, r.tau_s, was.to_degrees(), is.to_degrees());
+        assert!(is < 0.5 * was);
+    }
+
+    /// With only tracking noise to fit, every strength above the weakest scores clearly worse than none. The weakest
+    /// one can win by chance: in this scene the held-out 3-10 Hz motion is nothing but the other half's noise
+    /// (~0.01 px), where any change of a few thousandths of a pixel moves the log ratio either way. Whatever it picks
+    /// stays far below anything visible
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn residual_rotation_without_an_error_corrects_nothing_visible() {
+        let (stab, m) = residual_scene(0.0, false);
+        let before = stab.gyro.read().quaternions.clone();
+        stab.set_optical_measurements(m).unwrap();
+        stab.recompute_blocking();
+        let gyro = stab.gyro.read();
+        let r = gyro.optical_residual.as_ref().unwrap();
+        assert!(r.sigma_deg <= residual_rotation::SIGMAS_DEG[1], "selected {} deg", r.sigma_deg);
+        assert!(r.scores.iter().filter(|s| s.0 >= 0.05).all(|s| s.2 > 0.0), "strong corrections fit the noise");
+        let largest = before.iter().map(|(t, q)| q.angle_to(&GyroSource::clamped_quat_at_gyro_timestamp(&gyro.quaternions, *t as f64 / 1000.0))).fold(0.0, f64::max);
+        assert!(largest.to_degrees() < 0.002, "changed by up to {} deg", largest.to_degrees());
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn analysis_after_the_residual_rotation_measures_the_same() {
+        let (stab, first) = residual_scene(0.05, true);
+        let expected = (first.quats_checksum, first.translation_samples.clone(), bands_hash(&first.bands));
+        stab.set_optical_measurements(first).unwrap();
+        stab.recompute_blocking();
+        assert!(stab.gyro.read().optical_residual.as_ref().unwrap().applies);
+        let again = analyze_pairs(&stab, 120, residual_observations(0.05, |_| true));
+        assert_eq!(again.quats_checksum, expected.0);
+        assert_eq!(again.translation_samples, expected.1);
+        assert_eq!(bands_hash(&again.bands), expected.2);
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn residual_rotation_stops_when_cancelled_during_the_selection() {
+        let (stab, mut m) = residual_scene(0.05, false);
+        let replay = m.residual_replay.take().unwrap();
+        let render = ComputeParams::from_manager(&stab);
+        let calls = std::cell::Cell::new(0);
+        let cancel = || { calls.set(calls.get() + 1); calls.get() > 3 };
+        assert_eq!(replay.measure(None, None, &render, m.quats_checksum, m.context_checksum, &cancel).unwrap_err(), "Cancelled");
+        assert!(stab.gyro.read().optical_residual.is_none());
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn residual_rotation_with_one_half_of_the_tracks_selects_none() {
+        let stab = residual_fixture();
+        stab.optical_ui.write().correction_enabled = true;
+        let m = analyze_pairs(&stab, 120, residual_observations(0.05, |id| id % 2 == 0));
+        stab.set_optical_measurements(m).unwrap();
+        let gyro = stab.gyro.read();
+        assert_eq!(gyro.optical_residual.as_ref().unwrap().sigma_deg, 0.0, "not enough to cross-validate: zero, no error");
+    }
 }
 
 
@@ -2111,7 +2573,7 @@ mod sensor_solve_tests {
             }
         }
         OpticalMeasurements { bands: vec![], stab_requested: true, stab_pairs: pairs, stab_bands: bands,
-            translation_requested: false, translation_samples: vec![], translation_replay: None, scaled_fps: fps,
+            translation_requested: false, translation_samples: vec![], translation_replay: None, residual_replay: None, scaled_fps: fps,
             quats_checksum: optical_correction::checksum(quats), context_checksum: 9, video_base: vec![],
             frames: 300, measured_frames: 0, generation: 0 }
     }
@@ -2391,6 +2853,4 @@ mod sensor_solve_tests {
 
     #[test]
     fn solve_stab_ois_15000_vertical() {check_ois_without_roll(15000.0,Some(1));}
-
-
 }

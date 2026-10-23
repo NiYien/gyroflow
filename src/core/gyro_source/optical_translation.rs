@@ -702,6 +702,21 @@ impl OpticalTranslation {
         self.hash_into(&mut hasher);
         hasher.finish().max(1)
     }
+
+    /// Fingerprint of the measured dominant layer (`layer_motion` scaled by `auto_beta`, chained within segments), what
+    /// the residual rotation is measured without; independent of the settings and the checkbox. Never zero
+    pub fn dominant_layer_fingerprint(&self) -> u64 {
+        let mut h = DefaultHasher::new();
+        h.write_usize(self.samples.len());
+        for s in &self.samples {
+            h.write_i64(s.timestamp_us);
+            h.write_u32(s.segment);
+            h.write_u32(s.layer_motion[0].to_bits());
+            h.write_u32(s.layer_motion[1].to_bits());
+            h.write_u32(s.auto_beta.to_bits());
+        }
+        h.finish().max(1)
+    }
 }
 
 #[cfg(test)]

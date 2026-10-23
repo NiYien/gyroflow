@@ -15,8 +15,10 @@ pub mod splines;
 pub mod optical_correction;
 pub mod optical_translation;
 pub mod optical_stab;
+pub mod optical_residual;
 pub use optical_stab::{ OpticalStabReconstruction, ResponseTap, StabReconConfig };
 pub use optical_correction::{ OpticalCorrection, OpticalCorrectionSettings };
+pub use optical_residual::OpticalResidualRotation;
 pub use optical_translation::{ OpticalTranslation, OpticalTranslationSettings, TranslationSample, TranslationConfig };
 pub use file_metadata::*;
 pub use imu_transforms::*;
@@ -609,6 +611,10 @@ pub struct GyroSource {
     pub optical_translation: Option<OpticalTranslation>,
     #[serde(skip)]
     pub optical_stab: Option<OpticalStabReconstruction>,
+    /// The residual rotation of a file with motion data, composed after the reconstruction table, see
+    /// `optical_residual`
+    #[serde(skip)]
+    pub optical_residual: Option<OpticalResidualRotation>,
 }
 
 impl GyroSource {
@@ -2160,7 +2166,7 @@ impl GyroSource {
             // A file without motion data: what the analysis measured between the frames is all there is.
             self.quaternions = self.optical_correction.as_ref().unwrap().base_quats();
         }
-        if self.optical_correction.is_some() || self.optical_translation.is_some() || self.optical_stab.is_some() {
+        if self.has_optical_results() {
             self.optical_uncorrected_checksum = optical_correction::checksum(&self.quaternions);
         }
         if let Some(s) = &mut self.optical_stab {
@@ -2188,6 +2194,39 @@ impl GyroSource {
                 optical_correction::hold_over_clip(&mut self.quaternions, self.duration_ms);
             }
         }
+        // After the reconstruction table, which is built on the uncorrected quaternions
+        let residual_applies = self.optical_residual_applies();
+        if let Some(r) = &mut self.optical_residual {
+            r.applies = residual_applies;
+            if residual_applies {
+                r.apply(&mut self.quaternions);
+            } else if r.enabled {
+                log::warn!("The residual rotation was measured on other motion data, sync, lens, frame timing, reconstruction or translation, not applying it");
+            }
+        }
+    }
+    /// Whether the residual rotation is enabled and matches the uncorrected motion, the context, the reconstruction that
+    /// applies and the translation measurement
+    pub fn optical_residual_applies(&self) -> bool {
+        self.optical_residual.as_ref().is_some_and(|r| r.enabled)
+            && self.optical_residual_measured_for(self.optical_context, self.optical_stab.as_ref().is_some_and(|s| s.enabled))
+    }
+    /// Whether the residual rotation was measured on the file's motion data as it is now (uncorrected), in `context`,
+    /// with the reconstruction that applies when it's `reconstruction_enabled`, and on the translation measurement there
+    pub fn optical_residual_measured_for(&self, context: u64, reconstruction_enabled: bool) -> bool {
+        self.has_motion() && !self.ignores_file_motion() && self.optical_residual.as_ref().is_some_and(|r| r.measured_on(
+            self.optical_uncorrected_checksum, context, self.translation_reconstruction_checksum(context, reconstruction_enabled),
+            optical_residual::translation_fingerprint(self.optical_translation.as_ref())))
+    }
+    /// Whether any result of an optical analysis is there, switched on or not
+    pub fn has_optical_results(&self) -> bool {
+        self.optical_correction.is_some() || self.optical_translation.is_some() || self.optical_stab.is_some() || self.optical_residual.is_some()
+    }
+    /// Takes off the rotation corrections measured from the video (the band-fitted correction and the residual
+    /// rotation), integrating again when there was one: the motion the analyses measure against
+    pub fn strip_rotation_corrections(&mut self) {
+        let had_correction = self.optical_correction.take().is_some();
+        if self.optical_residual.take().is_some() || had_correction { self.integrate(); }
     }
     /// Whether the reconstruction matches the available file motion and current context.
     pub fn optical_stab_applies(&self) -> bool {
@@ -2798,6 +2837,10 @@ impl GyroSource {
         if let Some(s) = &self.optical_stab {
             s.hash_into(&mut hasher);
             hasher.write_u8(s.applies as u8);
+        }
+        if let Some(r) = &self.optical_residual {
+            r.hash_into(&mut hasher);
+            hasher.write_u8(r.applies as u8);
         }
         for (ts, v) in &self.offsets {
             hasher.write_i64(*ts);

@@ -137,9 +137,9 @@ MenuItem {
             translationcb.checked = !!translationcb.info.requested;
             stabcb.checked = !!stabcb.info.requested;
             // Without a result, keep the visible optical choice until Analyze explicitly submits it.
-            opticalcb.checked = !stabcb.checked && (restoreOpticalRequest ? !!opticalcb.info.requested :
+            opticalcb.checked = restoreOpticalRequest ? !!opticalcb.info.requested :
                 (!root.hasExplicitOpticalRequest && !!opticalcb.info.ignore_file_motion) ||
-                (opticalcb.info.available ? !!opticalcb.info.enabled : opticalcb.checked));
+                (opticalcb.info.available ? !!opticalcb.info.enabled : opticalcb.checked);
             ignoreFileMotion.checked = !!opticalcb.info.ignore_file_motion;
             // Statistics refreshes must not replace edits still waiting for their debounce timers.
             if (restoreParameters || !translationReferenceTimer.running)
@@ -189,17 +189,12 @@ MenuItem {
         root.updatingOpticalControls = true;
         try {
             if (mode === "stab") {
-                if (enabled) {
-                    opticalcb.checked = false;
-                    // An explicit optical-off action restores the file motion, unlike project readback.
-                    controller.set_optical_correction_enabled(false);
-                    controller.set_ignore_file_motion(false);
-                }
+                // The reconstruction is measured against the file's motion data: it can't be set aside meanwhile
+                if (enabled) controller.set_ignore_file_motion(false);
                 controller.set_stab_reconstruction_enabled(enabled);
             } else if (mode === "translation") {
                 controller.set_translation_stabilization_enabled(enabled);
             } else {
-                if (enabled) stabcb.checked = false;
                 controller.set_optical_correction_enabled(enabled);
                 if (!enabled) controller.set_ignore_file_motion(false);
             }
@@ -522,7 +517,6 @@ MenuItem {
         text: window.isSimpleMode ? qsTr("Optical stabilization") : qsTr("Optical correction");
         cb.tooltip: qsTr("Measure the camera rotation from the video itself and correct the motion data where they disagree. Useful when vibrations corrupt the gyro data, e.g. on a hard-mounted FPV camera. The analysis samples frames at an integer interval near 25 fps within the selected trim range.");
         property var info: ({ available: false });
-        cb.enabled: !stabcb.checked;
         onCheckedChanged: root.changeOpticalMode("optical", checked);
 
         BasicText {
@@ -539,6 +533,8 @@ MenuItem {
         }
         CheckBox {
             id: ignoreFileMotion;
+            // The reconstruction is measured against the file's motion data: it can't be set aside meanwhile
+            visible: !stabcb.checked;
             text: qsTr("Ignore motion data from the file");
             tooltip: qsTr("Measure all of the camera motion from the video, like for a file without motion data, instead of correcting the motion data. For motion data too broken to correct, e.g. a gyro that glitches or saturates for seconds at a time.");
             onCheckedChanged: if (root.initialized && !root.updatingOpticalControls) { controller.set_ignore_file_motion(checked); root.pushQueueOpticalSettings(); }
@@ -548,8 +544,9 @@ MenuItem {
             text: qsTr("Strength");
             width: parent.width;
             // Without motion data to correct (none in the file, or ignored), the motion and its correction come from
-            // the same tracks: the correction only refines within the frames, the strength changes next to nothing
-            visible: !!opticalcb.info.has_motion;
+            // the same tracks: the correction only refines within the frames, the strength changes next to nothing.
+            // With motion data the analysis chooses the strength itself; only a correction saved before that has one
+            visible: !!opticalcb.info.has_motion && !!opticalcb.info.legacy_strength;
             tooltip: qsTr("How far the correction may take the motion data from what it says. Lower values only correct small, fast errors like vibration. Higher values let the image override the motion data also where it's off by a lot or for longer, like gyro glitches, but follow the image's own mistakes (moving objects, water) more too.");
             SliderWithField {
                 id: opticalStrength;

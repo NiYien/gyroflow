@@ -169,6 +169,7 @@ fn jacobian_blocks(m: &BandMeasurement, start_us: f64, spacing_us: f64, knots: u
 }
 
 /// Symmetric positive definite band matrix, lower half, solved by Cholesky
+#[derive(Clone)]
 pub(super) struct BandSym {
     n: usize,
     bw: usize,

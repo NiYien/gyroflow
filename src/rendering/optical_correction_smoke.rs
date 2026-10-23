@@ -170,7 +170,7 @@ pub fn run(paths: &str) -> i32 {
             if reconstruction_enabled {
                 stab.set_optical_correction_enabled(true);
                 correction_forced = true;
-                log::info!(target: "sync", "[optical-smoke] reconstruction was ticked from metadata; switched to the optical correction");
+                log::info!(target: "sync", "[optical-smoke] reconstruction was ticked from metadata; ticked the optical correction too");
             }
             if stab.gyro.read().quaternions.is_empty() {
                 stab.recompute_gyro();
@@ -184,7 +184,8 @@ pub fn run(paths: &str) -> i32 {
                 let correction = gyro.optical_correction.take();
                 let reconstruction = gyro.optical_stab.take();
                 let translation = gyro.optical_translation.take();
-                if correction.is_some() || reconstruction.is_some() || translation.is_some() {
+                let residual = gyro.optical_residual.take();
+                if correction.is_some() || reconstruction.is_some() || translation.is_some() || residual.is_some() {
                     gyro.integrate();
                 }
                 sync_points = Some(gyro.get_offsets().len());
@@ -244,7 +245,10 @@ pub fn run(paths: &str) -> i32 {
         let info = stab.optical_correction_info();
         let applied = if export_translation {
             stab.gyro.read().optical_translation.as_ref().is_some_and(|t| t.is_active())
-        } else { stab.gyro.read().optical_correction_applied };
+        } else {
+            let gyro = stab.gyro.read();
+            gyro.optical_correction_applied || gyro.optical_residual.as_ref().is_some_and(|r| r.applies)
+        };
         let complete_info = info["frames"].as_u64().is_some()
             && info["measured_frames"].as_u64().is_some()
             && info["rms_deg"].as_f64().is_some_and(f64::is_finite)

@@ -202,9 +202,8 @@ fn apply_settings(job_id: u32, stab: &StabilizationManager, s: &QueueOpticalSett
     if ui.correction_enabled != resolved.correction {
         stab.set_optical_correction_enabled(resolved.correction);
     }
-    let ignore = resolve(s).ignore_file_motion;
-    if ignoring != ignore {
-        stab.set_ignore_file_motion(ignore);
+    if ignoring != resolved.ignore_file_motion {
+        stab.set_ignore_file_motion(resolved.ignore_file_motion);
     }
     if strength != s.strength.clamp(0.0, 1.0) && stab.set_optical_correction_strength(s.strength) {
         // Kept measurements refit in a fraction of a second; without them only an analysis applies the new strength
@@ -234,7 +233,7 @@ fn apply_settings(job_id: u32, stab: &StabilizationManager, s: &QueueOpticalSett
     before != state(stab)
 }
 
-/// Reconstruction excludes rotation correction and needs file motion; translation can accompany either.
+/// Reconstruction needs file motion; the correction and the translation can accompany it.
 struct Resolved {
     correction: bool,
     translation: bool,
@@ -244,7 +243,7 @@ struct Resolved {
 
 fn resolve(s: &QueueOpticalSettings) -> Resolved {
     Resolved {
-        correction: s.correction && !s.reconstruction,
+        correction: s.correction,
         translation: s.translation,
         reconstruction: s.reconstruction,
         ignore_file_motion: s.correction && s.ignore_file_motion && !s.reconstruction,
@@ -304,13 +303,15 @@ pub fn stabilize_pass_needed(stab: &StabilizationManager, settings: &QueueOptica
 
 /// Whether the result for `item` is there and measured on what the job has now, switched on or not: the uncorrected
 /// motion and `context` (sync, lens, frame timing), for a translation or a reconstruction the file's motion data. A
-/// correction also has to be fitted with `strength`. Shared by `applies` and `needs_analysis`
+/// correction of a file with motion data is the residual rotation, which also has to sit on the reconstruction and the
+/// translation the job has; a band-fitted correction (a file without motion data, or one saved before the residual
+/// rotation) has to be fitted with `strength`. Shared by `applies` and `needs_analysis`
 fn result_applies(gyro: &GyroSource, context: u64, item: &str, strength: f64, reconstruction: bool) -> bool {
     let file_motion = gyro.has_motion() && !gyro.ignores_file_motion();
     let uncorrected = gyro.optical_uncorrected_checksum;
     match item {
-        CORRECTION => gyro.optical_correction.as_ref()
-            .is_some_and(|c| c.measured_on(uncorrected, context) && c.settings.strength == strength),
+        CORRECTION => gyro.optical_residual_measured_for(context, reconstruction)
+            || gyro.optical_correction.as_ref().is_some_and(|c| c.measured_on(uncorrected, context) && c.settings.strength == strength),
         TRANSLATION => file_motion && gyro.optical_translation.as_ref().is_some_and(|t| {
             t.has_valid_geometry() && !t.samples.is_empty() && t.quats_checksum == uncorrected && t.context_checksum == context
                 && t.reconstruction_checksum == gyro.translation_reconstruction_checksum(context, reconstruction)
@@ -325,7 +326,7 @@ fn applies(stab: &StabilizationManager, item: &str) -> bool {
     let strength = stab.optical_settings.read().strength;
     let gyro = stab.gyro.read();
     let enabled = match item {
-        CORRECTION => gyro.optical_correction.as_ref().is_some_and(|c| c.enabled),
+        CORRECTION => gyro.optical_correction.as_ref().is_some_and(|c| c.enabled) || gyro.optical_residual.as_ref().is_some_and(|r| r.enabled),
         TRANSLATION => gyro.optical_translation.as_ref().is_some_and(|t| t.enabled),
         _ => gyro.optical_stab.as_ref().is_some_and(|s| s.enabled),
     };
@@ -371,7 +372,7 @@ mod tests {
     /// The motion data the results were measured on: without any correction
     fn uncorrected_checksum(stab: &StabilizationManager) -> u64 {
         let mut gyro = stab.gyro.read().clone();
-        if gyro.optical_correction.take().is_some() { gyro.integrate(); }
+        gyro.strip_rotation_corrections();
         checksum(&gyro.quaternions)
     }
 
@@ -421,6 +422,48 @@ mod tests {
         s.context_checksum = context_checksum(&measurement_params(stab));
         stab.gyro.write().optical_stab = Some(s);
         stab.recompute_gyro();
+    }
+
+    /// A residual rotation measured on what the job has now: the reconstruction that applies, the translation
+    fn install_residual(stab: &StabilizationManager) {
+        use gyroflow_core::gyro_source::optical_residual;
+        let quats_checksum = uncorrected_checksum(stab);
+        let context = context_checksum(&measurement_params(stab));
+        let residual = {
+            let gyro = stab.gyro.read();
+            optical_residual::OpticalResidualRotation {
+                version: optical_residual::VERSION, enabled: stab.optical_ui.read().correction_enabled,
+                start_us: 0.0, spacing_us: 5000.0, d_w: optical_residual::quantize(&vec![[0.0005, 0.0, 0.0]; 2001]),
+                ranges_us: vec![(0.0, 10_000_000.0)], sigma_deg: 0.02, tau_s: 0.1, quats_checksum, context_checksum: context,
+                reconstruction_checksum: gyro.translation_reconstruction_checksum(context, gyro.optical_stab.as_ref().is_some_and(|s| s.enabled)),
+                translation_checksum: optical_residual::translation_fingerprint(gyro.optical_translation.as_ref()),
+                frames: 300, measured_frames: 299, ..Default::default()
+            }
+        };
+        stab.gyro.write().optical_residual = Some(residual);
+        stab.recompute_gyro();
+    }
+
+    #[test]
+    fn a_residual_rotation_is_reused_only_with_its_reconstruction() {
+        let stab = manager(true);
+        let s = settings(serde_json::json!({ "correction": true, "reconstruction": true }));
+        let outcome = run_queue_optical(1, &stab, &s, true, |stab| {
+            install_reconstruction(stab);
+            install_residual(stab);
+            Ok(())
+        });
+        assert_eq!(outcome, QueueOpticalOutcome::Applied { analyzed: true });
+        let ui = *stab.optical_ui.read();
+        assert!(ui.correction_enabled && ui.stab_enabled, "the correction and the reconstruction apply together");
+        assert!(reconstruction_active(&stab));
+        assert!(stab.gyro.read().optical_residual.as_ref().unwrap().applies);
+        assert!(!needs_analysis(&stab, &s));
+        assert_eq!(run_queue_optical(1, &stab, &s, true, |_| panic!("an applying result must not be analyzed again")),
+            QueueOpticalOutcome::Applied { analyzed: false });
+        // Measured with another reconstruction than the one there now
+        stab.gyro.write().optical_stab.as_mut().unwrap().coeffs[0][0] += 0.001;
+        assert!(needs_analysis(&stab, &s));
     }
 
     fn translation_active(stab: &StabilizationManager) -> bool {

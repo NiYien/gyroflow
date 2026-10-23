@@ -371,6 +371,51 @@ TestCase {
         compare(lastPush().reconstruction, false);
     }
 
+    function test_correction_and_reconstruction_can_be_selected_together_data() {
+        return [
+            { tag: "reconstruction-first", first: "stab" },
+            { tag: "correction-first", first: "optical" }
+        ];
+    }
+
+    function test_correction_and_reconstruction_can_be_selected_together(data) {
+        // The residual rotation is measured after the reconstruction: ticking one leaves the other ticked
+        motion.restoreOpticalControls(false);
+        const box = function(texts) {
+            return controlMatching(motion, function(item) { return item.cb !== undefined && texts.indexOf(item.text) >= 0; });
+        };
+        const optical = box(["Optical correction", "Optical stabilization"]);
+        const stab = box(["Reconstruct in-camera stabilization"]);
+        verify(optical !== null && stab !== null);
+        const order = data.first === "stab" ? [stab, optical] : [optical, stab];
+        order[0].checked = true;
+        wait(0);
+        order[1].checked = true;
+        wait(0);
+        verify(optical.checked, "the correction stays ticked");
+        verify(stab.checked, "the reconstruction stays ticked");
+        verify(optical.cb.enabled, "the correction can still be changed");
+        motion.sendQueueOpticalSettings();
+        compare(lastPush().correction, true);
+        compare(lastPush().reconstruction, true);
+    }
+
+    function test_the_strength_shows_only_for_a_correction_fitted_with_one() {
+        // The full panel shows the correction's controls
+        windowStub.isSimpleMode = false;
+        wait(0);
+        const label = controlMatching(motion, function(item) { return item.text === "Strength"; });
+        verify(label !== null);
+        controllerStub.opticalInfo = { "available": true, "enabled": true, "strength": 0.3, "legacy_strength": true,
+            "ignore_file_motion": false, "has_motion": true };
+        motion.refreshOpticalInfo(true, false);
+        tryVerify(function() { return label.visible; }, 2000, "a correction saved with a strength keeps its slider");
+        controllerStub.opticalInfo = { "available": true, "enabled": true, "residual": true, "sigma_deg": 0.02, "tau_s": 0.1,
+            "ignore_file_motion": false, "has_motion": true };
+        motion.refreshOpticalInfo(true, false);
+        verify(!label.visible, "the residual rotation chooses its strength itself");
+    }
+
     function test_a_correction_brings_its_strength() {
         controllerStub.opticalInfo = { "available": true, "enabled": true, "strength": 0.3, "ignore_file_motion": false, "has_motion": true };
         motion.refreshOpticalInfo(true, false);
