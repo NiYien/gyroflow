@@ -8,6 +8,7 @@ pub fn build(target_os: &str) {
     println!("cargo:rerun-if-changed=_scripts/install_crm_deps.py");
     println!("cargo:rerun-if-changed=_scripts/build_crm.rs");
     println!("cargo:rerun-if-changed=src/rendering/crm_decoder.cpp");
+    println!("cargo:rerun-if-changed=src/rendering/crm_geometry.h");
     let root = Path::new("ext/crm");
     if !root.join("LibRaw-0.22.2/libraw/libraw.h").exists()
         || !root.join("include/abi/mdk/VideoDecoder.h").exists()

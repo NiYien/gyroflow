@@ -11,6 +11,7 @@
 #include "mdk/Packet.h"
 #include "mdk/VideoDecoder.h"
 #include "mdk/VideoFrame.h"
+#include "crm_geometry.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -18,6 +19,7 @@
 #include <condition_variable>
 #include <deque>
 #include <filesystem>
+#include <fstream>
 #include <future>
 #include <iostream>
 #include <libraw/libraw.h>
@@ -62,6 +64,9 @@ void report(const std::string &message) {
 struct Clip {
   std::string path;
   int width = 0, height = 0;
+  int raw_width = 0, raw_height = 0;
+  crm::Area area{};
+  bool movie_crop = false;
   std::vector<std::pair<int64_t, unsigned>> offsets;
   std::array<std::array<uint8_t, 65536>, 3> lut{};
 };
@@ -115,12 +120,36 @@ std::shared_ptr<Clip> open_clip(const std::string &path, int width,
   auto raw = open_raw(path, 0, true);
   auto clip = std::make_shared<Clip>();
   clip->path = path;
-  const auto &s = raw->imgdata.sizes;
+  auto &s = raw->imgdata.sizes;
+  const auto geometry = "container=" + std::to_string(width) + "x" +
+      std::to_string(height) + " raw=" + std::to_string(s.raw_width) + "x" +
+      std::to_string(s.raw_height) + " libraw=" + std::to_string(s.width) + "x" +
+      std::to_string(s.height) + " margins=" + std::to_string(s.left_margin) +
+      "," + std::to_string(s.top_margin);
+  if ((width > 0 && width != s.width) || (height > 0 && height != s.height)) {
+    std::ifstream input(std::filesystem::u8path(path), std::ios::binary);
+    const auto area = crm::MovieCropReader(input).read(
+        raw->get_internal_data_pointer()->unpacker_data.crx_track_selected,
+        s.raw_width, s.raw_height, width, height);
+    if (!area)
+      throw std::runtime_error(
+          "CRM container and active sensor dimensions differ: " + geometry +
+          "; no matching short IAD1 crop");
+    s.left_margin = area->left;
+    s.top_margin = area->top;
+    s.width = area->width;
+    s.height = area->height;
+    clip->movie_crop = true;
+  }
+  report("CRM geometry: " + geometry + " crop_source=" +
+         (clip->movie_crop ? "IAD1-short" : "LibRaw") + " crop=" +
+         std::to_string(s.left_margin) + "," + std::to_string(s.top_margin) +
+         "," + std::to_string(s.width) + "," + std::to_string(s.height));
   clip->width = s.width;
   clip->height = s.height;
-  if ((width > 0 && width != s.width) || (height > 0 && height != s.height))
-    throw std::runtime_error(
-        "CRM container and active sensor dimensions differ");
+  clip->raw_width = s.raw_width;
+  clip->raw_height = s.raw_height;
+  clip->area = {s.left_margin, s.top_margin, s.width, s.height};
 
   // Pinned LibRaw 0.22.2 exposes these sample tables. Map packet byte positions
   // rather than rounding timestamps, so seeking and edit-list PTS stay exact.
@@ -198,9 +227,18 @@ std::shared_ptr<Clip> open_clip(const std::string &path, int width,
 VideoFrame decode_frame(const std::shared_ptr<const Clip> &clip, unsigned index,
                         double pts, double duration) {
   auto raw = open_raw(clip->path, index, true);
-  const auto &s = raw->imgdata.sizes;
-  if (s.width != clip->width || s.height != clip->height)
+  auto &s = raw->imgdata.sizes;
+  if (s.raw_width != clip->raw_width || s.raw_height != clip->raw_height)
     throw std::runtime_error("CRM frame size changed");
+  if (clip->movie_crop) {
+    s.left_margin = clip->area.left;
+    s.top_margin = clip->area.top;
+    s.width = clip->area.width;
+    s.height = clip->area.height;
+  }
+  if (s.width != clip->width || s.height != clip->height ||
+      s.left_margin != clip->area.left || s.top_margin != clip->area.top)
+    throw std::runtime_error("CRM frame crop changed");
   const auto offsets = bayer_offsets(*raw);
   const double scale = std::min({1.0, 1920.0 / s.width, 1080.0 / s.height});
   const int ow = std::max(2, int(s.width * scale) / 2 * 2),
@@ -559,7 +597,8 @@ extern "C" int niyien_crm_read(const char *path, const char *decoder,
           }
           queue->changed.notify_all();
           const double timestamp = frame.timestamp() * 1000.0;
-          if (timestamp > ranges[range].to)
+          // Match the one-microsecond rounding tolerance at the lower bound.
+          if (timestamp > ranges[range].to + 0.001)
             break;
           if (timestamp + 0.001 < ranges[range].from)
             continue;
