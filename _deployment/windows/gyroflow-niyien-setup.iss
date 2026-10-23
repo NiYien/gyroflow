@@ -14,6 +14,22 @@
 #define PackageUrl ""
 #endif
 
+#ifndef ManifestUrl
+#define ManifestUrl "https://www.niyien.com/api/manifest?platform=windows&arch=x86_64"
+#endif
+
+#ifndef PackageCnUrl
+#define PackageCnUrl ""
+#endif
+
+#ifndef PackageGlobalUrl
+#define PackageGlobalUrl ""
+#endif
+
+#ifndef PackageTag
+#define PackageTag ""
+#endif
+
 #ifndef PackageSha256
 #define PackageSha256 ""
 #endif
@@ -111,6 +127,8 @@ SetupPackageFileVerifyFailed=Failed to verify local Gyroflow(NiYien) package.
 SetupVerifyTitle=Verifying Gyroflow(NiYien)
 SetupVerifyDescription=Please wait while setup verifies the integrity of the application package.
 SetupVerifyProgress=Verifying package integrity (SHA-256)...
+SetupResolveProgress=Selecting the download source...
+SetupUnwrapProgress=Preparing the downloaded application package...
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -242,6 +260,8 @@ begin
     end;
   end;
 end;
+
+#include "setup-routing.iss"
 
 function IsSwitchEnabled(const Name, DefaultValue: String): Boolean;
 var
@@ -490,6 +510,67 @@ begin
   end;
 end;
 
+procedure ResolvePackageUrl;
+var
+  ManifestText: AnsiString;
+  Source: String;
+begin
+  // Explicit URLs and local packages preserve the existing updater contract.
+  if (ActivePackageUrl <> '') or (ActivePackageFile <> '') then
+    Exit;
+  DownloadPage.SetText(ExpandConstant('{cm:SetupResolveProgress}'), '');
+  DownloadTemporaryFile('{#ManifestUrl}', 'niyien-setup-manifest.json', '', nil);
+  if not LoadStringFromFile(ExpandConstant('{tmp}\niyien-setup-manifest.json'), ManifestText) then
+    RaiseException('Failed to read the download manifest.');
+  Source := ReadManifestSource(String(ManifestText));
+  // Only routing comes from the live manifest; both package URLs are build-pinned.
+  if Source = 'cn' then
+    ActivePackageUrl := '{#PackageCnUrl}'
+  else
+    ActivePackageUrl := '{#PackageGlobalUrl}';
+  if ActivePackageUrl = '' then
+    RaiseException('Missing package URL for manifest source ' + Source + '.');
+  Log('Installer package source=' + Source + ' tag={#PackageTag} url=' + ActivePackageUrl);
+end;
+
+function OnPackageExtractionProgress(const ArchiveName, FileName: String; const Progress, ProgressMax: Int64): Boolean;
+begin
+  Result := True;
+  if ProgressMax > 0 then
+    VerifyPage.SetProgress(Integer((Progress * 100) div ProgressMax), 100);
+end;
+
+procedure DownloadPackage(const ZipPath: String; const Attempt: Integer);
+var
+  WrapperName, ExtractDir, InnerPath: String;
+begin
+  if not IsNightlyPackageUrl(ActivePackageUrl) then
+  begin
+    DownloadTemporaryFile(ActivePackageUrl, '{#PackageFilename}', '', @OnDownloadProgress);
+    Exit;
+  end;
+
+  // Actions artifacts contain the application ZIP inside one outer ZIP.
+  WrapperName := '{#PackageFilename}.artifact.zip';
+  DownloadTemporaryFile(ActivePackageUrl, WrapperName, '', @OnDownloadProgress);
+  ExtractDir := ExpandConstant('{tmp}\package-artifact-') + IntToStr(Attempt);
+  if not ForceDirectories(ExtractDir) then
+    RaiseException('Failed to create the artifact extraction directory.');
+  VerifyPage.SetText(ExpandConstant('{cm:SetupUnwrapProgress}'), '');
+  VerifyPage.SetProgress(0, 100);
+  VerifyPage.Show;
+  try
+    ExtractArchive(ExpandConstant('{tmp}\') + WrapperName, ExtractDir, '', False, @OnPackageExtractionProgress);
+  finally
+    VerifyPage.Hide;
+  end;
+  InnerPath := AddBackslash(ExtractDir) + '{#PackageFilename}';
+  if not FileExists(InnerPath) then
+    RaiseException('The Actions artifact does not contain {#PackageFilename}.');
+  if not FileCopy(InnerPath, ZipPath, False) then
+    RaiseException('Failed to stage the application package from the Actions artifact.');
+end;
+
 function DownloadAndVerifyPackage: Boolean;
 var
   ZipPath: String;
@@ -497,12 +578,6 @@ var
   LastError: String;
 begin
   Result := False;
-
-  if (ActivePackageUrl = '') and (ActivePackageFile = '') then
-  begin
-    SuppressibleMsgBox(ExpandConstant('{cm:SetupMissingPackageUrl}'), mbCriticalError, MB_OK, IDOK);
-    Exit;
-  end;
 
   if ActivePackageSha256 = '' then
   begin
@@ -517,34 +592,32 @@ begin
   end;
 
   ZipPath := ExpandConstant('{tmp}\{#PackageFilename}');
-  Log('Downloading Gyroflow package from ' + ActivePackageUrl);
   DownloadPage.Show;
   LastError := '';
   try
-    // Bounded retry: the package streams from the 123 direct-link CDN, whose
-    // cold origin fetch sporadically returns a transient 504. A single attempt
-    // turned that blip into a hard install failure. Inno cannot reliably tell
-    // 5xx/timeout from 4xx, so retry a few times on any failure (incl. SHA256
-    // mismatch for half-downloads); the first failed attempt also warms the CDN
-    // edge so the retry is likely to hit it warm.
+    // Retry the manifest, transfer, artifact extraction, and integrity check together.
     for Attempt := 1 to PACKAGE_DOWNLOAD_ATTEMPTS do
     begin
       try
         Log('Package download attempt ' + IntToStr(Attempt) + '/' + IntToStr(PACKAGE_DOWNLOAD_ATTEMPTS));
+        ResolvePackageUrl;
+        Log('Downloading Gyroflow package from ' + ActivePackageUrl);
+        DownloadPage.SetText(ExpandConstant('{cm:SetupDownloadDescription}'), '{#PackageFilename}');
         // Download without Inno's built-in verify (empty hash), then verify ourselves
         // with a progress bar so the integrity check is not a silent stall.
-        DownloadTemporaryFile(ActivePackageUrl, '{#PackageFilename}', '', @OnDownloadProgress);
+        DownloadPackage(ZipPath, Attempt);
         if not VerifyFileSha256WithProgress(ZipPath, ActivePackageSha256) then
           RaiseException('Downloaded package SHA256 mismatch.');
         PackageWasFetched := True;
         Result := True;
-        Break;
       except
         LastError := GetExceptionMessage;
         Log('Package download attempt ' + IntToStr(Attempt) + ' failed: ' + LastError);
         if Attempt < PACKAGE_DOWNLOAD_ATTEMPTS then
           Sleep(Attempt * 2000); // incremental backoff: 2s, 4s
       end;
+      if Result then
+        Break;
     end;
     if not Result then
       SuppressibleMsgBox(ExpandConstant('{cm:SetupDownloadVerifyFailed}') + #13#10 + LastError, mbCriticalError, MB_OK, IDOK);

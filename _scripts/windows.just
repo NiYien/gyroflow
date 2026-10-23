@@ -297,7 +297,7 @@ deploy:
     function New-IsppStringDefine {
         param(
             [Parameter(Mandatory=$true)] [string] $Name,
-            [Parameter(Mandatory=$true)] [string] $Value
+            [Parameter(Mandatory=$true)] [AllowEmptyString()] [string] $Value
         )
         $Escaped = $Value.Replace('"', '""')
         return "/D$Name=`"$Escaped`""
@@ -547,11 +547,27 @@ deploy:
                 $PackageTag = "v$CanonicalVersion"
             }
         }
-        $DefaultPackageUrl = $Env:NIYIEN_SETUP_PACKAGE_URL
-        if (-not $DefaultPackageUrl) {
-            $DefaultPackageUrl = "https://www.niyien.com/api/download/app/$PackageTag/$PackageName"
+        $DefaultPackageUrl = [string]$Env:NIYIEN_SETUP_PACKAGE_URL
+        $PackageCnUrl = "https://www.niyien.com/api/download/app/$([Uri]::EscapeDataString($PackageTag))/$PackageName"
+        $ManifestApi = python "$ProjectDir\_scripts\read_distribution_config.py" endpoints.manifest_api
+        if ($LASTEXITCODE -ne 0) { throw "Failed to read the manifest endpoint" }
+        $ManifestSeparator = if ($ManifestApi.Contains('?')) { '&' } else { '?' }
+        $SetupManifestUrl = "$ManifestApi${ManifestSeparator}platform=windows&arch=x86_64&app_version=$([Uri]::EscapeDataString($CanonicalVersion))"
+        if ($PackageTag.StartsWith('run-')) {
+            $RunId = $PackageTag.Substring(4)
+            if ($RunId -notmatch '^\d+$') { throw "Invalid setup Actions run tag: $PackageTag" }
+            $GithubOwner = python "$ProjectDir\_scripts\read_distribution_config.py" release.github_owner
+            if ($LASTEXITCODE -ne 0) { throw "Failed to read the GitHub owner" }
+            $GithubRepo = python "$ProjectDir\_scripts\read_distribution_config.py" release.github_repo
+            if ($LASTEXITCODE -ne 0) { throw "Failed to read the GitHub repository" }
+            $PackageGlobalUrl = "https://nightly.link/$GithubOwner/$GithubRepo/actions/runs/$RunId/{{ArtifactPrefix}}-windows.zip"
+        } else {
+            $GlobalReleaseBase = python "$ProjectDir\_scripts\read_distribution_config.py" sources.global.base
+            if ($LASTEXITCODE -ne 0) { throw "Failed to read the global release base" }
+            $PackageGlobalUrl = "$($GlobalReleaseBase.TrimEnd('/'))/$([Uri]::EscapeDataString($PackageTag))/$PackageName"
         }
-        Write-Host "Windows setup package URL: $DefaultPackageUrl"
+        Write-Host "Windows setup manifest URL: $SetupManifestUrl"
+        Write-Host "Windows setup package tag: $PackageTag; CN URL: $PackageCnUrl; global URL: $PackageGlobalUrl; explicit URL: $DefaultPackageUrl"
 
         $Iscc = Get-InnoSetupCompiler
         if (-not $Iscc) {
@@ -564,6 +580,10 @@ deploy:
             "/DAppFileVersion=$AppFileVersion",
             (New-IsppStringDefine "PackageFilename" $PackageName),
             (New-IsppStringDefine "PackageUrl" $DefaultPackageUrl),
+            (New-IsppStringDefine "ManifestUrl" $SetupManifestUrl),
+            (New-IsppStringDefine "PackageCnUrl" $PackageCnUrl),
+            (New-IsppStringDefine "PackageGlobalUrl" $PackageGlobalUrl),
+            (New-IsppStringDefine "PackageTag" $PackageTag),
             (New-IsppStringDefine "PackageSha256" $PackageSha256),
             "/DPackageSize=$PackageSize",
             "/DPackageExternalSize=$PackageExternalSize",
