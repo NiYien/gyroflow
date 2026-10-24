@@ -1557,18 +1557,19 @@ pub fn peek_container_rotation_from_url(url: &str) -> i32 {
     }
 }
 
-// Probe the container frame size of an `.r3d` file via telemetry-parser's
+// Probe the container frame size of an `.r3d` or `.nev` file via telemetry-parser's
 // mp4parse path. Returns `Some((width, height))` from the MP4 `tkhd` track
 // dimensions on success, `None` on any failure (open, parse, RED2 container,
 // zero dimension).
 //
 // Used as a defensive fallback when MDK reports a clearly sub-native size for
-// Nikon ZR `.r3d` (NR3D-codec in MP4 container) — e.g. proxy stream 249x140
+// Nikon `.r3d` or `.nev` (MP4 containers) — e.g. proxy stream 249x140
 // instead of native 3984x2240. Real RED2-container R3D files fail
 // `parse_mp4` and we return `None`, so MDK's value persists for them.
 pub fn peek_container_size_from_url(url: &str) -> Option<(u32, u32)> {
     let filename = gyroflow_core::filesystem::get_filename(url);
-    if !filename.to_ascii_lowercase().ends_with(".r3d") {
+    let lower = filename.to_ascii_lowercase();
+    if !lower.ends_with(".r3d") && !lower.ends_with(".nev") {
         return None;
     }
     let scheme = url.split("://").next().unwrap_or("");

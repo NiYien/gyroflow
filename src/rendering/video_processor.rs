@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2022 Adrian <adrian.eddy at gmail>
 
+use super::ffmpeg_processor::VideoInfo;
 use super::ffmpeg_video::RateControl;
 use super::mdk_processor::*;
 use super::*;
@@ -19,6 +20,23 @@ pub enum Processor<'a> {
 }
 pub struct VideoProcessor<'a> {
     inner: Processor<'a>,
+}
+
+fn correct_subnative_raw_size(url: &str, info: &mut VideoInfo) {
+    let filename = gyroflow_core::filesystem::get_filename(url).to_ascii_lowercase();
+    // Nikon R3D/NEV can report the decoder's reduced image as the source size.
+    // Preserve normal sizes and fall back only when the MP4 container supplies
+    // valid dimensions. Native RED containers keep the decoder's result.
+    if (filename.ends_with(".r3d") || filename.ends_with(".nev"))
+        && (info.width < 1000 || u64::from(info.width) * u64::from(info.height) < 1_000_000)
+    {
+        if let Some((w, h)) = crate::util::peek_container_size_from_url(url) {
+            if w > 0 && h > 0 {
+                info.width = w;
+                info.height = h;
+            }
+        }
+    }
 }
 
 impl<'a> VideoProcessor<'a> {
@@ -130,30 +148,7 @@ impl<'a> VideoProcessor<'a> {
                 }
             }
 
-            // Defensive size bypass for Nikon ZR .r3d when MDK regresses to
-            // reporting the proxy stream dimensions (e.g. 249x140 instead of
-            // native 3984x2240). All RED cameras and Nikon ZR ship at >= 2K
-            // (width >= 1920, area >= 2 MP), so the threshold below is a safe
-            // camera-class lower bound: any .r3d under 1000 wide or under
-            // 1 megapixel is unambiguously a sub-native MDK read. Real
-            // RED2-container R3D files (Komodo, V-RAPTOR) fail telemetry-parser
-            // parse_mp4 → peek returns None → MDK value preserved, zero
-            // regression for them.
-            if filename.to_lowercase().ends_with(".r3d") {
-                let (mw, mh) = {
-                    let info_b = info.borrow();
-                    (info_b.width, info_b.height)
-                };
-                if mw < 1000 || (mw as u64) * (mh as u64) < 1_000_000 {
-                    if let Some((w, h)) = crate::util::peek_container_size_from_url(url) {
-                        if w > 0 && h > 0 {
-                            let mut info_mut = info.borrow_mut();
-                            info_mut.width = w;
-                            info_mut.height = h;
-                        }
-                    }
-                }
-            }
+            correct_subnative_raw_size(url, &mut info.borrow_mut());
 
             std::thread::sleep(std::time::Duration::from_millis(100));
             mdk.mdk.stopProcessing(0);
@@ -218,6 +213,87 @@ impl<'a> VideoProcessor<'a> {
     pub fn set_strict_decode_errors(&mut self, enabled: bool) {
         if let Processor::Ffmpeg(proc) = &mut self.inner {
             proc.video.strict_decode_errors = enabled;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Minimal MP4 track headers exercise the actual file and metadata readers.
+    // No encoded Nikon frames or SDK are needed to test the size fallback.
+    fn container(w: u32, h: u32) -> Vec<u8> {
+        fn atom(name: &[u8; 4], payload: Vec<u8>) -> Vec<u8> {
+            [((payload.len() + 8) as u32).to_be_bytes().as_slice(), name, &payload].concat()
+        }
+        let mut mvhd = vec![0; 100];
+        mvhd[12..16].copy_from_slice(&60000u32.to_be_bytes());
+        mvhd[16..20].copy_from_slice(&1001u32.to_be_bytes());
+        let mut tkhd = vec![0; 84];
+        tkhd[3] = 3;
+        tkhd[12..16].copy_from_slice(&1u32.to_be_bytes());
+        tkhd[20..24].copy_from_slice(&1001u32.to_be_bytes());
+        for offset in [40, 56] {
+            tkhd[offset..offset + 4].copy_from_slice(&65536u32.to_be_bytes());
+        }
+        tkhd[72..76].copy_from_slice(&0x40000000u32.to_be_bytes());
+        tkhd[76..80].copy_from_slice(&(w << 16).to_be_bytes());
+        tkhd[80..84].copy_from_slice(&(h << 16).to_be_bytes());
+        let mut mdhd = vec![0; 24];
+        mdhd[12..16].copy_from_slice(&60000u32.to_be_bytes());
+        mdhd[16..20].copy_from_slice(&1001u32.to_be_bytes());
+        let mut hdlr = vec![0; 25];
+        hdlr[8..12].copy_from_slice(b"vide");
+        let mdia = atom(b"mdia", [atom(b"mdhd", mdhd), atom(b"hdlr", hdlr)].concat());
+        let trak = atom(b"trak", [atom(b"tkhd", tkhd), mdia].concat());
+        let moov = atom(b"moov", [atom(b"mvhd", mvhd), trak].concat());
+        [atom(b"ftyp", b"isom\0\0\0\0isom".to_vec()), moov].concat()
+    }
+
+    fn probe(dir: &std::path::Path, name: &str, bytes: &[u8], size: (u32, u32)) -> VideoInfo {
+        let path = dir.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        let url = gyroflow_core::filesystem::path_to_url(path.to_str().unwrap());
+        let mut info = VideoInfo {
+            width: size.0, height: size.1, fps: 59.94, duration_ms: 7307.0,
+            frame_count: 438, rotation: 90, ..Default::default()
+        };
+        correct_subnative_raw_size(&url, &mut info);
+        assert_eq!((info.fps, info.duration_ms, info.frame_count, info.rotation), (59.94, 7307.0, 438, 90));
+        info
+    }
+
+    #[test]
+    fn raw_size_fallback_reads_nev_and_r3d_container_dimensions() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["clip.NEV", "clip.nev", "clip.R3D", "clip.r3d"] {
+            let info = probe(dir.path(), name, &container(6048, 3402), (378, 212));
+            assert_eq!((info.width, info.height), (6048, 3402), "{name}");
+        }
+    }
+
+    #[test]
+    fn raw_size_fallback_preserves_normal_sizes_and_other_formats() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["clip.NEV", "clip.R3D"] {
+            let info = probe(dir.path(), name, &container(6060, 3410), (6048, 3402));
+            assert_eq!((info.width, info.height), (6048, 3402));
+        }
+        for name in ["clip.BRAW", "clip.MP4", "clip.CRM"] {
+            let info = probe(dir.path(), name, &container(6048, 3402), (378, 212));
+            assert_eq!((info.width, info.height), (378, 212));
+        }
+    }
+
+    #[test]
+    fn raw_size_fallback_preserves_size_when_container_is_unusable() {
+        let dir = tempfile::tempdir().unwrap();
+        for bytes in [b"RED2".to_vec(), container(0, 3402), container(6048, 0)] {
+            for name in ["clip.NEV", "clip.R3D"] {
+                let info = probe(dir.path(), name, &bytes, (378, 212));
+                assert_eq!((info.width, info.height), (378, 212));
+            }
         }
     }
 }
