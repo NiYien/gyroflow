@@ -2065,30 +2065,11 @@ pub fn install(typ: &str, plugins_base: String) -> io::Result<String> {
     // disabled via env; never affects the install result (all errors swallowed).
     crate::network::prewarm_url(&download_url);
 
-    // Surface network / HTTP errors instead of swallowing them. The previous
-    // `if let Ok(...)` skipped the entire download block on any ureq failure,
-    // leaving detect() to return Ok("") and the UI showing no feedback.
-    //
-    // Transient failures (5xx / timeouts / connection hiccups) are retried with
-    // the dedicated plugin retry profile: CN plugin zips stream from the 123
-    // direct-link CDN, whose cold origin fetch sporadically returns a transient
-    // 504. A single attempt turned that blip into a hard, user-visible install
-    // failure (app/lens/sdk downloads already retry via call_with_retry).
+    // Share Final Cut's total transfer timeout and retries for complete downloads,
+    // including body reads. Each retry discards the previous partial download.
     let retry_label = format!("plugin:{typ}");
-    let mut reader = match crate::network::call_with_plugin_retry(&retry_label, || {
-        crate::network::get(&download_url).call()
-    }) {
-        Ok(resp) => {
-            ::log::info!(
-                "[nle install] HTTP ok status={} content_len_hdr={:?}",
-                resp.status(),
-                resp.headers()
-                    .get("content-length")
-                    .and_then(|v| v.to_str().ok())
-                    .map(|s| s.to_owned())
-            );
-            resp.into_body().into_reader()
-        }
+    let content = match crate::network::download_plugin(&retry_label, &download_url) {
+        Ok(content) => content,
         Err(e) => {
             ::log::error!("[nle install] Failed to download plugin from {download_url}: {e}");
             return Err(io::Error::new(
@@ -2097,9 +2078,6 @@ pub fn install(typ: &str, plugins_base: String) -> io::Result<String> {
             ));
         }
     };
-    use std::io::Read;
-    let mut content = Vec::new();
-    reader.read_to_end(&mut content)?;
     ::log::info!(
         "[nle install] body read_to_end bytes={} sniff={:02x?}",
         content.len(),

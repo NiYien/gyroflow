@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::mpsc::Sender;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -104,6 +104,50 @@ fn fail(events: &Sender<FeedbackJobState>, reason: &str, persisted: bool) -> Job
 
 // -- HTTP helpers ----------------------------------------------------------
 
+const API_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+const UPLOAD_TIMEOUT: Duration = Duration::from_secs(600);
+
+fn feedback_request<T>(request: ureq::RequestBuilder<T>, timeout: Duration) -> ureq::RequestBuilder<T> {
+    // ureq also checks the response timeout while reading the body. Give each
+    // feedback request one budget covering send, server processing, and receive.
+    request.config()
+        .timeout_recv_response(None)
+        .timeout_recv_body(None)
+        .timeout_global(Some(timeout))
+        .build()
+}
+
+fn upload_request_with_retry<F>(name: &str, bytes: &[u8], timeout: Duration, mut request: F) -> Result<String, String>
+where
+    F: FnMut() -> ureq::RequestBuilder<ureq::typestate::WithBody>,
+{
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        let started = Instant::now();
+        let result = feedback_request(request(), timeout).send(bytes).and_then(|mut response| {
+            if !response.status().is_success() {
+                return Err(ureq::Error::StatusCode(response.status().as_u16()));
+            }
+            response.body_mut().read_to_string()
+        });
+        match result {
+            Ok(body) => {
+                log::info!(target: "feedback", "{name} complete attempt={attempt} bytes={} elapsed_ms={}", bytes.len(), started.elapsed().as_millis());
+                return Ok(body);
+            }
+            Err(error) => {
+                log::warn!(target: "feedback", "{name} failed attempt={attempt} bytes={} elapsed_ms={} error={error:?}", bytes.len(), started.elapsed().as_millis());
+                if attempt >= super::RETRY_ATTEMPTS || !crate::network::is_transient_error(&error) {
+                    return Err(format!("{name}: {error}"));
+                }
+                let backoff = super::BACKOFF_SECS.get((attempt - 1) as usize).copied().unwrap_or(8);
+                std::thread::sleep(Duration::from_secs(backoff));
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct UploadContract {
     method:  String,
@@ -146,7 +190,7 @@ fn request_token(meta: &Meta, summary: &str, email: &str, size: u64, sha256: &st
         "email":       email,
     });
     let url = format!("{}/feedback", super::NIYIEN_FEEDBACK_BASE);
-    let resp = crate::network::post(&url)
+    let resp = feedback_request(crate::network::post(&url), API_REQUEST_TIMEOUT)
         .header("Content-Type", "application/json")
         .send(serde_json::to_string(&body).map_err(|e| format!("encode: {e}"))?.as_str())
         .map_err(|e| format!("HTTP error: {e}"))?;
@@ -166,18 +210,15 @@ fn request_token(meta: &Meta, summary: &str, email: &str, size: u64, sha256: &st
 fn upload_r2(token: &TokenResponse, bytes: &[u8], events: &Sender<FeedbackJobState>) -> Result<(), String> {
     let upload = &token.upload;
     let _ = events.send(FeedbackJobState::Uploading { pct: 10 });
-    let mut req = crate::network::put(&upload.url);
-    for (k, v) in &upload.headers {
-        req = req.header(k.as_str(), v.as_str());
-    }
     let _ = events.send(FeedbackJobState::Uploading { pct: 30 });
-    let resp = req
-        .send(bytes)
-        .map_err(|e| format!("PUT failed: {e}"))?;
-    let status = resp.status();
-    if !(200..300).contains(&status.as_u16()) {
-        return Err(format!("R2 PUT status {status}"));
-    }
+    // Retrying the same signed PUT replaces the same object with identical bytes.
+    upload_request_with_retry("R2 PUT", bytes, UPLOAD_TIMEOUT, || {
+        let mut request = crate::network::put(&upload.url);
+        for (k, v) in &upload.headers {
+            request = request.header(k.as_str(), v.as_str());
+        }
+        request
+    })?;
     let _ = events.send(FeedbackJobState::Uploading { pct: 100 });
     Ok(())
 }
@@ -323,19 +364,13 @@ fn upload_pan123_slice(
     body.extend_from_slice(b"\r\n");
     write!(body, "--{boundary}--\r\n").unwrap();
 
-    let resp = crate::network::post(url)
-        .header("Authorization", &format!("Bearer {access}"))
-        .header("Platform", "open_platform")
-        .header("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
-        .send(body.as_slice())
-        .map_err(|e| format!("slice {slice_no} HTTP: {e}"))?;
-    if !(200..300).contains(&resp.status().as_u16()) {
-        return Err(format!("slice {slice_no} status {}", resp.status()));
-    }
-    let body_text = resp
-        .into_body()
-        .read_to_string()
-        .map_err(|e| format!("slice {slice_no} read: {e}"))?;
+    // Keep the upload ID, slice number, checksum, and multipart body on retries.
+    let body_text = upload_request_with_retry(&format!("slice {slice_no}"), &body, UPLOAD_TIMEOUT, || {
+        crate::network::post(url)
+            .header("Authorization", &format!("Bearer {access}"))
+            .header("Platform", "open_platform")
+            .header("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
+    })?;
     let payload: Pan123Resp<serde_json::Value> = serde_json::from_str(&body_text)
         .map_err(|e| format!("slice {slice_no} decode: {e}"))?;
     if payload.code != 0 {
@@ -346,7 +381,7 @@ fn upload_pan123_slice(
 
 fn pan123_post<T: for<'de> Deserialize<'de> + Default>(url: &str, access: &str, body: &serde_json::Value) -> Result<T, String> {
     let body_str = serde_json::to_string(body).map_err(|e| format!("encode: {e}"))?;
-    let resp = crate::network::post(url)
+    let resp = feedback_request(crate::network::post(url), API_REQUEST_TIMEOUT)
         .header("Authorization", &format!("Bearer {access}"))
         .header("Content-Type", "application/json")
         .header("Platform", "open_platform")
@@ -365,7 +400,7 @@ fn pan123_post<T: for<'de> Deserialize<'de> + Default>(url: &str, access: &str, 
 }
 
 fn pan123_get<T: for<'de> Deserialize<'de> + Default>(url: &str, access: &str) -> Result<T, String> {
-    let resp = crate::network::get(url)
+    let resp = feedback_request(crate::network::get(url), API_REQUEST_TIMEOUT)
         .header("Authorization", &format!("Bearer {access}"))
         .header("Platform", "open_platform")
         .call()
@@ -387,7 +422,7 @@ fn pan123_get<T: for<'de> Deserialize<'de> + Default>(url: &str, access: &str) -
 fn confirm(id: &str, size: u64, sha256: &str) -> Result<(), String> {
     let body = serde_json::json!({ "id": id, "size": size, "sha256": sha256 });
     let url = format!("{}/feedback/confirm", super::NIYIEN_FEEDBACK_BASE);
-    let resp = crate::network::post(&url)
+    let resp = feedback_request(crate::network::post(&url), API_REQUEST_TIMEOUT)
         .header("Content-Type", "application/json")
         .send(serde_json::to_string(&body).map_err(|e| format!("encode: {e}"))?.as_str())
         .map_err(|e| format!("HTTP error: {e}"))?;
@@ -588,6 +623,184 @@ fn md5_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::TcpListener;
+
+    struct TestResponse {
+        status: u16,
+        header_delay: Duration,
+        body_delay: Duration,
+        body: &'static str,
+        content_length: usize,
+    }
+
+    impl TestResponse {
+        fn new(status: u16, body: &'static str) -> Self {
+            Self { status, header_delay: Duration::ZERO, body_delay: Duration::ZERO, body, content_length: body.len() }
+        }
+    }
+
+    fn upload_server(responses: Vec<TestResponse>) -> (String, std::thread::JoinHandle<Vec<(String, Vec<u8>)>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}/upload", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut workers = Vec::new();
+            for response in responses {
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(Instant::now() < deadline, "expected upload attempt was not received");
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(error) => panic!("accept failed: {error}"),
+                    }
+                };
+                workers.push(std::thread::spawn(move || {
+                    stream.set_nonblocking(false).unwrap();
+                    stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+                    let mut request = Vec::new();
+                    let mut buffer = [0_u8; 4096];
+                    let header_end = loop {
+                        let count = stream.read(&mut buffer).unwrap();
+                        assert!(count > 0);
+                        request.extend_from_slice(&buffer[..count]);
+                        if let Some(end) = request.windows(4).position(|s| s == b"\r\n\r\n") {
+                            break end + 4;
+                        }
+                    };
+                    let headers = String::from_utf8(request[..header_end].to_vec()).unwrap();
+                    let size = headers.lines().find_map(|line| {
+                        let (key, value) = line.split_once(':')?;
+                        key.eq_ignore_ascii_case("content-length").then(|| value.trim().parse::<usize>().unwrap())
+                    }).unwrap_or(0);
+                    while request.len() - header_end < size {
+                        let count = stream.read(&mut buffer).unwrap();
+                        assert!(count > 0);
+                        request.extend_from_slice(&buffer[..count]);
+                    }
+                    std::thread::sleep(response.header_delay);
+                    let _ = write!(stream, "HTTP/1.1 {} Test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", response.status, response.content_length);
+                    std::thread::sleep(response.body_delay);
+                    let _ = stream.write_all(response.body.as_bytes());
+                    (headers, request[header_end..].to_vec())
+                }));
+            }
+            workers.into_iter().map(|worker| worker.join().unwrap()).collect()
+        });
+        (url, server)
+    }
+
+    fn r2_token(url: String) -> TokenResponse {
+        TokenResponse {
+            id: "test-report".into(), region: "global".into(), expires_at: "2099-01-01T00:00:00Z".into(),
+            upload: UploadContract {
+                method: "PUT".into(), kind: "r2_presigned_put".into(), url,
+                headers: HashMap::from([("x-test-header".into(), "preserved".into())]),
+                open_api_base: None, access_token: None, parent_file_id: None, parent_path: None, filename: None,
+            },
+        }
+    }
+
+    #[test]
+    fn feedback_request_allows_delayed_headers_and_body() {
+        for delay_body in [false, true] {
+            let mut response = TestResponse::new(200, "ok");
+            if delay_body { response.body_delay = Duration::from_millis(250); }
+            else { response.header_delay = Duration::from_millis(250); }
+            let (url, server) = upload_server(vec![response]);
+            let request = crate::network::post(&url).config()
+                .timeout_recv_response(Some(Duration::from_millis(100))).build();
+            let mut response = feedback_request(request, Duration::from_secs(2)).send("report").unwrap();
+            assert_eq!(response.body_mut().read_to_string().unwrap(), "ok");
+            assert_eq!(server.join().unwrap()[0].1, b"report");
+        }
+    }
+
+    #[test]
+    fn feedback_request_bounds_total_transfer_time() {
+        let mut response = TestResponse::new(200, "ok");
+        response.body_delay = Duration::from_millis(400);
+        let (url, server) = upload_server(vec![response]);
+        let mut response = feedback_request(crate::network::post(&url), Duration::from_millis(150))
+            .send("report").unwrap();
+        let error = response.body_mut().read_to_string().unwrap_err();
+        assert!(format!("{error:?}").contains("Timeout(Global)"));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn r2_retries_transient_failure_with_same_object_and_bytes() {
+        let (url, server) = upload_server(vec![TestResponse::new(503, ""), TestResponse::new(200, "")]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        upload_r2(&r2_token(url), b"zip bytes", &tx).unwrap();
+        let requests = server.join().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0], requests[1]);
+        assert!(requests[0].0.starts_with("PUT /upload "));
+        assert!(requests[0].0.to_ascii_lowercase().contains("x-test-header: preserved"));
+        assert_eq!(requests[0].1, b"zip bytes");
+        assert!(rx.try_iter().any(|state| matches!(state, FeedbackJobState::Uploading { pct: 100 })));
+    }
+
+    #[test]
+    fn r2_does_not_retry_definitive_errors_or_report_success() {
+        for status in [403, 404] {
+            let (url, server) = upload_server(vec![TestResponse::new(status, "")]);
+            let (tx, rx) = std::sync::mpsc::channel();
+            assert!(upload_r2(&r2_token(url), b"zip bytes", &tx).is_err());
+            assert_eq!(server.join().unwrap().len(), 1);
+            assert!(!rx.try_iter().any(|state| matches!(state, FeedbackJobState::Uploading { pct: 100 })));
+        }
+    }
+
+    #[test]
+    fn r2_stops_after_upload_retry_budget() {
+        let (url, server) = upload_server((0..super::super::RETRY_ATTEMPTS).map(|_| TestResponse::new(503, "")).collect());
+        let (tx, rx) = std::sync::mpsc::channel();
+        assert!(upload_r2(&r2_token(url), b"zip bytes", &tx).is_err());
+        assert_eq!(server.join().unwrap().len(), super::super::RETRY_ATTEMPTS as usize);
+        assert!(!rx.try_iter().any(|state| matches!(state, FeedbackJobState::Uploading { pct: 100 })));
+    }
+
+    #[test]
+    fn upload_retries_response_timeout_without_appending_partial_body() {
+        let mut delayed = TestResponse::new(200, "bad");
+        delayed.body_delay = Duration::from_millis(400);
+        let (url, server) = upload_server(vec![delayed, TestResponse::new(200, "ok")]);
+        let body = upload_request_with_retry("test upload", b"report", Duration::from_millis(150), || crate::network::put(&url)).unwrap();
+        assert_eq!(body, "ok");
+        let requests = server.join().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0], requests[1]);
+    }
+
+    #[test]
+    fn pan123_slice_retries_short_response_with_identical_multipart_body() {
+        let mut short = TestResponse::new(200, "bad");
+        short.content_length = 6;
+        let (url, server) = upload_server(vec![short, TestResponse::new(200, r#"{"code":0}"#)]);
+        let checksum = md5_hex(b"zip bytes");
+        upload_pan123_slice(&url, "test-token", "upload-1", 2, &checksum, b"zip bytes", "report.zip").unwrap();
+        let requests = server.join().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0], requests[1]);
+        assert!(requests[0].0.starts_with("POST /upload "));
+        assert!(requests[0].0.to_ascii_lowercase().contains("authorization: bearer test-token"));
+        let body = String::from_utf8(requests[0].1.clone()).unwrap();
+        for value in ["name=\"preuploadID\"\r\n\r\nupload-1", "name=\"sliceNo\"\r\n\r\n2", &checksum, "report.zip.part2", "zip bytes"] {
+            assert!(body.contains(value), "missing multipart value: {value}");
+        }
+    }
+
+    #[test]
+    fn pan123_slice_preserves_api_error_without_retry() {
+        let (url, server) = upload_server(vec![TestResponse::new(200, r#"{"code":401,"message":"invalid token"}"#)]);
+        let error = upload_pan123_slice(&url, "test-token", "upload-1", 1, "checksum", b"zip", "report.zip").unwrap_err();
+        assert!(error.contains("api code=401"));
+        assert_eq!(server.join().unwrap().len(), 1);
+    }
 
     #[test]
     fn md5_roundtrip() {
