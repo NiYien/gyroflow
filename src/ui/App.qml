@@ -1393,9 +1393,18 @@ Rectangle {
                                 }
 
                                 const job_id = render_queue.add(window.getAdditionalProjectDataJson(), controller.image_to_b64(result.image));
+                                // A rejected addition returns an ID without a queue entry.
+                                if (!render_queue.get_job_output_filename(job_id)) {
+                                    renderBtn.tempIsAddToQueue = false;
+                                    return;
+                                }
                                 // Saving preserves a completed stabilization; exporting must requeue this job.
-                                if (!renderBtn.isAddToQueue && !renderBtn.tempIsAddToQueue)
+                                if (!renderBtn.isAddToQueue && !renderBtn.tempIsAddToQueue) {
+                                    // add() clears the preview's job ID; keep it for subsequent exports.
+                                    render_queue.editing_job_id = job_id;
+                                    videoArea.captureEditingBaseline();
                                     render_queue.reset_job(job_id);
+                                }
                                 if (renderBtn.isAddToQueue || renderBtn.tempIsAddToQueue || render_queue.get_active_render_count() >= render_queue.parallel_renders) {
                                     // Add to queue
                                     renderBtn.addQueueDelayed = true;
