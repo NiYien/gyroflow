@@ -115,12 +115,12 @@ fn basis(grid: &Grid, shifts: &[f64], t: f64) -> [Vector3<f64>; BLOCKS] {
 /// N = sum w Jb^T Jb, every point at its own row times - the correction changes during the band's readout, and the gyro's
 /// mapping of the earlier frame isn't the identity at the precision a long lens needs.
 fn collect(pairs: &[SensorPair], bands: &[SensorBand], grid: &Grid, shifts: &[f64], cancel: &impl Fn() -> bool) -> Result<Vec<Band>> {
+    use rayon::prelude::*;
     let lookup: BTreeMap<_, _> = pairs.iter().map(|p| (p.seq, p)).collect();
     let mut out = Vec::with_capacity(bands.len());
-    for b in bands {
-        cancelled(cancel)?;
-        let Some(pair) = lookup.get(&b.pair) else { continue };
-        if !b.ta_us.is_finite() || !b.tb_us.is_finite() || !b.correction.iter().all(|v| v.is_finite()) || !(b.cauchy_scale_px > 0.0) { continue; }
+    let collect_band = |b: &SensorBand| -> Option<Band> {
+        let pair = lookup.get(&b.pair)?;
+        if !b.ta_us.is_finite() || !b.tb_us.is_finite() || !b.correction.iter().all(|v| v.is_finite()) || !(b.cauchy_scale_px > 0.0) { return None; }
         let frame = &pair.frame_b;
         let focal = frame.focal_full.x;
         let scale = Matrix2::from_diagonal(&frame.full_to_track);
@@ -151,17 +151,24 @@ fn collect(pairs: &[SensorPair], bands: &[SensorBand], grid: &Grid, shifts: &[f6
             mass += w;
         }
         let focal_px = focal * frame.full_to_track.x;
-        let Some(inverse) = normal.try_inverse() else { continue };
-        if mass <= 0.0 || !focal_px.is_finite() || focal_px <= 0.0 || !lever.is_finite() { continue; }
+        let inverse = normal.try_inverse()?;
+        if mass <= 0.0 || !focal_px.is_finite() || focal_px <= 0.0 || !lever.is_finite() { return None; }
         let mut rows = vec![0.0; 3 * COLUMNS];
         for c in 0..3 {
             for q in 0..COLUMNS {
                 rows[c * COLUMNS + q] = (0..3).map(|m| inverse[(c, m)] * sum[m * COLUMNS + q]).sum();
             }
         }
-        if !rows.iter().all(|v| v.is_finite()) { continue; }
-        out.push(Band { pair: b.pair, phase: b.band, middle: 0.5 * (b.ta_us + b.tb_us), measured: b.correction, rows, focal_px, lever2: lever / mass });
+        if !rows.iter().all(|v| v.is_finite()) { return None; }
+        Some(Band { pair: b.pair, phase: b.band, middle: 0.5 * (b.ta_us + b.tb_us), measured: b.correction, rows, focal_px, lever2: lever / mass })
+    };
+    // Bands are independent; keep point accumulation and band ordering unchanged, with bounded cancellation latency.
+    for batch in bands.chunks(128) {
+        cancelled(cancel)?;
+        let values: Vec<_> = batch.par_iter().map(collect_band).collect();
+        out.extend(values.into_iter().flatten());
     }
+    cancelled(cancel)?;
     Ok(out)
 }
 
@@ -199,7 +206,8 @@ fn robust_spread(values: impl Iterator<Item = f64>) -> f64 {
     1.4826 * values.get(values.len() / 2).copied().unwrap_or(0.0)
 }
 
-pub(super) fn solve_response(pairs: &[SensorPair], bands: &[SensorBand], sampler: &mut PriorSampler<'_>, frame_us: f64, cancel: &impl Fn() -> bool) -> Result<ResponseFit> {
+pub(super) fn solve_response(pairs: &[SensorPair], bands: &[SensorBand], sampler: &mut PriorSampler<'_>, frame_us: f64, processing_device:i32, cancel: &impl Fn() -> bool) -> Result<ResponseFit> {
+    let started = std::time::Instant::now();
     cancelled(cancel)?;
     if !frame_us.is_finite() || frame_us <= 0.0 { return Err(SensorSolveError::NoMeasurements); }
     let start_us = pairs.iter().flat_map(|p| p.points.iter().map(|p| p.ta_us)).fold(f64::INFINITY, f64::min).floor();
@@ -211,7 +219,9 @@ pub(super) fn solve_response(pairs: &[SensorPair], bands: &[SensorBand], sampler
     let count = ((end_us + reach - grid_start) / 1000.0).ceil() as usize + 1;
     let times: Vec<f64> = (0..count).map(|i| grid_start + i as f64 * 1000.0).collect();
     let grid = Grid { start: grid_start, values: sampler.sample(&times, cancel)? };
+    let prior_done = started.elapsed();
     let bands = collect(pairs, bands, &grid, &shifts, cancel)?;
+    let collect_done = started.elapsed();
     if bands.len() < 2 { return Err(SensorSolveError::NoMeasurements); }
     let n = bands.len();
     let width = 3 * COLUMNS;
@@ -219,7 +229,16 @@ pub(super) fn solve_response(pairs: &[SensorPair], bands: &[SensorBand], sampler
     let mut y: Vec<f64> = bands.iter().flat_map(|b| [b.measured.x, b.measured.y, b.measured.z]).collect();
     highpass(&bands, &mut x, width, cancel)?;
     highpass(&bands, &mut y, 3, cancel)?;
+    let highpass_done = started.elapsed();
+    let (mut assemble_time, mut factor_time) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
+    let mut validation_time=std::time::Duration::ZERO;
     let sigma: Vec<f64> = (0..COLUMNS).map(|c| if c < 27 { TAYLOR_SIGMA } else { FRAME_SIGMA }).collect();
+    let setup_started=std::time::Instant::now();
+    #[cfg(feature="use-opencv")]
+    let mut gpu=super::super::optical_motion::gpu_fitting::GpuNormal::for_device(processing_device,&x,&y,COLUMNS);
+    #[cfg(not(feature="use-opencv"))] let _=processing_device;
+    let setup_time=setup_started.elapsed();
+    let mut gpu_iterations=0;
     // First pass: the spread of the measurements themselves stands in for the residual noise.
     let mut noise: [f64; 3] = std::array::from_fn(|c| robust_spread((0..n).map(|i| y[i * 3 + c])));
     let mut weights = vec![1.0; n];
@@ -227,20 +246,45 @@ pub(super) fn solve_response(pairs: &[SensorPair], bands: &[SensorBand], sampler
     let mut scale_px = 0.0;
     for _ in 0..IRLS_ITERATIONS {
         cancelled(cancel)?;
-        let mut normal = DMatrix::<f64>::zeros(COLUMNS, COLUMNS);
-        let mut rhs = DVector::<f64>::zeros(COLUMNS);
-        for (i, w) in weights.iter().enumerate() {
-            for c in 0..3 {
-                // Never exactly zero, so a band set without rotation still has a (zero) solution.
-                let weight = w / (noise[c] * noise[c]).max(f64::MIN_POSITIVE);
-                let row = DVector::from_column_slice(&x[i * width + c * COLUMNS..i * width + (c + 1) * COLUMNS]);
-                normal.ger(weight, &row, &row, 1.0);
-                rhs.axpy(weight * y[i * 3 + c], &row, 1.0);
+        let assembling = std::time::Instant::now();
+        #[allow(unused_mut)] let mut accelerated=None;
+        #[cfg(feature="use-opencv")]
+        if let Some(device)=&mut gpu {
+            let row_weights:Vec<_>=weights.iter().flat_map(|w|noise.iter().map(move |s|w/(s*s).max(f64::MIN_POSITIVE))).collect();
+            match device.assemble(&row_weights) {
+                Ok(value)=>accelerated=Some(value),
+                Err(e)=>{log::warn!(target:"sync","Optical normal matrix: CPU fallback, {e}");gpu=None;},
             }
         }
+        cancelled(cancel)?;
+        let used_gpu=accelerated.is_some();
+        let (mut normal,rhs)=accelerated.unwrap_or_else(||cpu_normal(&x,&y,&weights,&noise));
         if !normal.iter().chain(rhs.iter()).all(|v| v.is_finite()) { return Err(SensorSolveError::SingularSystem); }
         for (i, sigma) in sigma.iter().enumerate() { normal[(i, i)] += 1.0 / (sigma * sigma); }
-        solution = normal.cholesky().ok_or(SensorSolveError::SingularSystem)?.solve(&rhs);
+        let matrix_norm=if used_gpu {normal.norm()}else{0.0};
+        assemble_time += assembling.elapsed();
+        let factoring = std::time::Instant::now();
+        let candidate=normal.cholesky().map(|chol|chol.solve(&rhs));
+        factor_time+=factoring.elapsed();
+        let checking=std::time::Instant::now();
+        let accurate=if let Some(candidate)=&candidate {
+            !used_gpu || normal_residual(&x,&y,&weights,&noise,&sigma,candidate)/(rhs.norm()+matrix_norm*candidate.norm()).max(1e-300)<1e-10
+        }else{false};
+        validation_time+=checking.elapsed();
+        if used_gpu && !accurate {
+            log::warn!(target:"sync","Optical normal matrix: CPU fallback after numerical validation");
+            #[cfg(feature="use-opencv")] {gpu=None;}
+            let assembling=std::time::Instant::now();
+            let (mut normal,rhs)=cpu_normal(&x,&y,&weights,&noise);
+            for (i,sigma) in sigma.iter().enumerate(){normal[(i,i)]+=1.0/(sigma*sigma);}
+            assemble_time+=assembling.elapsed();
+            let factoring=std::time::Instant::now();
+            solution=normal.cholesky().ok_or(SensorSolveError::SingularSystem)?.solve(&rhs);
+            factor_time+=factoring.elapsed();
+        }else{
+            solution=candidate.ok_or(SensorSolveError::SingularSystem)?;
+            if used_gpu {gpu_iterations+=1;}
+        }
         let residual: Vec<f64> = (0..n * 3).map(|q| {
             let (i, c) = (q / 3, q % 3);
             y[q] - x[i * width + c * COLUMNS..i * width + (c + 1) * COLUMNS].iter().zip(solution.iter()).map(|(a, b)| a * b).sum::<f64>()
@@ -275,7 +319,31 @@ pub(super) fn solve_response(pairs: &[SensorPair], bands: &[SensorBand], sampler
         (re * re + im * im).sqrt()
     });
     let measured_pairs = bands.iter().map(|b| b.pair).collect::<BTreeSet<_>>().len();
+    let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+    log::info!(target: "sync", "Optical reconstruction speed: pairs={measured_pairs} bands={n} total={:.1} ms prior={:.1} collect={:.1} highpass={:.1} assemble={:.1} factor={:.1} validate={:.1} setup={:.1} gpu_iterations={gpu_iterations}",
+        ms(started.elapsed()), ms(prior_done), ms(collect_done - prior_done), ms(highpass_done - collect_done), ms(assemble_time), ms(factor_time), ms(validation_time), ms(setup_time));
     Ok(ResponseFit { taps, start_us, end_us, measured_pairs, bands: n, gain_5hz, scale_px })
+}
+
+fn cpu_normal(x:&[f64],y:&[f64],weights:&[f64],noise:&[f64;3])->(DMatrix<f64>,DVector<f64>) {
+    let mut normal=DMatrix::zeros(COLUMNS,COLUMNS);let mut rhs=DVector::zeros(COLUMNS);
+    for (i,w) in weights.iter().enumerate(){for c in 0..3 {
+        let weight=w/(noise[c]*noise[c]).max(f64::MIN_POSITIVE);
+        let row=DVector::from_column_slice(&x[(i*3+c)*COLUMNS..(i*3+c+1)*COLUMNS]);
+        normal.ger(weight,&row,&row,1.0);rhs.axpy(weight*y[i*3+c],&row,1.0);
+    }}
+    (normal,rhs)
+}
+
+/// Checks the GPU result against the original f64 rows without rebuilding the Gram matrix.
+fn normal_residual(x:&[f64],y:&[f64],weights:&[f64],noise:&[f64;3],sigma:&[f64],solution:&DVector<f64>)->f64 {
+    let mut gradient:Vec<f64>=solution.iter().zip(sigma).map(|(v,s)|v/(s*s)).collect();
+    for (r,row) in x.chunks_exact(COLUMNS).enumerate() {
+        let residual=row.iter().zip(solution.iter()).map(|(a,b)|a*b).sum::<f64>()-y[r];
+        let weight=weights[r/3]/(noise[r%3]*noise[r%3]).max(f64::MIN_POSITIVE);
+        for (g,a) in gradient.iter_mut().zip(row){*g+=a*(weight*residual);}
+    }
+    gradient.iter().map(|v|v*v).sum::<f64>().sqrt()
 }
 
 #[cfg(test)]

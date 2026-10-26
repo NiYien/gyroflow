@@ -18,6 +18,25 @@ pub(super) struct LayerMotion {
     pub weight: f32,
 }
 
+pub(super) struct LayerInput {
+    data: Vec<(Vector2<f64>,Vector2<f64>,f64,usize)>,
+    cells: [usize;16*9],
+    texture: Vec<f32>,
+    depths: Vec<(f64,f64)>,
+    median: f64,
+    depth_scale: f64,
+    confidence: f64,
+}
+
+#[cfg(feature="use-opencv")]
+impl super::super::optical_motion::gpu_fitting::LayerData for LayerInput {
+    fn len(&self)->usize {self.data.len()}
+    fn point(&self,index:usize)->[f64;6] {
+        let (x,delta,rho,cell)=&self.data[index];
+        [x.x,x.y,delta.x,delta.y,rho/self.median,1.0/self.cells[*cell] as f64]
+    }
+}
+
 /// How much of a point's motion a viewer can see: its texture against the picture's typical tracked texture. Flat or
 /// dark areas still get corners but barely show that they move. Unknown texture counts fully.
 fn visibility(texture: f32, typical: f64) -> f64 {
@@ -44,8 +63,12 @@ fn plane(ray: Vector3<f64>) -> Option<Vector2<f64>> {
 
 /// `projection` maps upright source camera rays to the analysis output, including its crop.
 pub(super) fn fit(points: &[PairPoint], pair: &PairTranslation, projection: &Matrix3<f64>, size: (usize, usize)) -> LayerMotion {
+    prepare(points,pair,projection,size).map_or_else(LayerMotion::default,|input|fit_prepared(&input))
+}
+
+pub(super) fn prepare(points: &[PairPoint], pair: &PairTranslation, projection: &Matrix3<f64>, size: (usize, usize)) -> Option<LayerInput> {
     if pair.new_segment || !pair.confidence.is_finite() || pair.confidence <= 0.0 || size.0 == 0 || size.1 == 0 {
-        return LayerMotion::default();
+        return None;
     }
     let mut cells = [0usize; 16 * 9];
     // Texture of each kept point, for the dominant layer
@@ -65,10 +88,19 @@ pub(super) fn fit(points: &[PairPoint], pair: &PairTranslation, projection: &Mat
         texture.push(point.texture);
         Some((x, delta, rho, cell))
     }).collect();
-    if data.len() < 12 { return LayerMotion::default(); }
+    if data.len() < 12 { return None; }
     let depths: Vec<_> = data.iter().map(|d| (d.2, 1.0 / cells[d.3] as f64)).collect();
     let median = quantile(&depths, 0.5);
-    if median <= 0.0 || !pair.depth_scale.is_finite() || pair.depth_scale <= 0.0 { return LayerMotion::default(); }
+    if median <= 0.0 || !pair.depth_scale.is_finite() || pair.depth_scale <= 0.0 { return None; }
+    Some(LayerInput{data,cells,texture,depths,median,depth_scale:pair.depth_scale,confidence:pair.confidence})
+}
+
+pub(super) fn fit_prepared(input:&LayerInput)->LayerMotion {
+    solve(input).map_or_else(LayerMotion::default,|solution|finish(input,solution))
+}
+
+fn solve(input:&LayerInput)->Option<Vector3<f64>> {
+    let (data,cells,median)=(&input.data,&input.cells,input.median);
     let mut robust = vec![[1.0; 2]; data.len()];
     let mut solution = Vector3::zeros();
     for _ in 0..6 {
@@ -85,9 +117,9 @@ pub(super) fn fit(points: &[PairPoint], pair: &PairTranslation, projection: &Mat
                 g += row * (delta[axis] * weight);
             }
         }
-        let Some(cholesky) = h.cholesky() else { return LayerMotion::default(); };
+        let cholesky = h.cholesky()?;
         solution = cholesky.solve(&g);
-        if !solution.iter().all(|v| v.is_finite()) { return LayerMotion::default(); }
+        if !solution.iter().all(|v| v.is_finite()) { return None; }
         let residuals: Vec<_> = data.iter().flat_map(|(x, delta, rho, cell)| {
             let residual = delta - (solution.xy() + x * solution.z) * (rho / median);
             [0, 1].map(|axis| (residual[axis], 1.0 / cells[*cell] as f64))
@@ -99,23 +131,34 @@ pub(super) fn fit(points: &[PairPoint], pair: &PairTranslation, projection: &Mat
             for axis in 0..2 { weights[axis] = 1.0 / (1.0 + (residuals[2 * i + axis].0 / scale).powi(2)); }
         }
     }
+    Some(solution)
+}
+
+pub(super) fn finish(input:&LayerInput,mut solution:Vector3<f64>)->LayerMotion {
+    let (data,cells,texture,depths,median)=(&input.data,&input.cells,&input.texture,&input.depths,input.median);
     let mut textures: Vec<_> = texture.iter().map(|e| *e as f64).filter(|e| e.is_finite() && *e >= 0.0).collect();
     textures.sort_by(f64::total_cmp);
     let typical = textures.get(textures.len() / 2).copied().unwrap_or(0.0);
     // Dominant layer: the content that most of the visible, textured picture follows. Content at depth beta moves by
     // beta times the unit layer's motion, so the weighted median parallax projected on that motion gives its depth.
     // A median rather than a mean, so that a minority far in front or behind does not pull it.
-    let weights: Vec<_> = data.iter().zip(&texture).map(|(d, e)| visibility(*e, typical) / cells[d.3] as f64).collect();
+    let weights: Vec<_> = data.iter().zip(texture).map(|(d, e)| visibility(*e, typical) / cells[d.3] as f64).collect();
     let median_of = |axis: usize| quantile(&data.iter().zip(&weights).map(|(d, w)| (d.1[axis], *w)).collect::<Vec<_>>(), 0.5);
     let parallax = Vector2::new(median_of(0), median_of(1));
     // Keep the fit well conditioned, then express its result in the solver's fixed depth coordinates.
-    solution *= pair.depth_scale / median;
+    solution *= input.depth_scale / median;
     let unit = solution.xy();
     LayerMotion { motion: [solution.x as f32, solution.y as f32], scale_rate: solution.z as f32,
-        far_beta: (quantile(&depths, 0.2) / pair.depth_scale) as f32,
-        median_inv_depth: median / pair.depth_scale,
+        far_beta: (quantile(depths, 0.2) / input.depth_scale) as f32,
+        median_inv_depth: median / input.depth_scale,
         dominant: [parallax.dot(&unit) as f32, unit.norm_squared() as f32],
-        weight: pair.confidence.clamp(0.0, 1.0) as f32 }
+        weight: input.confidence.clamp(0.0, 1.0) as f32 }
+}
+
+#[cfg(all(test,feature="use-opencv"))]
+pub(super) fn fixture_input()->LayerInput {
+    let (points,pair,projection)=tests::scene(Vector3::new(0.002,-0.001,0.0004),false);
+    prepare(&points,&pair,&projection,(800,450)).unwrap()
 }
 
 #[cfg(test)]
@@ -123,7 +166,27 @@ mod tests {
     use super::*;
     use std::collections::{HashMap, HashSet};
 
-    fn scene(motion: Vector3<f64>, dense_near: bool) -> (Vec<PairPoint>, PairTranslation, Matrix3<f64>) {
+    #[cfg(feature="use-opencv")]
+    #[test]
+    fn gpu_layer_batch_matches_the_image_space_model() {
+        let Some(mut gpu)=super::super::super::optical_motion::gpu_fitting::GpuLayers::for_test()else{return;};
+        let mut inputs=Vec::new();
+        for dense in [false,true] {for motion in [Vector3::new(0.002,-0.001,0.0),Vector3::new(0.0,0.0,0.003),Vector3::zeros()] {
+            let (mut points,pair,projection)=scene(motion,dense);
+            for point in points.iter_mut().step_by(19){point.r.x+=0.01;}
+            inputs.push(prepare(&points,&pair,&projection,(800,450)).unwrap());
+        }}
+        let solutions=gpu.fit_batch(&inputs).unwrap();
+        for (input,solution) in inputs.iter().zip(solutions) {
+            let cpu=fit_prepared(input);let got=finish(input,Vector3::from(solution.unwrap()));
+            assert!(got.motion.iter().zip(cpu.motion).all(|(a,b)|(*a-b).abs()<1e-9));
+            assert!((got.scale_rate-cpu.scale_rate).abs()<1e-9);
+            assert_eq!(got.far_beta,cpu.far_beta);assert_eq!(got.median_inv_depth,cpu.median_inv_depth);assert_eq!(got.weight,cpu.weight);
+            assert!(got.dominant.iter().zip(cpu.dominant).all(|(a,b)|(*a-b).abs()<1e-10));
+        }
+    }
+
+    pub(super) fn scene(motion: Vector3<f64>, dense_near: bool) -> (Vec<PairPoint>, PairTranslation, Matrix3<f64>) {
         let mut points = Vec::new();
         let mut depths = HashMap::new();
         for y in 0..9 {

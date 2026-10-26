@@ -222,6 +222,28 @@ impl WgpuWrapper {
         }
     }
 
+    /// A hardware compute adapter matching the selected processing device, or the best available hardware adapter.
+    pub fn compute_adapter(selected: Option<usize>) -> Option<Adapter> {
+        if ADAPTERS.read().is_empty() { Self::list_devices(); }
+        let (entry, first_wgpu) = {
+            let devices = crate::stabilization::GPU_LIST.read();
+            (selected.and_then(|i| devices.get(i).cloned()), devices.iter().position(|d| d.starts_with("[wgpu]")))
+        };
+        let adapters = ADAPTERS.read();
+        let same = entry.and_then(|entry| {
+            if entry.starts_with("[wgpu]") {
+                let a = adapters.get(selected?.checked_sub(first_wgpu?)?)?;
+                let info = a.get_info();
+                (entry == format!("[wgpu] {} ({:?})", info.name, info.backend)).then_some(a)
+            } else if entry.starts_with("[OpenCL]") {
+                // Match the whole device name, so an RTX 4070 cannot select an RTX 4070 Ti.
+                adapters.iter().find(|a| { let name = a.get_info().name; !name.is_empty() && entry.contains(&format!(" {name}: ")) })
+            } else { None }
+        }).filter(|a| a.get_info().device_type != wgpu::DeviceType::Cpu);
+        same.or_else(|| [wgpu::DeviceType::DiscreteGpu, wgpu::DeviceType::IntegratedGpu, wgpu::DeviceType::Other, wgpu::DeviceType::VirtualGpu].iter()
+            .find_map(|t| adapters.iter().find(|a| a.get_info().device_type == *t))).cloned()
+    }
+
     pub fn initialize_context() -> Option<(String, String)> {
         let instance = INSTANCE.lock();
 

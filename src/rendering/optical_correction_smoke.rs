@@ -242,7 +242,7 @@ pub fn run(paths: &str) -> i32 {
             }
             analyzed
         })();
-        let info = stab.optical_correction_info();
+        let info = if export_translation { stab.translation_stabilization_info() } else { stab.optical_correction_info() };
         let applied = if export_translation {
             stab.gyro.read().optical_translation.as_ref().is_some_and(|t| t.is_active())
         } else {
@@ -251,8 +251,8 @@ pub fn run(paths: &str) -> i32 {
         };
         let complete_info = info["frames"].as_u64().is_some()
             && info["measured_frames"].as_u64().is_some()
-            && info["rms_deg"].as_f64().is_some_and(f64::is_finite)
-            && info["from_video"].as_bool().is_some();
+            && if export_translation { info["max_shift_pct"].as_f64().is_some_and(f64::is_finite) }
+               else { info["rms_deg"].as_f64().is_some_and(f64::is_finite) && info["from_video"].as_bool().is_some() };
         let status = match result {
             Err(e) => e,
             Ok(()) if !complete_info => "Optical correction info is incomplete".into(),

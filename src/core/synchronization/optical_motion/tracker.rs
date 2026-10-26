@@ -15,6 +15,8 @@ use opencv::{ core::{ self, Mat, Point, Point2f, Rect, Scalar, Size, TermCriteri
 use crate::synchronization::GrayImage;
 use super::FrameTracker;
 use super::tracks::{ round_robin_ids, tracking_size, Observation };
+use super::gpu_tracker::GpuTracker;
+pub use super::gpu_tracker::KltDevice;
 
 /// Grid the new corners are spread over, see `KltTracker::replenish`
 const GRID_ROWS: i32 = 6;
@@ -196,10 +198,11 @@ fn glare_circles(img: &Mat, (w, h): (i32, i32)) -> Result<Vec<(Point, i32)>, ope
     Ok(circles)
 }
 
-/// A frame made ready for `KltTracker::track_prepared`: resized to the tracking width and its pyramid built. None of
-/// it depends on the tracks, so frames can be prepared ahead, side by side
+/// A frame ready for tracking: a CPU pyramid or packed pixels whose pyramid will be built on the GPU.
+/// Neither preparation depends on the tracks, so frames can be prepared ahead, side by side.
 pub struct PreparedFrame {
-    pyramid: TrackingPyramid,
+    pyramid: Option<TrackingPyramid>,
+    pixels: Option<GrayImage>,
     size: (u32, u32),
 }
 
@@ -208,11 +211,13 @@ impl PreparedFrame {
     /// is kept for that replenish, where `track` would have met it
     pub fn precompute_corners(&mut self) {
         let size = (self.size.0 as i32, self.size.1 as i32);
-        let _ = self.pyramid.corners(size);
+        if let Some(pyramid) = &mut self.pyramid { let _ = pyramid.corners(size); }
     }
 }
 
 pub struct KltTracker {
+    gpu: Option<GpuTracker>,
+    gpu_preparation: std::sync::Arc<std::sync::atomic::AtomicBool>,
     prev: Option<TrackingPyramid>,
     size: (i32, i32),
     points: Vec<Point2f>,
@@ -228,8 +233,33 @@ pub struct KltTracker {
 
 impl KltTracker {
     pub fn new(max_points: usize, replenish_ratio: f64, track_width: u32) -> Self {
-        Self { prev: None, size: (0, 0), points: Vec::new(), ids: Vec::new(), next_id: 0, max_points, replenish_ratio, track_width,
+        Self { gpu: None, gpu_preparation: Default::default(), prev: None, size: (0, 0), points: Vec::new(), ids: Vec::new(), next_id: 0, max_points, replenish_ratio, track_width,
             #[cfg(test)] reference: false }
+    }
+
+    pub fn with_device(max_points: usize, replenish_ratio: f64, track_width: u32, device: KltDevice) -> Self {
+        let mut tracker = Self::new(max_points, replenish_ratio, track_width);
+        if let KltDevice::Gpu(selected) = device {
+            tracker.gpu = Some(GpuTracker::new(selected, max_points));
+            tracker.gpu_preparation.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        tracker
+    }
+
+    pub fn uses_gpu(&self) -> bool { self.gpu.is_some() }
+
+    /// Preparing workers switch back to CPU pyramids when tracking falls back.
+    pub fn gpu_preparation(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> { self.gpu_preparation.clone() }
+
+    #[cfg(test)]
+    pub(super) fn fail_gpu_once(&mut self) { self.gpu.as_mut().unwrap().fail_once(); }
+
+    /// GPU frames need only their packed pixels; responses and candidates are computed with tracking.
+    pub fn prepare_for_backend(img: &GrayImage, track_width: u32, gpu: bool) -> Result<PreparedFrame, String> {
+        if !gpu { return Self::prepare(img, track_width); }
+        let pixels = prepare_frame(img.width(), img.height(), img.width() as usize, img.as_raw(), track_width)
+            .map_err(|e| format!("OpenCV resize: {e:?}"))?;
+        Ok(PreparedFrame { size: pixels.dimensions(), pixels: Some(pixels), pyramid: None })
     }
 
     /// Prepares a frame for `track_prepared`, independently of any tracker with this `track_width`. The errors are
@@ -254,19 +284,66 @@ impl KltTracker {
             imgproc::resize(&src, &mut dst, Size::new(tw as i32, th as i32), 0.0, 0.0, imgproc::INTER_AREA)?;
             TrackingPyramid::new(&dst)?
         };
-        Ok(PreparedFrame { pyramid, size: (tw, th) })
+        Ok(PreparedFrame { pyramid: Some(pyramid), pixels: None, size: (tw, th) })
     }
 
     /// `track` of a frame prepared by `prepare`, or of the error preparing it: the tracker is then reset, as by an
     /// error of `track`
     pub fn track_prepared(&mut self, frame: Result<PreparedFrame, String>) -> Result<(Vec<Observation>, (u32, u32)), String> {
-        let tracked = frame.and_then(|frame| self.track_frame(frame).map_err(|e| format!("OpenCV error: {e:?}")));
+        let tracked = frame.and_then(|mut frame| {
+            if let Some(pixels) = frame.pixels.take() {
+                if self.gpu.is_some() {
+                    let tracked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.track_gpu_frame(frame, &pixels)))
+                        .unwrap_or_else(|_| Err("GPU tracking panicked".into()));
+                    match tracked {
+                        Ok(obs) => return Ok((obs, pixels.dimensions())),
+                        Err(e) => {
+                            // Never join a CPU track to a frame whose GPU result was lost. IDs remain unique.
+                            self.gpu = None;
+                            self.gpu_preparation.store(false, std::sync::atomic::Ordering::Relaxed);
+                            self.reset();
+                            log::warn!(target: "sync", "Optical tracking: CPU fallback, {e}");
+                        },
+                    }
+                }
+                frame = Self::prepare(&pixels, self.track_width)?;
+                frame.precompute_corners();
+            }
+            self.track_frame(frame).map_err(|e| format!("OpenCV error: {e:?}"))
+        });
         if tracked.is_err() { self.reset(); }
         tracked
     }
 
+    fn track_gpu_frame(&mut self, frame: PreparedFrame, pixels: &GrayImage) -> Result<Vec<Observation>, String> {
+        let size = (frame.size.0 as i32, frame.size.1 as i32);
+        if self.size != size { self.reset(); }
+        self.size = size;
+        let occupied: Vec<_> = self.points.iter().map(|p| [p.x,p.y]).collect();
+        for (id,point) in self.gpu.as_ref().unwrap().select(&occupied,self.replenish_ratio,self.next_id) {
+            self.points.push(Point2f::new(point[0],point[1]));self.ids.push(id);
+            self.next_id = self.next_id.wrapping_add(1);
+        }
+        let tracked = self.gpu.as_mut().unwrap().track(pixels, self.points.iter().map(|p| [p.x, p.y]))?;
+        let (mut points, mut ids, mut out) = (Vec::new(), Vec::new(), Vec::new());
+        for (i, (b, back)) in tracked.into_iter().enumerate() {
+            let a = self.points[i];
+            let fb = ((back[0] - a.x).powi(2) + (back[1] - a.y).powi(2)).sqrt();
+            if b[2] > 0.5 && back[2] > 0.5 && fb < FB_MAX_PX
+                && b[0] > 2.0 && b[1] > 2.0 && b[0] < (size.0 - 3) as f32 && b[1] < (size.1 - 3) as f32 {
+                let point = Point2f::new(b[0], b[1]);
+                out.push(Observation { id: self.ids[i], a: [a.x, a.y], b: [b[0], b[1]], texture: self.gpu.as_ref().unwrap().texture_at([b[0],b[1]]) });
+                points.push(point); ids.push(self.ids[i]);
+            }
+        }
+        self.points = points;
+        self.ids = ids;
+        Ok(out)
+    }
+
     fn track_frame(&mut self, frame: PreparedFrame) -> Result<(Vec<Observation>, (u32, u32)), opencv::Error> {
-        let PreparedFrame { pyramid: cur, size: (tw, th) } = frame;
+        let PreparedFrame { pyramid, size: (tw, th), .. } = frame;
+        let cur = pyramid.ok_or_else(|| opencv::Error::new(core::StsBadArg, "Missing tracking pyramid"))?;
         let (w, h) = (tw as i32, th as i32);
         if self.size != (w, h) { self.reset(); }
         self.size = (w, h);
@@ -461,6 +538,7 @@ impl KltTracker {
 impl FrameTracker for KltTracker {
     /// Forgets the tracks: the next frame starts new ones (a gap in the decoded frames, a cut). Ids keep counting
     fn reset(&mut self) {
+        if let Some(gpu) = &mut self.gpu { gpu.reset(); }
         self.prev = None;
         self.points.clear();
         self.ids.clear();
@@ -469,7 +547,7 @@ impl FrameTracker for KltTracker {
     /// Tracks the points of the previous frame into this one; nothing for the first frame. An error leaves the tracker
     /// reset, so the next frame starts new tracks
     fn track(&mut self, img: &GrayImage) -> Result<(Vec<Observation>, (u32, u32)), String> {
-        let frame = Self::prepare(img, self.track_width);
+        let frame = Self::prepare_for_backend(img, self.track_width, self.uses_gpu());
         self.track_prepared(frame)
     }
 }
@@ -500,6 +578,41 @@ mod tests {
     fn median(mut v: Vec<f32>) -> f32 {
         v.sort_unstable_by(|a, b| a.total_cmp(b));
         v[v.len() / 2]
+    }
+
+    #[test]
+    fn gpu_selection_preserves_local_opencv_rules() {
+        use super::super::gpu_corners::{GpuCorners,local_maxima};
+        for (w,h) in [(960,540),(853,480),(320,180)] {
+            let img=blobs(w,h,1400,(0,0));
+            let mat=Mat::new_rows_cols_with_data::<u8>(h as i32,w as i32,img.as_raw()).unwrap();
+            let mut pyramid=TrackingPyramid::new(&mat).unwrap();
+            let source=pyramid.layers.get(0).unwrap();
+            let mut features=GpuCorners::new(w as usize,h as usize);
+            let mut eig=Mat::default();
+            imgproc::corner_min_eigen_val(&source,&mut eig,7,3,core::BORDER_DEFAULT).unwrap();
+            features.global.copy_from_slice(eig.data_typed::<f32>().unwrap());
+            for r in 0..6 {for c in 0..4 {
+                let (x0,y0,x1,y1)=(w as i32*c/4,h as i32*r/6,w as i32*(c+1)/4,h as i32*(r+1)/6);
+                let roi=Mat::roi(&source,Rect::new(x0,y0,x1-x0,y1-y0)).unwrap();
+                let mut local=Mat::default();imgproc::corner_min_eigen_val(&roi,&mut local,7,3,core::BORDER_DEFAULT).unwrap();
+                for y in y0..y1 {features.local[y as usize*w as usize+x0 as usize..y as usize*w as usize+x1 as usize].copy_from_slice(local.at_row::<f32>(y-y0).unwrap());}
+            }}
+            features.global_candidates=local_maxima(&features.global,w as usize,h as usize,false);
+            features.local_candidates=local_maxima(&features.local,w as usize,h as usize,true);
+            features.find_glare(img.as_raw(),w as usize);
+            for ratio in [0.85,1.0] {for n in [0,17,1300] {
+                let mut reference=KltTracker::new(1500,ratio,w);
+                reference.size=(w as i32,h as i32);reference.next_id=5000;
+                reference.points=(0..n).map(|i|Point2f::new(((i*71+7)%w as usize) as f32+0.3,((i*53+5)%h as usize) as f32+0.7)).collect();
+                reference.ids=(0..n as u32).collect();
+                let occupied:Vec<_>=reference.points.iter().map(|p|[p.x,p.y]).collect();
+                let got=features.select(&occupied,1500,ratio,5000);
+                reference.replenish(&mut pyramid).unwrap();
+                let expected:Vec<_>=reference.ids[n..].iter().zip(&reference.points[n..]).map(|(id,p)|(*id,[p.x,p.y])).collect();
+                assert_eq!(got,expected,"{w}x{h} ratio={ratio} occupied={n}");
+            }}
+        }
     }
 
     #[test] fn preparing_padded_frames_preserves_the_original_resize_pixels() {

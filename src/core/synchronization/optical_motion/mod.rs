@@ -16,6 +16,11 @@ pub mod quat_table;
 pub mod rates;
 pub mod search;
 #[cfg(feature = "use-opencv")] pub mod tracker;
+#[cfg(feature = "use-opencv")] mod gpu_klt;
+#[cfg(feature = "use-opencv")] mod gpu_tracker;
+#[cfg(feature = "use-opencv")] mod gpu_corners;
+#[cfg(feature = "use-opencv")] pub(crate) mod gpu_fitting;
+#[cfg(all(test, feature = "use-opencv"))] mod gpu_tests;
 pub mod tracks;
 #[cfg(test)] pub mod testutil;
 
@@ -56,11 +61,12 @@ pub trait FrameTracker: Send {
 }
 
 /// None when built without `use-opencv`
-pub fn default_tracker(cfg: &OpticalConfig) -> Option<Box<dyn FrameTracker>> {
+pub fn default_tracker(cfg: &OpticalConfig, processing_device: i32) -> Option<Box<dyn FrameTracker>> {
     #[cfg(feature = "use-opencv")]
-    { Some(Box::new(tracker::KltTracker::new(MAX_POINTS, cfg.replenish, cfg.track_width))) }
+    { Some(Box::new(tracker::KltTracker::with_device(MAX_POINTS, cfg.replenish, cfg.track_width,
+        tracker::KltDevice::for_processing_device(processing_device)))) }
     #[cfg(not(feature = "use-opencv"))]
-    { let _ = cfg; None }
+    { let _ = (cfg, processing_device); None }
 }
 
 /// One window's track store under construction and its tracker (None without `use-opencv`)

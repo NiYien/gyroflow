@@ -168,6 +168,7 @@ impl AutosyncProcess {
         cancel_flag: Arc<AtomicBool>,
     ) -> Result<Self, AutosyncError> {
         let params = stab.params.read();
+        let processing_device = params.current_device;
         let org_fps = params.fps;
         let scaled_fps = params.get_scaled_fps();
         let org_duration_ms = params.duration_ms;
@@ -445,7 +446,7 @@ impl AutosyncProcess {
                 scaled_fps,
                 every_nth_frame.max(1),
                 cancel_flag.clone(),
-                &|| super::optical_motion::default_tracker(cfg),
+                &|| super::optical_motion::default_tracker(cfg, processing_device),
                 on_frame_done,
             ))
         } else {
@@ -464,7 +465,7 @@ impl AutosyncProcess {
                 scaled_fps,
                 every_nth,
                 cancel_flag.clone(),
-                &|| optical::default_tracker(optical::config::config()),
+                &|| optical::default_tracker(optical::config::config(), processing_device),
                 Arc::new(|| {}),
             );
             log::info!(target: "sync", "[deep-match] optical judge session: windows={} every_nth={} has_tracker={}",

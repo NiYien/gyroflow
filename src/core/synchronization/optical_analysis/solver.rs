@@ -190,9 +190,11 @@ impl BandSym {
             let j0 = i.saturating_sub(bw);
             for j in j0..=i {
                 let mut s = self.get(i, j);
-                for k in j0.max(j.saturating_sub(bw))..j {
-                    s -= self.get(i, k) * self.get(j, k);
-                }
+                // Both slices run from column j-1 down to j0; reverse them to retain the original arithmetic order.
+                let stride = bw + 1;
+                let a = &self.data[i * stride + i - j + 1..i * stride + i - j0 + 1];
+                let b = &self.data[j * stride + 1..j * stride + j - j0 + 1];
+                for (a, b) in a.iter().rev().zip(b.iter().rev()) { s -= a * b; }
                 let idx = self.idx(i, j);
                 if i == j {
                     if s <= 0.0 || !s.is_finite() { return None; }
@@ -220,6 +222,29 @@ impl BandSym {
 mod tests {
     use super::*;
     use nalgebra::{Matrix3, Vector3};
+
+    #[test]
+    fn contiguous_band_products_preserve_the_scalar_solution() {
+        let mut matrix = BandSym::new(511, 71);
+        for i in 0..matrix.n {
+            matrix.add(i, i, 100.0);
+            for j in i.saturating_sub(matrix.bw)..i { matrix.add(i, j, ((i * 17 + j * 3) as f64).sin() * 0.1); }
+        }
+        let rhs: Vec<_> = (0..matrix.n).map(|i| (i as f64 * 0.1).cos()).collect();
+        let expected = {
+            let mut m = matrix.clone();
+            let mut b = rhs.clone();
+            for i in 0..m.n { for j in i.saturating_sub(m.bw)..=i {
+                let mut s = m.get(i, j);
+                for k in i.saturating_sub(m.bw).max(j.saturating_sub(m.bw))..j { s -= m.get(i, k) * m.get(j, k); }
+                let idx = m.idx(i, j); m.data[idx] = if i == j { s.sqrt() } else { s / m.get(j, j) };
+            }}
+            for i in 0..m.n { let mut s=b[i]; for k in i.saturating_sub(m.bw)..i { s-=m.get(i,k)*b[k]; } b[i]=s/m.get(i,i); }
+            for i in (0..m.n).rev() { let mut s=b[i]; for k in i+1..(i+m.bw+1).min(m.n) { s-=m.get(k,i)*b[k]; } b[i]=s/m.get(i,i); }
+            b
+        };
+        assert_eq!(matrix.solve(rhs).unwrap(), expected);
+    }
 
     #[test]
     fn solver_rejects_empty_input() {

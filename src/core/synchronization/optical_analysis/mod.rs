@@ -239,6 +239,10 @@ pub fn solve_stab(m: &OpticalMeasurements, quats: &TimeQuat, config: &crate::gyr
 }
 
 pub(crate) fn solve_stab_with_cancel(m: &OpticalMeasurements, quats: &TimeQuat, config: &crate::gyro_source::optical_stab::StabReconConfig, cancel: impl Fn() -> bool) -> Result<crate::gyro_source::optical_stab::OpticalStabReconstruction, String> {
+    solve_stab_on_device(m,quats,config,-1,cancel)
+}
+
+pub(crate) fn solve_stab_on_device(m: &OpticalMeasurements, quats: &TimeQuat, config: &crate::gyro_source::optical_stab::StabReconConfig, processing_device:i32, cancel: impl Fn() -> bool) -> Result<crate::gyro_source::optical_stab::OpticalStabReconstruction, String> {
     use crate::gyro_source::optical_stab::{OpticalStabReconstruction, PriorError, PriorSampler, INPUT_CUTOFF_HZ};
     if cancel() { return Err("Cancelled".into()); }
     if optical_correction::checksum(quats) != m.quats_checksum {
@@ -252,7 +256,7 @@ pub(crate) fn solve_stab_with_cancel(m: &OpticalMeasurements, quats: &TimeQuat, 
     let cutoff_hz = config.cutoff_hz.unwrap_or(INPUT_CUTOFF_HZ);
     let frame_us = 1e6 / m.scaled_fps.max(1.0);
     let mut sampler = PriorSampler::new(quats, cutoff_hz).map_err(prior_error)?;
-    let fit = sensor_solver::solve_response(&m.stab_pairs, &m.stab_bands, &mut sampler, frame_us, &cancel).map_err(|error| {
+    let fit = sensor_solver::solve_response(&m.stab_pairs, &m.stab_bands, &mut sampler, frame_us, processing_device, &cancel).map_err(|error| {
         log::warn!("Sensor reconstruction failed: {error:?}");
         match error {
             sensor_solver::SensorSolveError::NoMeasurements => "Not enough of the image could be tracked".to_string(),
@@ -359,6 +363,13 @@ fn to_quat_frame(b: (f32, f32)) -> Vector3<f64> {
 
 struct TranslationState {
     solver: TranslationSolver,
+    solve_time: std::time::Duration,
+    layer_time: std::time::Duration,
+    measured_pairs: usize,
+    #[cfg(feature="use-opencv")]
+    gpu_layer: Option<super::optical_motion::gpu_fitting::GpuLayers>,
+    #[cfg(feature="use-opencv")]
+    pending_layers: Vec<(usize,image_space::LayerInput)>,
     next_seq: usize,
     pairs: HashMap<usize, (Vector3<f64>, HashMap<u32, f64>)>,
     position: Vector3<f64>,
@@ -377,6 +388,7 @@ pub(crate) struct TranslationReplay {
     track_size: (u32, u32),
     horizontal_readout: bool,
     focal_px: f64,
+    processing_device: i32,
 }
 
 impl TranslationReplay {
@@ -387,13 +399,13 @@ impl TranslationReplay {
         reconstruction.applies = true;
         self.params.gyro.write().optical_stab = Some(reconstruction);
         self.params.apply_optical_stab = true;
-        let mut state = TranslationState::new();
+        let mut state = TranslationState::with_device(self.processing_device);
         while !self.pairs.is_empty() {
             if cancel() { return Err("Cancelled".into()); }
             let pairs: VecDeque<_> = self.pairs.drain(..self.pairs.len().min(CHUNK)).collect();
             let mut derived = OpticalMotionAnalysis::derive_pairs(&self.params, &pairs, &None, self.track_size, self.horizontal_readout);
             let next_seq = pairs.back().unwrap().seq + 1;
-            OpticalMotionAnalysis::measure_translation_pairs(&self.params, &mut state, &pairs, next_seq, self.focal_px, &mut derived, false);
+            OpticalMotionAnalysis::measure_translation_pairs(&self.params, &mut state, &pairs, next_seq, self.focal_px, &mut derived, false, cancel);
         }
         if cancel() { return Err("Cancelled".into()); }
         Ok(state.finish())
@@ -662,12 +674,46 @@ const AUTO_DOMINANT_RANGE: (f64, f64) = (0.02, 50.0);
 impl TranslationState {
     fn new() -> Self {
         Self { solver: TranslationSolver::new(TranslationSolverConfig::resolved()),
+            #[cfg(feature="use-opencv")] gpu_layer: None,
+            #[cfg(feature="use-opencv")] pending_layers: Vec::new(),
+            solve_time: std::time::Duration::ZERO, layer_time: std::time::Duration::ZERO, measured_pairs: 0,
             next_seq: 0, pairs: HashMap::new(), position: Vector3::zeros(), segment: 0, depth_segment: 0,
             samples: Vec::new(), median_depths: Vec::new(), dominant: Vec::new() }
+    }
+    fn with_device(device:i32)->Self {
+        #[allow(unused_mut)] let mut state=Self::new();
+        #[cfg(feature="use-opencv")] {state.gpu_layer=super::optical_motion::gpu_fitting::GpuLayers::for_device(device);}
+        #[cfg(not(feature="use-opencv"))] let _=device;
+        state
+    }
+    #[cfg(feature="use-opencv")]
+    fn flush_layers(&mut self,cancel:&dyn Fn()->bool) {
+        if self.pending_layers.is_empty() || cancel(){return;}
+        let started=std::time::Instant::now();
+        let pending=std::mem::take(&mut self.pending_layers);
+        let results=if pending.len()>=8 {
+            match self.gpu_layer.as_mut().map(|gpu|gpu.fit_batch(&pending.iter().map(|(_,input)|input).collect::<Vec<_>>())) {
+                Some(Ok(results))=>Some(results),
+                Some(Err(e))=>{log::warn!(target:"sync","Optical layer fit: CPU fallback, {e}");self.gpu_layer=None;None},
+                None=>None,
+            }
+        }else{None};
+        if cancel(){return;}
+        for (slot,(index,input)) in pending.into_iter().enumerate() {
+            let layer=results.as_ref().and_then(|r|r[slot]).map_or_else(||image_space::fit_prepared(&input),|v|image_space::finish(&input,Vector3::from(v)));
+            let sample=&mut self.samples[index];
+            sample.layer_motion=layer.motion;sample.layer_scale_rate=layer.scale_rate;sample.far_beta=layer.far_beta;sample.weight=layer.weight;
+            self.dominant[index]=layer.dominant;self.median_depths[index]=layer.median_inv_depth;
+        }
+        self.layer_time+=started.elapsed();
     }
     /// Each sample's automatic layer: the dominant layer gain of the samples around it in its segment, numerators and
     /// denominators added up weighted by time and confidence, so that what a stretch of video shows decides.
     fn finish(self) -> Vec<TranslationSample> {
+        #[cfg(feature="use-opencv")]
+        if let Some(gpu)=&self.gpu_layer {if gpu.batches>0 {log::info!(target:"sync","Optical layer GPU: pairs={} batches={}",gpu.pairs,gpu.batches);}}
+        log::info!(target: "sync", "Optical translation speed: pairs={} solve={:.1} ms image_layer={:.1} ms",
+            self.measured_pairs, self.solve_time.as_secs_f64() * 1000.0, self.layer_time.as_secs_f64() * 1000.0);
         let TranslationState { mut samples, mut dominant, median_depths, .. } = self;
         // One constant unit per solve span. A changing visible depth distribution must not rescale each frame's motion.
         let mut start = 0;
@@ -728,6 +774,7 @@ impl TranslationState {
 pub struct OpticalMotionAnalysis {
     /// Its `gyro` is a copy of the motion data without any optical correction: that's what the new one is measured against
     params: ComputeParams,
+    processing_device: i32,
     fps_scale: Option<f64>,
     scaled_fps: f64,
     every_nth_frame: usize,
@@ -817,7 +864,8 @@ impl OpticalMotionAnalysis {
             let total_frames = total_frames.div_ceil(every_nth_frame);
             log::info!("Optical analysis sampling: source_fps={scaled_fps:.6} every_nth={every_nth_frame} analysis_fps={:.6}",
                 scaled_fps / every_nth_frame as f64);
-            let translation = (vision.is_none() && ui.translation_enabled).then(TranslationState::new);
+            let processing_device=stab.params.read().current_device;
+            let translation = (vision.is_none() && ui.translation_enabled).then(||TranslationState::with_device(processing_device));
             let translation_replay = (translation.is_some() && ui.stab_enabled).then(VecDeque::new);
             // With motion data the correction is the residual rotation, measured from a subsample of the tracks
             let residual = (vision.is_none() && ui.correction_enabled).then(ResidualStore::new);
@@ -826,7 +874,9 @@ impl OpticalMotionAnalysis {
                 every_nth_frame, hp_min, hp_max,
                 track_size: (0, 0),
                 focal_px: 0.0,
-                tracker: Self::new_tracker(),
+                tracker: KltTracker::with_device(MAX_POINTS, 1.0, TRACK_WIDTH,
+                    super::optical_motion::tracker::KltDevice::for_processing_device(processing_device)),
+                processing_device,
                 last: None,
                 pairs: VecDeque::new(),
                 derived_cache: HashMap::new(),
@@ -857,7 +907,7 @@ impl OpticalMotionAnalysis {
     /// and `finish` says "Cancelled"
     pub fn is_cancelled(&self) -> bool { self.cancel.is_cancelled() }
 
-    /// The tracker `feed_frame` tracks with: a pipeline's tracking thread makes another one like it
+    /// CPU placeholder after the configured tracker moves into the pipeline's tracking thread.
     #[cfg(feature = "use-opencv")]
     fn new_tracker() -> KltTracker { KltTracker::new(MAX_POINTS, 1.0, TRACK_WIDTH) }
 
@@ -897,7 +947,8 @@ impl OpticalMotionAnalysis {
                 }
                 let image = GrayImage::from_raw(width, height, packed).ok_or_else(|| "Invalid frame size".to_string())?;
                 // Prepared like the pipeline does, corner response included: it gives each point its texture
-                let frame = KltTracker::prepare(&image, TRACK_WIDTH).map(|mut frame| { frame.precompute_corners(); frame });
+                let frame = KltTracker::prepare_for_backend(&image, TRACK_WIDTH, self.tracker.uses_gpu())
+                    .map(|mut frame| { frame.precompute_corners(); frame });
                 let (obs, tracked_size) = self.tracker.track_prepared(frame)?;
                 if tracked_size != (width, height) {
                     return Err(format!("Tracking size {:?} differs from input {:?}", tracked_size, (width, height)));
@@ -980,7 +1031,7 @@ impl OpticalMotionAnalysis {
         let translation_replay = self.translation_replay.take().map(|mut pairs| {
             pairs.append(&mut self.pairs);
             TranslationReplay { params: self.params, pairs, track_size: self.track_size,
-                horizontal_readout: self.horizontal_readout, focal_px: self.focal_px }
+                horizontal_readout: self.horizontal_readout, focal_px: self.focal_px, processing_device:self.processing_device }
         });
         Ok(OpticalMeasurements {
             bands: self.measurements,
@@ -1150,11 +1201,11 @@ impl OpticalMotionAnalysis {
     /// Solve each pair once, then reuse its parallax while the high-pass still needs it.
     fn measure_translation(&mut self, derived: &mut [Derived]) {
         let Some(state) = &mut self.translation else { return };
-        Self::measure_translation_pairs(&self.params, state, &self.pairs, self.next_seq, self.focal_px, derived, true);
+        Self::measure_translation_pairs(&self.params, state, &self.pairs, self.next_seq, self.focal_px, derived, true, &||self.cancel.is_cancelled());
     }
 
     fn measure_translation_pairs(params: &ComputeParams, state: &mut TranslationState, pairs: &VecDeque<Pair>,
-        next_seq: usize, focal_px: f64, derived: &mut [Derived], remove_parallax: bool) {
+        next_seq: usize, focal_px: f64, derived: &mut [Derived], remove_parallax: bool, cancel:&dyn Fn()->bool) {
         // Lens queries take the gyro lock themselves. Complete them before reading poses.
         let mut focal_ratios = HashMap::new();
         let mut output_projections = HashMap::new();
@@ -1176,7 +1227,9 @@ impl OpticalMotionAnalysis {
             [q.w as f32, q.i as f32, q.j as f32, q.k as f32]
         };
         let mut points_of = points_by_pair(derived, state.next_seq);
-        for pair in pairs.iter().filter(|pair| pair.seq >= state.next_seq) {
+        let from_seq=state.next_seq;
+        for pair in pairs.iter().filter(|pair| pair.seq >= from_seq) {
+            if cancel(){return;}
             let points = points_of.remove(&pair.seq).unwrap_or_default();
             let start_us = (pair.a.mid_ms * 1000.0).round() as i64;
             if state.samples.last().is_none_or(|s| s.timestamp_us != start_us) {
@@ -1194,10 +1247,18 @@ impl OpticalMotionAnalysis {
                     ..Default::default()
                 });
             }
+            let started = std::time::Instant::now();
             let result = state.solver.step(&points, 1.0 / focal_px, pair.b.mid_ms / 1000.0);
+            state.solve_time += started.elapsed();
+            state.measured_pairs += 1;
             if result.new_segment && state.samples.len() > 1 { state.depth_segment += 1; }
-            let layer = image_space::fit(&points, &result, &output_projections[&pair.b.index],
-                (params.output_width, params.output_height));
+            let started = std::time::Instant::now();
+            #[cfg(feature="use-opencv")] let use_gpu=state.gpu_layer.is_some();
+            #[cfg(not(feature="use-opencv"))] let use_gpu=false;
+            #[cfg(feature="use-opencv")]
+            let pending_layer=if use_gpu {image_space::prepare(&points,&result,&output_projections[&pair.b.index],(params.output_width,params.output_height))}else{None};
+            let layer=if use_gpu {image_space::LayerMotion::default()}else{image_space::fit(&points,&result,&output_projections[&pair.b.index],(params.output_width,params.output_height))};
+            state.layer_time += started.elapsed();
             if result.new_segment { state.position = Vector3::zeros(); }
             if result.confidence > 0.0 {
                 state.position += gyro.org_quat_at_timestamp(pair.b.mid_ms) * result.c_segment;
@@ -1221,7 +1282,13 @@ impl OpticalMotionAnalysis {
             });
             state.dominant.push(layer.dominant);
             state.median_depths.push(layer.median_inv_depth);
+            #[cfg(feature="use-opencv")]
+            if let Some(input)=pending_layer {
+                state.pending_layers.push((state.samples.len()-1,input));
+                if state.pending_layers.len()>=super::optical_motion::gpu_fitting::GpuLayers::BATCH {state.flush_layers(cancel);}
+            }
         }
+        #[cfg(feature="use-opencv")] state.flush_layers(cancel);
         state.next_seq = next_seq;
         if remove_parallax {
             for d in derived {
@@ -1547,7 +1614,7 @@ mod tests {
             let pairs: VecDeque<_> = replay.pairs.drain(..replay.pairs.len().min(CHUNK)).collect();
             let mut derived = OpticalMotionAnalysis::derive_pairs(&replay.params, &pairs, &None, replay.track_size, replay.horizontal_readout);
             OpticalMotionAnalysis::measure_translation_pairs(&replay.params, &mut state, &pairs,
-                pairs.back().unwrap().seq+1, replay.focal_px, &mut derived, true);
+                pairs.back().unwrap().seq+1, replay.focal_px, &mut derived, true, &||false);
             state.pairs.clear();
         }
         let samples = cached.translation_replay.unwrap().measure(&response,&||false).unwrap();
@@ -2226,6 +2293,36 @@ mod tests {
     #[cfg(feature = "use-opencv")]
     fn frames_at_30fps(pixels: Vec<Vec<u8>>, (w, h): (u32, u32)) -> Vec<(i64, u32, u32, usize, Vec<u8>)> {
         pixels.into_iter().enumerate().map(|(k, p)| ((k as f64 * 1e6 / 30.0).round() as i64, w, h, w as usize, p)).collect()
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn gpu_layer_failure_recomputes_the_same_batch_on_cpu() {
+        for cancelled in [false,true] {
+            let mut state=TranslationState::new();
+            state.gpu_layer=Some(super::super::optical_motion::gpu_fitting::GpuLayers::failure_fixture());
+            let expected=image_space::fit_prepared(&image_space::fixture_input());
+            for i in 0..8 {state.samples.push(TranslationSample::default());state.dominant.push([0.0;2]);state.median_depths.push(0.0);state.pending_layers.push((i,image_space::fixture_input()));}
+            state.flush_layers(&||cancelled);
+            if cancelled {
+                assert_eq!(state.pending_layers.len(),8);assert!(state.samples.iter().all(|s|s.weight==0.0));
+            }else{
+                assert!(state.gpu_layer.is_none());assert!(state.pending_layers.is_empty());
+                for (i,sample) in state.samples.iter().enumerate(){assert_eq!(sample.layer_motion,expected.motion);assert_eq!(sample.layer_scale_rate,expected.scale_rate);assert_eq!(sample.weight,expected.weight);assert_eq!(state.dominant[i],expected.dominant);}
+            }
+        }
+    }
+
+    #[cfg(feature="use-opencv")]
+    #[test]
+    fn gpu_layer_cancel_discards_a_completed_batch() {
+        let Some(gpu)=super::super::optical_motion::gpu_fitting::GpuLayers::for_test()else{return;};
+        let mut state=TranslationState::new();state.gpu_layer=Some(gpu);
+        for i in 0..8 {state.samples.push(TranslationSample::default());state.dominant.push([0.0;2]);state.median_depths.push(0.0);state.pending_layers.push((i,image_space::fixture_input()));}
+        let checks=std::cell::Cell::new(0);
+        state.flush_layers(&||{checks.set(checks.get()+1);checks.get()>1});
+        assert_eq!(state.gpu_layer.as_ref().unwrap().pairs,8);
+        assert!(state.samples.iter().all(|s|s.weight==0.0 && s.layer_motion==[0.0;2]));
     }
 
     #[cfg(feature = "use-opencv")]

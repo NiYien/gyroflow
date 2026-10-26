@@ -336,16 +336,28 @@ pub fn strength_grid() -> Vec<(f64, f64)> {
 /// smallest mean log ratio to no correction wins, ties to the smaller σ; nothing better than zero selects zero
 pub fn select_strength(problem: &ResidualProblem, held: [&HeldOutMotion; 2], orientation: &[Matrix3<f64>], focal_960: f64,
     cancelled: &dyn Fn() -> bool) -> Option<Selection> {
+    let requested = std::env::var("GYROFLOW_OPTICAL_RESIDUAL_WORKERS").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(8).clamp(1, 8);
+    // Each concurrent candidate owns one band matrix. Bound extra storage to 128 MiB.
+    let bytes = (6 * problem.nodes).saturating_mul(problem.u + 1).saturating_mul(8);
+    let workers = requested.min((128 * 1024 * 1024 / bytes.max(1)).max(1)).min(rayon::current_num_threads());
+    select_strength_batched(problem, held, orientation, focal_960, cancelled, workers)
+}
+
+fn select_strength_batched(problem: &ResidualProblem, held: [&HeldOutMotion; 2], orientation: &[Matrix3<f64>], focal_960: f64,
+    cancelled: &dyn Fn() -> bool, workers: usize) -> Option<Selection> {
+    use rayon::prelude::*;
+    let started = std::time::Instant::now();
+    if cancelled() { return None; }
     let w = problem.initial_weights();
     let assembled = [problem.assemble(&w, |p| p.half == 0), problem.assemble(&w, |p| p.half == 1)];
+    let assembled_time = started.elapsed();
     let zero = vec![Vector3::zeros(); problem.nodes];
     let reference = [held_out_left(&zero, orientation, problem.t0_ms, held[0], focal_960)?,
                      held_out_left(&zero, orientation, problem.t0_ms, held[1], focal_960)?];
     // A half none of whose pairs could be fitted shows no motion to take a ratio to
     if reference.iter().flatten().flatten().any(|v| !(*v > 0.0)) { return None; }
     let mut scores = Vec::new();
-    for (sig_deg, tau) in strength_grid() {
-        if cancelled() { return None; }
+    let score = |&(sig_deg, tau): &(f64, f64)| -> Option<(f64, f64, f64)> {
         let mut total = 0.0;
         // (estimated from, scored on)
         for (est, on) in [(1usize, 0usize), (0, 1)] {
@@ -355,12 +367,22 @@ pub fn select_strength(problem: &ResidualProblem, held: [&HeldOutMotion; 2], ori
             for b in 0..3 { for c in 0..3 { s += (left[b][c] / reference[on][b][c]).ln(); } }
             total += s / 9.0;
         }
-        scores.push((sig_deg, tau, total / 2.0));
+        Some((sig_deg, tau, total / 2.0))
+    };
+    for batch in strength_grid().chunks(workers.max(1)) {
+        if cancelled() { return None; }
+        // Collect in grid order so completion order cannot change tie breaking.
+        let values: Option<Vec<_>> = if workers == 1 { batch.iter().map(score).collect() }
+                                    else { batch.par_iter().map(score).collect() };
+        scores.extend(values?);
+        if cancelled() { return None; }
     }
     let best = scores.iter().copied().fold(None::<(f64, f64, f64)>, |best, s| match best {
         Some(b) if (b.2, b.0, b.1) <= (s.2, s.0, s.1) => Some(b),
         _ => Some(s),
     })?;
+    log::info!(target:"sync", "Optical residual selection: assemble={:.1} ms candidates={:.1} ms workers={workers} nodes={} width={}",
+        assembled_time.as_secs_f64()*1000.0, (started.elapsed()-assembled_time).as_secs_f64()*1000.0, problem.nodes, problem.u);
     Some(Selection { sigma_deg: best.0, tau_s: best.1, scores })
 }
 
@@ -599,6 +621,9 @@ mod tests {
         for (out, table, sel) in [(&f.out, &f.table, (f.selected[0], f.selected[1])), (&f.out_noise, &f.table_noise, (f.selected[2], f.selected[3]))] {
             let h = held(&f, out);
             let s = select_strength(&problem, [&h[0], &h[1]], &f.orientation, f.focal, &|| false).unwrap();
+            let serial = select_strength_batched(&problem, [&h[0], &h[1]], &f.orientation, f.focal, &|| false, 1).unwrap();
+            assert_eq!(s.scores, serial.scores);
+            assert!(select_strength_batched(&problem, [&h[0], &h[1]], &f.orientation, f.focal, &|| true, 4).is_none());
             for ((_, _, a), b) in s.scores.iter().zip(table) { assert!((a - b).abs() < 1e-7, "{a} {b}"); }
             assert!((s.sigma_deg - sel.0).abs() < 1e-12 && (s.tau_s - sel.1).abs() < 1e-12, "{s:?} vs {sel:?}");
         }

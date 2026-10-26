@@ -2,8 +2,8 @@
 // Copyright © 2026 Gyroflow contributors
 
 //! Runs an `OpticalMotionAnalysis` as a pipeline. The caller's (decoder) thread hands over grayscale frames, two
-//! workers prepare them (the pyramid and what a replenish needs of them, which doesn't depend on the tracks), one
-//! thread tracks them and one measures what was tracked. Every stage handles the frames in decoding order, with the
+//! workers prepare corners and either CPU pyramids or pixels for the GPU, one thread tracks them and one
+//! measures what was tracked. Every stage handles the frames in decoding order, with the
 //! same inputs as `feed_frame`, so the measurements are the same as feeding the frames one by one.
 
 use std::sync::{ Arc, Mutex, atomic::{ AtomicBool, AtomicU64, AtomicUsize, Ordering::Relaxed } };
@@ -153,12 +153,15 @@ pub struct PipelineOutcome {
 }
 
 impl AnalysisPipeline {
-    pub fn start(analysis: OpticalMotionAnalysis) -> Result<(Self, FrameSink), String> {
+    pub fn start(mut analysis: OpticalMotionAnalysis) -> Result<(Self, FrameSink), String> {
         let started = analysis.started;
         let shared = Arc::new(Shared::default());
         let decode_end = Arc::new(Mutex::new(None));
         let cancel = analysis.cancel.clone();
         let track_width = TRACK_WIDTH;
+        // Move the configured tracker, including its pending GPU setup, into the tracking stage exactly once.
+        let tracker = std::mem::replace(&mut analysis.tracker, OpticalMotionAnalysis::new_tracker());
+        let prepare_on_gpu = tracker.gpu_preparation();
 
         let mut senders = Vec::with_capacity(PREPARE_WORKERS);
         let mut prepared_rx = Vec::with_capacity(PREPARE_WORKERS);
@@ -167,8 +170,9 @@ impl AnalysisPipeline {
             let (tx, rx) = sync_channel::<Job>(PREPARE_QUEUE);
             let (out_tx, out_rx) = sync_channel::<Prepared>(PREPARE_QUEUE);
             let (shared, cancel) = (shared.clone(), cancel.clone());
+            let prepare_on_gpu = prepare_on_gpu.clone();
             let worker = std::thread::Builder::new().name(format!("optical-prepare-{i}"))
-                .spawn(move || prepare_stage(rx, out_tx, track_width, &shared, &cancel))
+                .spawn(move || prepare_stage(rx, out_tx, track_width, prepare_on_gpu, &shared, &cancel))
                 .map_err(|e| format!("Cannot start the optical analysis: {e}"))?;
             senders.push(tx);
             prepared_rx.push(out_rx);
@@ -177,7 +181,6 @@ impl AnalysisPipeline {
         let (tracked_tx, tracked_rx) = sync_channel::<Tracked>(MEASURE_QUEUE);
         let tracker = {
             let (shared, cancel) = (shared.clone(), cancel.clone());
-            let tracker = OpticalMotionAnalysis::new_tracker();
             std::thread::Builder::new().name("optical-track".into())
                 .spawn(move || track_stage(prepared_rx, tracked_tx, tracker, &shared, &cancel))
                 .map_err(|e| format!("Cannot start the optical analysis: {e}"))?
@@ -265,7 +268,7 @@ fn log_speed(outcome: &str, frames: usize, started: Instant, decode_end: Option<
 }
 
 /// Prepares each frame independently of the tracks: the pyramid, and what a replenish needs of the frame
-fn prepare_stage(rx: Receiver<Job>, tx: SyncSender<Prepared>, track_width: u32, shared: &Shared, cancel: &CancelCheck) {
+fn prepare_stage(rx: Receiver<Job>, tx: SyncSender<Prepared>, track_width: u32, gpu: Arc<AtomicBool>, shared: &Shared, cancel: &CancelCheck) {
     loop {
         // Waits in short steps: a stop must end it even while the sink still exists
         let job = match rx.recv_timeout(Duration::from_millis(50)) {
@@ -275,7 +278,7 @@ fn prepare_stage(rx: Receiver<Job>, tx: SyncSender<Prepared>, track_width: u32, 
         };
         if shared.stop.load(Relaxed) || cancel.is_cancelled() { break; }
         let started = Instant::now();
-        let frame = job.image.as_ref().map(|image| KltTracker::prepare(image, track_width).map(|mut frame| {
+        let frame = job.image.as_ref().map(|image| KltTracker::prepare_for_backend(image, track_width, gpu.load(Relaxed)).map(|mut frame| {
             frame.precompute_corners();
             frame
         }));

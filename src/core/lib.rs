@@ -3087,7 +3087,8 @@ impl StabilizationManager {
                 gyro.strip_rotation_corrections();
                 gyro.quaternions
             };
-            match synchronization::optical_analysis::solve_stab_with_cancel(&m, &quats, &gyro_source::StabReconConfig::resolved(), cancelled) {
+            let processing_device=self.params.read().current_device;
+            match synchronization::optical_analysis::solve_stab_on_device(&m, &quats, &gyro_source::StabReconConfig::resolved(), processing_device, cancelled) {
                 Ok(s) => Some(s),
                 Err(error) => { ::log::warn!("Failed to reconstruct in-camera stabilization: {}", error); stab_error = Some(error); None }
             }
