@@ -219,7 +219,7 @@ TestCase {
         translation.checked = false;
         reconstruction.checked = true;
         wait(0);
-        compare(lastPush().translation, false);
+        compare(lastPush().translation, true);
         compare(lastPush().reconstruction, true);
         translation.checked = true;
         reconstruction.checked = false;
@@ -354,14 +354,22 @@ TestCase {
         compare(pushed.translation, true);
     }
 
-    function test_translation_and_reconstruction_can_be_selected_in_either_order() {
+    function test_reconstruction_requires_translation_until_it_is_unticked() {
         motion.restoreOpticalControls(false);
+        motion.changeOpticalMode("translation", false);
+        const translation = controlMatching(motion.experimentalControls, x => x.cb !== undefined && x.text === "Translation stabilization");
+        const automatic = controlMatching(motion.experimentalControls, x => x.text === "Automatic parameters");
+        verify(translation && automatic);
         motion.changeOpticalMode("stab", true);
         wait(0);
+        verify(translation.checked);
+        verify(!translation.cb.interactive);
+        verify(automatic.interactive);
         compare(lastPush().translation, true);
         compare(lastPush().reconstruction, true);
         motion.changeOpticalMode("translation", false);
-        motion.changeOpticalMode("translation", true);
+        verify(translation.checked);
+        verify(controllerStub.translationRequested);
         wait(0);
         compare(lastPush().translation, true);
         compare(lastPush().reconstruction, true);
@@ -369,6 +377,11 @@ TestCase {
         wait(0);
         compare(lastPush().translation, true);
         compare(lastPush().reconstruction, false);
+        verify(translation.cb.interactive);
+        motion.changeOpticalMode("translation", false);
+        wait(0);
+        compare(lastPush().translation, false);
+        verify(!controllerStub.translationRequested);
     }
 
     function test_correction_and_reconstruction_can_be_selected_together_data() {

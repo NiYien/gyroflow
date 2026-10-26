@@ -134,6 +134,10 @@ MenuItem {
             opticalcb.info = JSON.parse(controller.optical_correction_info());
             translationcb.info = JSON.parse(controller.translation_stabilization_info());
             stabcb.info = JSON.parse(controller.stab_reconstruction_info());
+            if (stabcb.info.requested && !translationcb.info.requested) {
+                controller.set_translation_stabilization_enabled(true);
+                translationcb.info = JSON.parse(controller.translation_stabilization_info());
+            }
             translationcb.checked = !!translationcb.info.requested;
             stabcb.checked = !!stabcb.info.requested;
             // Without a result, keep the visible optical choice until Analyze explicitly submits it.
@@ -185,6 +189,10 @@ MenuItem {
     }
     function changeOpticalMode(mode: string, enabled: bool): void {
         if (!root.initialized || root.updatingOpticalControls) return;
+        if (mode === "translation" && !enabled && stabcb.checked) {
+            root.refreshOpticalInfo(false, false);
+            return;
+        }
         if (mode === "translation") root.saveTranslationPreference("enabled", enabled);
         root.updatingOpticalControls = true;
         try {
@@ -575,6 +583,7 @@ MenuItem {
     CheckBoxWithContent {
         id: translationcb;
         text: qsTr("Translation stabilization");
+        cb.unavailable: stabcb.checked;
         cb.tooltip: qsTr("Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis samples frames at an integer interval near 25 fps within the selected trim range. Can't be used together with in-camera stabilization reconstruction. The reported shift is sampled at frame centers; output cropping changes its apparent size.");
         cb.rightPadding: translationAuto.visible ? translationAuto.width + 10 * dpiScale : 0;
         cb.implicitHeight: Math.max(root.mobileStyle ? 44 * dpiScale : 30 * dpiScale, cb.contentItem.implicitHeight + 12 * dpiScale);
