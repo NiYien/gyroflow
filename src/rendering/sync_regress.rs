@@ -30,6 +30,10 @@
 //!
 //! Environment: `GYROFLOW_SYNC_REGRESS_ONLY=<name,name>` runs only those clips; `GYROFLOW_SYNC_REGRESS_GATE=1`
 //! makes the exit code reflect the gates; `GYROFLOW_SYNC_REGRESS_DECODE=sw|gpu` as above.
+//!
+//! A clip with `deep_match: { gyro?, range_ms? }` runs method 0 with the deep-match
+//! collector and writes `deep-results.json`. These probe results require a baseline
+//! comparison; the optical acceptance gates are unavailable in this mode.
 
 use std::cell::RefCell;
 use std::fmt::Write as _;
@@ -225,6 +229,22 @@ struct Clip {
     /// `SyncParams` fields to override, in the units `AutosyncProcess` takes (ms)
     #[serde(default)]
     params: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Runs the real essential deep-match probe instead of methods 2 and 3.
+    #[serde(default)]
+    deep_match: Option<DeepMatchConfig>,
+}
+
+#[derive(serde::Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
+struct DeepMatchConfig {
+    #[serde(default)]
+    gyro: Option<String>,
+    #[serde(default)]
+    range_ms: Option<(f64, f64)>,
+}
+
+impl Clip {
+    fn methods(&self) -> &'static [usize] { if self.deep_match.is_some() { &[0] } else { &METHODS } }
 }
 
 fn default_tolerance() -> f64 {
@@ -256,7 +276,7 @@ impl Corpus {
                     return Err(format!("{}: file not found: {file}", clip.name));
                 }
             }
-            for method in METHODS {
+            for &method in clip.methods() {
                 sync_params_for(clip, method).map_err(|e| format!("{}: {e}", clip.name))?;
             }
         }
@@ -343,6 +363,7 @@ struct MethodRun {
     errors: Vec<String>,
     /// `[optical]` / `[posterior]` log lines of the run, from the tag on
     log: Vec<String>,
+    deep_result: Option<serde_json::Value>,
 }
 
 struct ClipResult {
@@ -372,6 +393,10 @@ pub fn run(corpus_path: &str) -> i32 {
         .ok()
         .map(|s| s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect());
     let gate_mode = std::env::var("GYROFLOW_SYNC_REGRESS_GATE").is_ok_and(|v| v.trim() == "1");
+    if gate_mode && corpus.clips.iter().any(|c| c.deep_match.is_some()) {
+        println!("[regress] optical acceptance gates do not apply to deep probes; compare deep-results.json against the baseline");
+        return 2;
+    }
     if let Some(only) = &only {
         for name in only {
             if !corpus.clips.iter().any(|c| &c.name == name) {
@@ -416,6 +441,16 @@ pub fn run(corpus_path: &str) -> i32 {
     let report = evaluate_gates(&rows, &known);
 
     let csv = rows_csv(&rows);
+    let deep: Vec<_> = results.iter().flat_map(|r| r.runs.iter().filter_map(|run| run.deep_result.as_ref().map(|decision| {
+        serde_json::json!({"clip":r.clip.name,"total_ms":run.total_ms,"decode_ms":run.timing.wall_ms,
+            "feed_ms":run.timing.feed_ms,"frames":run.timing.frames,"result":run.result,"decision":decision,"errors":run.errors})
+    }))).collect();
+    if !deep.is_empty() {
+        if let Err(e) = std::fs::write(out_dir.join("deep-results.json"), serde_json::to_vec_pretty(&deep).unwrap()) {
+            println!("[regress] cannot write deep-results.json: {e}");
+            return 2;
+        }
+    }
     let summary = summary_md(corpus_path, gate_mode, decode, &results, &known, &report, started.elapsed().as_secs_f64());
     for (name, text) in [("rows.csv", &csv), ("summary.md", &summary)] {
         if let Err(e) = std::fs::write(out_dir.join(name), text) {
@@ -424,9 +459,14 @@ pub fn run(corpus_path: &str) -> i32 {
     }
     println!("{summary}");
     println!("[regress] wrote {} and {}", out_dir.join("rows.csv").display(), out_dir.join("summary.md").display());
-    println!("[regress] gates: {}", if report.passed() { "PASS" } else { "FAIL" });
+    if deep.is_empty() {
+        println!("[regress] gates: {}", if report.passed() { "PASS" } else { "FAIL" });
+    } else {
+        println!("[regress] deep probe results recorded; acceptance and timing require baseline comparison");
+    }
     log::logger().flush();
 
+    if !deep.is_empty() && results.iter().any(|r| r.error.is_some() || r.runs.iter().any(|run| !run.errors.is_empty())) { return 2; }
     if gate_mode && !report.passed() { 1 } else { 0 }
 }
 
@@ -444,7 +484,7 @@ fn run_clip(clip: &Clip, decode: DecodeMode, seq: &mut usize) -> ClipResult {
         Err(e) => {
             println!("[regress] {}: FAILED: {e}", clip.name);
             result.error = Some(e);
-            for method in METHODS {
+            for &method in clip.methods() {
                 for window in 0..clip.sync_points_ms.len() {
                     result.rows.push(empty_row(clip, window, method, f64::NAN));
                 }
@@ -453,7 +493,7 @@ fn run_clip(clip: &Clip, decode: DecodeMode, seq: &mut usize) -> ClipResult {
         }
     };
     let info = result.info.clone().unwrap_or_default();
-    for method in METHODS {
+    for &method in clip.methods() {
         *seq += 1;
         let run = run_method(&stab, clip, &info, method, decode, *seq);
         println!(
@@ -481,6 +521,17 @@ fn import_clip(clip: &Clip) -> Result<(Arc<StabilizationManager>, ClipInfo), Str
     let cancel = Arc::new(AtomicBool::new(false));
     let url = gyroflow_core::filesystem::path_to_url(&clip.project);
     stab.import_gyroflow_file(&url, true, |_| (), cancel, false).map_err(|e| format!("import: {e:?}"))?;
+    if let Some(deep) = &clip.deep_match {
+        if let Some(path) = &deep.gyro {
+            let mut file = std::fs::File::open(path).map_err(|e| format!("gyro open: {e}"))?;
+            let size = file.metadata().map_err(|e| format!("gyro metadata: {e}"))?.len() as usize;
+            let options = gyroflow_core::gyro_source::FileLoadOptions {
+                time_range_ms: deep.range_ms, bypass_builtin_gyro_arbitration: true, ..Default::default()
+            };
+            stab.load_gyro_data(&mut file, size, &gyroflow_core::filesystem::path_to_url(path), false,
+                &options, |_| (), Arc::new(AtomicBool::new(false))).map_err(|e| format!("gyro load: {e:?}"))?;
+        }
+    }
     if stab.gyro.read().quaternions.len() < 2 {
         stab.recompute_gyro();
     }
@@ -514,6 +565,7 @@ fn run_method(stab: &Arc<StabilizationManager>, clip: &Clip, info: &ClipInfo, me
         decoders: Vec::new(),
         errors: Vec::new(),
         log: Vec::new(),
+        deep_result: None,
     };
     stab.pose_estimator.clear();
     let mut sync_params = match sync_params_for(clip, method) {
@@ -524,6 +576,18 @@ fn run_method(stab: &Arc<StabilizationManager>, clip: &Clip, info: &ClipInfo, me
         }
     };
     sync_params.normalize_for_mode(MODE);
+    struct DeepCollector;
+    impl Drop for DeepCollector {
+        fn drop(&mut self) { gyroflow_core::synchronization::deep_match::take(); }
+    }
+    let _deep_collector = clip.deep_match.as_ref().map(|_| {
+        use gyroflow_core::synchronization::deep_match as dm;
+        let (_, k) = dm::plan_windows(info.duration_ms, dm::candidates_count(), dm::scan_short(),
+            dm::scan_long(), dm::long_min_ms(), dm::per_window_ms());
+        dm::arm(k);
+        dm::arm_forward();
+        DeepCollector
+    });
     let timestamps_fract: Vec<f64> = clip.sync_points_ms.iter().map(|ms| ms / info.duration_ms).collect();
 
     let tag = format!("[regress] run {seq}: clip={} method={method}", clip.name);
@@ -619,6 +683,36 @@ fn run_method(stab: &Arc<StabilizationManager>, clip: &Clip, info: &ClipInfo, me
             }
             sync.finished_feeding_frames();
         }
+    }
+    if clip.deep_match.is_some() {
+        use gyroflow_core::synchronization::deep_match as dm;
+        let curves = dm::take_curves();
+        let forward = dm::take_forward();
+        let short = dm::take_short_overlap();
+        let (scanned, gated) = dm::window_counts();
+        let stats = dm::take();
+        let offsets: Vec<_> = result.lock().as_ref().map(|r| r.0.iter().map(|p| p.1).collect()).unwrap_or_default();
+        let mut verdict = short.clone().unwrap_or_else(|| match forward {
+            Some(dm::ForwardOutcome::Confirmed { offset_ms, .. }) => dm::DeepMatchVerdict::Accepted { offset_ms },
+            _ if !curves.is_empty() && dm::posterior_enabled() => dm::decide_posterior(&curves, scanned, gated,
+                info.duration_ms, dm::post_conf_min(), dm::post_ci95_base_ms(), dm::drift_rate_ms_per_min(), dm::drift_floor_ms()),
+            _ => dm::evaluate(&offsets, &stats, scanned, gated, dm::spread_max_ms(), dm::cost_ratio_max(), dm::tight_spread_ms(), dm::cost_ratio_tight()),
+        });
+        if short.is_none() && matches!(verdict, dm::DeepMatchVerdict::WeakValley { .. }) && dm::drift_fit_enabled() {
+            if let dm::DriftFitOutcome::Rescued { offset_ms, .. } = dm::drift_fit_rescue(&curves, info.duration_ms,
+                dm::post_conf_min(), dm::post_ci95_base_ms(), dm::drift_floor_ms(), &dm::drift_fit_params(), "regress") {
+                verdict = dm::DeepMatchVerdict::Accepted { offset_ms };
+            }
+        }
+        let windows: Vec<_> = curves.iter().map(|c| {
+            let mut hash = crc32fast::Hasher::new();
+            for &(x, y) in &c.curve { hash.update(&x.to_le_bytes()); hash.update(&y.to_le_bytes()); }
+            serde_json::json!({"index":c.range_idx,"center_ms":c.t_center_ms,"offset_ms":c.argmin_ms,
+                "cost":c.cost_min,"n_eff":c.n_eff,"curve_points":c.curve.len(),"curve_crc32":hash.finalize()})
+        }).collect();
+        log::info!(target:"sync", "[regress] deep probe verdict={verdict:?}");
+        run.deep_result = Some(serde_json::json!({"verdict":format!("{verdict:?}"),"windows":windows,"scanned":scanned,"gated":gated,
+            "scope":"single probe through short-overlap, forward, posterior and pre-verification drift; no additional-window or pool orchestration"}));
     }
     let delivered = result.lock().take();
     let end = delivered.as_ref().map_or_else(Instant::now, |(_, t)| *t);
@@ -921,6 +1015,19 @@ fn summary_md(corpus_path: &str, gate_mode: bool, decode: DecodeMode, results: &
         DecodeMode::Software => "decode `sw` (software only)",
         DecodeMode::GpuFirst => "decode `gpu` (GPU first, software fallback as in the controller)",
     };
+    if results.iter().any(|r| r.clip.deep_match.is_some()) {
+        let _ = writeln!(s, "- Deep probes use method 0 through AutosyncProcess, {decode_text}.");
+        let _ = writeln!(s, "- This records a single probe, including short-overlap, forward, posterior and pre-verification drift. It does not run additional-window or pool orchestration.");
+        let _ = writeln!(s, "- Compare deep-results.json with the original backend. A completed run is not an accuracy gate.\n");
+        let _ = writeln!(s, "| clip | method | probe ms | frames | verdict | errors |\n|---|---|---:|---:|---|---|");
+        for result in results {
+            for run in &result.runs {
+                let verdict = run.deep_result.as_ref().and_then(|v| v.get("verdict")).and_then(|v| v.as_str()).unwrap_or("see rows.csv");
+                let _ = writeln!(s, "| {} | {} | {:.1} | {} | {} | {:?} |", result.clip.name, run.method, run.total_ms, run.timing.frames, verdict, run.errors);
+            }
+        }
+        return s;
+    }
     let _ = writeln!(s, "- Methods: m2 = existing chain (`offset_method` 2), m3 = optical motion (`offset_method` 3); both through `AutosyncProcess`, {decode_text}, {PROC_HEIGHT} px processing height, GRAY8, fresh `PoseEstimator` per method; m2 runs first on every clip");
     let _ = writeln!(s, "- Correct = conf >= {CONF_GATE} and |err| <= tolerance; err = offset - truth (ms); total = from before `from_manager` to the end of the result callback, per window");
     let _ = writeln!(s, "- G / near / second / coarse / fine: parsed in-process from the `[optical] seg` lines (logger ring buffer)\n");

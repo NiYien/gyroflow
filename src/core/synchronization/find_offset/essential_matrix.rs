@@ -16,6 +16,10 @@ use crate::gyro_source::TimeIMU;
 
 #[path = "short_overlap.rs"]
 mod short_overlap;
+#[path = "essential_scan.rs"]
+mod essential_scan;
+#[path = "gyro_preparation.rs"]
+mod gyro_preparation;
 
 pub(crate) fn judge_progress_scale(armed: bool) -> f64 {
     if armed { 0.9 } else { 1.0 }
@@ -47,7 +51,12 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
         .filter(|_| crate::synchronization::deep_match::is_armed());
     let mut probe_cache: Vec<(Vec<TimeIMU>, BTreeMap<usize, TimeIMU>)> = Vec::new();
 
-    let raw_imu_len = gyro.raw_imu(&gyro.file_metadata.read()).len();
+    // The snapshot remains immutable through the window loop and is released before any forward solver.
+    let prepared_metadata = (deep_match::is_armed() && deep_match::forward_armed() && gyro_preparation::enabled())
+        .then(|| gyro.file_metadata.read());
+    let mut prepared_gyro = prepared_metadata.as_ref().map(|metadata| gyro_preparation::PreparedGyro::new(gyro.raw_imu(metadata)));
+    let raw_imu_len = if let Some(metadata) = &prepared_metadata { gyro.raw_imu(metadata).len() }
+        else { gyro.raw_imu(&gyro.file_metadata.read()).len() };
 
     if !estimated_gyro.is_empty() && gyro.duration_ms > 0.0 && raw_imu_len > 0 {
         // Deep-match top-K motion selection (design §3.2): when armed, rank
@@ -110,7 +119,7 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
                 .collect();
             if !of_item.is_empty() {
                 let last_of_timestamp = of_item.last().map(|x| x.timestamp_ms).unwrap_or_default();
-                let mut gyro_item: Vec<TimeIMU> = gyro
+                let mut gyro_item: Vec<TimeIMU> = if prepared_gyro.is_some() { Vec::new() } else { gyro
                     .raw_imu(&gyro.file_metadata.read())
                     .iter()
                     .filter_map(|x| {
@@ -123,7 +132,7 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
                             None
                         }
                     })
-                    .collect();
+                    .collect() };
 
                 let max_angle = get_max_angle(&of_item);
                 // The gate reads OF-estimated rates, which scale by
@@ -148,7 +157,7 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
                     continue;
                 }
 
-                let gyro_bintree: BTreeMap<usize, TimeIMU> = {
+                let gyro_bintree: Arc<BTreeMap<usize, TimeIMU>> = {
                     let _g = crate::synchronization::sync_perf::StageGuard::new(
                         crate::synchronization::sync_perf::Stage::FindOffPrep,
                     );
@@ -158,18 +167,32 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
                         params.scaled_fps,
                         &mut of_item,
                     );
-                    let _ =
-                        Lowpass::filter_gyro_forward_backward(20.0, sample_rate, &mut gyro_item);
-                    gyro_item
+                    if let Some(cache) = &mut prepared_gyro {
+                        let started = std::time::Instant::now();
+                        let (table, hit) = cache.window(of_item[0].timestamp_ms, last_of_timestamp,
+                            sync_params.initial_offset, sync_params.search_size, sample_rate);
+                        log::info!(target: "sync", "[deep-prep] window={i} reused={hit} samples={} elapsed_ms={:.1}",
+                            table.len(), started.elapsed().as_secs_f64() * 1000.0);
+                        table
+                    } else {
+                        let _ = Lowpass::filter_gyro_forward_backward(20.0, sample_rate, &mut gyro_item);
+                        Arc::new(gyro_item
                         .into_iter()
                         .map(|x| ((x.timestamp_ms * 1000.0) as usize, x))
-                        .collect()
+                        .collect())
+                    }
                 };
 
                 // Keep the filtered pair for the rs-sync probe so the cheap
                 // prefilter scores the exact same data the scan saw.
                 if probe_spec.is_some() {
-                    probe_cache.push((of_item.clone(), gyro_bintree.clone()));
+                    probe_cache.push((of_item.clone(), gyro_bintree.as_ref().clone()));
+                }
+
+                if deep_match::is_armed() {
+                    essential_scan::capture(&of_item, &gyro_bintree,
+                        essential_scan::Grid { initial: sync_params.initial_offset, radius: sync_params.search_size },
+                        i, (*from_ts + *to_ts) as f64 / 2000.0, params.scaled_duration_ms);
                 }
 
                 let find_min =
@@ -177,32 +200,48 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
 
                 // First search every 1 ms
                 let steps = sync_params.search_size as usize * 2;
+                let mut scan_curve = None;
                 let coarse_lowest = {
                     let _g = crate::synchronization::sync_perf::StageGuard::new(
                         crate::synchronization::sync_perf::Stage::FindOffCoarse,
                     );
-                    // Whole-file scans (deep match) take seconds per window
-                    // with no other progress source, which reads as a stuck
-                    // bar in the UI — report sub-window progress from inside
-                    // the scan, throttled to 1% buckets (~100 fires/window).
-                    let scan_done = std::sync::atomic::AtomicUsize::new(0);
-                    let scan_bucket = std::sync::atomic::AtomicUsize::new(0);
-                    (0..steps)
-                        .into_par_iter()
-                        .map(|j| {
-                            let offs =
-                                sync_params.initial_offset - sync_params.search_size + (j as f64);
-                            let cost = calculate_cost(offs, &of_item, &gyro_bintree);
-                            let done = scan_done.fetch_add(1, Relaxed) + 1;
-                            let bucket = done * 100 / steps.max(1);
-                            if scan_bucket.fetch_max(bucket, Relaxed) < bucket {
-                                progress_cb(
-                                    (i as f64 + done as f64 / steps.max(1) as f64) / ranges_len,
-                                );
-                            }
-                            (offs, cost)
-                        })
-                        .reduce_with(find_min)
+                    let deep_scan = deep_match::is_armed() && deep_match::forward_armed();
+                    let accelerated = if deep_scan {
+                        essential_scan::scan(
+                            &of_item, &gyro_bintree,
+                            essential_scan::Grid { initial: sync_params.initial_offset, radius: sync_params.search_size },
+                            true, params.processing_device, &cancel_flag,
+                            &|p| progress_cb((i as f64 + p) / ranges_len),
+                        )
+                    } else { None };
+                    if deep_scan && cancel_flag.load(Relaxed) { return Vec::new(); }
+                    if let Some(result) = accelerated {
+                        scan_curve = Some(result.curve);
+                        result.minimum
+                    } else {
+                        // Whole-file scans (deep match) take seconds per window
+                        // with no other progress source, which reads as a stuck
+                        // bar in the UI — report sub-window progress from inside
+                        // the scan, throttled to 1% buckets (~100 fires/window).
+                        let scan_done = std::sync::atomic::AtomicUsize::new(0);
+                        let scan_bucket = std::sync::atomic::AtomicUsize::new(0);
+                        (0..steps)
+                            .into_par_iter()
+                            .map(|j| {
+                                let offs =
+                                    sync_params.initial_offset - sync_params.search_size + (j as f64);
+                                let cost = calculate_cost(offs, &of_item, &gyro_bintree);
+                                let done = scan_done.fetch_add(1, Relaxed) + 1;
+                                let bucket = done * 100 / steps.max(1);
+                                if scan_bucket.fetch_max(bucket, Relaxed) < bucket {
+                                    progress_cb(
+                                        (i as f64 + done as f64 / steps.max(1) as f64) / ranges_len,
+                                    );
+                                }
+                                (offs, cost)
+                            })
+                            .reduce_with(find_min)
+                    }
                 };
                 let lowest = coarse_lowest.and_then(|lowest| {
                     let _g = crate::synchronization::sync_perf::StageGuard::new(
@@ -245,7 +284,7 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
                                 // (design §3.3). Fed to the joint posterior.
                                 let step_ms = 25.0;
                                 let n_steps = ((sync_params.search_size * 2.0) / step_ms) as usize;
-                                let mut curve: Vec<(f64, f64)> = (0..n_steps)
+                                let mut curve: Vec<(f64, f64)> = scan_curve.take().unwrap_or_else(|| (0..n_steps)
                                     .into_par_iter()
                                     .map(|k| {
                                         let offs = sync_params.initial_offset
@@ -254,7 +293,7 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
                                         (offs, calculate_cost(offs, &of_item, &gyro_bintree))
                                     })
                                     .filter(|(_, c)| c.is_finite() && *c != f64::MAX)
-                                    .collect();
+                                    .collect());
                                 let dense_r = dm::post_dense_ms();
                                 let dense: Vec<(f64, f64)> = {
                                     // ~12 points — plain iterator; rayon dispatch
@@ -291,7 +330,7 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
                                 let step_ms = 25.0;
                                 let n_steps =
                                     ((sync_params.search_size * 2.0) / step_ms) as usize;
-                                let mut costs: Vec<f64> = (0..n_steps)
+                                let mut costs: Vec<f64> = scan_curve.take().map(|curve| curve.into_iter().map(|p| p.1).collect()).unwrap_or_else(|| (0..n_steps)
                                     .into_par_iter()
                                     .map(|k| {
                                         let offs = sync_params.initial_offset
@@ -300,7 +339,7 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
                                         calculate_cost(offs, &of_item, &gyro_bintree)
                                     })
                                     .filter(|c| c.is_finite() && *c != f64::MAX)
-                                    .collect();
+                                    .collect());
                                 costs.sort_by(|a, b| {
                                     a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
                                 });
@@ -385,6 +424,8 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
     // The main scan is done with the gyro store; release the read guard before
     // any rs-sync stage below re-acquires it (parking_lot read locks are not
     // recursion-safe when a writer is queued in between).
+    drop(prepared_gyro);
+    drop(prepared_metadata);
     drop(gyro);
 
     // This branch owns only short, genuinely overlapping regular deep scans.

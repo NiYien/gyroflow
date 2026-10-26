@@ -28,6 +28,8 @@ pub(crate) fn anamorphic_lens_correction_decay(stretch_h: f64, stretch_v: f64) -
 #[derive(Default, Clone)]
 pub struct ComputeParams {
     pub gyro: Arc<RwLock<GyroSource>>,
+    /// Processing device selected for this operation; negative means CPU.
+    pub processing_device: i32,
     pub fovs: Vec<f64>,
     pub minimal_fovs: Vec<f64>,
     pub keyframes: KeyframeManager,
@@ -129,6 +131,7 @@ impl ComputeParams {
 
         Self {
             gyro: mgr.gyro.clone(),
+            processing_device: params.current_device,
             lens,
             camera_diagonal_fovs: Vec::new(),
             smoothing_uses_camera_view: false,
