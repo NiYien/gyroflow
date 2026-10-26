@@ -12,6 +12,10 @@ use wgpu::Adapter;
 use wgpu::BufferUsages;
 use wgpu::util::DeviceExt;
 
+#[path = "wgpu_runtime.rs"]
+mod runtime;
+use runtime::BufferUnmapGuard;
+
 #[derive(Debug)]
 pub enum WgpuError {
     RequestDevice(wgpu::RequestDeviceError),
@@ -318,7 +322,7 @@ impl WgpuWrapper {
         }
 
         if let Some(adapter) = lock.get(adapter_id) {
-            let timing_features = adapter.features() & wgpu::Features::TIMESTAMP_QUERY;
+            let timing_features = runtime::timestamp_features(adapter.get_info().backend, adapter.features());
             log::debug!(
                 "WGPU initializing adapter #{adapter_id}: {:?}",
                 adapter.get_info()
@@ -1112,26 +1116,32 @@ impl WgpuWrapper {
 
         match &mut buffers.output.data {
             BufferSource::Cpu { buffer, .. } => {
-                let buffer_slice = self.staging_buffer.as_ref().unwrap().slice(..);
+                let staging_buffer = self.staging_buffer.as_ref().unwrap();
+                let _staging_unmap = BufferUnmapGuard(staging_buffer);
+                let buffer_slice = staging_buffer.slice(..);
                 let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
-                buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
+                buffer_slice.map_async(wgpu::MapMode::Read, move |v| { let _ = sender.send(v); });
 
                 // Map both results before the existing wait; timestamp collection never adds a wait.
                 let timestamp_receiver = timestamps.map(|t| {
+                    let unmap = BufferUnmapGuard(&t.mapped);
                     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
                     t.mapped.slice(..).map_async(wgpu::MapMode::Read, move |result| { let _ = sender.send(result); });
-                    receiver
+                    (unmap, receiver)
                 });
 
-                let _ = self.device.poll(wgpu::PollType::Wait {
+                if let Err(error) = self.device.poll(wgpu::PollType::Wait {
                     submission_index: None,
                     timeout: None,
-                });
+                }) {
+                    log::error!(target: "gpu", "wgpu readback wait failed: {error:?}");
+                    return false;
+                }
 
                 let result = pollster::block_on(receiver.receive());
                 drop(wait_timer);
                 let mut sampled = false;
-                if let (Some(t), Some(receiver)) = (timestamps, timestamp_receiver) {
+                if let (Some(t), Some((_unmap, receiver))) = (timestamps, timestamp_receiver) {
                     if matches!(receiver.try_recv(), Ok(Ok(()))) {
                         let data = t.mapped.slice(..).get_mapped_range();
                         let begin = u64::from_ne_bytes(data[0..8].try_into().unwrap());
@@ -1143,7 +1153,6 @@ impl WgpuWrapper {
                     } else {
                         t.samples.record(plane, None);
                     }
-                    t.mapped.unmap();
                 }
                 // Reuse this plane's last measured pass for unsampled frames, including the final partial interval.
                 if let Some(us) = timestamp_state.and_then(|t| t.samples.estimate(plane)) {
@@ -1178,10 +1187,9 @@ impl WgpuWrapper {
 
                     // We have to make sure all mapped views are dropped before we unmap the buffer.
                     drop(data);
-                    self.staging_buffer.as_ref().unwrap().unmap();
                 } else {
                     // TODO change to Result
-                    log::error!("failed to run compute on wgpu!");
+                    log::error!(target: "gpu", "failed to run compute on wgpu: readback mapping result={result:?}");
                     return false;
                 }
             }

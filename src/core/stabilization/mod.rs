@@ -1335,7 +1335,9 @@ impl Stabilization {
                         return CACHED_WGPU.with(|x| {
                             let mut cached = x.0.borrow_mut();
                             if let Some(wgpu) = cached.get(&hash) {
-                                wgpu.undistort_image(buffers, &itm, drawing_buffer);
+                                if !wgpu.undistort_image(buffers, &itm, drawing_buffer) {
+                                    return Err(GyroflowCoreError::Unknown);
+                                }
                                 ret.backend = "wgpu";
                                 Ok(ret)
                             } else {
@@ -1352,7 +1354,9 @@ impl Stabilization {
                     }
                 } else {
                     if let Some(ref wgpu) = self.wgpu {
-                        wgpu.undistort_image(buffers, &itm, drawing_buffer);
+                        if !wgpu.undistort_image(buffers, &itm, drawing_buffer) {
+                            return Err(GyroflowCoreError::Unknown);
+                        }
                         ret.backend = "wgpu";
                         return Ok(ret);
                     } else {

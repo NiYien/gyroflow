@@ -718,7 +718,7 @@ where
         render_frame_count
     );
 
-    let mut planes = Vec::<Box<dyn FnMut(i64, &mut Video, &mut Video, usize, bool)>>::new();
+    let mut planes = Vec::<Box<dyn FnMut(i64, &mut Video, &mut Video, usize, bool) -> Result<(), FFmpegError>>>::new();
 
     let is_prores_videotoolbox = proc.video_codec.as_deref() == Some("prores_videotoolbox");
 
@@ -855,8 +855,14 @@ where
                             transform.kernel_params.flags |= KernelParamsFlags::FILL_WITH_BACKGROUND.bits();
                         }
                         match plane.process_pixels::<$t>(timestamp_us, None, &mut buffers, Some(&transform)) {
-                            Ok(info) => timing.set_backend(info.backend),
-                            Err(e) => ::log::error!("Failed to process pixels: {e:?}"),
+                            Ok(info) => {
+                                timing.set_backend(info.backend);
+                                Ok(())
+                            },
+                            Err(e) => {
+                                ::log::error!(target: "video.render", "Failed to process pixels: {e:?}");
+                                Err(FFmpegError::InternalError(Error::External))
+                            },
                         }
                     }));
                 })*
@@ -972,9 +978,10 @@ where
 
         let mut undistort_frame = |frame: &mut Video, out_frame: &mut Video| {
             for (i, cb) in planes.iter_mut().enumerate() {
-                (*cb)(timestamp_us, frame, out_frame, i, fill_with_background);
+                (*cb)(timestamp_us, frame, out_frame, i, fill_with_background)?;
             }
             progress2((process_frame as f64 / render_frame_count as f64, process_frame, render_frame_count, false, false));
+            Ok::<(), FFmpegError>(())
         };
 
         match input_frame.format() {
@@ -987,12 +994,14 @@ where
             Pixel::YUVA444P10LE | Pixel::YUVA444P12LE | Pixel::YUVA444P16LE |
             Pixel::AYUV64LE | Pixel::GBRAPF32LE | Pixel::GBRPF32LE |
             Pixel::RGB24 | Pixel::RGBA | Pixel::RGB48BE | Pixel::RGBA64BE => {
-                undistort_frame(input_frame, output_frame)
+                undistort_frame(input_frame, output_frame)?;
             },
             _ => {
+                let mut result = Ok(());
                 converter.convert_pixel_format(input_frame, output_frame, Pixel::YUV444P16LE, ffmpeg_interpolation, |converted_frame, converted_output| {
-                    undistort_frame(converted_frame, converted_output);
+                    result = undistort_frame(converted_frame, converted_output);
                 })?;
+                result?;
             }
         }
 

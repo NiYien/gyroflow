@@ -1360,6 +1360,34 @@ mod decode_fallback_tests {
     }
 
     #[test]
+    fn gpu_processing_failure_stops_export_after_encoded_frames() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = fixture(dir.path());
+        let folder = filesystem::path_to_url(dir.path().to_str().unwrap());
+        for order in [ProcessingOrder::PreConversion, ProcessingOrder::PostConversion] {
+            let mut proc = FfmpegProcessor::from_file(&input, false, 0, None).unwrap();
+            proc.video_codec = Some("ffv1".into());
+            proc.video.gpu_encoding = false;
+            proc.video.processing_order = order;
+            proc.audio_codec = codec::Id::None;
+            let frames = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let observed = frames.clone();
+            proc.on_frame(move |_, input, output, _, _| {
+                if observed.fetch_add(1, Relaxed) == 3 {
+                    return Err(FFmpegError::InternalError(Error::External));
+                }
+                *output.unwrap() = input.clone();
+                Ok(())
+            });
+            let error = proc.render(&folder, "gpu-failed.nut.tmp", (32, 24), None,
+                Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false))).unwrap_err();
+            assert!(matches!(error, FFmpegError::InternalError(Error::External)));
+            assert_eq!(frames.load(Relaxed), 4, "processing must stop at the failed frame");
+            assert_eq!(next_decoder_attempt(-1, 3, &error), None);
+        }
+    }
+
+    #[test]
     fn rendered_sample_aspect_ratio_override_preserves_pixels_and_timestamps() {
         let dir = tempfile::tempdir().unwrap();
         let input = fixture(dir.path());
