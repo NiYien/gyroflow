@@ -49,6 +49,7 @@ TestCase {
         property bool gyro_has_accurate_timestamps: false;
         property int lastMethod: -1;
         property var methodCalls: [];
+        property int telemetryLoads: 0;
         function set_integration_method(index) { lastMethod = index; methodCalls = methodCalls.concat([index]); }
         function set_imu_lpf(v) { }
         function set_imu_median_filter(v) { }
@@ -58,7 +59,7 @@ TestCase {
         function set_imu_bias(x, y, z) { }
         function set_glitch_filter(enabled, strength) { }
         function recompute_gyro() { }
-        function load_telemetry() { }
+        function load_telemetry() { telemetryLoads += 1; }
         function quats_at_timestamp(ts) { return [1, 0, 0, 0]; }
         function mesh_at_frame(frame) { return []; }
     }
@@ -112,6 +113,7 @@ TestCase {
         controllerStub.lastMethod = -1;
         controllerStub.methodCalls = [];
         controllerStub.gyro_has_quaternions = false;
+        controllerStub.telemetryLoads = 0;
         motion = createTemporaryObject(factory, testCase, { width: 380 });
         verify(motion !== null);
     }
@@ -119,6 +121,18 @@ TestCase {
     function test_telemetry_defaults_to_vqf() {
         loadTelemetry(false, true);
         settleMethod(2);
+    }
+
+    function test_restoring_all_metadata_does_not_reload_the_motion_file() {
+        motion.lastSelectedFile = "file:///external-motion.gcsv";
+        motion.setAllMetadata(true);
+        wait(20);
+        compare(motion.allMetadata, true);
+        compare(controllerStub.telemetryLoads, 0);
+        motion.setAllMetadata(false);
+        wait(20);
+        compare(motion.allMetadata, false);
+        compare(controllerStub.telemetryLoads, 0);
     }
 
     function test_preset_without_motion_data_keeps_vqf() {

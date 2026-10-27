@@ -88,7 +88,7 @@ pub(super) fn smoothing_quaternions(
         let down = forward.cross(&right);
         let offset =
             Quat64::from_matrix(&(flip * Matrix3::from_columns(&[right, down, forward]) * flip));
-        let video_time_ms = timestamp_ms + frame_offsets.get(frame).copied().unwrap_or_default();
+        let video_time_ms = timestamp_ms + super::per_frame_entry(&frame_offsets, frame).copied().unwrap_or_default();
         let gyro_time_ms = video_time_ms - gyro.offset_at_video_timestamp(video_time_ms);
         view_offsets.insert((gyro_time_ms * 1000.0).round() as i64, offset);
     }

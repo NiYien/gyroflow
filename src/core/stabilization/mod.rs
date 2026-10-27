@@ -539,7 +539,7 @@ impl Stabilization {
                     kernel_flags.set(KernelParamsFlags::HAS_FPD_DATA,
                 file_metadata.mesh_correction.has_focal_plane(frame),
             );
-            if file_metadata.camera_stab_data.len() > frame
+            if file_metadata.camera_stab_at(frame).is_some()
                 || (self.compute_params.apply_optical_stab && gyro.optical_stab.as_ref().is_some_and(|s| s.is_active()))
             {
                 kernel_flags.set(KernelParamsFlags::HAS_IBIS_DATA, true);

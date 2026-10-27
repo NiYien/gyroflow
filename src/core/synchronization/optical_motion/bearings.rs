@@ -24,7 +24,7 @@ pub fn build_window_tracks(raw: &RawWindow, params: &ComputeParams, horizontal: 
         let timing = |f: RawFrame| FrameTiming {
             index: f.index,
             ts_ms: f.ts_ms,
-            mid_ms: f.ts_ms + md.per_frame_time_offsets.get(f.index).copied().unwrap_or(0.0),
+            mid_ms: f.ts_ms + md.frame_time_offset(f.index),
             readout_ms: FrameTransform::get_frame_readout_time(params, false, f.ts_ms, &md),
         };
         raw.pairs.iter().map(|p| (timing(p.a), timing(p.b))).collect()

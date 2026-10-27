@@ -608,9 +608,7 @@ impl AutosyncProcess {
                 .read()
                 .file_metadata
                 .read()
-                .per_frame_time_offsets
-                .get(frame)
-                .unwrap_or(&0.0)
+                .frame_time_offset(frame)
                 * 1000.0)
                 .round() as i64;
         }

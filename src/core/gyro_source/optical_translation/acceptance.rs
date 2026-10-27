@@ -320,7 +320,7 @@ fn translation_video_projection_acceptance() {
         FrameTransform::dequantize_camera_matrix(&params,frame,&mut k);
         let gyro=params.gyro.read();let md=gyro.file_metadata.read();
         let readout=FrameTransform::get_frame_readout_time(&params,true,frame_time,&md);
-        let centre=frame_time+md.per_frame_time_offsets.get(frame).unwrap_or(&0.0);
+        let centre=frame_time+md.frame_time_offset(frame);
         let rows=if params.frame_readout_direction.is_horizontal(){params.width}else{params.height};
         let short=params.width.min(params.height) as f64;
         let t=gyro.optical_translation.as_ref().unwrap();

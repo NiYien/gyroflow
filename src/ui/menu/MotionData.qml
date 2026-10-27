@@ -489,12 +489,20 @@ MenuItem {
             }
         }
     }
+    // Restore the saved load mode without triggering a second telemetry load.
+    function setAllMetadata(value: bool): void {
+        allMetadataDebounce.stop();
+        allMetadataCb.preventReload = true;
+        allMetadataCb.checked = value;
+        allMetadataCb.preventReload = false;
+    }
     CheckBox {
         id: allMetadataCb;
+        property bool preventReload: false;
         text: qsTr("Load all metadata");
         visible: root.lastSelectedFile.toString() && root.lastSelectedFile != window.videoArea.loadedFileUrl;
         checked: false;
-        onCheckedChanged: allMetadataDebounce.start();
+        onCheckedChanged: if (!preventReload) allMetadataDebounce.start();
         Timer {
             id: allMetadataDebounce;
             interval: 1;

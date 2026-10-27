@@ -183,7 +183,8 @@ Item {
         } else {
             urls = [
                 obj.videofile,
-                obj.gyro_source?.filepath || ""
+                obj.gyro_source?.filepath || "",
+                obj.gyro_source?.all_metadata ? "1" : ""
             ];
         }
         if ((!urls || !urls[0]) && !vidInfo.filename) {
@@ -228,6 +229,7 @@ Item {
             }
             return;
         }
+        if (urls[1]) window.motionData.setAllMetadata(urls[2] == "1");
         if (urls[1] && !isCorrectGyroLoaded && filesystem.exists(urls[1])) {
             console.log("Deferring gyro file fallback", urls[1]);
             window.motionData.lastSelectedFile = urls[1];
@@ -341,7 +343,7 @@ Item {
                     // of the last selected file is acceptable, aborting the
                     // fallback load itself is not.
                     if (window.motionData) window.motionData.lastSelectedFile = fallbackUrl;
-                    controller.load_telemetry(fallbackUrl, false, window.videoArea.vid, -1, fallbackProjectVersion);
+                    controller.load_telemetry(fallbackUrl, window.motionData && window.motionData.allMetadata, window.videoArea.vid, -1, fallbackProjectVersion);
                     return;
                 }
             }
@@ -400,6 +402,7 @@ Item {
                     if (!error_string) {
                         loadFile(url, true);
                     } else {
+                        root.mergedFiles = [];
                         messageBox(Modal.Error, error_string, [ { text: qsTr("Ok") } ]);
                     }
                 }
@@ -679,8 +682,7 @@ Item {
                     { text: qsTr("Yes"), accent: true, clicked: function() {
                         dlg.btnsRow.children[0].enabled = false;
                         getOutputFile(folder, sequenceList[0], "_joined", "", true, function(outFolder, outFilename, outFullFileUrl) {
-                            root.mergedFiles = sequenceList.map(x => filesystem.get_file_url(folder, x, false).toString());
-                            controller.mp4_merge(sequenceList.map(x => filesystem.get_file_url(folder, x, false).toString()), outFolder, outFilename);
+                            mergeFiles(sequenceList.map(x => filesystem.get_file_url(folder, x, false).toString()), outFolder, outFilename);
                         });
                         return false;
                     } },
@@ -970,6 +972,22 @@ Item {
         const urlsCopy = [...urls];
         queue.item.shown = true;
         Qt.callLater(function() { queue.item.dt.loadFiles(urlsCopy); });
+    }
+
+    function mergeFiles(urls: var, outFolder: url, outFilename: string): void {
+        const merge = (filename) => {
+            root.mergedFiles = urls;
+            controller.mp4_merge(urls, outFolder, filename);
+        };
+        if (filesystem.exists_in_folder(outFolder, outFilename)) {
+            messageBox(Modal.Question, qsTranslate("App", "Output file already exists, do you want to overwrite it?"), [
+                { text: qsTr("Yes"), clicked: () => merge(outFilename) },
+                { text: qsTranslate("App", "Rename"), clicked: () => merge(window.renameOutput(outFilename, outFolder)) },
+                { text: qsTr("No"), accent: true, clicked: () => askForOutputLocation(outFolder, outFilename, false, (folder, filename) => mergeFiles(urls, folder, filename)) },
+            ]);
+        } else {
+            merge(outFilename);
+        }
     }
 
     function askForOutputLocation(folder: url, filename: string, choice: bool, cb: var): void {

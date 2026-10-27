@@ -11,8 +11,9 @@ use argmin::{
     solver::neldermead::NelderMead,
 };
 use nalgebra::Vector2;
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelIterator, ParallelExtend};
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use telemetry_parser::tags_impl::{
     GetWithType, GroupId, GroupedTagMap, TagId, TagMap, TagValue, TimeVector3,
 };
@@ -594,20 +595,29 @@ pub struct ISSamples {
     pub x: Vec<i32>,
     pub y: Vec<i32>,
     pub a: Vec<i32>,
+    pub missing_frames: Vec<u32>,
 }
 impl ISSamples {
-    fn calc_time_diff(&self, frame_interval: i32, i1: usize, i2: usize) -> Option<i32> {
-        if self.t.is_empty() {
-            return None;
-        }
-        let a = i1.min(i2).min(self.t.len() - 1);
-        let b = i1.max(i2).min(self.t.len() - 1);
-        let mut dt = self.t.get(b)? - self.t.get(a)?;
+    fn sample_pair(&self, i1: usize, i2: usize) -> Option<(usize, usize)> {
+        let last = self.t.len().checked_sub(1)?;
+        Some((i1.min(i2).min(last), i1.max(i2).min(last)))
+    }
+    fn sample_time_diff(&self, frame_interval: i32, i1: usize, i2: usize) -> Option<i64> {
+        let (a, b) = self.sample_pair(i1, i2)?;
+        let mut dt = i64::from(*self.t.get(b)?) - i64::from(*self.t.get(a)?);
         if dt <= 0 {
             // wrapped to the next frame, or a duplicated/clamped sample
-            dt += frame_interval;
+            dt += i64::from(frame_interval);
         }
         Some(dt)
+    }
+    fn missing_time(&self, frame_interval: i32, i1: usize, i2: usize) -> Option<i64> {
+        let (a, b) = self.sample_pair(i1, i2)?;
+        let missing = self.missing_frames.get(b)?.checked_sub(*self.missing_frames.get(a)?)?;
+        Some(i64::from(missing) * i64::from(frame_interval))
+    }
+    fn calc_time_diff(&self, frame_interval: i32, i1: usize, i2: usize) -> Option<i64> {
+        self.sample_time_diff(frame_interval, i1, i2)?.checked_add(self.missing_time(frame_interval, i1, i2)?)
     }
 
     fn search_idx(
@@ -673,13 +683,6 @@ impl ISSamples {
         }
         Some((bot_index, current_time))
     }
-    fn calc_ofs(&self, frame_interval: i32, idx: usize) -> Option<i32> {
-        let mut acc_time = 0;
-        for i in 0..idx {
-            acc_time += self.calc_time_diff(frame_interval, i, i + 1)?;
-        }
-        Some(acc_time)
-    }
 
     /// Builds the per-row spline for one frame, returns the spline and the row offset of its first point, like the reference `VibrationProofGL::set_vp_frame`
     fn calc_spline(
@@ -707,10 +710,12 @@ impl ISSamples {
             0
         };
 
+        // Keep the reference's initial-sample spacing, adding missing frames only at their actual gap.
+        let mut spacing = 0;
         for i in 0..n_entries {
-            // Note: the accumulated time is intentionally summed from the first sample, the reference does the same
-            let ts = self.calc_ofs(frame_interval, i)? as f64 * entry_rate;
+            if i > 0 { spacing += self.sample_time_diff(frame_interval, i - 1, i)?; }
             if top_index + i < self.x.len() {
+                let ts = (spacing + self.missing_time(frame_interval, top_index, top_index + i)?) as f64 * entry_rate;
                 spline.add_point(
                     ts,
                     nalgebra::Vector3::new(
@@ -727,6 +732,7 @@ impl ISSamples {
 
 #[derive(Default)]
 pub struct ISTemp {
+    pub frames: Vec<usize>,
     pub frame_interval: i32,
     pub original_sample_rate: f64,
     pub first_frame_ts: Vec<f64>,
@@ -762,7 +768,7 @@ pub fn is_unsupported_lens_sentinel(ois: &[TimeVector3<i32>]) -> bool {
 pub fn stab_collect(
     is: &mut ISTemp,
     tag_map: &GroupedTagMap,
-    _info: &telemetry_parser::util::SampleInfo,
+    frame: usize,
     frame_rate: f64,
 ) -> Option<()> {
     let imager = tag_map.get(&GroupId::Imager)?;
@@ -780,8 +786,11 @@ pub fn stab_collect(
     let crop_origin = (imager.get_t(TagId::CaptureAreaOrigin) as Option<&(f32, f32)>)?;
     let crop_size = (imager.get_t(TagId::CaptureAreaSize) as Option<&(f32, f32)>)?;
 
-    // Nothing below may fail: the per-frame vectors (start indices, exposure, crop, timestamp) must stay the same length
+    if is.frames.last().is_some_and(|last| frame <= *last) { return None; }
+    let missing = u32::try_from(frame - is.frames.len()).ok()?;
+    // Nothing below may fail: the per-frame vectors (frames, start indices, exposure, crop, timestamp) must stay the same length
     // The sensor and the lens stabilizers are sampled independently, keep separate timing for each of them
+    is.frames.push(frame);
     is.ibis.per_frame_start_idx.push(is.ibis.t.len());
     is.ois.per_frame_start_idx.push(is.ois.t.len());
 
@@ -802,6 +811,7 @@ pub fn stab_collect(
             is.ibis
                 .a
                 .push(angle.and_then(|a| a.get(i)).map(|a| a.z).unwrap_or(0));
+            is.ibis.missing_frames.push(missing);
         }
     }
     if let Some(ois) = ois {
@@ -821,6 +831,7 @@ pub fn stab_collect(
                     is.ois.x.push(s.x);
                     is.ois.y.push(s.y);
                     is.ois.a.push(0);
+                    is.ois.missing_frames.push(missing);
                 }
             }
         }
@@ -845,17 +856,21 @@ pub fn stab_calc_splines(
     _frame_rate: f64,
     _size: (usize, usize),
 ) -> Option<Vec<CameraStabData>> {
-    let num_frames = is_temp.per_frame_exposure.len();
+    let (first, last) = (*is_temp.frames.first()?, *is_temp.frames.last()?);
+    let num_frames = last - first + 1;
 
     let readout_time = (md.frame_readout_time.unwrap_or_default() * 1000.0).max(1.0);
 
-    let per_frame_data: Vec<CameraStabData> = (0..num_frames)
-        .into_par_iter()
-        .filter_map(|frame| {
-            let crop_area = *is_temp.per_frame_crop.get(frame)?; // (x, y, w, h)
-            let exposuretime = is_temp.per_frame_exposure.get(frame)?;
-            let first_timestamp = is_temp.first_frame_ts.get(frame)?;
-            let top_offset = first_timestamp - exposuretime / 2.0;
+    let frame_data = |frame: usize| -> Option<CameraStabData> {
+            let entry = is_temp.frames.partition_point(|f| *f <= frame).checked_sub(1)?;
+            let crop_area = *is_temp.per_frame_crop.get(entry)?; // (x, y, w, h)
+            let top = |entry: usize| Some(is_temp.first_frame_ts.get(entry)? - is_temp.per_frame_exposure.get(entry)? / 2.0);
+            let mut top_offset = top(entry)?;
+            let later = frame - is_temp.frames[entry];
+            if later > 0 {
+                let span = is_temp.frames.get(entry + 1)? - is_temp.frames[entry];
+                top_offset += (top(entry + 1)? - top_offset) * later as f64 / span as f64 + later as f64 * is_temp.frame_interval as f64;
+            }
             let entry_rate = is_temp.sensor_size.1 as f64 / readout_time; // rows per microsecond
 
             // A stabilizer without usable samples for this frame gets an empty spline (no shift); the frame itself is kept so that
@@ -864,7 +879,7 @@ pub fn stab_calc_splines(
                 .ibis
                 .calc_spline(
                     is_temp.frame_interval,
-                    frame,
+                    entry,
                     top_offset,
                     readout_time,
                     entry_rate,
@@ -874,7 +889,7 @@ pub fn stab_calc_splines(
                 .ois
                 .calc_spline(
                     is_temp.frame_interval,
-                    frame,
+                    entry,
                     top_offset,
                     readout_time,
                     entry_rate,
@@ -890,22 +905,27 @@ pub fn stab_calc_splines(
                 ibis_spline,
                 ois_spline,
             })
-        })
-        .collect();
-
-    if per_frame_data.is_empty() {
+        };
+    let mut per_frame_data = super::per_frame::table(last + 1, "Sony stabilizer data")?;
+    let incomplete = AtomicUsize::new(0);
+    per_frame_data.par_extend((first..=last).into_par_iter().map(|frame| frame_data(frame).unwrap_or_else(|| {
+        incomplete.fetch_add(1, Ordering::Relaxed);
+        CameraStabData::default()
+    })));
+    let incomplete = incomplete.into_inner();
+    if incomplete == num_frames {
         return None;
     }
 
-    if per_frame_data.len() != num_frames {
+    if incomplete > 0 {
         log::error!(
             "Sony stabilizer data is incomplete: {} of {num_frames} frames",
-            per_frame_data.len()
+            num_frames - incomplete
         );
         return None;
     }
 
-    Some(per_frame_data)
+    super::per_frame::hold_leading(per_frame_data, first, "Sony stabilizer data")
 }
 
 /// Above this residual of the inverse mesh lookup, `|forward(inverse(q)) - q|` in video pixels at the worst of
@@ -913,6 +933,39 @@ pub fn stab_calc_splines(
 /// (`MeshTable::refinement`), two more spline evaluations per pixel; below it the 9x9 inverse is taken as it is. A
 /// quarter pixel is within the blur of the resampling filter
 pub const MESH_REFINE_THRESHOLD_PX: f64 = 0.25;
+
+#[cfg(test)]
+mod missing_frame_tests {
+    use super::*;
+
+    #[test]
+    fn stabilizer_samples_include_the_time_of_missing_frames() {
+        let samples = ISSamples {
+            t: vec![900, 100, 900, 100],
+            missing_frames: vec![0, 0, 2, 2],
+            ..Default::default()
+        };
+        assert_eq!(samples.calc_time_diff(1000, 0, 1), Some(200));
+        assert_eq!(samples.calc_time_diff(1000, 1, 2), Some(2800));
+        assert_eq!(samples.calc_time_diff(1000, 2, 3), Some(200));
+    }
+
+    #[test]
+    fn stabilizer_tables_keep_leading_and_middle_frame_slots() {
+        let temp = ISTemp {
+            frames: vec![1, 3],
+            per_frame_exposure: vec![1.0, 1.0],
+            first_frame_ts: vec![0.0, 0.0],
+            per_frame_crop: vec![(0.0, 0.0, 100.0, 80.0), (0.0, 0.0, 90.0, 70.0)],
+            ..Default::default()
+        };
+        let frames = stab_calc_splines(&FileMetadata::default(), &temp, 0.0, 25.0, (100, 80)).unwrap();
+        assert_eq!(frames.len(), 4);
+        assert_eq!(frames[0].crop_area, frames[1].crop_area);
+        assert_eq!(frames[2].crop_area.2, 100.0);
+        assert_eq!(frames[3].crop_area.2, 90.0);
+    }
+}
 /// In the kernels: a first correction shorter than this (sensor pixels) leaves the second iteration nothing to do. The
 /// error left after applying a correction `d` is about `|J - I|·|d|` with `J` the Jacobian of the mesh, a few percent
 /// of `d` for a lens mesh. The kernels compare against its square
@@ -961,7 +1014,7 @@ pub fn get_mesh_correction(
         .unwrap_or_default();
 
     if !has_any_mesh_value && focal_plane.is_empty() {
-        return None;
+        return Some(MeshFrame::default());
     }
 
     let size = (|| -> Option<(f64, f64)> {

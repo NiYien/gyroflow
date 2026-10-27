@@ -526,17 +526,14 @@ impl FrameTransform {
                 params.height
             } as f64;
         let timestamp_ms = timestamp_ms
-            + file_metadata
-                .per_frame_time_offsets
-                .get(frame)
-                .unwrap_or(&0.0);
+            + file_metadata.frame_time_offset(frame);
         let start_ts = timestamp_ms - (frame_readout_time / 2.0);
         // ----------- Rolling shutter correction -----------
 
         // let frame_period = 1000.0 / params.scaled_fps as f64;
         // dbg!(frame_period);
 
-        let is_scale = if let Some(is) = file_metadata.camera_stab_data.get(frame) {
+        let is_scale = if let Some(is) = file_metadata.camera_stab_at(frame) {
             (
                 params.width as f64 / is.crop_area.2 as f64 / is.pixel_pitch.0 as f64,
                 params.height as f64 / is.crop_area.3 as f64 / is.pixel_pitch.1 as f64
@@ -568,10 +565,7 @@ impl FrameTransform {
         };
 
         let breathing = if params.lens_breathing_enabled {
-            file_metadata
-                .lens_breathing
-                .get(frame)
-                .filter(|b| !b.scale.is_empty())
+            file_metadata.lens_breathing_at(frame)
         } else {
             None
         };
@@ -619,7 +613,7 @@ impl FrameTransform {
                 }
 
                 let (mut sx, mut sy, mut ra, mut ox, mut oy) =
-                    if let Some(is) = file_metadata.camera_stab_data.get(frame) {
+                    if let Some(is) = file_metadata.camera_stab_at(frame) {
                         let y_sensor = sensor_row(y, is.crop_area.1 as f64, is.crop_area.3 as f64);
 
                         let s = is
@@ -836,10 +830,7 @@ impl FrameTransform {
                 params.height
             } as f64;
         let timestamp_ms = timestamp_ms
-            + file_metadata
-                .per_frame_time_offsets
-                .get(frame)
-                .unwrap_or(&0.0);
+            + file_metadata.frame_time_offset(frame);
         let start_ts = timestamp_ms - (frame_readout_time / 2.0);
         // ----------- Rolling shutter correction -----------
 
@@ -863,10 +854,7 @@ impl FrameTransform {
         // fov = 1 (zoom polygon, sync, features) describe the picture the zoom is fitted around, and a zoom folded
         // into them would only let the fit relax and undo it
         let breathing = if use_fovs && params.lens_breathing_enabled {
-            file_metadata
-                .lens_breathing
-                .get(frame)
-                .filter(|b| !b.scale.is_empty())
+            file_metadata.lens_breathing_at(frame)
         } else {
             None
         };
@@ -945,7 +933,7 @@ impl FrameTransform {
             .collect();
 
         let mut shifts: Option<Vec<(f32, f32, f32, f32, f32)>> =
-            if let Some(is) = file_metadata.camera_stab_data.get(frame) {
+            if let Some(is) = file_metadata.camera_stab_at(frame) {
                 let is_scale = (
                     params.width as f64 / is.crop_area.2 as f64 / is.pixel_pitch.0 as f64,
                     params.height as f64 / is.crop_area.3 as f64 / is.pixel_pitch.1 as f64,

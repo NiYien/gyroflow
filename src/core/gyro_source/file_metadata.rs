@@ -265,6 +265,16 @@ impl FileMetadata {
     pub fn has_mesh_correction(&self) -> bool {
         !self.mesh_correction.is_empty()
     }
+    /// Capture-time offset of a video frame, continuing the last metadata frame at the clip's tail.
+    pub fn frame_time_offset(&self, frame: usize) -> f64 {
+        per_frame_entry(&self.per_frame_time_offsets, frame).copied().unwrap_or(0.0)
+    }
+    pub fn camera_stab_at(&self, frame: usize) -> Option<&CameraStabData> {
+        per_frame_entry(&self.camera_stab_data, frame)
+    }
+    pub fn lens_breathing_at(&self, frame: usize) -> Option<&BreathingFrame> {
+        per_frame_entry(&self.lens_breathing, frame).filter(|b| !b.scale.is_empty())
+    }
     /// More than 0.2% between the smallest and the largest value
     fn varies(it: &mut dyn Iterator<Item = f64>) -> bool {
         let (mut min, mut max, mut count) = (f64::MAX, 0.0f64, 0usize);
@@ -343,6 +353,31 @@ impl FileMetadata {
     }
 }
 
+/// A camera may stop writing metadata just before the video ends; keep its last value then.
+pub fn per_frame_entry<T>(table: &[T], frame: usize) -> Option<&T> {
+    table.get(frame).or_else(|| table.last())
+}
+
+#[cfg(test)]
+mod per_frame_tail_tests {
+    use super::*;
+
+    #[test]
+    fn tail_readers_continue_the_last_metadata_frame() {
+        let mut metadata = FileMetadata::default();
+        assert_eq!(metadata.frame_time_offset(10), 0.0);
+        assert!(metadata.camera_stab_at(10).is_none());
+        metadata.per_frame_time_offsets = vec![1.0, 2.0];
+        metadata.camera_stab_data = vec![CameraStabData { offset: 12.0, ..Default::default() }];
+        metadata.lens_breathing = vec![BreathingFrame { scale: vec![0.8], ..Default::default() }];
+        assert_eq!(metadata.frame_time_offset(10), 2.0);
+        assert_eq!(metadata.camera_stab_at(10).unwrap().offset, 12.0);
+        assert_eq!(metadata.lens_breathing_at(10).unwrap().scale, vec![0.8]);
+        metadata.lens_breathing.push(BreathingFrame::default());
+        assert!(metadata.lens_breathing_at(10).is_none());
+    }
+}
+
 // ------------- Mesh correction -------------
 
 /// Length of the header every mesh block starts with: `[block length, divisions x, y, mesh size x, y, capture area
@@ -407,12 +442,11 @@ impl MeshCorrections {
         !self.frames.iter().any(|f| !f.is_empty())
     }
     pub fn clear(&mut self) {
-        self.tables.clear();
-        self.frames.clear();
+        *self = Self::default();
     }
     /// The correction of a frame, `None` when it has none
     pub fn frame(&self, frame: usize) -> Option<&MeshFrame> {
-        self.frames.get(frame).filter(|f| !f.is_empty())
+        per_frame_entry(&self.frames, frame).filter(|f| !f.is_empty())
     }
     pub fn has_mesh(&self, frame: usize) -> bool {
         self.frame(frame).map_or(false, |f| f.table.is_some())

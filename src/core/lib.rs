@@ -1513,9 +1513,13 @@ impl StabilizationManager {
             }
         };
 
-        let (fps, size) = {
+        let (fps, size, frame_count) = {
             let params = self.params.read();
-            (params.fps, params.size)
+            (params.fps, params.size, params.frame_count)
+        };
+        let parse_options = gyro_source::FileLoadOptions {
+            video_frames: options.video_frames.or((frame_count > 0).then_some(frame_count)),
+            ..options.clone()
         };
 
         let cancel_flag2 = cancel_flag.clone();
@@ -1523,7 +1527,7 @@ impl StabilizationManager {
             stream,
             filesize,
             &url,
-            options,
+            &parse_options,
             size,
             fps,
             progress_cb,
@@ -1541,6 +1545,7 @@ impl StabilizationManager {
                 return Err(e);
             }
         };
+        if cancel_flag.load(SeqCst) { return Ok(()); }
 
         if is_main_video {
             self.apply_main_video_telemetry(&mut md, &url, false);
@@ -1578,6 +1583,7 @@ impl StabilizationManager {
                 let mut gyro = self.gyro.write();
                 gyro.load_from_telemetry(md);
                 gyro.file_load_options = options.clone();
+                gyro.all_metadata = is_main_video;
                 let fm = gyro.file_metadata.read();
                 (
                     fm.raw_imu.len(),
@@ -1621,8 +1627,10 @@ impl StabilizationManager {
             );
         }
 
-        if let Some(id) = camera_id {
-            *self.camera_id.write() = Some(id);
+        if !cancel_flag.load(SeqCst) {
+            if is_main_video || camera_id.is_some() {
+                *self.camera_id.write() = camera_id;
+            }
         }
         Ok(())
     }
@@ -3365,7 +3373,7 @@ impl StabilizationManager {
                     let md = gyro.file_metadata.read();
                     (0..params.frame_count).map(|frame| {
                         let frame_time = frame as f64 * 1000.0 / params.scaled_fps;
-                        let time = frame_time + md.per_frame_time_offsets.get(frame).unwrap_or(&0.0);
+                        let time = frame_time + md.frame_time_offset(frame);
                         (frame_time, time, gyro.org_quat_at_timestamp(time))
                     }).collect()
                 };
@@ -4202,6 +4210,7 @@ impl StabilizationManager {
             },
             "gyro_source": {
                 "filepath":           gyro.file_url,
+                "all_metadata":       gyro.all_metadata,
                 "lpf":                gyro.imu_transforms.imu_lpf,
                 "mf":                 gyro.imu_transforms.imu_mf,
                 "rotation":           gyro.imu_transforms.imu_rotation_angles,
@@ -4332,10 +4341,7 @@ impl StabilizationManager {
                         .ceil() as usize;
                     imu_timestamps_final.push(
                         timestamp_ms
-                            - file_metadata
-                                .per_frame_time_offsets
-                                .get(frame)
-                                .unwrap_or(&0.0),
+                            - file_metadata.frame_time_offset(frame),
                     );
                 }
                 util::compress_to_base91_cbor(&imu_timestamps).and_then(|s| {
@@ -4611,7 +4617,8 @@ impl StabilizationManager {
                     .get("raw_imu")
                     .map(|x| x.is_string())
                     .unwrap_or_default();
-                let is_main_video = org_gyro_url == org_video_url;
+                let is_main_video = org_gyro_url == org_video_url
+                    || obj.get("all_metadata").and_then(|x| x.as_bool()).unwrap_or_default();
 
                 let built_in_gyro: std::io::Result<crate::gyro_source::FileMetadata> =
                     util::decompress_from_base91_cbor(
@@ -4827,6 +4834,7 @@ impl StabilizationManager {
                 }
 
                 let mut gyro = self.gyro.write();
+                if !org_gyro_url.is_empty() { gyro.all_metadata = is_main_video; }
                 if allow_external_io && !org_gyro_url.is_empty() {
                     gyro.file_url = gyro_url.clone();
                 } else if !allow_external_io {
@@ -5528,7 +5536,8 @@ impl StabilizationManager {
             && metadata.fps > 0.0
         {
             let video_size = (metadata.width as usize, metadata.height as usize);
-            let frame_count = (metadata.duration_s * metadata.fps).ceil() as usize;
+            // Floating point multiplication can put a whole frame count a few ulps above its integer.
+            let frame_count = (metadata.duration_s * metadata.fps - 1e-6).ceil().max(1.0) as usize;
 
             self.init_from_video_data(
                 metadata.duration_s * 1000.0,
@@ -5537,6 +5546,7 @@ impl StabilizationManager {
                 video_size,
             );
             self.set_video_rotation(((360 - metadata.rotation) % 360) as f64);
+            *self.camera_id.write() = None;
             let _ = self.load_gyro_data(
                 stream,
                 filesize,
@@ -6012,6 +6022,39 @@ mod tests {
     }
 
     #[test]
+    fn project_restores_all_metadata_for_a_separate_motion_file() {
+        let source = optical_project_manager();
+        {
+            let mut gyro = source.gyro.write();
+            gyro.file_url = "file:///separate-motion-file.gcsv".into();
+            gyro.all_metadata = true;
+            gyro.file_metadata.write().per_frame_time_offsets = vec![2.0, 4.0];
+        }
+        let project = optical_export(&source);
+        assert_eq!(project["gyro_source"]["all_metadata"], true);
+        let restored = optical_import(&project);
+        assert!(restored.gyro.read().all_metadata);
+        assert_eq!(restored.gyro.read().file_metadata.read().frame_time_offset(10), 4.0);
+        let mut legacy = project;
+        legacy["gyro_source"].as_object_mut().unwrap().remove("all_metadata");
+        assert!(!optical_import(&legacy).gyro.read().all_metadata);
+    }
+
+    #[test]
+    fn loading_unknown_video_drops_previous_camera_and_avoids_a_rounding_frame() {
+        let manager = StabilizationManager::default();
+        *manager.camera_id.write() = Some(CameraIdentifier { brand: "Sony".into(), model: "previous".into(), ..Default::default() });
+        let mut metadata = telemetry_parser::util::VideoMetadata::default();
+        metadata.width = 1920;
+        metadata.height = 1080;
+        metadata.duration_s = 13.847166666666666;
+        metadata.fps = 29.970029970029973;
+        manager.load_video_file(&mut std::io::Cursor::new(Vec::<u8>::new()), 0, "file:///unknown-video.mp4", Some(metadata), false).unwrap();
+        assert_eq!(manager.params.read().frame_count, 415);
+        assert!(manager.camera_id.read().is_none());
+    }
+
+    #[test]
     fn project_without_correction_exports_new_fields_only() {
         use std::hash::{Hash, Hasher};
         let manager = optical_project_manager();
@@ -6029,6 +6072,8 @@ mod tests {
         assert!(!contains_correction(&project));
         assert_eq!(project["offsets"], serde_json::to_value(manager.gyro.read().get_offsets()).unwrap());
         let fields = project["gyro_source"].as_object_mut().unwrap();
+        assert_eq!(fields.get("all_metadata"), Some(&serde_json::json!(false)));
+        fields.retain(|key, _| key != "all_metadata");
         let enabled = fields.remove("optical_correction_enabled");
         let strength = fields.remove("optical_correction_strength");
         let ignored = fields.remove("ignore_file_motion");

@@ -7,6 +7,7 @@ mod camera_view;
 mod file_metadata;
 mod imu_transforms;
 mod sony;
+mod per_frame;
 #[cfg(test)]
 mod output_dimensions_tests;
 #[cfg(test)]
@@ -507,6 +508,9 @@ pub fn compute_auto_rotation_for_segment_with_state(
 pub struct FileLoadOptions {
     pub sample_index: Option<usize>,
     pub project_version: u64,
+    /// The video's frame count bounds the per-frame metadata tables, not the motion file's duration.
+    #[serde(skip)]
+    pub video_frames: Option<usize>,
     #[serde(default)]
     pub header_only: bool,
     #[serde(default)]
@@ -516,6 +520,48 @@ pub struct FileLoadOptions {
     /// `keep_video_gyro` main video. Every other caller must leave this false.
     #[serde(default)]
     pub bypass_builtin_gyro_arbitration: bool,
+}
+
+#[cfg(test)]
+mod per_frame_rate_tests {
+    use super::*;
+
+    #[test]
+    fn uniform_sensor_gaps_do_not_reduce_the_reported_sample_rate() {
+        let continuous: Vec<f64> = (0..100).map(|i| i as f64).collect();
+        let missing: Vec<f64> = (0..100).map(|i| i as f64 + if i >= 50 { 40.0 } else { 0.0 }).collect();
+        assert_eq!(GyroSource::readings_per_second(continuous.iter().copied()), GyroSource::readings_per_second(missing.iter().copied()));
+        let jittered = [0.0, 1.1, 2.0, 3.2, 9.0, 10.0];
+        let expected = 6.0 / (10.0 * 7.0 / 6.0 / 1000.0);
+        assert!((GyroSource::readings_per_second(jittered.into_iter()) - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn cancelling_a_parse_does_not_cache_its_partial_metadata() {
+        struct CancelOnRead {
+            stream: std::io::Cursor<Vec<u8>>,
+            cancel: Arc<AtomicBool>,
+        }
+        impl Read for CancelOnRead {
+            fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+                let count = self.stream.read(bytes)?;
+                self.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                Ok(count)
+            }
+        }
+        impl Seek for CancelOnRead {
+            fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> { self.stream.seek(pos) }
+        }
+        let data = b"GYROFLOW IMU LOG\nversion,1.3\ntscale,0.001\ngscale,1\nascale,1\nt,gx,gy,gz,ax,ay,az\n0,0,0,0,0,0,1\n1,0,0,0,0,0,1\n2,0,0,0,0,0,1\n".to_vec();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let mut stream = CancelOnRead { stream: std::io::Cursor::new(data.clone()), cancel: cancel.clone() };
+        let path = "cancelled-per-frame-fixture.gcsv";
+        let result = GyroSource::parse_telemetry_file(&mut stream, data.len(), path, &Default::default(), (1920, 1080), 30.0, |_| (), cancel.clone());
+        assert!(matches!(result, Err(crate::GyroflowCoreError::IOError(ref e)) if e.kind() == std::io::ErrorKind::Interrupted));
+        cancel.store(false, std::sync::atomic::Ordering::Relaxed);
+        let metadata = GyroSource::parse_telemetry_file(&mut std::io::Cursor::new(data.clone()), data.len(), path, &Default::default(), (1920, 1080), 30.0, |_| (), cancel).unwrap();
+        assert_eq!(metadata.raw_imu.len(), 3);
+    }
 }
 
 pub fn get_camera_db_path() -> Option<String> {
@@ -589,6 +635,9 @@ pub struct GyroSource {
     offsets_adjusted: BTreeMap<i64, f64>, // <timestamp + offset, offset>
 
     pub file_url: String,
+    /// The motion file was loaded as the video's metadata, including its frame timing.
+    #[serde(default)]
+    pub all_metadata: bool,
 
     /// Correction measured from the video, composed onto `quaternions` at the end of `integrate`
     #[serde(default)]
@@ -757,6 +806,9 @@ impl GyroSource {
         progress_cb: F,
         cancel_flag: Arc<AtomicBool>,
     ) -> Result<FileMetadata, crate::GyroflowCoreError> {
+        if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "Telemetry loading cancelled").into());
+        }
         let t_total = std::time::Instant::now();
         // path comes from QML/QUrl callers as a file:// URL (sometimes percent-
         // encoded, sometimes not). Normalize to a native filesystem path so the
@@ -832,9 +884,12 @@ impl GyroSource {
             filesize,
             &path,
             progress_cb,
-            cancel_flag,
+            cancel_flag.clone(),
             tpoptions,
         );
+        if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "Telemetry loading cancelled").into());
+        }
         let mut input = match input_result {
             Ok(input) => {
                 log::info!(
@@ -1541,26 +1596,38 @@ impl GyroSource {
         // mounted lens never reports its OSS compensation.
         let mut ois_sentinel = false;
         let mut mesh_cache = BTreeMap::new();
+        let is_red = input.camera_type() == "RED" || input.camera_type() == "RED RAW";
+        let legacy_red_offset = options.project_version > 0 && options.project_version < 4;
+        let (mut red_has_frames, mut red_clip_exposure) = (false, None);
         if let Some(ref samples) = input.samples {
-            for info in samples {
+            let mut sample_frames: Vec<Option<usize>> = samples.iter().map(|info| {
+                // RED's clip header carries exposure too, but does not describe a video frame.
+                if is_red && !info.tag_map.as_ref().and_then(|x| x.get(&GroupId::Default))
+                    .is_some_and(|x| x.contains_key(&TagId::TimestampUs)) {
+                    return None;
+                }
+                usize::try_from(info.sample_index).ok()
+            }).collect();
+            per_frame::limit_frames(options.video_frames, &mut sample_frames);
+            let mut time_offsets = per_frame::PerFrame::new("Per-frame time offsets");
+            let mut deferred_offsets = per_frame::PerFrame::new("Canon deferred frame time offsets");
+            let mut mesh_frames = per_frame::PerFrame::new("Mesh correction");
+            for (info, &frame) in samples.iter().zip(&sample_frames) {
                 if let Some(ref tag_map) = info.tag_map {
                     // --------------------------------- Sony ---------------------------------
                     if let Some((org_sample_rate, offset)) =
                         sony::get_time_offset(&md, &input, tag_map, sample_rate, sony_packet_timed)
                     {
                         original_sample_rate = org_sample_rate;
-                        md.per_frame_time_offsets.push(offset);
+                        if let Some(frame) = frame { time_offsets.set(frame, offset); }
                     }
                     sony::init_lens_profile(&mut md, &input, tag_map, size, info);
-                    sony::stab_collect(&mut is_temp, tag_map, info, fps);
-                    // One entry per sample, the correction is looked up by frame index: empty where the frame has none
-                    // (`MeshCorrections::frame`); the whole thing goes when no frame has one
-                    let mesh_frame = sony::get_mesh_correction(tag_map,
-                        size,
-                        &mut md.mesh_correction, &mut mesh_cache,
-                    )
-                    .unwrap_or_default();
-                        md.mesh_correction.frames.push(mesh_frame);
+                    if let Some(frame) = frame {
+                        sony::stab_collect(&mut is_temp, tag_map, frame, fps);
+                        if let Some(mesh_frame) = sony::get_mesh_correction(tag_map, size, &mut md.mesh_correction, &mut mesh_cache) {
+                            mesh_frames.set(frame, mesh_frame);
+                        }
+                    }
 
                     if let Some(ois) = tag_map
                         .get(&GroupId::LensOSS)
@@ -1579,16 +1646,19 @@ impl GyroSource {
                     // --------------------------------- Sony ---------------------------------
 
                     // --------------------------------- RED ---------------------------------
-                    if input.camera_type() == "RED" || input.camera_type() == "RED RAW" {
+                    if is_red {
+                        red_has_frames |= frame.is_some();
                         telemetry_parser::try_block!({
-                            let legacy_offset =
-                                options.project_version > 0 && options.project_version < 4;
-                            if !legacy_offset {
+                            if !legacy_red_offset {
                                 let exposure_time =
                                     (tag_map.get(&GroupId::Default)?.get_t(TagId::ExposureTime)
                                         as Option<&f32>)?;
-                                md.per_frame_time_offsets
-                                    .push(-(*exposure_time as f64 / 1000.0) / 2.0);
+                                let offset = -(*exposure_time as f64 / 1000.0) / 2.0;
+                                if let Some(frame) = frame {
+                                    time_offsets.set(frame, offset);
+                                } else {
+                                    red_clip_exposure = Some(offset);
+                                }
                             }
                         });
                     }
@@ -1600,9 +1670,9 @@ impl GyroSource {
                             canon::get_time_offset(&md, &input, tag_map, sample_rate, fps)
                         {
                             if canon_defer_intrinsic_time_offsets {
-                                md.canon_deferred_frame_time_offsets.push(offset);
+                                if let Some(frame) = frame { deferred_offsets.set(frame, offset); }
                             } else {
-                                md.per_frame_time_offsets.push(offset);
+                                if let Some(frame) = frame { time_offsets.set(frame, offset); }
                             }
                         }
                         canon::init_lens_profile(&mut md, &input, tag_map, size, info);
@@ -1642,7 +1712,7 @@ impl GyroSource {
                                     // The additional 0.9 ms is a mystery
                                     let diff = (video_ts - x.t) * 1000.0;
 
-                                    md.per_frame_time_offsets.push(
+                                    time_offsets.set(i,
                                         -(x.v * 1000.0 / 2.0)
                                             - 0.9
                                             - diff
@@ -1660,8 +1730,19 @@ impl GyroSource {
                     // --------------------------------- Insta360 ---------------------------------
                 }
             }
+            if let Some(offset) = red_clip_exposure.filter(|_| red_has_frames && !legacy_red_offset && !time_offsets.has(0)) {
+                time_offsets.set(0, offset);
+            }
+            time_offsets.report();
+            deferred_offsets.report();
+            md.per_frame_time_offsets = time_offsets.interpolate();
+            md.canon_deferred_frame_time_offsets = deferred_offsets.interpolate();
             if input.camera_type() == "Sony" {
-                md.lens_breathing = sony::breathing::compute(samples);
+                md.lens_breathing = sony::breathing::compute(samples, &sample_frames);
+            }
+            if mesh_frames.values().any(|m| !m.is_empty()) {
+                mesh_frames.report();
+                md.mesh_correction.frames = mesh_frames.hold();
             }
             if md.mesh_correction.is_empty() {
                 md.mesh_correction.clear();
@@ -1819,6 +1900,9 @@ impl GyroSource {
             );
         }
 
+        if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "Telemetry loading cancelled").into());
+        }
         #[cfg(feature = "cache-gyro-metadata")]
         {
             log::info!("[parse_telemetry] cache miss \u{2192} parsed and cached: {} (mtime={})", native_path, mtime);
@@ -1846,6 +1930,7 @@ impl GyroSource {
     }
 
     pub fn clear(&mut self) {
+        self.all_metadata = false;
         self.quaternions.clear();
         self.smoothed_quaternions.clear();
         self.raw_imu.clear();
@@ -2571,10 +2656,7 @@ impl GyroSource {
         for frame in 0..compute_params.frame_count {
             let timestamp_ms =
                 frame as f64 / compute_params.scaled_fps * 1000.0
-                    + file_metadata
-                        .per_frame_time_offsets
-                        .get(frame)
-                        .unwrap_or(&0.0);
+                    + file_metadata.frame_time_offset(frame);
 
             video_times.push(timestamp_ms - frame_readout_half);
             video_times.push(timestamp_ms + frame_readout_half);
@@ -2868,21 +2950,35 @@ impl GyroSource {
 
     pub fn get_sample_rate(file_metadata: &FileMetadata) -> f64 {
         if file_metadata.raw_imu.len() > 2 {
-            let len = file_metadata.raw_imu.len() as f64;
-            let duration_ms = file_metadata.raw_imu.last().unwrap().timestamp_ms
-                - file_metadata.raw_imu.first().unwrap().timestamp_ms;
-            let duration_ms = duration_ms * ((len + 1.0) / len.max(1.0));
-            file_metadata.raw_imu.len() as f64 / (duration_ms / 1000.0)
+            Self::readings_per_second(file_metadata.raw_imu.iter().map(|x| x.timestamp_ms))
         } else if file_metadata.quaternions.len() > 2 {
-            let len = file_metadata.quaternions.len() as f64;
-            let first = *file_metadata.quaternions.iter().next().unwrap().0 as f64 / 1000.0;
-            let last = *file_metadata.quaternions.iter().next_back().unwrap().0 as f64 / 1000.0;
-            let duration_ms = last - first;
-            let duration_ms = duration_ms * ((len + 1.0) / len.max(1.0));
-            file_metadata.quaternions.len() as f64 / (duration_ms / 1000.0)
+            Self::readings_per_second(file_metadata.quaternions.keys().map(|ts| *ts as f64 / 1000.0))
         } else {
             0.0
         }
+    }
+
+    /// A gap in an otherwise uniform sensor clock is missing readings, not a slower sensor.
+    fn readings_per_second(times: impl Iterator<Item = f64> + Clone) -> f64 {
+        let steps = || times.clone().zip(times.clone().skip(1)).map(|(a, b)| b - a);
+        let len = times.clone().count() as f64;
+        let mut duration_ms = times.clone().last().unwrap_or_default() - times.clone().next().unwrap_or_default();
+        let (shortest, longest) = steps().fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), step| (min.min(step), max.max(step)));
+        if longest > shortest * 1.5 {
+            let mut sorted: Vec<f64> = steps().collect();
+            let middle = sorted.len() / 2;
+            let interval = *sorted.select_nth_unstable_by(middle, f64::total_cmp).1;
+            let gap = |step: f64| step > interval * 1.5;
+            let even = |step: f64| ((step - interval) * 1000.0).abs().round() <= 1.0;
+            if interval > 0.0 && steps().all(|step| gap(step) || even(step)) {
+                let (gaps, gap_ms) = steps().filter(|step| gap(*step)).fold((0.0, 0.0), |(count, ms), step| (count + 1.0, ms + step));
+                if gaps > 0.0 {
+                    duration_ms = (duration_ms - gap_ms) * (len - 1.0) / (len - 1.0 - gaps);
+                }
+            }
+        }
+        let duration_ms = duration_ms * ((len + 1.0) / len.max(1.0));
+        len / (duration_ms / 1000.0)
     }
 
     pub fn find_bias(&self, timestamp_start: f64, timestamp_stop: f64) -> (f64, f64, f64) {

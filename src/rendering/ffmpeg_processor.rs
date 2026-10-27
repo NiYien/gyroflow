@@ -195,6 +195,8 @@ pub enum FFmpegError {
     InternalError(ffmpeg_next::Error),
     CannotOpenInputFile((String, FilesystemError)),
     CannotOpenOutputFile((String, FilesystemError)),
+    OutputIsInput(String, String),
+    Output(String),
 }
 
 impl std::fmt::Display for FFmpegError {
@@ -249,6 +251,8 @@ impl std::fmt::Display for FFmpegError {
             FFmpegError::CannotOpenOutputFile((url, e)) => {
                 write!(f, "Cannot open output file {url}: {e:?}")
             }
+            FFmpegError::OutputIsInput(output, input) => write!(f, "Rendering to {output} would write over {input}, which it's rendered from. Choose another name or folder for the output."),
+            FFmpegError::Output(why) => write!(f, "{why}"),
         }
     }
 }
@@ -271,6 +275,7 @@ pub struct VideoInfo {
     pub duration_ms: f64,
     pub frame_count: usize,
     pub fps: f64,
+    pub base_fps: f64,
     pub width: u32,
     pub height: u32,
     pub bitrate: f64, // in Mbps
@@ -287,6 +292,7 @@ impl Default for VideoInfo {
             duration_ms: 0.0,
             frame_count: 0,
             fps: 0.0,
+            base_fps: 0.0,
             width: 0,
             height: 0,
             bitrate: 0.0,
@@ -322,6 +328,9 @@ fn frame_processing_error(gpu_decoding: bool, error: FFmpegError) -> FFmpegError
 }
 
 pub(super) fn next_decoder_attempt(index: i32, rendered_frames: usize, error: &FFmpegError) -> Option<i32> {
+    if matches!(error, FFmpegError::OutputIsInput(..) | FFmpegError::Output(_)) {
+        return None;
+    }
     if index < 0 {
         return None;
     }
@@ -661,6 +670,11 @@ impl<'a> FfmpegProcessor<'a> {
                 audio_streams.push(i);
                 output_index += 1;
             } else if self.preserve_other_tracks && medium == media::Type::Data {
+                let tag = unsafe { (*stream.parameters().as_ptr()).codec_tag }.to_le_bytes();
+                if &tag == b"tmcd" && Self::timecode_rate_too_high(&output_format, stream.avg_frame_rate()) {
+                    stream_mapping[i] = -1;
+                    continue;
+                }
                 // Direct stream copy
                 let mut ost = octx.add_stream(encoder::find(codec::Id::None))?;
                 ost.set_parameters(stream.parameters());
@@ -699,6 +713,12 @@ impl<'a> FfmpegProcessor<'a> {
             metadata.set("creation_time", &updated_creation_time);
         }
         log::debug!("Output metadata: {:?}", &metadata);
+        if self.video.output_index.and_then(|i| octx.stream(i))
+            .is_some_and(|stream| Self::timecode_rate_too_high(&output_format, stream.avg_frame_rate()))
+        {
+            log::warn!("Not writing a MOV/MP4 timecode above 255 fps");
+            metadata = metadata.iter().filter(|(key, _)| *key != "timecode").collect();
+        }
         octx.set_metadata(metadata);
         // Header will be written after video encoder is initalized, in ffmpeg_video.rs:init_encoder
 
@@ -1037,10 +1057,11 @@ impl<'a> FfmpegProcessor<'a> {
                 }
 
                 let mut frames = stream.frames() as usize;
+                let fps = Self::average_frame_rate(&stream);
+                let base_fps = Self::base_frame_rate(&stream).unwrap_or(fps);
+                let duration_s = Self::video_duration_s(&context, &stream).unwrap_or_default();
                 if frames == 0 {
-                    frames = (stream.duration() as f64
-                        * f64::from(stream.time_base())
-                        * f64::from(stream.rate())) as usize;
+                    frames = (duration_s * fps) as usize;
                 }
 
                 let rotation = {
@@ -1085,9 +1106,10 @@ impl<'a> FfmpegProcessor<'a> {
                 };
 
                 return Ok(VideoInfo {
-                    duration_ms: stream.duration() as f64 * f64::from(stream.time_base()) * 1000.0,
+                    duration_ms: duration_s * 1000.0,
                     frame_count: frames,
-                    fps: f64::from(stream.rate()), // or avg_frame_rate?
+                    fps,
+                    base_fps,
                     width: video.width(),
                     height: video.height(),
                     bitrate: bitrate as f64 / 1024.0 / 1024.0,
@@ -1101,11 +1123,79 @@ impl<'a> FfmpegProcessor<'a> {
         }
         Err(ffmpeg_next::Error::StreamNotFound)
     }
+
+    /// The frame rate of a video stream as the player (MDK) and gyroflow-core read it: the average one, ffmpeg's
+    /// `avg_frame_rate` (the stream's frames over their duration), so a clip added to the queue maps its frames to the
+    /// same times as in the app. `r_frame_rate`, the base rate its timestamps are at, is the same for a constant frame
+    /// rate, but slower or faster than the frames of a variable one (an iPhone clip: 30 against 30.0021), and can be
+    /// the stream's time base (raw H.264/HEVC); it stands in only when ffmpeg can't tell the average (0/0). 0 when
+    /// neither is known
+    fn timecode_rate_too_high(container: &str, rate: Rational) -> bool {
+        matches!(container, "mov" | "mp4") && rate.denominator() > 0 && f64::from(rate).round() > 255.0
+    }
+
+    fn average_frame_rate(stream: &Stream) -> f64 {
+        [stream.avg_frame_rate(), stream.rate()].into_iter().find(|rate| rate.numerator() > 0 && rate.denominator() > 0).map_or(0.0, f64::from)
+    }
+
+    /// The base frame rate of a video stream, ffmpeg's `r_frame_rate`: the rate its timestamps are at. For a recording
+    /// it's the rate the camera records at, the same for every part of it. The MP4 demuxer takes it from the frame
+    /// duration when all frames but the last have the same one, else ffmpeg from the first frames' durations (their
+    /// common divisor, or the standard rate nearest them), else from the codec, so frames dropped from a part (longer
+    /// durations) leave it as it is, where they lower the average. `None` when ffmpeg can't tell it
+    fn base_frame_rate(stream: &Stream) -> Option<f64> {
+        let rate = stream.rate();
+        (rate.numerator() > 0 && rate.denominator() > 0).then(|| f64::from(rate))
+    }
+
+    /// The duration of a video stream in seconds, as the file declares it: the stream's own (MP4, MOV, MXF, MPEG-TS),
+    /// else the duration its track's statistics give (the `DURATION` tag the Matroska and WebM muxers write per track,
+    /// ffmpeg's and mkvmerge's, which is the player's, MDK's, value there), else the container's (FLV's `onMetaData`, a
+    /// Matroska file without the tags), which spans all its streams. `None` when nothing declares one: a raw H.264/HEVC
+    /// stream, or a recording that never got its duration written. ffmpeg doesn't know such a duration either, and the
+    /// player has 0; a raw stream's frames have no time at all to be rendered by
+    fn video_duration_s(context: &format::context::Input, stream: &Stream) -> Option<f64> {
+        if stream.duration() > 0 {
+            return Some(stream.duration() as f64 * f64::from(stream.time_base()));
+        }
+        let tag = stream.metadata().iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case("DURATION") || key.get(..9).is_some_and(|key| key.eq_ignore_ascii_case("DURATION-")))
+            .and_then(|(_, value)| Self::duration_tag_s(value));
+        tag.filter(|s| *s > 0.0).or_else(|| (context.duration() > 0).then(|| context.duration() as f64 / f64::from(ffi::AV_TIME_BASE)))
+    }
+
+    /// A Matroska `DURATION` tag, `HH:MM:SS.nnnnnnnnn`, in seconds
+    fn duration_tag_s(value: &str) -> Option<f64> {
+        let mut parts = value.trim().splitn(3, ':');
+        let (hours, minutes, seconds) = (parts.next()?.parse::<u64>().ok()?, parts.next()?.parse::<u64>().ok()?, parts.next()?.parse::<f64>().ok()?);
+        (minutes < 60 && (0.0..60.0).contains(&seconds)).then(|| (hours as f64 * 3600.0 + minutes as f64 * 60.0) + seconds)
+    }
 }
 
 #[cfg(test)]
 mod decode_fallback_tests {
     use super::*;
+
+    #[test]
+    fn output_errors_do_not_retry_decoders() {
+        for error in [FFmpegError::Output("rename failed".into()), FFmpegError::OutputIsInput("out".into(), "in".into())] {
+            for index in -1..=4 {
+                assert_eq!(next_decoder_attempt(index, 0, &error), None);
+            }
+        }
+    }
+
+    #[test]
+    fn duration_tags_and_high_rate_timecodes_are_checked() {
+        assert_eq!(FfmpegProcessor::duration_tag_s("01:02:03.125"), Some(3723.125));
+        for text in ["00:60:00", "00:00:60", "00:00:NaN", "00:00:inf", "00:00:-1", "broken"] {
+            assert_eq!(FfmpegProcessor::duration_tag_s(text), None, "{text}");
+        }
+        assert!(FfmpegProcessor::timecode_rate_too_high("mov", Rational(400, 1)));
+        assert!(!FfmpegProcessor::timecode_rate_too_high("mp4", Rational(240000, 1001)));
+        assert!(!FfmpegProcessor::timecode_rate_too_high("mkv", Rational(400, 1)));
+        assert!(!FfmpegProcessor::timecode_rate_too_high("mp4", Rational(400, 0)));
+    }
 
     #[test]
     fn decode_fallback_stops_after_software_and_keeps_encoder_errors() {
