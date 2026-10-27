@@ -1186,6 +1186,21 @@ Kokeile toista lähtökoodekkia (H.265/HEVC tukee useampia tapauksia kuin H.264/
         <source>Continue processing</source>
         <translation>Jatka käsittelyä</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3392"/>
+        <source>Not enough of the image could be tracked</source>
+        <translation>Kuvasta ei voitu seurata riittävästi piirteitä</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3400"/>
+        <source>The analysis gave no usable result</source>
+        <translation>Analyysi ei tuottanut käyttökelpoista tulosta</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3406"/>
+        <source>Analysis failed. See the log for details.</source>
+        <translation>Analyysi epäonnistui. Katso lisätiedot lokista.</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>

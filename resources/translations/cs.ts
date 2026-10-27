@@ -1187,6 +1187,21 @@ Zkuste jiný výstupní kodek (H.265/HEVC zvládne více případů než H.264/A
         <source>Continue processing</source>
         <translation>Pokračovat ve zpracování</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3392"/>
+        <source>Not enough of the image could be tracked</source>
+        <translation>Nedostatek obrazových detailů pro sledování</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3400"/>
+        <source>The analysis gave no usable result</source>
+        <translation>Analýza neposkytla použitelný výsledek</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3406"/>
+        <source>Analysis failed. See the log for details.</source>
+        <translation>Analýza selhala. Podrobnosti najdete v protokolu.</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>

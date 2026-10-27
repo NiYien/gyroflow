@@ -1187,6 +1187,21 @@ Prøv en annen utdatakodek (H.265/HEVC dekker flere tilfeller enn H.264/AVC), se
         <source>Continue processing</source>
         <translation>Fortsett behandlingen</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3392"/>
+        <source>Not enough of the image could be tracked</source>
+        <translation>For lite av bildet kunne spores</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3400"/>
+        <source>The analysis gave no usable result</source>
+        <translation>Analysen ga ikke noe brukbart resultat</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3406"/>
+        <source>Analysis failed. See the log for details.</source>
+        <translation>Analysen mislyktes. Se loggen for mer informasjon.</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>

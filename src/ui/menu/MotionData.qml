@@ -21,6 +21,7 @@ MenuItem {
     property bool initialized: false;
     Component.onCompleted: {
         root.restoreTranslationPreferences();
+        root.ensureSimpleTranslationAuto();
         root.initialized = true;
     }
     property bool hasAccurateTimestamps: false;
@@ -33,12 +34,53 @@ MenuItem {
     property url lastSelectedFile: "";
     property alias extensions: fileDialog.extensions;
     property alias experimentalControls: experimentalControls;
+    property alias translationControls: translationcb;
     readonly property bool opticalEditsPending: opticalStrengthTimer.running || translationReferenceTimer.running
         || translationSmoothnessTimer.running || translationAlongAxisTimer.running || translationAutoTimer.running
         || (opticalcb.checked && opticalcb.info.available && opticalcb.info.outdated);
 
     function moveExperimentalControls(target: var): void {
         experimentalControls.parent = target || opticalControlsHost;
+    }
+    function moveTranslationControls(target: var): void {
+        translationcb.parent = target || translationControlsHost;
+    }
+
+    Connections {
+        target: window;
+        function onIsSimpleModeChanged(): void {
+            if (window.isSimpleMode) {
+                root.fullModeTranslationAuto = translationAuto.checked;
+                root.ensureSimpleTranslationAuto();
+            } else {
+                translationAutoTimer.stop();
+                root.updatingOpticalControls = true;
+                try {
+                    translationAuto.checked = root.fullModeTranslationAuto;
+                    controller.set_translation_auto(root.fullModeTranslationAuto);
+                } finally {
+                    root.updatingOpticalControls = false;
+                }
+            }
+            if (root.queueOpticalSettingsEdited) root.pushQueueOpticalSettings();
+        }
+    }
+
+    function ensureSimpleTranslationAuto(): void {
+        if (!window.isSimpleMode) return;
+        translationAutoTimer.stop();
+        const wasUpdating = root.updatingOpticalControls;
+        root.updatingOpticalControls = true;
+        try {
+            translationAuto.checked = true;
+            const info = JSON.parse(controller.translation_stabilization_info());
+            if (!info.auto) {
+                root.fullModeTranslationAuto = false;
+                controller.set_translation_auto(true);
+            }
+        } finally {
+            root.updatingOpticalControls = wasUpdating;
+        }
     }
 
     FileDialog {
@@ -66,6 +108,7 @@ MenuItem {
     // Qt signals can call back synchronously while a batch of user choices is being applied.
     property bool updatingOpticalControls: false;
     property bool hasExplicitOpticalRequest: false;
+    property bool fullModeTranslationAuto: true;
     function translationPreferences(): var {
         try {
             const saved = JSON.parse(settings.value("translationStabilization", "{}"));
@@ -103,7 +146,8 @@ MenuItem {
                 restored = true;
             }
             if (typeof saved.auto === "boolean") {
-                controller.set_translation_auto(saved.auto);
+                root.fullModeTranslationAuto = saved.auto;
+                controller.set_translation_auto(window.isSimpleMode || saved.auto);
                 restored = true;
             }
         } finally {
@@ -133,6 +177,10 @@ MenuItem {
         try {
             opticalcb.info = JSON.parse(controller.optical_correction_info());
             translationcb.info = JSON.parse(controller.translation_stabilization_info());
+            if (window.isSimpleMode && !translationcb.info.auto) {
+                root.ensureSimpleTranslationAuto();
+                translationcb.info = JSON.parse(controller.translation_stabilization_info());
+            }
             stabcb.info = JSON.parse(controller.stab_reconstruction_info());
             if (stabcb.info.requested && !translationcb.info.requested) {
                 controller.set_translation_stabilization_enabled(true);
@@ -152,8 +200,10 @@ MenuItem {
                 translationSmoothness.value = Math.log(translationcb.info.smoothness_s) / Math.LN10;
             if (restoreParameters || !translationAlongAxisTimer.running)
                 translationAlongAxis.checked = !!translationcb.info.along_axis;
-            if (restoreParameters || !translationAutoTimer.running)
-                translationAuto.checked = !!translationcb.info.auto;
+            if (restoreParameters || !translationAutoTimer.running) {
+                translationAuto.checked = window.isSimpleMode || !!translationcb.info.auto;
+                if (!window.isSimpleMode) root.fullModeTranslationAuto = translationAuto.checked;
+            }
             // The core reports a strength only with a correction fitted; without one the slider keeps its value
             if (restoreParameters && typeof opticalcb.info.strength === "number") opticalStrength.value = opticalcb.info.strength * 100;
         } finally {
@@ -171,6 +221,7 @@ MenuItem {
     }
     function syncQueueOpticalSettingsForProcessing(): void {
         // Loading a preview can change the visible choices after the last queue edit. An explicit batch action uses them.
+        root.ensureSimpleTranslationAuto();
         if (!root.queueOpticalSettingsEdited || !window.isSimpleMode || window.useMobileWorkspace) return;
         root.sendQueueOpticalSettings();
     }
@@ -183,7 +234,7 @@ MenuItem {
             translation_reference: (200 - translationReference.value) / 100,
             translation_smoothness: Math.pow(10, translationSmoothness.value),
             translation_along_axis: translationAlongAxis.checked,
-            translation_auto: translationAuto.checked,
+            translation_auto: window.isSimpleMode || translationAuto.checked,
             reconstruction: stabcb.checked
         }));
     }
@@ -201,6 +252,7 @@ MenuItem {
                 if (enabled) controller.set_ignore_file_motion(false);
                 controller.set_stab_reconstruction_enabled(enabled);
             } else if (mode === "translation") {
+                root.ensureSimpleTranslationAuto();
                 controller.set_translation_stabilization_enabled(enabled);
             } else {
                 controller.set_optical_correction_enabled(enabled);
@@ -213,6 +265,7 @@ MenuItem {
         root.pushQueueOpticalSettings();
     }
     function analyzeOpticalModes(): void {
+        root.ensureSimpleTranslationAuto();
         const optical = opticalcb.checked;
         const translation = translationcb.checked;
         const reconstruction = stabcb.checked;
@@ -269,7 +322,10 @@ MenuItem {
                 if (typeof gyro.translation_reference === "number") translationReference.value = 200 - gyro.translation_reference * 100;
                 if (typeof gyro.translation_smoothness === "number") translationSmoothness.value = Math.log(gyro.translation_smoothness) / Math.LN10;
                 if (typeof gyro.translation_along_axis === "boolean") translationAlongAxis.checked = gyro.translation_along_axis;
-                if (typeof gyro.translation_auto === "boolean") translationAuto.checked = gyro.translation_auto;
+                if (typeof gyro.translation_auto === "boolean") {
+                    root.fullModeTranslationAuto = gyro.translation_auto;
+                    translationAuto.checked = window.isSimpleMode || gyro.translation_auto;
+                }
                 if (typeof gyro.stab_reconstruction_enabled === "boolean") stabcb.checked = gyro.stab_reconstruction_enabled;
             } finally {
                 root.updatingOpticalControls = false;
@@ -580,8 +636,13 @@ MenuItem {
             }
         }
     }
+    Item {
+        id: translationControlsHost;
+        width: parent.width;
+        height: translationcb.parent === translationControlsHost ? translationcb.height : 0;
     CheckBoxWithContent {
         id: translationcb;
+        objectName: "translationStabilization";
         text: qsTr("Translation stabilization");
         cb.unavailable: stabcb.checked;
         cb.tooltip: qsTr("Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis samples frames at an integer interval near 25 fps within the selected trim range. Can't be used together with in-camera stabilization reconstruction. The reported shift is sampled at frame centers; output cropping changes its apparent size.");
@@ -596,14 +657,20 @@ MenuItem {
         }
         CheckBox {
             id: translationAuto;
+            objectName: "translationAutomaticParameters";
             parent: translationcb.cb;
             anchors.right: parent.right;
             anchors.verticalCenter: parent.verticalCenter;
-            visible: translationcb.checked;
+            visible: !window.isSimpleMode && translationcb.checked;
             text: qsTr("Automatic parameters");
             tooltip: qsTr("Choose the reference distance and the smoothness from the analysis: hold the distant scenery steady, or the subject once it fills most of the picture, and smooth as much as the shift range allows.");
             checked: true;
             onCheckedChanged: if (root.initialized && !root.updatingOpticalControls) {
+                if (window.isSimpleMode) {
+                    root.ensureSimpleTranslationAuto();
+                    return;
+                }
+                root.fullModeTranslationAuto = checked;
                 root.saveTranslationPreference("auto", checked);
                 translationAutoTimer.restart();
             }
@@ -623,7 +690,7 @@ MenuItem {
         Label {
             text: qsTr("Reference distance");
             width: parent.width;
-            visible: !translationAuto.checked;
+            visible: !window.isSimpleMode && !translationAuto.checked;
             tooltip: qsTr("Move toward Near to stabilize closer objects, or toward Far to stabilize more distant content. The middle position stabilizes the farther parts of the image (default).");
             Row {
                 width: parent.width;
@@ -654,7 +721,7 @@ MenuItem {
         Label {
             text: qsTr("Translation smoothness");
             width: parent.width;
-            visible: !translationAuto.checked;
+            visible: !window.isSimpleMode && !translationAuto.checked;
             tooltip: qsTr("Low values only remove fast shakes. High values also remove slow drifts and come close to locking the picture.");
             Row {
                 width: parent.width;
@@ -680,13 +747,14 @@ MenuItem {
         CheckBox {
             id: translationAlongAxis;
             text: qsTr("Compensate movement along the lens axis");
-            visible: !translationAuto.checked;
+            visible: !window.isSimpleMode && !translationAuto.checked;
             checked: true;
             onCheckedChanged: if (root.initialized && !root.updatingOpticalControls) {
                 root.saveTranslationPreference("along_axis", checked);
                 translationAlongAxisTimer.restart();
             }
         }
+    }
     }
     Timer {
         id: translationReferenceTimer;

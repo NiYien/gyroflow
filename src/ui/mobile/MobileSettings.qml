@@ -11,6 +11,8 @@ Column {
     property bool busy: false
     property string section: "stabilization"
     property string platformOs: Qt.platform.os
+    property alias translationContent: translationContent
+    property bool canEditTranslation: true
     signal documentRequested(string kind)
     signal experimentalRequested()
     property color accentColor: MobileStyle.accent(dark)
@@ -74,6 +76,13 @@ Column {
             text: qsTr("Lens correction")
             checked: root.host ? root.host.batchState.lensCorrection >= 0.5 : true
             onToggled: if (root.host) root.host.batchState.lensCorrection = checked ? 1 : 0
+        }
+        Divider {}
+        Column {
+            id: translationContent
+            objectName: "mobileTranslationContent"
+            width: parent.width
+            enabled: root.canEditTranslation
         }
     }
     MobileGroup {

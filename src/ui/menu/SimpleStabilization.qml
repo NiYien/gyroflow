@@ -424,7 +424,7 @@ Column {
     // `neuflow-burn` feature is re-enabled.
     CheckBox {
         id: aiSyncCb;
-        enabled: !opticalSyncCb.checked;
+        enabled: !root.opticalSyncEnabled;
         text: qsTr("AI SYNC");
         // Visibility follows the `neuflow-burn` cargo feature via
         // has_neuflow_support(), so builds without Burn never offer a toggle
@@ -435,7 +435,7 @@ Column {
         checked: settings.value("simpleAiSync", false) === true || settings.value("simpleAiSync", false) === "true";
         onCheckedChanged: {
             settings.setValue("simpleAiSync", checked);
-            render_queue.batch_sync_ai_method = checked && controller.has_neuflow_support();
+            render_queue.batch_sync_ai_method = checked && controller.has_neuflow_support() && !root.opticalSyncEnabled;
             // The AI sync toggle changes the optical-flow method consumed by sync, so any
             // prior batch sync is now stale and must re-run on the next sync action.
             window.syncDirty = true;
@@ -448,23 +448,15 @@ Column {
             if (window.isSimpleMode)
                 controller.set_of_method(checked && controller.has_neuflow_support() ? 4 : 2);
         }
-        Component.onCompleted: render_queue.batch_sync_ai_method = checked && controller.has_neuflow_support();
+        Component.onCompleted: render_queue.batch_sync_ai_method = checked && controller.has_neuflow_support() && !root.opticalSyncEnabled;
     }
 
-    // This toggle is not persisted and writes one-way to Rust. Switching it updates existing jobs.
-    CheckBox {
-        id: opticalSyncCb;
-        text: qsTr("Optical sync");
-        tooltip: qsTr("Synchronize by tracking features in the video instead of using optical flow. Also used by batch matching and deep matching. Experimental: it may find no sync point for extreme rotation or very smooth motion.");
-        visible: !isMobile && controller.has_optical_sync_support();
-        checked: false;
-        enabled: !controller.sync_in_progress && !(window.videoArea && window.videoArea.queue && (window.videoArea.queue.matching || window.videoArea.queue._batchSyncInFlight));
-        onCheckedChanged: {
-            render_queue.batch_sync_optical = checked;
-            render_queue.set_jobs_sync_offset_method(checked ? 3 : 2);
-            window.syncDirty = true;
-        }
-        Component.onCompleted: render_queue.batch_sync_optical = checked;
+    // Simple mode always uses optical sync when the build supports it. App
+    // mirrors the mode to RenderQueue, which also updates queued projects.
+    readonly property bool opticalSyncEnabled: window.isSimpleMode && controller.has_optical_sync_support();
+    onOpticalSyncEnabledChanged: {
+        render_queue.batch_sync_ai_method = aiSyncCb.checked && controller.has_neuflow_support() && !root.opticalSyncEnabled;
+        window.syncDirty = true;
     }
 
     // ── Sync with Full mode ──

@@ -44,6 +44,7 @@ Rectangle {
     property int importTab: 0
     property bool browseFilesInApp: false
     property int settingsTab: 0
+    property alias translationContent: mobileSettings.translationContent
     property var pendingFolderImport: null
     property int previewJobId: 0
     property int detailJobId: 0
@@ -1038,7 +1039,7 @@ Rectangle {
                         spacing: 16 * root.unit
                         MobileText { unit: root.unit; dark: root.dark; visible: root.busy; width: parent.width; text: qsTr("Stop the current task to adjust processing settings."); wrapMode: Text.WordWrap; color: root.mutedColor; secondary: true; }
                         MobileText { unit: root.unit; dark: root.dark; visible: root.settingsTab < 2; width: parent.width; text: qsTr("Changes apply to all videos."); wrapMode: Text.WordWrap; secondary: true }
-                        MobileSettings { visible: root.settingsTab !== 1; width: parent.width; host: root.host; unit: root.unit; dark: root.dark; busy: root.busy; platformOs: root.platformOs; section: ["stabilization", "lens", "app"][root.settingsTab]; onDocumentRequested: kind => root.showPanel(kind); onExperimentalRequested: root.showPanel("experimental") }
+                        MobileSettings { id: mobileSettings; visible: root.settingsTab !== 1; width: parent.width; host: root.host; unit: root.unit; dark: root.dark; busy: root.busy; platformOs: root.platformOs; canEditTranslation: root.canEditExperimental; section: ["stabilization", "lens", "app"][root.settingsTab]; onDocumentRequested: kind => root.showPanel(kind); onExperimentalRequested: root.showPanel("experimental") }
                         Column { id: settingsContent; visible: root.settingsTab === 1; width: parent.width; spacing: 16 * root.unit; enabled: !root.busy; opacity: enabled ? 1 : 0.55 }
                     }
                     Column {

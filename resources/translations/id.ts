@@ -1185,6 +1185,21 @@ Coba codec keluaran lain (H.265/HEVC menangani lebih banyak kasus daripada H.264
         <source>Continue processing</source>
         <translation>Lanjutkan pemrosesan</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3392"/>
+        <source>Not enough of the image could be tracked</source>
+        <translation>Bagian gambar yang dapat dilacak tidak cukup</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3400"/>
+        <source>The analysis gave no usable result</source>
+        <translation>Analisis tidak memberikan hasil yang dapat digunakan</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3406"/>
+        <source>Analysis failed. See the log for details.</source>
+        <translation>Analisis gagal. Lihat log untuk detailnya.</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>

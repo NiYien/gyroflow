@@ -27,6 +27,7 @@ TestCase {
     Component { id: inputFactory; TextInput { width: 120; height: 48; text: "35" } }
     Component { id: videoCardFactory; Mobile.MobileVideoCard { height: 72; unit: 1; dark: false } }
     Component { id: settingsFactory; Mobile.MobileSettings { unit: 1; dark: false; host: previewService } }
+    Component { id: translationGuestFactory; Mobile.MobileToggle { width: parent.width; unit: 1; dark: false; text: "Translation stabilization" } }
     QtObject {
         id: previewService
         property QtObject batchState: QtObject {
@@ -227,6 +228,74 @@ TestCase {
         samples = [];
         workspace.refresh();
         verify(workspace.canEditExperimental, "Settings can be selected before adding videos");
+    }
+    function test_translation_settings_host_allows_batch_choices_without_a_preview() {
+        workspace.host = previewService;
+        previewService.videoArea.vid.loaded = false;
+        samples = [];
+        workspace.refresh();
+        workspace.showPanel("settings");
+        const target = workspace.translationContent;
+        verify(target !== null);
+        compare(target.objectName, "mobileTranslationContent");
+        verify(target.enabled, "The translation choice can be set before adding or previewing a video");
+        const guest = createTemporaryObject(translationGuestFactory, target);
+        verify(guest !== null && guest.enabled);
+        workspace.settingsTab = 1;
+        verify(!target.visible, "The translation choice belongs to stabilization, not lens settings");
+        workspace.settingsTab = 2;
+        verify(!target.visible, "The translation choice stays out of application preferences");
+        workspace.settingsTab = 0;
+        verify(target.visible && guest.enabled);
+    }
+    function test_translation_settings_host_guards_loading_and_processing() {
+        workspace.host = previewService;
+        previewService.videoArea.vid.loaded = false;
+        workspace.showPanel("settings");
+        const target = workspace.translationContent;
+        const guest = createTemporaryObject(translationGuestFactory, target);
+        verify(guest !== null && target.enabled && guest.enabled);
+        for (const field of ["video_loading_in_progress", "loading_gyro_in_progress", "sync_in_progress"]) {
+            previewService.controller[field] = true;
+            verify(!target.enabled && !guest.enabled, field + " blocks the reparented translation control");
+            previewService.controller[field] = false;
+            verify(target.enabled && guest.enabled, field + " restores editing after completion");
+        }
+        previewService.videoArea.queueEditLoading = true;
+        verify(!target.enabled && !guest.enabled, "Loading a queue preview also protects its motion settings");
+        previewService.videoArea.queueEditLoading = false;
+        workspace.engineBusy = true;
+        verify(!target.enabled && !guest.enabled, "Batch processing disables translation editing");
+        workspace.engineBusy = false;
+        verify(target.enabled && guest.enabled);
+    }
+    function test_translation_settings_host_layout_data() {
+        return [{ tag: "portrait", w: 360, h: 640 },
+            { tag: "landscape", w: 800, h: 360 },
+            { tag: "narrow", w: 280, h: 640 }];
+    }
+    function test_translation_settings_host_layout(data) {
+        workspace.host = previewService;
+        workspace.width = data.w; workspace.height = data.h;
+        workspace.showPanel("settings");
+        const target = workspace.translationContent;
+        const guest = createTemporaryObject(translationGuestFactory, target);
+        verify(guest !== null);
+        waitForRendering(workspace);
+        tryVerify(function() { return target.height >= guest.height && target.width > 0; });
+        compare(guest.width, target.width, "Reparented content follows the stabilization group's width");
+        const scroll = workspace.panelFlickable;
+        const bottom = guest.mapToItem(scroll, 0, guest.height).y;
+        if (bottom > scroll.height) scroll.contentY += bottom - scroll.height + 8;
+        const top = guest.mapToItem(scroll, 0, 0).y;
+        if (top < 0) scroll.contentY += top - 8;
+        waitForRendering(workspace);
+        const start = guest.mapToItem(workspace, 0, 0);
+        const end = guest.mapToItem(workspace, guest.width, guest.height);
+        verify(start.x >= 0 && end.x <= workspace.width, "Translation content fits the panel horizontally");
+        verify(guest.mapToItem(scroll, 0, 0).y >= -1
+            && guest.mapToItem(scroll, 0, guest.height).y <= scroll.height + 1,
+            "Translation content remains reachable by scrolling in either orientation");
     }
     function test_experimental_analysis_can_be_cancelled_and_blocks_navigation() {
         prepareExperimentalPreview();

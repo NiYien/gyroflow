@@ -1187,6 +1187,21 @@ Prøv en anden output-codec (H.265/HEVC klarer flere tilfælde end H.264/AVC), s
         <source>Continue processing</source>
         <translation>Fortsæt behandlingen</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3392"/>
+        <source>Not enough of the image could be tracked</source>
+        <translation>For lidt af billedet kunne spores</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3400"/>
+        <source>The analysis gave no usable result</source>
+        <translation>Analysen gav intet brugbart resultat</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3406"/>
+        <source>Analysis failed. See the log for details.</source>
+        <translation>Analysen mislykkedes. Se loggen for flere oplysninger.</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>

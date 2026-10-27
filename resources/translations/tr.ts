@@ -1183,6 +1183,21 @@ Farklı bir çıkış kodeki deneyin (H.265/HEVC, H.264/AVC&apos;den daha fazla 
         <source>Continue processing</source>
         <translation>İşlemeye devam et</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3392"/>
+        <source>Not enough of the image could be tracked</source>
+        <translation>Görüntüde yeterli sayıda nokta izlenemedi</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3400"/>
+        <source>The analysis gave no usable result</source>
+        <translation>Analiz kullanılabilir bir sonuç vermedi</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3406"/>
+        <source>Analysis failed. See the log for details.</source>
+        <translation>Analiz başarısız oldu. Ayrıntılar için günlüğe bakın.</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>

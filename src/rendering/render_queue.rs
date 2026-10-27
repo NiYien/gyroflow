@@ -137,6 +137,9 @@ pub struct RenderQueueItem {
     // Analysis progress, 0..1. Separate from processing_progress, which the
     // queue progress and ETA read as sync progress.
     pub optical_progress: f64,
+    // Source frames in the analyzed range. Project-only completion changes
+    // total_frames to 1, so the analysis budget needs its own stable count.
+    pub optical_total_frames: u64,
 
     frame_times: std::collections::VecDeque<(u64, u64)>,
 
@@ -437,6 +440,33 @@ struct Job {
     // analysis pass (analysis + project write, no sync) now that its batch sync
     // is final. In memory only, see schedule_stabilize_optical_passes.
     optical_pass: bool,
+}
+
+#[derive(Clone)]
+struct BatchSyncOpticalAttempt {
+    settings: QueueOpticalSettings,
+    context: u64,
+    quaternions: u64,
+    outcome: QueueOpticalOutcome,
+}
+
+impl BatchSyncOpticalAttempt {
+    fn new(stab: &StabilizationManager, settings: QueueOpticalSettings, outcome: QueueOpticalOutcome) -> Self {
+        use core::synchronization::optical_analysis::{context_checksum, measurement_params};
+        Self {
+            settings,
+            context: context_checksum(&measurement_params(stab)),
+            quaternions: core::gyro_source::optical_correction::checksum(&stab.gyro.read().quaternions),
+            outcome,
+        }
+    }
+
+    fn matches(&self, stab: &StabilizationManager, settings: &QueueOpticalSettings) -> bool {
+        use core::synchronization::optical_analysis::{context_checksum, measurement_params};
+        self.settings == *settings
+            && self.context == context_checksum(&measurement_params(stab))
+            && self.quaternions == core::gyro_source::optical_correction::checksum(&stab.gyro.read().quaternions)
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1991,7 +2021,7 @@ pub struct RenderQueue {
     estimated_remaining_ms: qt_property!(f64; READ get_estimated_remaining_ms NOTIFY progress_changed),
     pub status: qt_property!(QString; NOTIFY status_changed),
     pub auto_rotate: qt_property!(bool; NOTIFY auto_rotate_changed),
-    pub simple_mode: qt_property!(bool; NOTIFY simple_mode_changed),
+    pub simple_mode: qt_property!(bool; WRITE set_simple_mode NOTIFY simple_mode_changed),
     // Simple mode "AI SYNC" toggle. When true, apply_match uses of_method=4
     // (NeuFlow v2 Burn) for batch sync; when false, of_method=2 (DIS).
     // Driven by SimpleStabilization.qml::aiSyncCb and persisted via QSettings.
@@ -2128,6 +2158,7 @@ pub struct RenderQueue {
     batch_sync_confirmed_points:
         HashMap<u32, Vec<gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate>>,
     batch_sync_attempted_timestamps_ms: HashMap<u32, Vec<f64>>,
+    batch_sync_optical_attempts: HashMap<u32, BatchSyncOpticalAttempt>,
     batch_sync_repair_round: u8,
     batch_sync_repair_prompt_pending: bool,
     batch_sync_prompt_kind: BatchSyncPromptKind,
@@ -2633,7 +2664,15 @@ impl RenderQueue {
             };
         }
 
-        ((snapshot.done_units - start_units).max(0.0) / total_units).clamp(0.0, 1.0)
+        let progress = ((snapshot.done_units - start_units).max(0.0) / total_units).clamp(0.0, 1.0);
+        if snapshot.done_jobs < snapshot.total_jobs
+            && self.queue_has_optical_work()
+        {
+            // A short final clip must not round the whole queue up to 100%.
+            progress.min(0.99)
+        } else {
+            progress
+        }
     }
     pub fn get_queue_done_jobs(&self) -> u64 {
         self.queue_progress_snapshot().done_jobs
@@ -2657,6 +2696,14 @@ impl RenderQueue {
         let exports_video = self.exports_video();
 
         for item in q.iter() {
+            // The ETA model has no optical-analysis throughput samples. Let the
+            // UI estimate from the combined progress until that stage is done.
+            if matches!(item.status, JobStatus::Queued | JobStatus::Rendering)
+                && self.queue_item_optical_work_units(item) > 0.0
+                && item.optical_progress < 1.0
+            {
+                return None;
+            }
             match item.status {
                 JobStatus::Queued => {
                     if exports_video {
@@ -2699,7 +2746,15 @@ impl RenderQueue {
     }
 
     fn queue_progress_uses_weighted_work(&self) -> bool {
-        self.export_project == 2 || self.export_project == 4
+        self.export_project == 2
+            || self.export_project == 4
+            || (self.exports_video() && self.queue_has_optical_work())
+    }
+
+    fn queue_has_optical_work(&self) -> bool {
+        self.queue.try_borrow().is_ok_and(|queue| {
+            queue.iter().any(|item| self.queue_item_optical_work_units(item) > 0.0)
+        })
     }
 
     fn queue_progress_snapshot(&self) -> QueueProgressSnapshot {
@@ -2723,28 +2778,63 @@ impl RenderQueue {
             };
             let sync_units =
                 Self::queue_item_sync_work_units(item, estimated_sync_units, render_units);
-            let mut total_units = sync_units + render_units;
+            let optical_units = self.queue_item_optical_work_units(item);
+            let mut total_units = sync_units + optical_units + render_units;
             if total_units <= f64::EPSILON {
                 total_units = 1.0;
             }
 
-            let done_units = match item.status {
-                JobStatus::Finished | JobStatus::Skipped => total_units,
-                JobStatus::Queued | JobStatus::Rendering | JobStatus::Error => {
-                    Self::queue_item_active_work_units(item, sync_units, render_units)
+            let waiting_for_confirmation = optical_units > 0.0
+                && item.status == JobStatus::Finished
+                && item.sync_status.to_string().contains("\"done_pending\"");
+            let completed = matches!(item.status, JobStatus::Finished | JobStatus::Skipped)
+                && !waiting_for_confirmation;
+            let mut done_units = match item.status {
+                JobStatus::Finished | JobStatus::Skipped if completed => total_units,
+                JobStatus::Finished | JobStatus::Skipped
+                | JobStatus::Queued | JobStatus::Rendering | JobStatus::Error => {
+                    Self::queue_item_active_work_units(item, sync_units, optical_units, render_units)
                         .min(total_units)
                 }
             };
+            // Analysis completion still has project writing and, for a batch,
+            // sync confirmation behind it. Only the terminal state earns 100%.
+            if optical_units > 0.0 && !completed {
+                done_units = done_units.min(total_units * 0.99);
+            }
 
             snapshot.done_units += done_units;
             snapshot.total_units += total_units;
             snapshot.total_jobs += 1;
-            if matches!(item.status, JobStatus::Finished | JobStatus::Skipped) {
+            if completed {
                 snapshot.done_jobs += 1;
             }
         }
 
         snapshot
+    }
+
+    fn queue_item_optical_work_units(&self, item: &RenderQueueItem) -> f64 {
+        if self.export_metadata.is_some()
+            || self.export_stmap.is_some()
+            || self.deep_match_pending.contains_key(&item.job_id)
+        {
+            return 0.0;
+        }
+        if self.jobs.get(&item.job_id).is_some_and(|job| {
+            job.optical.as_ref().is_some_and(QueueOpticalSettings::any_ticked)
+        }) || item.optical_notice.to_string().starts_with("optical_skipped:") {
+            // Keep the budget after results are installed or the phase is
+            // cleared. A reconstruction skip also keeps its original budget
+            // after the safety gate unticks it. Reset clears the notice.
+            if item.optical_total_frames > 0 {
+                item.optical_total_frames as f64
+            } else {
+                item.total_frames.max(1) as f64
+            }
+        } else {
+            0.0
+        }
     }
 
     fn queue_item_sync_work_units(
@@ -2764,13 +2854,17 @@ impl RenderQueue {
     fn queue_item_active_work_units(
         item: &RenderQueueItem,
         sync_units: f64,
+        optical_units: f64,
         render_units: f64,
     ) -> f64 {
         let processing = item.processing_progress.clamp(0.0, 1.0);
-        if render_units > 0.0 && item.current_frame > 0 {
-            sync_units + (item.current_frame.min(item.total_frames) as f64)
+        if render_units > 0.0 && item.current_frame > 0
+            && (optical_units <= f64::EPSILON
+                || (item.optical_progress >= 1.0 && item.processing_phase != "optical".into()))
+        {
+            sync_units + optical_units + (item.current_frame.min(item.total_frames) as f64)
         } else {
-            sync_units * processing
+            sync_units * processing + optical_units * item.optical_progress.clamp(0.0, 1.0)
         }
     }
 
@@ -2899,6 +2993,7 @@ impl RenderQueue {
         self.batch_sync_points.clear();
         self.batch_sync_confirmed_points.clear();
         self.batch_sync_attempted_timestamps_ms.clear();
+        self.batch_sync_optical_attempts.clear();
         self.batch_sync_repair_round = 0;
         self.batch_sync_repair_prompt_pending = false;
         self.batch_sync_prompt_kind = BatchSyncPromptKind::None;
@@ -2946,6 +3041,8 @@ impl RenderQueue {
                 }).to_string());
                 itm.processing_progress = 0.0;
                 itm.current_frame = 0;
+                itm.processing_phase = QString::default();
+                itm.optical_progress = 0.0;
             });
         }
         self.batch_sync_status_changed();
@@ -3542,6 +3639,7 @@ impl RenderQueue {
             self.batch_sync_points.retain(|p| p.job_id != job_id);
             self.batch_sync_confirmed_points.remove(&job_id);
             self.batch_sync_attempted_timestamps_ms.remove(&job_id);
+            self.batch_sync_optical_attempts.remove(&job_id);
             self.dynamic_clock_shift_by_job.remove(&job_id);
             if let Some(job) = self.jobs.get_mut(&job_id) {
                 // Kill the finishing run's trailing callbacks: the job being
@@ -3565,6 +3663,8 @@ impl RenderQueue {
                 }).to_string());
                 itm.processing_progress = 0.0;
                 itm.current_frame = 0;
+                itm.processing_phase = QString::default();
+                itm.optical_progress = 0.0;
             });
         }
         self.batch_sync_status_changed();
@@ -4691,8 +4791,8 @@ impl RenderQueue {
             }
         };
         self.batch_sync_status_changed();
-        // stabilize-flow-optical-analysis: the analysis is bound to the sync
-        // offsets, so it waits until no repair can move them any more.
+        // Reuse individual analysis when possible; repair may still change its
+        // inputs, so final follow-up passes wait for the repair decision.
         if self.batch_sync_prompt_kind == BatchSyncPromptKind::Repair {
             self.log_deferred_stabilize_passes("repair prompt pending");
         } else if repair_round_queued {
@@ -4717,6 +4817,27 @@ impl RenderQueue {
         stab.keyframes.write().update_gyro(&gyro);
         drop(gyro);
         stab.invalidate_smoothing();
+    }
+
+    fn prepare_batch_sync_optical(
+        stab: &StabilizationManager,
+        job_id: u32,
+        candidates: &[core::synchronization::sync_repair::BatchSyncPointCandidate],
+    ) -> bool {
+        let result = core::synchronization::sync_repair::confirm_batch_sync_points_for_jobs(
+            candidates.to_vec(),
+            [job_id],
+        );
+        let Some(video) = result.videos.iter().find(|video| video.job_id == job_id) else { return false; };
+        if video.confirmed_points.is_empty() {
+            return false;
+        }
+        // Restore file motion before replacing its offsets; a previous visual
+        // analysis may have stored them separately while motion was ignored.
+        stab.set_ignore_file_motion(false);
+        Self::apply_batch_sync_points_to_stab(stab, &video.confirmed_points);
+        ::log::info!(target: "queue.optical", "[queue-optical] job={job_id} analyzing after individual sync ({} points); batch verification pending", video.confirmed_points.len());
+        true
     }
 
     /// Finish a sync run with VQF quaternions, not merely a VQF method label.
@@ -4917,11 +5038,8 @@ impl RenderQueue {
         }
     }
 
-    /// stabilize-flow-optical-analysis: once the batch sync is final (no repair
-    /// round running, no repair prompt waiting), every green job whose panel
-    /// settings still need it goes back to the queue for an analysis pass: the
-    /// analysis and the project write, without a sync (`optical_pass` in
-    /// `render_job`). Yellow jobs are left to the export's analysis.
+    /// Complete analysis only for green jobs whose final sync or settings still
+    /// need it. An unchanged individual attempt, including a fallback, is reused.
     fn schedule_stabilize_optical_passes(&mut self, why: &str) {
         if !self.batch_uses_queue_optical_settings() {
             return;
@@ -4941,6 +5059,7 @@ impl RenderQueue {
             })
             .collect();
         let (mut scheduled, mut applies, mut green, mut yellow) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let mut retained_skips = Vec::new();
         for job_id in job_ids {
             let Some((status, color)) = rows.get(&job_id) else { continue; };
             match color.as_str() {
@@ -4955,8 +5074,18 @@ impl RenderQueue {
             let Some(stab) = job.stab.clone() else { continue; };
             // The row goes back to the queue: it takes the panel's current settings, as reset_job gives them
             let Some(settings) = self.optical_settings.clone().or_else(|| job.optical.clone()) else { continue; };
+            let settings = normalize_queue_optical_settings(settings, self.simple_mode);
             if !settings.any_ticked() {
                 continue;
+            }
+            if let Some(attempt) = self.batch_sync_optical_attempts.get(&job_id).filter(|attempt| attempt.matches(&stab, &settings)) {
+                if !matches!(attempt.outcome, QueueOpticalOutcome::Applied { .. }) {
+                    if matches!(attempt.outcome, QueueOpticalOutcome::Skip { .. }) {
+                        retained_skips.push((job_id, attempt.outcome.clone()));
+                    }
+                    applies.push(job_id);
+                    continue;
+                }
             }
             if !queue_optical::stabilize_pass_needed(&stab, &settings) {
                 applies.push(job_id);
@@ -4971,8 +5100,16 @@ impl RenderQueue {
                 itm.status = JobStatus::Queued;
                 itm.current_frame = 0;
                 itm.processing_phase = QString::default();
+                itm.optical_progress = 0.0;
             });
             scheduled.push(job_id);
+        }
+        for (job_id, outcome) in retained_skips {
+            // Ignore the first worker's trailing finished tick after a final skip.
+            if let Some(job) = self.jobs.get(&job_id) {
+                job.render_epoch.fetch_add(1, SeqCst);
+            }
+            self.finish_queue_optical(job_id, outcome);
         }
         ::log::info!(
             target: "queue.optical",
@@ -5056,6 +5193,7 @@ impl RenderQueue {
     }
 
     fn prepare_batch_sync_repair_job(&mut self, job_id: u32) -> bool {
+        self.batch_sync_optical_attempts.remove(&job_id);
         let Some(job) = self.jobs.get(&job_id) else {
             return false;
         };
@@ -5126,6 +5264,8 @@ impl RenderQueue {
             itm.status = JobStatus::Queued;
             itm.current_frame = 0;
             itm.processing_progress = 0.0;
+            itm.processing_phase = QString::default();
+            itm.optical_progress = 0.0;
             itm.error_string = QString::default();
         });
         true
@@ -5429,6 +5569,7 @@ impl RenderQueue {
                 itm.export_settings = QString::from(render_options.settings_string(params.get_scaled_fps()));
                 itm.thumbnail_url = thumbnail_url;
                 itm.duration_ms = params.duration_ms;
+                itm.optical_total_frames = (params.frame_count as f64 * trim_ratio).ceil() as u64;
                 itm.start_timestamp = 0;
                 itm.start_timestamp2 = 0;
                 itm.start_timestamp_frame = 0;
@@ -5490,6 +5631,7 @@ impl RenderQueue {
                 optical_notice: QString::default(),
                 processing_phase: QString::default(),
                 optical_progress: 0.0,
+                optical_total_frames: (params.frame_count as f64 * trim_ratio).ceil() as u64,
                 frame_times: Default::default(),
                 status: if stabilization_blocked {
                     JobStatus::Skipped
@@ -5594,6 +5736,8 @@ impl RenderQueue {
         );
         self.update_queue_indices();
 
+        self.apply_simple_mode_to_job(job_id);
+
         self.queue_changed();
         self.handle_manual_camera_queue_change(manual_camera_eligible_before, Some(job_id));
         ::log::info!(
@@ -5647,6 +5791,7 @@ impl RenderQueue {
         self.completed_batch_sync_job_ids.remove(&job_id);
         self.batch_sync_confirmed_points.remove(&job_id);
         self.batch_sync_attempted_timestamps_ms.remove(&job_id);
+        self.batch_sync_optical_attempts.remove(&job_id);
         self.batch_sync_points.retain(|point| point.job_id != job_id);
         // Removing a job also removes its vote from the local clock consensus.
         self.batch_clock.remove_job(job_id);
@@ -6116,6 +6261,11 @@ impl RenderQueue {
                 let mut v = q[i].clone();
                 if v.status == JobStatus::Rendering {
                     v.status = JobStatus::Queued;
+                    // A cancelled analysis restarts from the beginning. Clear it
+                    // before resume captures the queue's progress baseline.
+                    if v.processing_phase.to_string() == "optical" {
+                        v.optical_progress = 0.0;
+                    }
                     // The stopped analysis' last progress callback is dropped by the epoch guard
                     v.processing_phase = QString::default();
                     q.change_line(i, v);
@@ -6234,6 +6384,7 @@ impl RenderQueue {
     }
 
     pub fn reset_job(&mut self, job_id: u32) {
+        self.batch_sync_optical_attempts.remove(&job_id);
         // queue-optical-analysis: a job going back to the queue (an export after
         // the sync, a retry, a re-render) renders with the panel's current
         // settings. Before the gate below, which reads them.
@@ -6330,6 +6481,7 @@ impl RenderQueue {
                             }
                             job.stab = Some(stab);
                         }
+                        self.apply_simple_mode_to_job(job_id);
                     }
                     Err(e) => {
                         ::log::error!(
@@ -7650,6 +7802,7 @@ impl RenderQueue {
     }
 
     pub fn render_job(&mut self, job_id: u32) {
+        self.apply_simple_mode_to_job(job_id);
         if self.jobs.get(&job_id).is_some_and(|job| job.stab.is_none() && job.project_data.is_some())
             && self.job_original_stabilization_requirement(job_id)
         {
@@ -8187,13 +8340,14 @@ impl RenderQueue {
             // (job_is_deep_match is captured above, next to job_is_batch_sync.)
             let batch_sync_done = util::qt_queued_callback_mut(
                 QPointer::from(self as &Self),
-                move |this, (job_id, render_epoch, points, attempted_timestamps_ms, t1_snapshot, decode_failure): (
+                move |this, (job_id, render_epoch, points, attempted_timestamps_ms, t1_snapshot, decode_failure, optical_attempt): (
                     u32,
                     u64,
                     Vec<gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate>,
                     Vec<f64>,
                     Option<BTreeMap<i64, f64>>,
                     Option<DeepMatchDecodeFailure>,
+                    Option<BatchSyncOpticalAttempt>,
                 )| {
                     let current_epoch = this
                         .jobs
@@ -8212,13 +8366,22 @@ impl RenderQueue {
                             job.last_written_offsets = Some(snapshot);
                         }
                     }
+                    this.batch_sync_optical_attempts.remove(&job_id);
+                    if let Some(attempt) = optical_attempt {
+                        update_model!(this, job_id, itm {
+                            itm.optical_notice = QString::from(attempt.outcome.notice());
+                        });
+                        this.batch_sync_optical_attempts.insert(job_id, attempt);
+                    }
                     this.record_batch_sync_result(job_id, points, attempted_timestamps_ms);
                 },
             );
             // queue-optical-analysis: the job's experimental settings and whether
             // the clip needs its in-camera stabilization reconstructed, read here
             // on the UI thread for the worker's analysis step.
-            let queue_optical_settings = job.optical.clone();
+            let simple_mode = self.simple_mode;
+            let queue_optical_settings = job.optical.clone()
+                .map(|settings| normalize_queue_optical_settings(settings, simple_mode));
             let requires_compensation = queue_optical_settings.is_some()
                 && self.job_original_stabilization_requirement(job_id);
             let optical_phase = util::qt_queued_callback_mut(
@@ -8268,11 +8431,15 @@ impl RenderQueue {
                 self.mobile_deliveries.remove(&job_id);
             }
             let gyro_outdated = job.gyro_outdated.clone();
+            optical_phase((false, 0.0));
             core::run_threaded(move || {
                 // §4.10 OpGuard: render queue item worker runs autosync,
                 // recompute, encoding — all heavy shared-state work that must
                 // gate concurrent project-load.
                 let _g = crate::core::OpGuard::enter(&in_flight_count);
+                if simple_mode {
+                    stab.set_translation_auto(true);
+                }
                 if !cancel_flag.load(SeqCst) && gyro_outdated.swap(false, SeqCst) {
                     stab.recompute_gyro();
                 }
@@ -8332,6 +8499,11 @@ impl RenderQueue {
                     sample.sync_frames = sync_stats.frames;
                     sample.sync_ms = sync_start.elapsed().as_secs_f64() * 1000.0;
                 }
+                let batch_optical_ready = defer_batch_sync_confirmation
+                    && !job_is_deep_match
+                    && !cancel_flag.load(SeqCst)
+                    && queue_optical_settings.as_ref().is_some_and(|settings| settings.any_ticked() && !settings.ignore_file_motion)
+                    && Self::prepare_batch_sync_optical(&stab, job_id, &sync_stats.points);
                 // Deep match never consumes the recompute output (the run is
                 // rolled back or reduced to a coarse offset either way) and
                 // recompute_blocking can take seconds on long clips — which
@@ -8345,7 +8517,52 @@ impl RenderQueue {
                     stab.recompute_blocking();
                 }
 
+                let mut optical_attempt = None;
+                // Apply the same analysis step to individual sync results and
+                // ordinary exports. Batch confirmation runs only after it ends.
+                if let Some(settings) = queue_optical_settings
+                    .as_ref()
+                    .filter(|_| !job_is_deep_match && export_metadata.is_none() && export_stmap.is_none()
+                        && (!defer_batch_sync_confirmation || batch_optical_ready))
+                {
+                    if cancel_flag.load(SeqCst) {
+                        return;
+                    }
+                    let outcome = queue_optical::run_queue_optical(job_id, &stab, settings, requires_compensation, |stab| {
+                        optical_phase((true, 0.0));
+                        let phase = optical_phase.clone();
+                        rendering::analyze_optically(
+                            stab,
+                            cancel_flag.clone(),
+                            Some(pause_flag.clone()),
+                            move |fraction, _, _| phase((true, fraction)),
+                        )
+                    });
+                    if outcome == QueueOpticalOutcome::Cancelled || cancel_flag.load(SeqCst) {
+                        return;
+                    }
+                    optical_phase((false, 1.0));
+                    let notice = outcome.notice();
+                    if !notice.is_empty() {
+                        additional_data = queue_optical::with_notice(&additional_data, &notice);
+                    }
+                    if defer_batch_sync_confirmation {
+                        // Keep sync accounting intact even when reconstruction
+                        // fails. The final confirmation decides whether to skip.
+                        optical_attempt = Some(BatchSyncOpticalAttempt::new(&stab, settings.clone(), outcome));
+                    } else {
+                        let skip = matches!(outcome, QueueOpticalOutcome::Skip { .. });
+                        optical_done(outcome);
+                        if skip {
+                            return;
+                        }
+                    }
+                }
+
                 if defer_batch_sync_confirmation {
+                    if cancel_flag.load(SeqCst) {
+                        return;
+                    }
                     let points = sync_stats.points;
                     let attempted_timestamps_ms = sync_stats.attempted_timestamps_ms;
                     Self::submit_sync_eta_sample(eta_sample.as_ref(), &eta_sample_done);
@@ -8357,12 +8574,9 @@ impl RenderQueue {
                     // also stash the snapshot in last_written_offsets so the cross-video
                     // confirm pass (T2) can skip a redundant rewrite when offsets match.
                     //
-                    // do_autosync in collect_batch_points mode (~render_queue.rs:4849)
-                    // intentionally skips gyro.set_offset, leaving stab.gyro empty until
-                    // T2 apply_batch_sync_points_to_stab. So we must derive the T1
-                    // offsets directly from sync_stats.points and inject them via JSON
-                    // post-processing (mirrors the T2 yellow path), without touching
-                    // stab.gyro itself.
+                    // Point collection leaves offsets untouched. Individual
+                    // optical analysis applies its validated subset first;
+                    // otherwise preserve the original candidate-based T1 write.
                     let t1_snapshot: Option<BTreeMap<i64, f64>> = if job_is_deep_match {
                         // Deep match: skip the T1 .gyroflow write entirely;
                         // finish_deep_match handles write-back or rollback.
@@ -8373,13 +8587,15 @@ impl RenderQueue {
                             &render_options,
                             &default_suffix,
                         );
-                        let t1_offsets: BTreeMap<i64, f64> = points
-                            .iter()
-                            .map(|p| {
+                        let t1_offsets: BTreeMap<i64, f64> = if batch_optical_ready {
+                            // Match the offsets used by the optical payload.
+                            stab.gyro.read().file_offsets().clone()
+                        } else {
+                            points.iter().map(|p| {
                                 let ts = ((p.timestamp_ms - p.offset_ms) * 1000.0) as i64;
                                 (ts, p.offset_ms)
-                            })
-                            .collect();
+                            }).collect()
+                        };
                         match Self::write_gyroflow_with_offsets_override(
                             &stab,
                             &t1_data,
@@ -8414,43 +8630,10 @@ impl RenderQueue {
                         attempted_timestamps_ms,
                         t1_snapshot,
                         sync_stats.decode_failure,
+                        optical_attempt,
                     ));
                     progress((1.0, 1, 1, true, false));
                     return;
-                }
-
-                // queue-optical-analysis: analyze what the job's experimental
-                // settings ask for, after the sync and before anything is written.
-                // Deep match probes, metadata and STMap exports don't need it.
-                if let Some(settings) = queue_optical_settings
-                    .as_ref()
-                    .filter(|_| !job_is_deep_match && export_metadata.is_none() && export_stmap.is_none())
-                {
-                    let outcome = queue_optical::run_queue_optical(job_id, &stab, settings, requires_compensation, |stab| {
-                        optical_phase((true, 0.0));
-                        let phase = optical_phase.clone();
-                        let result = rendering::analyze_optically(
-                            stab,
-                            cancel_flag.clone(),
-                            Some(pause_flag.clone()),
-                            move |fraction, _, _| phase((true, fraction)),
-                        );
-                        optical_phase((false, 1.0));
-                        result
-                    });
-                    let skip = matches!(outcome, QueueOpticalOutcome::Skip { .. });
-                    // A stopped or paused pass keeps the project T2 wrote rather
-                    // than one with the items on and no results; it runs again
-                    let cancelled_pass = optical_pass && outcome == QueueOpticalOutcome::Cancelled;
-                    let notice = outcome.notice();
-                    if !notice.is_empty() {
-                        // The project written below records why an item is off
-                        additional_data = queue_optical::with_notice(&additional_data, &notice);
-                    }
-                    optical_done(outcome);
-                    if skip || cancelled_pass {
-                        return;
-                    }
                 }
 
                 if let Some((opt, path, fields)) = export_metadata {
@@ -10222,6 +10405,9 @@ impl RenderQueue {
         if force_autosync && has_sync_points {
             let stale = stab.gyro.read().get_offsets().len();
             stab.gyro.write().clear_offsets();
+            // A repair must use file motion rather than a correction measured
+            // with the individual sync points just removed.
+            stab.refresh_optical_correction();
             ::log::info!(
                 "do_autosync clearing {} stale sync point(s) for {}",
                 stale,
@@ -10957,6 +11143,53 @@ impl RenderQueue {
         core::run_threaded(move || {
             apply_mounting_rotation_to_stabs(&stabs, pitch_deg, roll_deg, yaw_deg);
         });
+    }
+
+    pub fn set_simple_mode(&mut self, enabled: bool) {
+        self.simple_mode = enabled;
+        self.simple_mode_changed();
+        self.batch_sync_optical = enabled && cfg!(feature = "opencv");
+        self.batch_sync_optical_changed();
+        if self.batch_sync_optical {
+            self.batch_sync_ai_method = false;
+            self.batch_sync_ai_method_changed();
+        }
+        if enabled {
+            let job_ids: Vec<u32> = self.jobs.keys().copied().collect();
+            for job_id in job_ids {
+                self.apply_simple_mode_to_job(job_id);
+            }
+        }
+    }
+
+    // Keep queue imports and restored projects aligned with the simple panel.
+    // Active workers and deep-match probes keep the settings they started with.
+    fn apply_simple_mode_to_job(&mut self, job_id: u32) {
+        if !self.simple_mode
+            || self.deep_match_pending.contains_key(&job_id)
+            || self.queue.borrow().iter().any(|item| item.job_id == job_id && item.status == JobStatus::Rendering)
+        {
+            return;
+        }
+        let Some(job) = self.jobs.get_mut(&job_id) else { return; };
+        if let Some(stab) = &job.stab {
+            stab.set_translation_auto(true);
+            if !cfg!(feature = "opencv") { return; }
+            let mut lens = stab.lens.write();
+            let sync = lens.sync_settings.get_or_insert_with(|| serde_json::json!({}));
+            if let Some(sync) = sync.as_object_mut() {
+                sync.insert("offset_method".into(), 3.into());
+            }
+        }
+        if !cfg!(feature = "opencv") { return; }
+        if let Some(patched) = patch_additional_data_offset_method(&job.additional_data, 3) {
+            job.additional_data = patched;
+        }
+        if let Some(data) = job.project_data.as_mut() {
+            if let Some(patched) = patch_additional_data_offset_method(data, 3) {
+                *data = patched;
+            }
+        }
     }
 
     pub fn set_jobs_sync_offset_method(&mut self, method: u32) {
@@ -17864,6 +18097,13 @@ fn batch_offset_method(optical: bool) -> u64 {
     if optical { 3 } else { 2 }
 }
 
+fn normalize_queue_optical_settings(mut settings: QueueOpticalSettings, simple_mode: bool) -> QueueOpticalSettings {
+    if simple_mode {
+        settings.translation_auto = true;
+    }
+    settings
+}
+
 fn patch_additional_data_offset_method(additional_data: &str, method: u64) -> Option<String> {
     let serde_json::Value::Object(mut obj) = serde_json::from_str::<serde_json::Value>(additional_data).ok()? else { return None; };
     let sync = obj.entry("synchronization".to_owned()).or_insert_with(|| serde_json::json!({}));
@@ -23742,6 +23982,115 @@ mod tests {
     }
 
     #[test]
+    fn simple_sync_mode_overrides_existing_project_methods_without_enabling_autosync() {
+        for original in 0..=3 {
+            let mut queue = queue_with_eta_job(JobStatus::Queued);
+            let stab = queue.jobs[&1].stab.clone().unwrap();
+            stab.lens.write().sync_settings = Some(serde_json::json!({
+                "offset_method": original, "do_autosync": false, "initial_offset": -1.5,
+            }));
+            queue.jobs.get_mut(&1).unwrap().additional_data = serde_json::json!({
+                "synchronization": { "offset_method": original, "do_autosync": false },
+            }).to_string();
+            queue.batch_sync_ai_method = true;
+            queue.set_simple_mode(true);
+            let expected = if cfg!(feature = "opencv") { 3 } else { original };
+            let sync = stab.lens.read().sync_settings.clone().unwrap();
+            assert_eq!(sync["offset_method"], expected);
+            assert_eq!(sync["do_autosync"], false);
+            assert_eq!(sync["initial_offset"], -1.5);
+            let additional: serde_json::Value = serde_json::from_str(&queue.jobs[&1].additional_data).unwrap();
+            assert_eq!(additional["synchronization"]["offset_method"], expected);
+            assert_eq!(queue.batch_sync_optical, cfg!(feature = "opencv"));
+            if cfg!(feature = "opencv") { assert!(!queue.batch_sync_ai_method); }
+        }
+    }
+
+    #[test]
+    fn simple_sync_mode_reaches_new_jobs_and_keeps_full_mode_optional() {
+        let mut queue = RenderQueue::default();
+        queue.set_simple_mode(true);
+        let stab = edited_preview_stab();
+        stab.lens.write().sync_settings = Some(serde_json::json!({ "offset_method": 1 }));
+        queue.add_internal(1, stab.clone(), RenderOptions::default(), "{}".into(), QString::default(), None);
+        assert_eq!(stab.lens.read().sync_settings.as_ref().unwrap()["offset_method"], if cfg!(feature = "opencv") { 3 } else { 1 });
+        queue.set_simple_mode(false);
+        assert!(!queue.batch_sync_optical);
+        stab.lens.write().sync_settings.as_mut().unwrap()["offset_method"] = 1.into();
+        queue.apply_simple_mode_to_job(1);
+        assert_eq!(stab.lens.read().sync_settings.as_ref().unwrap()["offset_method"], 1);
+    }
+
+    #[test]
+    fn simple_sync_mode_skips_running_jobs_and_deep_match_probes() {
+        let mut queue = queue_with_eta_job(JobStatus::Rendering);
+        queue.set_simple_mode(true);
+        let stab = queue.jobs[&1].stab.clone().unwrap();
+        assert_eq!(stab.lens.read().sync_settings.as_ref().unwrap()["offset_method"], 2);
+        {
+            let mut q = queue.queue.borrow_mut();
+            let mut item = q[0].clone();
+            item.status = JobStatus::Queued;
+            q.change_line(0, item);
+        }
+        simulate_deep_match_probe(&mut queue, &stab);
+        queue.apply_simple_mode_to_job(1);
+        assert_eq!(stab.lens.read().sync_settings.as_ref().unwrap()["offset_method"], 0);
+        queue.deep_match_pending.remove(&1);
+        queue.apply_simple_mode_to_job(1);
+        assert_eq!(stab.lens.read().sync_settings.as_ref().unwrap()["offset_method"], if cfg!(feature = "opencv") { 3 } else { 0 });
+    }
+
+    #[test]
+    fn simple_sync_mode_reaches_a_recreated_project_stabilizer() {
+        let mut queue = queue_with_eta_job(JobStatus::Finished);
+        let job = queue.jobs.get_mut(&1).unwrap();
+        job.project_data = RenderQueue::get_gyroflow_data_internal(job.stab.as_ref().unwrap(), "{}", &job.render_options);
+        job.stab = None;
+        queue.set_simple_mode(true);
+        queue.reset_job(1);
+        assert_eq!(queue.jobs[&1].stab.as_ref().unwrap().lens.read().sync_settings.as_ref().unwrap()["offset_method"], if cfg!(feature = "opencv") { 3 } else { 2 });
+    }
+
+    #[test]
+    fn simple_mode_normalizes_translation_auto_without_changing_the_request() {
+        let settings = QueueOpticalSettings { translation_auto: false, ..Default::default() };
+        let normalized = normalize_queue_optical_settings(settings.clone(), true);
+        assert!(normalized.translation_auto);
+        assert!(!normalized.translation);
+        assert_eq!(normalize_queue_optical_settings(settings.clone(), false), settings);
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = queue.jobs[&1].stab.clone().unwrap();
+        stab.set_translation_auto(false);
+        queue.optical_settings = Some(settings.clone());
+        queue.set_simple_mode(true);
+        assert!(stab.optical_ui.read().translation_settings.auto);
+        assert!(queue.jobs[&1].optical.is_none(), "an untouched panel stays untouched");
+        assert_eq!(queue.optical_settings, Some(settings), "full-mode settings are retained");
+    }
+
+    #[test]
+    fn simple_mode_does_not_schedule_manual_settings_over_an_automatic_result() {
+        let mut queue = stabilize_batch(1, Some(serde_json::json!({
+            "translation": true, "translation_auto": false,
+        })));
+        queue.set_simple_mode(true);
+        let stab = queue.jobs[&1].stab.clone().unwrap();
+        install_stabilize_pass_translation(&stab);
+        assert!(queue_optical::settings_differ(&stab, queue.jobs[&1].optical.as_ref().unwrap()));
+        {
+            let mut q = queue.queue.borrow_mut();
+            let mut item = q[0].clone();
+            item.status = JobStatus::Finished;
+            item.sync_status = r#"{"color":"green"}"#.into();
+            q.change_line(0, item);
+        }
+        queue.schedule_stabilize_optical_passes("automatic translation already applies");
+        assert!(passes(&queue).is_empty());
+        assert!(!queue.jobs[&1].optical.as_ref().unwrap().translation_auto, "the full-mode request is retained");
+    }
+
+    #[test]
     fn queue_snapshot_preserves_project_with_non_object_additional_data() {
         let queue = queue_with_eta_job(JobStatus::Finished);
         let job = &queue.jobs[&1];
@@ -27022,18 +27371,16 @@ mod tests {
     }
 
     #[test]
-    fn optical_sync_checkbox_is_one_way_and_unpersisted() {
+    fn simple_mode_optical_sync_is_automatic_and_has_no_checkbox() {
         let qml = include_str!("../ui/menu/SimpleStabilization.qml");
-        for needle in [
-            "id: opticalSyncCb;",
-            "render_queue.batch_sync_optical = checked;",
-            "render_queue.set_jobs_sync_offset_method(checked ? 3 : 2);",
-            "controller.has_optical_sync_support()",
-            "Component.onCompleted: render_queue.batch_sync_optical = checked;",
-        ] {
-            assert!(qml.contains(needle), "missing: {needle}");
-        }
+        assert!(!qml.contains("id: opticalSyncCb;"));
+        assert!(!qml.contains("text: qsTr(\"Optical sync\")"));
+        assert!(qml.contains("window.isSimpleMode && controller.has_optical_sync_support()"));
+        assert!(qml.contains("enabled: !root.opticalSyncEnabled;"));
         assert!(!qml.contains("simpleOpticalSync"), "the optical sync toggle must not be persisted");
+        let app = include_str!("../ui/App.qml");
+        assert!(app.matches("render_queue.simple_mode = isSimpleMode;").count() >= 2,
+            "startup and mode switches reach the backend policy");
     }
 
     #[test]
@@ -27169,6 +27516,266 @@ mod tests {
         assert!((queue.get_queue_progress() - 0.5).abs() < 0.001);
         assert_eq!(queue.get_queue_done_jobs(), 0);
         assert_eq!(queue.get_queue_total_jobs(), 1);
+    }
+
+    fn queue_with_optical_progress_job(export_project: u32) -> RenderQueue {
+        let mut queue = queue_with_eta_job(JobStatus::Rendering);
+        queue.export_project = export_project;
+        {
+            let mut q = queue.queue.borrow_mut();
+            let mut item = q[0].clone();
+            item.optical_total_frames = item.total_frames;
+            q.change_line(0, item);
+        }
+        queue.jobs.get_mut(&1).unwrap().optical = Some(QueueOpticalSettings {
+            translation: true,
+            ..Default::default()
+        });
+        queue
+    }
+
+    #[test]
+    fn queue_progress_budgets_optical_analysis_before_sync_finishes() {
+        let queue = queue_with_optical_progress_job(2);
+        let set_progress = |sync, optical, phase: &str| {
+            let mut q = queue.queue.borrow_mut();
+            let mut item = q[0].clone();
+            item.processing_progress = sync;
+            item.optical_progress = optical;
+            item.processing_phase = phase.into();
+            q.change_line(0, item);
+        };
+        set_progress(0.5, 0.0, "");
+        assert!((queue.get_queue_progress() - 10.0 / 120.0).abs() < 0.001);
+        set_progress(1.0, 0.0, "optical");
+        assert!((queue.get_queue_progress() - 20.0 / 120.0).abs() < 0.001);
+        set_progress(1.0, 0.5, "optical");
+        assert!((queue.get_queue_progress() - 70.0 / 120.0).abs() < 0.001);
+        set_progress(1.0, 0.5, "");
+        assert!((queue.get_queue_progress() - 70.0 / 120.0).abs() < 0.001);
+        set_progress(1.0, 1.0, "");
+        assert_eq!(queue.get_queue_progress(), 0.99);
+    }
+
+    #[test]
+    fn queue_progress_weights_analysis_and_encoding_for_both_video_exports() {
+        for export_project in [0, 4] {
+            let queue = queue_with_optical_progress_job(export_project);
+            {
+                let mut q = queue.queue.borrow_mut();
+                let mut item = q[0].clone();
+                item.processing_progress = 1.0;
+                item.optical_progress = 0.5;
+                item.processing_phase = "optical".into();
+                q.change_line(0, item);
+            }
+            assert!(queue.get_queue_progress_uses_jobs());
+            assert!((queue.get_queue_progress() - 70.0 / 220.0).abs() < 0.001);
+            {
+                let mut q = queue.queue.borrow_mut();
+                let mut item = q[0].clone();
+                item.optical_progress = 1.0;
+                item.processing_phase = QString::default();
+                item.current_frame = 50;
+                q.change_line(0, item);
+            }
+            assert!((queue.get_queue_progress() - 170.0 / 220.0).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn queue_progress_ignores_old_encoded_frames_while_analysis_is_running() {
+        let queue = queue_with_optical_progress_job(4);
+        {
+            let mut q = queue.queue.borrow_mut();
+            let mut item = q[0].clone();
+            item.processing_progress = 1.0;
+            item.optical_progress = 0.5;
+            item.processing_phase = "optical".into();
+            item.current_frame = item.total_frames;
+            q.change_line(0, item);
+        }
+        assert!((queue.get_queue_progress() - 70.0 / 220.0).abs() < 0.001);
+        assert_eq!(queue.estimated_remaining_ms(), None);
+    }
+
+    #[test]
+    fn queue_progress_does_not_round_a_short_unfinished_clip_up_to_complete() {
+        let mut queue = queue_with_optical_progress_job(2);
+        add_eta_job(&mut queue, 2, 1);
+        queue.jobs.get_mut(&2).unwrap().optical = Some(QueueOpticalSettings {
+            translation: true,
+            ..Default::default()
+        });
+        {
+            let mut q = queue.queue.borrow_mut();
+            let mut active = q[0].clone();
+            active.processing_progress = 1.0;
+            active.optical_progress = 1.0;
+            q.change_line(0, active);
+            let mut finished = q[1].clone();
+            finished.total_frames = 100_000;
+            finished.status = JobStatus::Finished;
+            q.change_line(1, finished);
+        }
+        assert_eq!(queue.get_queue_progress(), 0.99);
+    }
+
+    #[test]
+    fn queue_progress_keeps_optical_budget_when_a_result_becomes_reusable() {
+        let queue = queue_with_optical_progress_job(2);
+        let before = queue.queue_progress_snapshot().total_units;
+        install_stabilize_pass_translation(queue.jobs[&1].stab.as_ref().unwrap());
+        assert!(!queue_optical::needs_analysis(
+            queue.jobs[&1].stab.as_ref().unwrap(),
+            queue.jobs[&1].optical.as_ref().unwrap(),
+        ));
+        assert_eq!(queue.queue_progress_snapshot().total_units, before);
+        let mut q = queue.queue.borrow_mut();
+        let mut item = q[0].clone();
+        item.processing_progress = 1.0;
+        item.optical_progress = 1.0;
+        item.status = JobStatus::Finished;
+        q.change_line(0, item);
+        drop(q);
+        assert_eq!(queue.get_queue_progress(), 1.0);
+    }
+
+    #[test]
+    fn queue_progress_keeps_analysis_budget_after_project_completion_and_manager_release() {
+        let mut queue = queue_with_optical_progress_job(2);
+        let before = queue.queue_item_optical_work_units(&queue.queue.borrow()[0]);
+        {
+            let mut q = queue.queue.borrow_mut();
+            let mut item = q[0].clone();
+            item.current_frame = 1;
+            item.total_frames = 1;
+            item.status = JobStatus::Finished;
+            q.change_line(0, item);
+        }
+        queue.jobs.get_mut(&1).unwrap().stab = None;
+        assert_eq!(queue.queue_item_optical_work_units(&queue.queue.borrow()[0]), before);
+    }
+
+    #[test]
+    fn queue_progress_keeps_the_requested_budget_when_reconstruction_is_skipped() {
+        for export_project in [0, 2, 4] {
+            let mut queue = queue_with_optical_progress_job(export_project);
+            queue.jobs.get_mut(&1).unwrap().optical = Some(QueueOpticalSettings {
+                reconstruction: true,
+                ..Default::default()
+            });
+            add_eta_job(&mut queue, 2, 1);
+            queue.status = "active".into();
+            queue.pause_flag.store(true, SeqCst);
+            {
+                let mut q = queue.queue.borrow_mut();
+                let mut item = q[0].clone();
+                item.processing_progress = 1.0;
+                item.optical_progress = 1.0;
+                item.processing_phase = "optical".into();
+                q.change_line(0, item);
+            }
+            let before = queue.queue_progress_snapshot();
+            let before_progress = queue.get_queue_progress();
+            queue.finish_queue_optical(1, QueueOpticalOutcome::Skip {
+                reason: "NotConverged".into(),
+            });
+            assert!(!queue.jobs[&1].optical.as_ref().unwrap().any_ticked());
+            assert_eq!(queue.queue.borrow()[0].status, JobStatus::Skipped);
+            assert!(queue.get_queue_progress_uses_jobs());
+            assert_eq!(queue.queue_progress_snapshot().total_units, before.total_units);
+            assert!(queue.get_queue_progress() >= before_progress);
+        }
+    }
+
+    #[test]
+    fn queue_progress_preserves_paused_optical_pass_work() {
+        let mut queue = queue_with_optical_progress_job(2);
+        queue.jobs.get_mut(&1).unwrap().optical_pass = true;
+        {
+            let mut q = queue.queue.borrow_mut();
+            let mut item = q[0].clone();
+            item.processing_progress = 1.0;
+            item.optical_progress = 0.5;
+            q.change_line(0, item);
+        }
+        let progress = queue.get_queue_progress();
+        {
+            let mut q = queue.queue.borrow_mut();
+            let mut item = q[0].clone();
+            item.status = JobStatus::Queued;
+            item.processing_phase = QString::default();
+            q.change_line(0, item);
+        }
+        assert_eq!(queue.get_queue_progress(), progress);
+        queue.start_queue_work_units = 20.0;
+        assert!((queue.get_queue_progress() - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn queue_progress_waits_for_batch_confirmation_after_analysis() {
+        let queue = queue_with_optical_progress_job(2);
+        {
+            let mut q = queue.queue.borrow_mut();
+            let mut item = q[0].clone();
+            item.processing_progress = 1.0;
+            item.optical_progress = 1.0;
+            item.status = JobStatus::Finished;
+            item.sync_status = r#"{"color":"done_pending"}"#.into();
+            q.change_line(0, item);
+        }
+        assert_eq!(queue.get_queue_progress(), 0.99);
+        assert_eq!(queue.get_queue_done_jobs(), 0);
+        {
+            let mut q = queue.queue.borrow_mut();
+            let mut item = q[0].clone();
+            item.sync_status = r#"{"color":"green"}"#.into();
+            q.change_line(0, item);
+        }
+        assert_eq!(queue.get_queue_progress(), 1.0);
+        assert_eq!(queue.get_queue_done_jobs(), 1);
+    }
+
+    #[test]
+    fn queue_progress_without_ticked_optical_modes_keeps_frame_progress() {
+        let mut queue = queue_with_eta_job(JobStatus::Rendering);
+        queue.export_project = 0;
+        queue.jobs.get_mut(&1).unwrap().optical = Some(QueueOpticalSettings::default());
+        {
+            let mut q = queue.queue.borrow_mut();
+            let mut item = q[0].clone();
+            item.current_frame = 25;
+            q.change_line(0, item);
+        }
+        assert!(!queue.get_queue_progress_uses_jobs());
+        assert_eq!(queue.get_queue_progress(), 0.25);
+    }
+
+    #[test]
+    fn queue_eta_does_not_report_sync_only_time_during_analysis() {
+        let mut queue = queue_with_optical_progress_job(4);
+        queue.observe_eta_sample_for_epoch(1, 0, QueueEtaSample {
+            sync_frames: 10,
+            sync_ms: 1_000.0,
+            render_frames: 10,
+            render_ms: 2_000.0,
+        });
+        {
+            let mut q = queue.queue.borrow_mut();
+            let mut item = q[0].clone();
+            item.processing_progress = 1.0;
+            item.optical_progress = 0.5;
+            q.change_line(0, item);
+        }
+        assert_eq!(queue.estimated_remaining_ms(), None);
+        {
+            let mut q = queue.queue.borrow_mut();
+            let mut item = q[0].clone();
+            item.optical_progress = 1.0;
+            q.change_line(0, item);
+        }
+        assert_eq!(queue.estimated_remaining_ms(), Some(20_000));
     }
 
     #[test]
@@ -33277,7 +33884,7 @@ mod tests {
         let project = worker.find("if export_project > 0 {").unwrap();
         let encode = worker.find("rendering::render(").unwrap();
         assert!(recompute < call, "after the sync's recompute");
-        assert!(first_phase_done < call, "the batch sync's first phase returns before it");
+        assert!(call < first_phase_done, "each batch item analyzes before reporting its sync complete");
         assert!(call < metadata && call < stmap && call < project && call < encode);
         let notice = worker.find("queue_optical::with_notice(").expect("the written project records the notice");
         assert!(call < notice && notice < project);
@@ -33285,6 +33892,10 @@ mod tests {
         for condition in ["!job_is_deep_match", "export_metadata.is_none()", "export_stmap.is_none()"] {
             assert!(guard.contains(condition), "the analysis step requires {condition}");
         }
+        let individual = worker.find("let batch_optical_ready =").expect("individual sync analysis eligibility");
+        let individual_guard = &worker[individual..worker[individual..].find(';').unwrap() + individual];
+        assert!(individual_guard.contains("settings.any_ticked() && !settings.ignore_file_motion"),
+            "pure visual analysis waits for final confirmation so its saved file offsets cannot pollute T2");
         assert!(worker.contains("rendering::analyze_optically("), "production analyzes with the shared pipeline");
     }
 
@@ -33679,11 +34290,13 @@ mod tests {
         assert!(worker.contains("stabilize pass: analysis and project write without a sync"));
         // The analysis step, then the type 2 project next to the source
         let call = at("queue_optical::run_queue_optical(");
-        let cancelled = at("let cancelled_pass = optical_pass && outcome == QueueOpticalOutcome::Cancelled;");
-        let leave = at("if skip || cancelled_pass {");
+        let cancelled = at("if outcome == QueueOpticalOutcome::Cancelled || cancel_flag.load(SeqCst) {");
+        let leave = cancelled + worker[cancelled..].find("return;").expect("cancelled analysis returns");
         let project = at("if export_project > 0 {");
         assert!(at("stab.recompute_blocking();") < call && call < cancelled && cancelled < leave && leave < project,
             "a stopped analysis leaves the T2 project as it is");
+        assert!(leave < at("let t1_snapshot:") && leave < at("batch_sync_done(("),
+            "a cancelled individual analysis neither replaces T1 nor records a completed attempt");
         // The finish: back to Finished with the results kept, flag cleared, also when it fails
         let finished = at("if finished {");
         let release = at("// Release StabilizationManager to reclaim GPU memory");
@@ -33731,5 +34344,298 @@ mod tests {
         queue.finish_queue_optical(2, QueueOpticalOutcome::Skip { reason: "NotConverged".into() });
         assert_eq!(row_status(&queue, 2), (JobStatus::Skipped, "image_stabilization".into()));
         assert!(passes(&queue).is_empty());
+    }
+
+    #[test]
+    fn individual_sync_repair_removes_stale_rotation_before_sampling_motion() {
+        use gyroflow_core::gyro_source::{OpticalCorrection, Quat64};
+        use gyroflow_core::synchronization::optical_analysis::{context_checksum, measurement_params};
+        let stab = Arc::new(StabilizationManager::default());
+        give_stabilize_pass_motion(&stab);
+        {
+            let mut params = stab.params.write();
+            params.duration_ms = 10_000.0;
+            params.frame_count = 101;
+            params.fps = 10.0;
+        }
+        {
+            let mut gyro = stab.gyro.write();
+            // This fixture supplies recorded quaternions, not raw IMU samples.
+            gyro.integration_method = 0;
+            gyro.file_metadata.write().quaternions = (0..=100)
+                .map(|i| (i * 100_000, Quat64::identity()))
+                .collect();
+            gyro.integrate();
+            gyro.set_offset(5_000_000, 12.0);
+        }
+        let original = stab.gyro.read().quaternions.clone();
+        assert_eq!(original.len(), 101, "recorded motion is loaded before installing the optical correction");
+        let correction = OpticalCorrection {
+            enabled: true,
+            start_us: 0.0,
+            spacing_us: 100_000.0,
+            coeffs: (0..103).map(|i| [0.002 * (i as f32 * 0.3).sin(), 0.00137, -0.000713]).collect(),
+            quats_checksum: gyroflow_core::gyro_source::optical_correction::checksum(&original),
+            context_checksum: context_checksum(&measurement_params(&stab)),
+            frames: 300,
+            measured_frames: 299,
+            ..Default::default()
+        };
+        stab.set_optical_correction_enabled(true);
+        stab.gyro.write().set_optical_correction(Some(correction));
+        stab.recompute_gyro();
+        stab.refresh_optical_correction();
+        assert!(stab.gyro.read().optical_correction_applied, "the individual analysis changed the motion used by sync");
+        assert_ne!(stab.gyro.read().quaternions, original);
+
+        // Exercise the real repair entry without opening a decoder or choosing a window.
+        stab.lens.write().sync_settings = Some(serde_json::json!({ "do_autosync": true, "max_sync_points": 0 }));
+        let input = stab.input_file.read().clone();
+        let stats = RenderQueue::do_autosync_attempt(
+            stab.clone(), |_| {}, None, &input,
+            |_| panic!("the zero-window repair must not decode"),
+            720, Arc::new(AtomicBool::new(false)), 1, true, false, true,
+        );
+        assert!(stats.points.is_empty());
+        let gyro = stab.gyro.read();
+        assert!(gyro.get_offsets().is_empty(), "the repair starts without the provisional sync points");
+        assert!(!gyro.optical_correction_applied, "the old optical correction is stale before sync reads motion");
+        assert_eq!(gyro.quaternions, original, "the new sync uses the file's uncorrected motion");
+        assert!(gyro.optical_correction.is_some(), "the old result is retained for a matching context");
+    }
+
+    #[test]
+    fn individual_sync_optical_uses_only_the_valid_consistent_points() {
+        let stab = StabilizationManager::default();
+        give_stabilize_pass_motion(&stab);
+        stab.gyro.write().set_offset(123_000, 42.0);
+        let before = stab.gyro.read().get_offsets().clone();
+        let mut invalid = sync_candidate(1, 1000.0, 1000.0, 0.9);
+        invalid.cost = f64::NAN;
+        let mut infinite = sync_candidate(1, 1100.0, 1000.0, 0.9);
+        infinite.offset_ms = f64::INFINITY;
+        let rejected = vec![
+            invalid, infinite,
+            sync_candidate_with_rank(1, 1200.0, 1000.0, 0.9, 11.0),
+            sync_candidate(1, 1300.0, 1000.0, 0.14),
+            sync_candidate(2, 1400.0, 1000.0, 0.9),
+        ];
+        assert!(!RenderQueue::prepare_batch_sync_optical(&stab, 1, &rejected));
+        assert_eq!(*stab.gyro.read().get_offsets(), before, "a rejected individual result leaves the manager intact");
+
+        let mut candidates = rejected;
+        candidates.extend([
+            sync_candidate(1, 1000.0, 1000.0, 0.8),
+            sync_candidate(1, 2000.0, 1000.5, 0.8),
+            sync_candidate(1, 3000.0, 5000.0, 0.99),
+        ]);
+        assert!(RenderQueue::prepare_batch_sync_optical(&stab, 1, &candidates));
+        assert_eq!(*stab.gyro.read().get_offsets(), BTreeMap::from([(0, 1000.0), (999_500, 1000.5)]),
+            "the consistent pair wins over a higher-confidence isolated point");
+        assert_eq!(stab.gyro.read().integration_method, 2, "the analysis uses final VQF integration");
+        assert_eq!(candidates.len(), 8, "all original candidates remain available for batch verification");
+    }
+
+    #[test]
+    fn individual_sync_optical_restores_ignored_motion_before_applying_its_points() {
+        let stab = StabilizationManager::default();
+        give_stabilize_pass_motion(&stab);
+        stab.gyro.write().set_offset(123_000, 42.0);
+        let old_offsets = stab.gyro.read().get_offsets().clone();
+        assert!(stab.set_ignore_file_motion(true));
+        assert!(stab.gyro.read().get_offsets().is_empty());
+        assert_eq!(*stab.gyro.read().file_offsets(), old_offsets);
+
+        let points = vec![sync_candidate(1, 2000.0, 1000.0, 0.9)];
+        assert!(RenderQueue::prepare_batch_sync_optical(&stab, 1, &points));
+        let expected = BTreeMap::from([(1_000_000, 1000.0)]);
+        {
+            let gyro = stab.gyro.read();
+            assert!(!gyro.ignores_file_motion());
+            assert!(gyro.has_motion());
+            assert_eq!(*gyro.get_offsets(), expected, "the new analysis reads the individual sync points");
+            assert_eq!(*gyro.file_offsets(), expected, "the project carries the same offsets as its optical payload");
+        }
+
+        assert!(stab.set_ignore_file_motion(true));
+        assert!(stab.set_ignore_file_motion(false));
+        assert_eq!(*stab.gyro.read().get_offsets(), expected, "toggling ignore cannot restore the old hidden offsets");
+    }
+
+    /// A successful individual analysis before the queue receives its batch-sync completion.
+    fn measured_individual_translation(
+        queue: &mut RenderQueue,
+        job_id: u32,
+        points: &[gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate],
+    ) -> (Arc<StabilizationManager>, u64) {
+        let stab = queue.jobs[&job_id].stab.clone().unwrap();
+        give_stabilize_pass_motion(&stab);
+        assert!(RenderQueue::prepare_batch_sync_optical(&stab, job_id, points));
+        let settings = queue.jobs[&job_id].optical.clone().unwrap();
+        let outcome = queue_optical::run_queue_optical(job_id, &stab, &settings, false, |stab| {
+            install_measured_translation(stab);
+            Ok(())
+        });
+        assert_eq!(outcome, QueueOpticalOutcome::Applied { analyzed: true });
+        queue.batch_sync_optical_attempts.insert(job_id, BatchSyncOpticalAttempt::new(&stab, settings, outcome));
+        queue.jobs.get_mut(&job_id).unwrap().last_written_offsets = Some(stab.gyro.read().file_offsets().clone());
+        let checksum = stab.gyro.read().optical_translation.as_ref().unwrap().checksum();
+        (stab, checksum)
+    }
+
+    #[test]
+    fn individual_sync_optical_results_survive_unchanged_batch_confirmation() {
+        let mut queue = stabilize_batch(3, Some(translation_ticked()));
+        let before = epochs(&queue);
+        let mut measured = Vec::new();
+        for (job_id, offset) in [(1, 1000.0), (2, 1100.0), (3, 1050.0)] {
+            let points = vec![sync_candidate(job_id, 1000.0, offset, 0.9)];
+            let (stab, checksum) = measured_individual_translation(&mut queue, job_id, &points);
+            measured.push((job_id, stab, checksum));
+            queue.record_batch_sync_points(job_id, points);
+        }
+        assert_eq!(queue.batch_sync_prompt_kind.to_string(), "none");
+        assert!(passes(&queue).is_empty(), "the completed individual analyses do not become a second batch of work");
+        assert_eq!(epochs(&queue), before, "unchanged results do not invalidate a worker's completion");
+        for (job_id, stab, checksum) in measured {
+            assert_eq!(row_status(&queue, job_id).0, JobStatus::Finished);
+            assert_eq!(batch_status(&queue, job_id)["color"], "green");
+            assert!(!queue_optical::stabilize_pass_needed(&stab, queue.jobs[&job_id].optical.as_ref().unwrap()));
+            assert_eq!(stab.gyro.read().optical_translation.as_ref().unwrap().checksum(), checksum);
+        }
+    }
+
+    #[test]
+    fn individual_sync_optical_repeats_only_when_batch_confirmation_changes_its_points() {
+        let mut queue = stabilize_batch(3, Some(translation_ticked()));
+        let first_points = vec![
+            sync_candidate(1, 1000.0, 1000.0, 0.9),
+            sync_candidate(1, 2000.0, 1001.0, 0.9),
+        ];
+        let (first, _) = measured_individual_translation(&mut queue, 1, &first_points);
+        let before_offsets = first.gyro.read().get_offsets().clone();
+        queue.record_batch_sync_points(1, first_points);
+        let mut others = Vec::new();
+        for job_id in [2, 3] {
+            let points = vec![sync_candidate(job_id, 1000.0, 4000.5, 0.9)];
+            let (stab, checksum) = measured_individual_translation(&mut queue, job_id, &points);
+            others.push((job_id, stab, checksum));
+            queue.record_batch_sync_points(job_id, points);
+        }
+        assert_eq!(passes(&queue), vec![1], "the accepted cross-video band removes only job 1's first point");
+        assert_ne!(*first.gyro.read().get_offsets(), before_offsets);
+        assert_eq!(*first.gyro.read().get_offsets(), BTreeMap::from([(999_000, 1001.0)]));
+        for (job_id, stab, checksum) in others {
+            assert_eq!(row_status(&queue, job_id).0, JobStatus::Finished);
+            assert_eq!(stab.gyro.read().optical_translation.as_ref().unwrap().checksum(), checksum);
+        }
+    }
+
+    #[test]
+    fn individual_sync_optical_fallback_is_reused_until_its_inputs_change() {
+        let mut queue = stabilize_batch(1, Some(translation_ticked()));
+        let stab = queue.jobs[&1].stab.clone().unwrap();
+        give_stabilize_pass_motion(&stab);
+        let points = vec![sync_candidate(1, 1000.0, 1000.0, 0.9)];
+        assert!(RenderQueue::prepare_batch_sync_optical(&stab, 1, &points));
+        let settings = queue.jobs[&1].optical.clone().unwrap();
+        let outcome = queue_optical::run_queue_optical(1, &stab, &settings, false, |_| Err("Tracking unavailable".into()));
+        assert!(matches!(outcome, QueueOpticalOutcome::Fallback { analyzed: true, .. }));
+        assert!(!stab.optical_ui.read().translation_enabled);
+        queue.batch_sync_optical_attempts.insert(1, BatchSyncOpticalAttempt::new(&stab, settings, outcome));
+        queue.jobs.get_mut(&1).unwrap().last_written_offsets = Some(stab.gyro.read().file_offsets().clone());
+        queue.record_batch_sync_points(1, points);
+        assert!(passes(&queue).is_empty(), "a failed individual attempt is not retried on identical final sync points");
+        assert_eq!(row_status(&queue, 1).0, JobStatus::Finished);
+
+        queue.set_jobs_optical_settings(serde_json::json!({ "translation": true, "translation_smoothness": 2.5 }).to_string());
+        queue.schedule_stabilize_optical_passes("settings changed after the failed analysis");
+        assert_eq!(passes(&queue), vec![1], "a changed request can try the analysis again");
+    }
+
+    #[test]
+    fn individual_sync_optical_skip_still_completes_batch_accounting() {
+        let mut queue = stabilize_batch(3, Some(serde_json::json!({ "translation": true, "reconstruction": true })));
+        let stab = queue.jobs[&1].stab.clone().unwrap();
+        give_stabilize_pass_motion(&stab);
+        stab.gyro.read().file_metadata.write().additional_data = serde_json::json!({ "stabilization_blocks_processing": true });
+        let points = vec![sync_candidate(1, 1000.0, 1000.0, 0.9)];
+        assert!(RenderQueue::prepare_batch_sync_optical(&stab, 1, &points));
+        let settings = queue.jobs[&1].optical.clone().unwrap();
+        let outcome = queue_optical::run_queue_optical(1, &stab, &settings, true, |_| Err("Tracking unavailable".into()));
+        assert!(matches!(outcome, QueueOpticalOutcome::Skip { .. }));
+        queue.batch_sync_optical_attempts.insert(1, BatchSyncOpticalAttempt::new(&stab, settings, outcome));
+        queue.jobs.get_mut(&1).unwrap().last_written_offsets = Some(stab.gyro.read().file_offsets().clone());
+        let before_epoch = queue.jobs[&1].render_epoch.load(SeqCst);
+        queue.record_batch_sync_points(1, points);
+        assert!(queue.completed_batch_sync_job_ids.contains(&1));
+        assert_eq!(batch_status(&queue, 1)["color"], "done_pending", "the batch still receives the sync result before deciding the skip");
+        queue.record_batch_sync_points(2, vec![sync_candidate(2, 1000.0, 1100.0, 0.9)]);
+        queue.record_batch_sync_points(3, vec![sync_candidate(3, 1000.0, 1050.0, 0.9)]);
+        assert!(queue.expected_batch_sync_job_ids.iter().all(|id| queue.completed_batch_sync_job_ids.contains(id)));
+        assert_eq!(queue.batch_sync_prompt_kind.to_string(), "none");
+        assert_eq!(row_status(&queue, 1), (JobStatus::Skipped, "image_stabilization".into()));
+        assert_eq!(queue.jobs[&1].render_epoch.load(SeqCst), before_epoch + 1, "the original worker's trailing completion cannot overwrite the skip");
+        assert_eq!(passes(&queue), vec![2, 3], "only the other jobs still owe an analysis");
+    }
+
+    #[test]
+    fn individual_sync_optical_attempts_clear_on_reset_remove_and_new_batch() {
+        let mut queue = stabilize_batch(3, Some(translation_ticked()));
+        for job_id in 1..=3 {
+            let points = vec![sync_candidate(job_id, 1000.0, 1000.0, 0.9)];
+            measured_individual_translation(&mut queue, job_id, &points);
+        }
+        queue.reset_job(1);
+        assert!(!queue.batch_sync_optical_attempts.contains_key(&1), "an explicit retry is a new attempt");
+        assert_eq!(queue.batch_sync_optical_attempts.len(), 2, "reset affects only the requested job");
+        queue.remove(2);
+        assert!(!queue.batch_sync_optical_attempts.contains_key(&2));
+        assert!(queue.batch_sync_optical_attempts.contains_key(&3));
+        queue.register_batch_sync_jobs([1, 3]);
+        assert!(queue.batch_sync_optical_attempts.is_empty(), "a new synchronization batch cannot inherit a failed attempt");
+    }
+
+    #[test]
+    fn individual_sync_optical_pause_and_reset_clear_the_phase_without_changing_the_budget() {
+        let mut queue = stabilize_batch(2, Some(translation_ticked()));
+        {
+            let mut rows = queue.queue.borrow_mut();
+            let mut active = rows[0].clone();
+            active.status = JobStatus::Rendering;
+            active.processing_progress = 1.0;
+            active.processing_phase = QString::from("optical");
+            active.optical_progress = 0.6;
+            rows.change_line(0, active);
+            let mut finished = rows[1].clone();
+            finished.status = JobStatus::Finished;
+            finished.processing_progress = 1.0;
+            finished.optical_progress = 1.0;
+            rows.change_line(1, finished);
+        }
+        let total = queue.queue_progress_snapshot().total_units;
+        let before_epoch = queue.jobs[&1].render_epoch.load(SeqCst);
+        queue.pause();
+        let active = queue_row(&queue, 1);
+        assert_eq!(active.status, JobStatus::Queued);
+        assert_eq!(active.processing_phase.to_string(), "");
+        assert_eq!(active.optical_progress, 0.0, "a restarted analysis begins from zero");
+        assert_eq!(active.processing_progress, 1.0, "pausing preserves the completed sync progress");
+        assert_eq!(queue.queue_progress_snapshot().total_units, total, "the analysis remains part of the same work budget");
+        assert_eq!(queue.jobs[&1].render_epoch.load(SeqCst), before_epoch + 1);
+        assert!(queue.jobs[&1].cancel_flag.load(SeqCst));
+        assert_eq!(queue_row(&queue, 2).optical_progress, 1.0, "another completed item keeps its result");
+
+        {
+            let mut rows = queue.queue.borrow_mut();
+            let mut item = rows[0].clone();
+            item.processing_phase = QString::from("optical");
+            item.optical_progress = 0.4;
+            rows.change_line(0, item);
+        }
+        queue.reset_job(1);
+        assert_eq!(queue_row(&queue, 1).processing_phase.to_string(), "");
+        assert_eq!(queue_row(&queue, 1).optical_progress, 0.0);
+        assert_eq!(queue_row(&queue, 2).optical_progress, 1.0);
     }
 }

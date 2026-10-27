@@ -67,7 +67,10 @@ Rectangle {
         videoArea.height = Qt.binding(() => mobileUI.previewHost.height);
         simpleSensorLensSection.locked = true;
         pushToEnd(simpleSensorLensSection, mobileUI.settingsContent);
-        if (window.motionData) window.motionData.moveExperimentalControls(mobileUI.experimentalContent);
+        if (window.motionData) {
+            window.motionData.moveExperimentalControls(mobileUI.experimentalContent);
+            window.motionData.moveTranslationControls(mobileUI.translationContent);
+        }
         mobileSettingsReady = true;
     }
     function openMobilePreview(jobId: int): void {
@@ -236,8 +239,10 @@ Rectangle {
     function reparentSimplePanels(): void {
         if (!simpleVideoInfoSection || !simpleModeContainer) return;
         if (useMobileWorkspace) { Qt.callLater(attachMobileWorkspace); return; }
-        if (window.motionData) window.motionData.moveExperimentalControls(
-            isSimpleMode ? simpleExperimentalContent : null);
+        if (window.motionData) {
+            window.motionData.moveExperimentalControls(isSimpleMode ? simpleExperimentalContent : null);
+            window.motionData.moveTranslationControls(isSimpleMode ? simpleTranslationContent : null);
+        }
         const useTabs = isMobileLayout && isSimpleMode;
         const tab1 = useTabs ? simpleVideoGyroTab.inner : simpleModeContainer;
         const tab2 = useTabs ? simpleStabSettingsTab.inner : simpleModeContainer;
@@ -2038,11 +2043,16 @@ Rectangle {
                     iconName: "gyroflow";
                     objectName: "simple-stab";
                     opened: false;
-                    innerItem.enabled: window.videoArea.vid.loaded
-                        || batchState.active
-                        || (window.isSimpleMode && render_queue.has_video_jobs);
+                    innerItem.enabled: !controller.video_loading_in_progress && !controller.loading_gyro_in_progress;
                     Menu.SimpleStabilization {
                         id: simpleStab;
+                        width: parent.width;
+                        enabled: window.videoArea.vid.loaded || batchState.active
+                            || (window.isSimpleMode && render_queue.has_video_jobs);
+                    }
+                    Column {
+                        id: simpleTranslationContent;
+                        objectName: "simpleTranslationContent";
                         width: parent.width;
                     }
                 }
@@ -3380,12 +3390,31 @@ Rectangle {
             return qsTr("Rendering failed: %1").arg(text.substring(14).trim());
         }
         // queue-optical-analysis notices: "optical_fallback:<items>:<reason>" / "optical_skipped:reconstruction:<reason>".
-        // The reason is the analysis' own text and may hold colons.
+        // Match known causes explicitly so translation extraction sees them. Raw diagnostics stay in the log.
         if (text.startsWith("optical_fallback:") || text.startsWith("optical_skipped:")) {
             const rest = text.substring(text.indexOf(":") + 1);
             const split = rest.indexOf(":");
             const items = (split >= 0 ? rest.substring(0, split) : rest).split(",").filter(item => item.length > 0);
-            const reason = split >= 0 ? qsTranslate("MotionData", rest.substring(split + 1)) : "";
+            const rawReason = split >= 0 ? rest.substring(split + 1).trim() : "";
+            let reason = "";
+            switch (rawReason) {
+                case "Not enough of the image could be tracked":
+                    reason = qsTr("Not enough of the image could be tracked");
+                    break;
+                case "Needs motion data from the file":
+                case "No motion data to correct":
+                    reason = qsTranslate("MotionData", "Needs motion data from the file");
+                    break;
+                case "The analysis gave no usable result":
+                case "NoMeasurements":
+                    reason = qsTr("The analysis gave no usable result");
+                    break;
+                case "Motion data changed after analysis; analyze again":
+                    reason = qsTranslate("MotionData", "Settings changed, analyze again");
+                    break;
+                default:
+                    reason = qsTr("Analysis failed. See the log for details.");
+            }
             if (text.startsWith("optical_skipped:")) {
                 return qsTr("In-camera stabilization could not be reconstructed (%1).").arg(reason);
             }

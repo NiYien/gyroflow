@@ -1168,7 +1168,7 @@ Item {
                 if (queueStatus == "active" && estimate >= 0) {
                     remainingBaseMs = estimate;
                     remainingBaseTimestamp = Date.now();
-                } else if (queueStatus != "active") {
+                } else {
                     remainingBaseMs = -1;
                     remainingBaseTimestamp = 0;
                 }

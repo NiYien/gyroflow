@@ -1187,6 +1187,21 @@ Try a different output codec (H.265/HEVC handles more cases than H.264/AVC), low
         <source>Continue processing</source>
         <translation>Продолжить обработку</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3392"/>
+        <source>Not enough of the image could be tracked</source>
+        <translation>Недостаточно деталей изображения для отслеживания</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3400"/>
+        <source>The analysis gave no usable result</source>
+        <translation>Анализ не дал пригодного результата</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="3406"/>
+        <source>Analysis failed. See the log for details.</source>
+        <translation>Анализ завершился ошибкой. Подробности см. в журнале.</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>

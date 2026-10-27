@@ -136,6 +136,7 @@ TestCase {
     property alias filesystem: filesystemStub;
 
     Component { id: factory; Menu.MotionData { } }
+    Component { id: translationHostFactory; Item { width: 380; height: 240; } }
     property var motion;
     property string appSource;
 
@@ -263,6 +264,7 @@ TestCase {
     }
 
     function test_translation_edits_survive_a_restart_and_reach_the_queue() {
+        windowStub.isSimpleMode = false;
         motion.restoreOpticalControls(false);
         motion.changeOpticalMode("translation", false);
         motion.changeOpticalMode("translation", true);
@@ -291,6 +293,91 @@ TestCase {
         restartPanel();
         compare(lastPush().translation, false);
         compare(lastPush().translation_reference, 0.5);
+    }
+
+    function test_simple_mode_forces_auto_without_changing_the_full_mode_preference_data() {
+        return [{ tag: "desktop", mobile: false }, { tag: "mobile", mobile: true }];
+    }
+
+    function test_simple_mode_forces_auto_without_changing_the_full_mode_preference(data) {
+        windowStub.useMobileWorkspace = data.mobile;
+        settingsStub.values = { translationStabilization: JSON.stringify({ enabled: true, auto: false }) };
+        restartPanel();
+        motion.opened = true;
+        const automatic = controlMatching(motion.translationControls, x => x.text === "Automatic parameters");
+        const reference = controlMatching(motion.translationControls, x => x.text === "Reference distance");
+        verify(automatic && reference);
+        compare(controllerStub.translationAuto, true);
+        compare(lastPush().translation_auto, true);
+        verify(!automatic.visible);
+        verify(!reference.visible);
+        compare(JSON.parse(settingsStub.value("translationStabilization", "{}")).auto, false);
+
+        windowStub.isSimpleMode = false;
+        wait(0);
+        compare(controllerStub.translationAuto, false);
+        verify(automatic.visible);
+        tryVerify(function() { return reference.visible; });
+        compare(lastPush().translation_auto, false);
+
+        windowStub.isSimpleMode = true;
+        wait(0);
+        compare(controllerStub.translationAuto, true);
+        verify(!automatic.visible);
+        verify(!reference.visible);
+        windowStub.isSimpleMode = false;
+        wait(0);
+        compare(controllerStub.translationAuto, false);
+        compare(JSON.parse(settingsStub.value("translationStabilization", "{}")).auto, false);
+    }
+
+    function test_a_manual_project_stays_automatic_in_simple_mode() {
+        const saved = settingsStub.value("translationStabilization", "{}");
+        controllerStub.translationAuto = false;
+        motion.loadGyroflow({ gyro_source: { translation_stabilization_enabled: true, translation_auto: false } });
+        wait(0);
+        compare(controllerStub.translationAuto, true);
+        motion.sendQueueOpticalSettings();
+        compare(lastPush().translation_auto, true);
+        compare(settingsStub.value("translationStabilization", "{}"), saved);
+        windowStub.isSimpleMode = false;
+        wait(0);
+        compare(controllerStub.translationAuto, false, "Full mode can still edit the project's manual settings");
+    }
+
+    function test_processing_commits_automatic_parameters_even_before_a_status_refresh() {
+        motion.changeOpticalMode("translation", true);
+        wait(0);
+        controllerStub.translationAuto = false;
+        dispatchFromApp("runSimpleBatchSync");
+        compare(controllerStub.translationAuto, true);
+        compare(renderQueueStub.processingSettings.translation_auto, true);
+    }
+
+    function test_translation_controls_move_as_one_instance_and_keep_their_queue_behavior() {
+        motion.opened = true;
+        motion.restoreOpticalControls(false);
+        const translation = motion.translationControls;
+        const originalParent = translation.parent;
+        const simpleHost = createTemporaryObject(translationHostFactory, testCase);
+        verify(simpleHost !== null);
+        motion.moveTranslationControls(simpleHost);
+        compare(translation.parent, simpleHost);
+        verify(controlMatching(motion.experimentalControls, x => x === translation) === null);
+        const automatic = controlMatching(translation, x => x.text === "Automatic parameters");
+        verify(automatic !== null && !automatic.visible);
+        translation.checked = false;
+        wait(0);
+        compare(lastPush().translation, false);
+        translation.checked = true;
+        wait(0);
+        compare(lastPush().translation, true);
+        compare(lastPush().translation_auto, true);
+        motion.changeOpticalMode("stab", true);
+        verify(translation.checked && !translation.cb.interactive, "reconstruction still requires the same moved toggle");
+        motion.moveTranslationControls(null);
+        compare(translation.parent, originalParent);
+        compare(motion.translationControls, translation);
     }
 
     function test_project_readback_wins_without_changing_saved_preferences() {
