@@ -16254,6 +16254,13 @@ impl RenderQueue {
                     gyroflow_core::synchronization::sync_diag::record_deep_match_posterior(&curves, clip_ms);
                 }
                 let decide_posterior = || {
+                    if deep_match::long_match_enabled(clip_ms) && !self.is_auto_probe_run(job_id) {
+                        return deep_match::decide_long_match(
+                            &curves, windows_scanned, windows_gated, clip_ms,
+                            deep_match::post_conf_min(), deep_match::post_ci95_base_ms(),
+                            deep_match::drift_floor_ms(), &deep_match::long_match_params(),
+                        ).0;
+                    }
                     deep_match::decide_posterior(
                         &curves,
                         windows_scanned,
@@ -16339,6 +16346,7 @@ impl RenderQueue {
                 && deep_match::posterior_enabled()
                 && !curves.is_empty()
                 && !self.is_auto_probe_run(job_id)
+                && !stab.as_ref().is_some_and(|s| deep_match::long_match_enabled(s.params.read().duration_ms))
             {
                 let clip_ms = stab.as_ref().map(|s| s.params.read().duration_ms).unwrap_or(0.0);
                 if let deep_match::DriftFitOutcome::Rescued { offset_ms, .. } = deep_match::drift_fit_rescue(
@@ -16485,20 +16493,23 @@ impl RenderQueue {
             return false;
         }
         let clip_ms = stab_arc.params.read().duration_ms;
+        let long_model = deep_match::long_match_enabled(clip_ms);
         let t_d = deep_match::drift_tolerance_ms(
             clip_ms,
-            deep_match::drift_rate_ms_per_min(),
+            if long_model { deep_match::long_match_params().k_max_ms_per_min } else { deep_match::drift_rate_ms_per_min() },
             deep_match::drift_floor_ms(),
         );
         let min_sep = 2.0 * (deep_match::verify_local_ms() + t_d);
-        let peaks = deep_match::posterior_peaks(
+        let peaks = if long_model {
+            deep_match::long_match_hypotheses(curves, min_sep, &deep_match::long_match_params())
+        } else { deep_match::posterior_peaks(
             curves,
             clip_ms,
             deep_match::drift_rate_ms_per_min(),
             deep_match::drift_floor_ms(),
             deep_match::verify_top_k(),
             min_sep,
-        );
+        ) };
         if peaks.is_empty() {
             ::log::info!(target: "sync", "[deep-match] verify skipped: reason=no_peaks job={}", job_id);
             return false;
@@ -16651,9 +16662,10 @@ impl RenderQueue {
             c.range_idx += 100;
         }
         let clip_ms = stab.as_ref().map(|s| s.params.read().duration_ms).unwrap_or(0.0);
+        let long_model = deep_match::long_match_enabled(clip_ms);
         let t_d = deep_match::drift_tolerance_ms(
             clip_ms,
-            deep_match::drift_rate_ms_per_min(),
+            if long_model { deep_match::long_match_params().k_max_ms_per_min } else { deep_match::drift_rate_ms_per_min() },
             deep_match::drift_floor_ms(),
         );
         let align_tol = deep_match::verify_align_tol_ms() + t_d;
@@ -16679,7 +16691,21 @@ impl RenderQueue {
         merged.extend(verify_curves.iter().cloned());
         // Re-decision over base + verification curves — non-empty by
         // construction, so the empty-chunk classification is unreachable.
-        let merged_verdict = deep_match::decide_posterior(
+        let merged_verdict = if long_model {
+            let (verdict, model) = deep_match::decide_long_match(
+                &merged, merged.len(), 0, clip_ms,
+                deep_match::post_conf_min(), deep_match::post_ci95_base_ms(),
+                deep_match::drift_floor_ms(), &deep_match::long_match_params(),
+            );
+            // New windows must support the fitted clock at their own times.
+            // A constant hypothesis offset is only a search starting point.
+            aligned = model.as_ref().map_or(0, |m| verify_curves.iter().enumerate()
+                .filter(|(i, c)| m.supporters.contains(&(vs.base_curves.len() + i))
+                    && deep_match::verify_window_aligned(c, m.offset_at(c.t_center_ms),
+                        deep_match::drift_fit_resid_ms(), ratio_max))
+                .count());
+            verdict
+        } else { deep_match::decide_posterior(
             &merged,
             merged.len(),
             0,
@@ -16688,7 +16714,7 @@ impl RenderQueue {
             deep_match::post_ci95_base_ms(),
             deep_match::drift_rate_ms_per_min(),
             deep_match::drift_floor_ms(),
-        );
+        ) };
         let min_aligned = deep_match::verify_min_aligned();
         let (pass, outcome) = match &merged_verdict {
             deep_match::DeepMatchVerdict::Accepted { .. } if aligned >= min_aligned => (true, "pass"),
@@ -16735,6 +16761,7 @@ impl RenderQueue {
         if matches!(vs.original_verdict, deep_match::DeepMatchVerdict::WeakValley { .. })
             && deep_match::drift_fit_enabled()
             && !verify_curves.is_empty()
+            && !long_model
         {
             if let deep_match::DriftFitOutcome::Rescued { offset_ms, .. } = deep_match::drift_fit_rescue(
                 &merged,
@@ -25536,7 +25563,7 @@ mod tests {
     }
 
     #[test]
-    fn deep_match_drift_fit_rescues_weakvalley_curves_and_short_circuits() {
+    fn deep_match_long_model_accepts_drift_curves_and_short_circuits() {
         use gyroflow_core::synchronization::deep_match;
         let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
         let mut queue = queue_with_eta_job(JobStatus::Queued);
@@ -25565,9 +25592,8 @@ mod tests {
             vec![],
         );
 
-        // The drift-fit review (trigger 1, pre-verify) must rescue the
-        // WeakValley on chunk 1/2 and terminate as Accepted — no verification
-        // probe, no advance to the second chunk.
+        // The long-clip model accepts directly without the legacy rescue or
+        // another decoding pass, and without advancing to the next chunk.
         assert!(
             queue.deep_match_results.contains_key(&1),
             "drift-line WeakValley must be rescued to Accepted"
@@ -25576,6 +25602,41 @@ mod tests {
             queue.deep_match_pending.is_empty(),
             "rescue must short-circuit the remaining chunks"
         );
+    }
+
+    #[test]
+    fn deep_match_long_model_verification_requires_new_support() {
+        use gyroflow_core::synchronization::deep_match;
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        for valid_verification in [true, false] {
+            let mut queue = queue_with_eta_job(JobStatus::Queued);
+            let stab = setup_deep_match_job(&mut queue, false);
+            simulate_deep_match_probe_chunks(&mut queue, &stab,
+                vec![(0.0, 7_200_000.0), (7_000_000.0, 14_200_000.0)], 0);
+            stab.params.write().duration_ms = 6_602_395.8;
+            let base_curves = vec![drift_curve(0, 1320479.0, -129.376),
+                drift_curve(1, 2640958.0, 400.0), drift_curve(2, 5281917.0, -2.736)];
+            queue.deep_match_pending.get_mut(&1).unwrap().verify = Some(DeepMatchVerify {
+                peaks: vec![-110.0], peak_idx: 0, delta_ms: -110.0,
+                scanned_centers_ms: base_curves.iter().map(|c| c.t_center_ms).collect(),
+                base_curves,
+                original_verdict: deep_match::DeepMatchVerdict::WeakValley { worst_ratio: 0.725 },
+            });
+            let verify = if valid_verification {
+                vec![drift_curve(0, 3373390.0, -65.4), drift_curve(1, 4609890.0, -24.5),
+                    drift_curve(2, 6484790.0, 40.1)]
+            } else {
+                vec![drift_curve(0, 3373390.0, -65.4), drift_curve(1, 4609890.0, 300.0),
+                    drift_curve(2, 6484790.0, -400.0)]
+            };
+            queue.finish_deep_match_verify(1, Some(stab), verify);
+            assert_eq!(queue.deep_match_results.contains_key(&1), valid_verification);
+            if valid_verification {
+                assert!(queue.deep_match_pending.is_empty());
+            } else {
+                assert_eq!(queue.deep_match_pending[&1].current_chunk, 1);
+            }
+        }
     }
 
     #[test]

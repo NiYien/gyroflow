@@ -1051,6 +1051,142 @@ fn median_of(v: &mut [f64]) -> f64 {
     }
 }
 
+/// A chunk-local clock model. The reported offset belongs to `reference_ms`.
+#[derive(Debug, Clone)]
+pub struct LongMatchModel {
+    pub offset_ms: f64,
+    pub reference_ms: f64,
+    pub slope: f64,
+    pub supporters: Vec<usize>,
+}
+
+impl LongMatchModel {
+    pub fn offset_at(&self, time_ms: f64) -> f64 {
+        self.offset_ms + self.slope * (time_ms - self.reference_ms)
+    }
+}
+
+pub fn long_match_enabled(duration_ms: f64) -> bool {
+    duration_ms > long_min_ms() && drift_fit_enabled() && posterior_enabled()
+}
+
+pub fn long_match_params() -> DriftFitParams {
+    DriftFitParams {
+        // Keep the old override, but do not impose the legacy 4 ms/min ceiling
+        // on a model checked against independent windows and competing fits.
+        k_max_ms_per_min: env_f64_nonneg("GYROFLOW_DEEP_MATCH_DRIFT_FIT_K_MAX_MS_PER_MIN", 10.0),
+        ..drift_fit_params()
+    }
+}
+
+/// Seed verification from measured valleys, not peaks created by dilation.
+/// Prefer offsets supported by another window within the allowed clock drift.
+pub fn long_match_hypotheses(curves: &[DeepMatchWindowCurve], min_separation_ms: f64, p: &DriftFitParams) -> Vec<f64> {
+    let mut candidates: Vec<_> = curves.iter()
+        .filter(|c| window_flatness_ratio(c).is_some_and(|r| r <= p.ratio_max))
+        .map(|c| {
+            let support = curves.iter().filter(|other| {
+                let tolerance = p.resid_max_ms + p.k_max_ms_per_min * (other.t_center_ms - c.t_center_ms).abs() / 60_000.0;
+                (other.argmin_ms - c.argmin_ms).abs() <= tolerance
+            }).count();
+            (c.argmin_ms, support)
+        }).collect();
+    candidates.sort_by_key(|c| std::cmp::Reverse(c.1));
+    let mut peaks: Vec<f64> = Vec::new();
+    for (offset, _) in candidates {
+        if peaks.iter().all(|&other| (other - offset).abs() >= min_separation_ms) {
+            peaks.push(offset);
+            if peaks.len() == 3 { break; }
+        }
+    }
+    peaks
+}
+
+/// Decide long clips in drift-corrected coordinates, never on a duration-wide
+/// dilated peak. Pair hypotheses only propose a consensus; at least three
+/// independent windows and a strict majority must support the final model.
+pub fn decide_long_match(
+    curves: &[DeepMatchWindowCurve],
+    windows_scanned: usize,
+    windows_gated: usize,
+    clip_duration_ms: f64,
+    conf_min: f64,
+    ci95_base_ms: f64,
+    drift_floor_ms: f64,
+    p: &DriftFitParams,
+) -> (DeepMatchVerdict, Option<LongMatchModel>) {
+    if curves.is_empty() {
+        return (classify_empty_chunk(windows_scanned, windows_gated), None);
+    }
+    let reject = || (DeepMatchVerdict::WeakValley { worst_ratio: 1.0 }, None);
+    let confident: Vec<usize> = curves.iter().enumerate()
+        .filter(|(_, c)| window_flatness_ratio(c).is_some_and(|r| r <= p.ratio_max))
+        .map(|(i, _)| i).collect();
+    let required = p.min_windows.max(3).max(curves.len() / 2 + 1);
+    let mut seen = Vec::<Vec<usize>>::new();
+    let mut accepted = Vec::<LongMatchModel>::new();
+    for (pos, &i) in confident.iter().enumerate() {
+        for &j in &confident[pos + 1..] {
+            let dt = curves[j].t_center_ms - curves[i].t_center_ms;
+            if dt.abs() < per_window_ms() { continue; }
+            let slope = (curves[j].argmin_ms - curves[i].argmin_ms) / dt;
+            if !slope.is_finite() || (slope * 60_000.0).abs() > p.k_max_ms_per_min { continue; }
+            let supporters: Vec<usize> = confident.iter().copied().filter(|&n| {
+                let predicted = curves[i].argmin_ms + slope * (curves[n].t_center_ms - curves[i].t_center_ms);
+                (curves[n].argmin_ms - predicted).abs() <= p.resid_max_ms
+            }).collect();
+            if supporters.len() < required || seen.contains(&supporters) { continue; }
+            seen.push(supporters.clone());
+            let mut points: Vec<_> = supporters.iter().map(|&n| (curves[n].t_center_ms, curves[n].argmin_ms)).collect();
+            points.sort_by(|a, b| a.0.total_cmp(&b.0));
+            if points.windows(2).any(|w| w[1].0 - w[0].0 < per_window_ms()) { continue; }
+            let Some((slope, intercept)) = theil_sen_fit(&points) else { continue; };
+            if (slope * 60_000.0).abs() > p.k_max_ms_per_min
+                || points.iter().any(|&(t, d)| (d - intercept - slope * t).abs() > p.resid_max_ms)
+            { continue; }
+            let reference_ms = points.iter().map(|p| p.0).sum::<f64>() / points.len() as f64;
+            let shifted: Vec<_> = supporters.iter().map(|&n| {
+                let mut c = curves[n].clone();
+                let dx = -slope * (c.t_center_ms - reference_ms);
+                c.argmin_ms += dx;
+                for point in &mut c.curve { point.0 += dx; }
+                c
+            }).collect();
+            if let DeepMatchVerdict::Accepted { offset_ms } = decide_posterior(
+                &shifted, shifted.len(), 0, clip_duration_ms, conf_min, ci95_base_ms, 0.0, drift_floor_ms,
+            ) {
+                // A joint peak must be supported at the actual returned offset,
+                // not merely by a line fitted elsewhere in a multimodal curve.
+                if shifted.iter().any(|c| (c.argmin_ms - offset_ms).abs() > p.resid_max_ms) { continue; }
+                // Keep the fitted reference value: the residual floor can make
+                // several grid points tie, and argmax chooses the left edge.
+                let fitted_offset_ms = intercept + slope * reference_ms;
+                if (fitted_offset_ms - offset_ms).abs() > p.resid_max_ms { continue; }
+                accepted.push(LongMatchModel { offset_ms: fitted_offset_ms, reference_ms, slope, supporters });
+            }
+        }
+    }
+    accepted.sort_by_key(|m| std::cmp::Reverse(m.supporters.len()));
+    let Some(best) = accepted.first() else {
+        ::log::info!(target: "sync", "[deep-match] long model: no consensus windows={} confident={} required={} slope_limit={:.1}ms/min",
+            curves.len(), confident.len(), required, p.k_max_ms_per_min);
+        return reject();
+    };
+    // Every retained fit already has majority support. A second distinct fit
+    // is ambiguity, even when it has one fewer supporter than the best fit.
+    let lo = curves.iter().map(|c| c.t_center_ms).fold(f64::INFINITY, f64::min);
+    let hi = curves.iter().map(|c| c.t_center_ms).fold(f64::NEG_INFINITY, f64::max);
+    if accepted.iter().skip(1).any(|m|
+        [lo, hi].iter().any(|&t| (m.offset_at(t) - best.offset_at(t)).abs() > p.resid_max_ms))
+    {
+        ::log::info!(target: "sync", "[deep-match] long model: ambiguous competing consensus");
+        return reject();
+    }
+    ::log::info!(target: "sync", "[deep-match] long model: accepted support={}/{} k={:.3}ms/min offset={:.1}ms reference={:.1}ms excluded={}",
+        best.supporters.len(), curves.len(), best.slope * 60_000.0, best.offset_ms, best.reference_ms, curves.len() - best.supporters.len());
+    (DeepMatchVerdict::Accepted { offset_ms: best.offset_ms }, Some(best.clone()))
+}
+
 /// Drift-fit review for a `WeakValley` chunk (design D1-D6). Addresses the
 /// structural conf collapse on long clips: the drift dilation spreads the
 /// joint peak over ~T(D) while `conf_posterior` integrates a fixed ±12.5ms
@@ -2584,6 +2720,117 @@ mod tests {
             DeepMatchVerdict::Accepted { offset_ms } => assert!((offset_ms + 100.0).abs() <= 10.0, "got {offset_ms}"),
             v => panic!("expected Accepted, got {v:?}"),
         }
+    }
+
+    fn long_curve(idx: usize, time: f64, peak: f64) -> DeepMatchWindowCurve {
+        let curve = (-400..=400).map(|i| {
+            let distance = i as f64 * 5.0;
+            (peak + distance, 1.0 + (1.0 - (-0.5 * (distance / 13.0).powi(2)).exp()))
+        }).collect();
+        DeepMatchWindowCurve { range_idx: idx, t_center_ms: time, argmin_ms: peak, cost_min: 1.0, n_eff: 149.0, curve }
+    }
+
+    fn long_decision(curves: &[DeepMatchWindowCurve]) -> (DeepMatchVerdict, Option<LongMatchModel>) {
+        decide_long_match(curves, curves.len(), 0, 6_602_395.8, 0.5, 35.0, 10.0,
+            &DriftFitParams { ratio_max: 0.6, min_windows: 3, k_max_ms_per_min: 10.0, resid_max_ms: 25.0 })
+    }
+
+    #[test]
+    fn long_match_feedback_five_windows_survive_one_false_valley() {
+        // Logged locations and independent numerical fit; curve shapes are
+        // synthetic because the feedback contains no raw cost curves.
+        let points = [(1320479.0, -141129.376075), (2640958.0, -4127016.116075),
+            (5281917.0, -141002.736075), (3373390.0, -141065.4),
+            (4609890.0, -141024.5), (6484790.0, -140959.9)];
+        let curves: Vec<_> = points.iter().enumerate().map(|(i, &(t, d))| long_curve(i, t, d)).collect();
+        assert!(matches!(drift_fit_rescue(&curves, 6_602_395.8, 0.5, 35.0, 10.0,
+            &DriftFitParams { ratio_max: 0.6, min_windows: 3, k_max_ms_per_min: 4.0, resid_max_ms: 25.0 }, "baseline"),
+            DriftFitOutcome::Skipped { reason: "residual" }));
+        assert!(!matches!(long_decision(&curves[..3]).0, DeepMatchVerdict::Accepted { .. }));
+        let (verdict, model) = long_decision(&curves);
+        assert!(matches!(verdict, DeepMatchVerdict::Accepted { .. }));
+        let model = model.unwrap();
+        assert_eq!(model.supporters, vec![0, 2, 3, 4, 5]);
+        assert!((model.slope * 60000.0 - 1.9615).abs() < 0.1);
+        for &i in &model.supporters { assert!((model.offset_at(points[i].0) - points[i].1).abs() < 5.0); }
+    }
+
+    #[test]
+    fn long_match_accepts_both_drift_directions_beyond_old_limit() {
+        for rate in [-10.0, -6.0, 0.0, 6.0, 10.0] {
+            let curves: Vec<_> = [10.0, 35.0, 65.0, 100.0].iter().enumerate()
+                .map(|(i, &minute)| long_curve(i, minute * 60000.0, -1000.0 + rate * minute)).collect();
+            let (verdict, model) = long_decision(&curves);
+            assert!(matches!(verdict, DeepMatchVerdict::Accepted { .. }), "rate={rate}: {verdict:?}");
+            let model = model.unwrap();
+            assert!((model.slope * 60000.0 - rate).abs() < 1e-6);
+            assert!((model.offset_at(0.0) + 1000.0).abs() <= 10.0);
+        }
+    }
+
+    #[test]
+    fn long_match_rejects_out_of_range_and_nonlinear_clocks() {
+        // These were admissible under the previous 20 ms/min setting.
+        for rate in [-20.0, -12.0, -10.01, 10.01, 12.0, 20.0] {
+            let curves: Vec<_> = [10.0, 35.0, 65.0, 100.0].iter().enumerate()
+                .map(|(i, &minute)| long_curve(i, minute * 60000.0, -1000.0 + rate * minute)).collect();
+            assert!(!matches!(long_decision(&curves).0, DeepMatchVerdict::Accepted { .. }), "rate={rate}");
+        }
+        for offsets in [[0.0, 1000.0, 2000.0], [0.0, 0.0, 200.0]] {
+            let curves: Vec<_> = offsets.iter().enumerate()
+                .map(|(i, &d)| long_curve(i, (i + 1) as f64 * 600000.0, d)).collect();
+            assert!(!matches!(long_decision(&curves).0, DeepMatchVerdict::Accepted { .. }));
+        }
+    }
+
+    #[test]
+    fn long_match_requires_independent_majority_not_two_points_or_duplicates() {
+        let mut curves = vec![long_curve(0, 600000.0, 0.0), long_curve(1, 1200000.0, 10.0)];
+        assert!(!matches!(long_decision(&curves).0, DeepMatchVerdict::Accepted { .. }));
+        curves.push(curves[1].clone());
+        assert!(!matches!(long_decision(&curves).0, DeepMatchVerdict::Accepted { .. }));
+        let curves: Vec<_> = [0.0, 10.0, 20.0, 10000.0, 20000.0, 40000.0].iter().enumerate()
+            .map(|(i, &d)| long_curve(i, (i + 1) as f64 * 600000.0, d)).collect();
+        assert!(!matches!(long_decision(&curves).0, DeepMatchVerdict::Accepted { .. }));
+    }
+
+    #[test]
+    fn long_match_rejects_competing_majority_models() {
+        let curves: Vec<_> = [-100.0, -100.0, -100.0, 0.0, 100.0].iter().enumerate()
+            .map(|(i, &d)| long_curve(i, (i + 1) as f64 * 600000.0, d)).collect();
+        assert!(!matches!(long_decision(&curves).0, DeepMatchVerdict::Accepted { .. }));
+    }
+
+    #[test]
+    fn long_match_keeps_confidence_gate_for_thin_evidence() {
+        let curves: Vec<_> = (0..4).map(|i| {
+            let mut c = long_curve(i, (i + 1) as f64 * 600000.0, i as f64 * 10.0);
+            c.n_eff = 1.0;
+            c
+        }).collect();
+        assert!(!matches!(long_decision(&curves).0, DeepMatchVerdict::Accepted { .. }));
+    }
+
+    #[test]
+    fn long_match_rejects_repeated_equal_echoes() {
+        let curves: Vec<_> = (0..4).map(|i| {
+            let mut c = long_curve(i, (i + 1) as f64 * 600000.0, 0.0);
+            for (offset, cost) in &mut c.curve {
+                let distance = [-500.0f64, 0.0, 500.0].iter()
+                    .map(|peak| (*offset - peak).abs()).fold(f64::INFINITY, f64::min);
+                *cost = 1.0 + (1.0 - (-0.5 * (distance / 13.0).powi(2)).exp());
+            }
+            c
+        }).collect();
+        assert!(!matches!(long_decision(&curves).0, DeepMatchVerdict::Accepted { .. }));
+    }
+
+    #[test]
+    fn long_match_hypotheses_prefer_supported_measured_valleys() {
+        let curves = vec![long_curve(0, 600000.0, -4000000.0),
+            long_curve(1, 1800000.0, -141000.0), long_curve(2, 3600000.0, -140760.0)];
+        let p = DriftFitParams { ratio_max: 0.6, min_windows: 3, k_max_ms_per_min: 10.0, resid_max_ms: 25.0 };
+        assert_eq!(long_match_hypotheses(&curves, 7000.0, &p), vec![-141000.0, -4000000.0]);
     }
 
     #[test]

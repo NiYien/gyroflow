@@ -512,7 +512,10 @@ fn forward_rescore(
     // `scaled_duration_ms` vs `duration_ms` (video speed), and either way the
     // outcome is unchanged: a spurious skip lands on the same Accepted verdict,
     // a spurious run merely costs time it cannot misuse.
-    if matches!(
+    let initial_verdict = if dm::long_match_enabled(params.scaled_duration_ms) {
+        dm::decide_long_match(&curves, curves.len(), 0, params.scaled_duration_ms,
+            dm::post_conf_min(), dm::post_ci95_base_ms(), dm::drift_floor_ms(), &dm::long_match_params()).0
+    } else {
         // Re-decision over the curves this scan just produced (the guard above
         // returned already when there were too few), so the empty-chunk
         // classification is unreachable here.
@@ -525,7 +528,9 @@ fn forward_rescore(
             dm::post_ci95_base_ms(),
             dm::drift_rate_ms_per_min(),
             dm::drift_floor_ms(),
-        ),
+        )
+    };
+    if matches!(initial_verdict,
         dm::DeepMatchVerdict::Accepted { .. }
     ) {
         ::log::info!(
