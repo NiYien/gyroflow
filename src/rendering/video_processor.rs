@@ -22,19 +22,15 @@ pub struct VideoProcessor<'a> {
     inner: Processor<'a>,
 }
 
-fn correct_subnative_raw_size(url: &str, info: &mut VideoInfo) {
+fn correct_raw_source_size(url: &str, info: &mut VideoInfo) {
     let filename = gyroflow_core::filesystem::get_filename(url).to_ascii_lowercase();
     // Nikon R3D/NEV can report the decoder's reduced image as the source size.
-    // Preserve normal sizes and fall back only when the MP4 container supplies
-    // valid dimensions. Native RED containers keep the decoder's result.
-    if (filename.ends_with(".r3d") || filename.ends_with(".nev"))
-        && (info.width < 1000 || u64::from(info.width) * u64::from(info.height) < 1_000_000)
-    {
+    // Even a reduced 4K/8K frame can exceed the old small-image threshold.
+    // Use valid MP4 source dimensions; native RED keeps the decoder's result.
+    if filename.ends_with(".r3d") || filename.ends_with(".nev") {
         if let Some((w, h)) = crate::util::peek_container_size_from_url(url) {
-            if w > 0 && h > 0 {
-                info.width = w;
-                info.height = h;
-            }
+            info.width = w;
+            info.height = h;
         }
     }
 }
@@ -148,7 +144,7 @@ impl<'a> VideoProcessor<'a> {
                 }
             }
 
-            correct_subnative_raw_size(url, &mut info.borrow_mut());
+            correct_raw_source_size(url, &mut info.borrow_mut());
 
             std::thread::sleep(std::time::Duration::from_millis(100));
             mdk.mdk.stopProcessing(0);
@@ -259,7 +255,7 @@ mod tests {
             width: size.0, height: size.1, fps: 59.94, duration_ms: 7307.0,
             frame_count: 438, rotation: 90, ..Default::default()
         };
-        correct_subnative_raw_size(&url, &mut info);
+        correct_raw_source_size(&url, &mut info);
         assert_eq!((info.fps, info.duration_ms, info.frame_count, info.rotation), (59.94, 7307.0, 438, 90));
         info
     }
@@ -268,17 +264,19 @@ mod tests {
     fn raw_size_fallback_reads_nev_and_r3d_container_dimensions() {
         let dir = tempfile::tempdir().unwrap();
         for name in ["clip.NEV", "clip.nev", "clip.R3D", "clip.r3d"] {
-            let info = probe(dir.path(), name, &container(6048, 3402), (378, 212));
-            assert_eq!((info.width, info.height), (6048, 3402), "{name}");
+            for decoded_size in [(378, 212), (1512, 850), (3024, 1701), (6048, 3402)] {
+                let info = probe(dir.path(), name, &container(6048, 3402), decoded_size);
+                assert_eq!((info.width, info.height), (6048, 3402), "{name} {decoded_size:?}");
+            }
         }
     }
 
     #[test]
-    fn raw_size_fallback_preserves_normal_sizes_and_other_formats() {
+    fn raw_size_fallback_uses_container_dimensions_and_preserves_other_formats() {
         let dir = tempfile::tempdir().unwrap();
         for name in ["clip.NEV", "clip.R3D"] {
             let info = probe(dir.path(), name, &container(6060, 3410), (6048, 3402));
-            assert_eq!((info.width, info.height), (6048, 3402));
+            assert_eq!((info.width, info.height), (6060, 3410));
         }
         for name in ["clip.BRAW", "clip.MP4", "clip.CRM"] {
             let info = probe(dir.path(), name, &container(6048, 3402), (378, 212));

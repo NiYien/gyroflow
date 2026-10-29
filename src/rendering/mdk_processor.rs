@@ -230,6 +230,46 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "requires native BRAW runtime, GYROFLOW_BRAW_TEST_FILE and GYROFLOW_BRAW_TEST_SIZE=width,height"]
+    fn braw_source_dimensions_reach_sync_geometry() {
+        let source = std::env::var("GYROFLOW_BRAW_TEST_FILE").unwrap();
+        let expected: Vec<usize> = std::env::var("GYROFLOW_BRAW_TEST_SIZE").unwrap()
+            .split(',').map(|v| v.parse().unwrap()).collect();
+        assert_eq!(expected.len(), 2);
+        let expected = (expected[0], expected[1]);
+        qml_video_rs::video_item::MDKVideoItem::setGlobalOption("plugins", "mdk-braw:mdk-r3d");
+        let url = gyroflow_core::filesystem::path_to_url(&source);
+        let info = crate::rendering::VideoProcessor::get_video_info(&url).unwrap();
+        assert_eq!((info.width as usize, info.height as usize), expected);
+
+        let manager = gyroflow_core::StabilizationManager::default();
+        manager.init_from_video_data(info.duration_ms, info.fps, info.frame_count,
+            (info.width as usize, info.height as usize));
+        manager.params.write().output_size = expected;
+        let mut file = std::fs::File::open(&source).unwrap();
+        let length = file.metadata().unwrap().len() as usize;
+        manager.load_gyro_data(&mut file, length, &url, true, &Default::default(), |_| {},
+            Arc::new(AtomicBool::new(false))).unwrap();
+        let lens = manager.lens.read();
+        assert_eq!((lens.calib_dimension.w, lens.calib_dimension.h), expected);
+        drop(lens);
+        let focal = manager.gyro.read().file_metadata.read().lens_params.values()
+            .next().unwrap().pixel_focal_length.unwrap();
+        let params = gyroflow_core::stabilization::ComputeParams::from_manager(&manager);
+        assert_eq!((params.width, params.height), expected);
+        // The same sensor point must give the same bearing at every tracking resolution.
+        // Near the optical axis, the independent paraxial reference uses source pixels.
+        let reference = (expected.0 as f32 * 0.001 / focal.0, expected.1 as f32 * 0.001 / focal.1);
+        for divisor in [1, 2, 8] {
+            let dims = ((expected.0 / divisor) as u32, (expected.1 / divisor) as u32);
+            let points = [(dims.0 as f32 * 0.501, dims.1 as f32 * 0.501)];
+            let rays = gyroflow_core::stabilization::undistort_points_for_optical_flow(&points, 0, &params, dims);
+            assert!((rays[0].0 - reference.0).abs() < 1e-6, "{divisor}: {rays:?}");
+            assert!((rays[0].1 - reference.1).abs() < 1e-6, "{divisor}: {rays:?}");
+        }
+    }
+
+    #[test]
     #[ignore = "requires the native MDK/BRAW runtime and GYROFLOW_BRAW_TEST_FILE"]
     fn braw_failed_open_returns_error_and_allows_next_file() {
         let source = std::env::var("GYROFLOW_BRAW_TEST_FILE").unwrap();

@@ -994,7 +994,8 @@ void MDKPlayer::stopProcessingPlayer(uint64_t id) {
 void MDKPlayer::initProcessingPlayer(uint64_t id, uint64_t width, uint64_t height, bool yuv, std::string custom_decoder, const std::vector<std::pair<uint64_t, uint64_t>> &ranges, VideoProcessCb &&cb) { // ms
     m_processingPlayers[id] = std::make_unique<mdk::Player>();
     auto player = m_processingPlayers[id].get();
-    const auto sourceInfo = custom_decoder == "R3D" || custom_decoder.rfind("R3D:", 0) == 0
+    const bool isBraw = custom_decoder == "BRAW" || custom_decoder.rfind("BRAW:", 0) == 0;
+    const auto sourceInfo = isBraw || custom_decoder == "R3D" || custom_decoder.rfind("R3D:", 0) == 0
         ? std::make_shared<SourceVideoInfo>() : nullptr;
     if (!custom_decoder.empty()) {
         player->setDecoders(MediaType::Video, { custom_decoder });
@@ -1108,13 +1109,13 @@ void MDKPlayer::initProcessingPlayer(uint64_t id, uint64_t width, uint64_t heigh
     });
     player->setVideoSurfaceSize(64, 64);
 
-    player->prepare(ranges[0].first, [this, player, sourceInfo, finish](int64_t position, bool *) {
+    player->prepare(ranges[0].first, [this, player, sourceInfo, isBraw, finish](int64_t position, bool *) {
         if (position >= 0) {
-            // Native RED streams replace codec dimensions with scaled output after decoding.
+            // BRAW and native RED replace codec dimensions with scaled output after decoding.
             // Nikon's MP4-backed R3D/NEV keeps its existing container-size fallback.
             if (sourceInfo) {
                 const auto info = player->mediaInfo();
-                if (info.metadata.count("camera_model_id") && !info.video.empty()
+                if ((isBraw || info.metadata.count("camera_model_id")) && !info.video.empty()
                     && info.video[0].codec.width > 0 && info.video[0].codec.height > 0)
                     captureSourceVideoInfo(sourceInfo, info);
             }

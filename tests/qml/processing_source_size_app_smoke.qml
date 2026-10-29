@@ -44,7 +44,8 @@ Item {
             if (!probe.loaded) return;
             const text = render_queue.get_gyroflow_data(probe.jobId);
             if (!text) return;
-            const info = JSON.parse(text).video_info;
+            const project = JSON.parse(text);
+            const info = project.video_info;
             const fixture = probe.cases[probe.index];
             console.warn("PROCESSING_SOURCE_SIZE_RESULT", probe.index, JSON.stringify(info));
             if (info.width !== fixture.width || info.height !== fixture.height
@@ -52,6 +53,16 @@ Item {
                     || Math.abs(info.duration_ms - fixture.duration_ms) > 1) {
                 probe.fail("source properties changed");
                 return;
+            }
+            if (fixture.pixelFocalLength !== undefined) {
+                const lens = project.calibration_data;
+                if (!lens || lens.calib_dimension.w !== fixture.width || lens.calib_dimension.h !== fixture.height
+                        || lens.orig_dimension.w !== fixture.width || lens.orig_dimension.h !== fixture.height
+                        || Math.abs(lens.fisheye_params.camera_matrix[0][0] - fixture.pixelFocalLength) > 0.01) {
+                    probe.fail("source dimensions and telemetry lens geometry disagree");
+                    return;
+                }
+                console.warn("PROCESSING_SOURCE_LENS_RESULT", probe.index, JSON.stringify(lens));
             }
             render_queue.remove(probe.jobId);
             probe.jobId = 0;
