@@ -223,8 +223,7 @@ impl MDKVideoItem {
         self.playingChanged();
     }
     pub fn surfaceSizeUpdated(&mut self, width: u32, height: u32) {
-        self.setSurfaceSize(width, height);
-
+        // A completed resize may arrive after a newer size request.
         if let Some(ref mut cb) = self.m_resizeCb {
             cb(width, height)
         }
@@ -267,6 +266,7 @@ impl MDKVideoItem {
 
         self.surfaceSizeChanged();
         self.forceRedraw();
+        (self as &dyn QQuickItem).update();
     }
 
     pub fn setPlaybackRange(&mut self, from_ms: i64, to_ms: i64) {
