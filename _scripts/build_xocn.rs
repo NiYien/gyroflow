@@ -82,8 +82,8 @@ pub fn build(target_os: &str) {
     if target_os == "windows" {
         native.flag("/utf-8").flag("/EHsc");
     }
-    if target_os == "macos" {
-        // MDK does not export FrameReader RTTI on macOS.
+    if matches!(target_os, "macos" | "ios") {
+        // MDK does not export FrameReader RTTI on Apple platforms.
         native.flag("-fno-rtti");
     }
     if target_os == "linux" {
