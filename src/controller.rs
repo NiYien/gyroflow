@@ -463,6 +463,7 @@ pub struct Controller {
 
     check_external_sdk: qt_method!(fn(&self, filename: QString) -> bool),
     supports_native_crm: qt_method!(fn supports_native_crm(&self) -> bool { crate::crm::available() }),
+    is_native_xocn: qt_method!(fn is_native_xocn(&self, url: QUrl) -> bool { crate::xocn::is_source(&crate::util::qurl_to_encoded(url)) }),
     install_external_sdk: qt_method!(fn(&self, url: QString)),
     external_sdk_progress: qt_signal!(percent: f64, sdk_name: QString, error_string: QString, url: QString),
 
@@ -599,6 +600,8 @@ fn video_log_decoder_label(custom_decoder: &str) -> &'static str {
         "R3D"
     } else if custom_decoder.starts_with("CRM:") {
         "CRM"
+    } else if custom_decoder.starts_with("XOCN") {
+        "XOCN"
     } else {
         "custom"
     }
@@ -3267,6 +3270,9 @@ impl Controller {
     // restore_video_after_resume so a post-suspend reload picks the same
     // decoder as the original load.
     fn make_custom_decoder(&self, filename: &str, url: &str, player: &QJSValue) -> String {
+        if let Some(decoder) = crate::xocn::decoder_for_url(url) {
+            return decoder;
+        }
         if let Some(decoder) = crate::crm::decoder_for_url(url) {
             return decoder;
         }

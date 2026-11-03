@@ -411,8 +411,8 @@ Item {
         function onTelemetry_loaded(is_main_video: bool, filename: string, camera: string, additional_data: var): void {
             if (!is_main_video && controller.gyro_loaded) root.defaultPreviewPending = true;
             if (is_main_video) {
-                // Kinefinity SAR is a display hint. Keep source pixels intact for lens processing.
-                vid.setSourceAspectRatio(camera === "Kinefinity" || camera.startsWith("Kinefinity "));
+                // Preserve sensor pixels before applying display SAR and lens processing.
+                vid.setSourceAspectRatio(camera === "Kinefinity" || camera.startsWith("Kinefinity ") || controller.is_native_xocn(vid.url));
                 root.detectedCamera = camera;
                 vidInfo.updateEntry("Detected camera", camera || "---");
 
@@ -1321,8 +1321,8 @@ Item {
                                 return;
                             }
                             Qt.callLater(() => {
-                                if (controller.supports_native_crm() && root.fileExtension(root.loadedFileUrl) === "crm") {
-                                    // CRM already has a complete first frame; a warm-up seek
+                                if ((controller.supports_native_crm() && root.fileExtension(root.loadedFileUrl) === "crm") || controller.is_native_xocn(root.loadedFileUrl)) {
+                                    // Native RAW already has a complete first frame; a warm-up seek
                                     // can overwrite a user's seek immediately after loading.
                                     vid.forceRedraw();
                                 } else {

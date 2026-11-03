@@ -275,7 +275,7 @@ void MDKPlayer::setUrl(const QUrl &url, const QString &customDecoder) {
             qDebug2("setUrl") << "Setting custom HTTP headers:" << customDecoder.mid(8);
             m_player->setProperty("avio.headers", customDecoder.mid(8).toStdString());
         } else {
-            m_player->setDecoders(mdk::MediaType::Video, { toStdString(customDecoder) });
+            if (customDecoder != "XOCN") m_player->setDecoders(mdk::MediaType::Video, { toStdString(customDecoder) });
 #if (_WIN32+0)
             // An explicit decoder must not be replaced by the automatic software fallback.
             m_autoSoftwareDecoders = false;
@@ -296,6 +296,9 @@ void MDKPlayer::setUrl(const QUrl &url, const QString &customDecoder) {
         }
     }
     qDebug2("setUrl") << "Final url:" << path;
+    // MDK selects custom readers by suffix before it opens the container.
+    // Keep the public URL unchanged and mark only an explicitly selected X-OCN source.
+    if (customDecoder == "XOCN") path += ".xocn";
     m_player->setMedia(qUtf8Printable(path));
 #if (_WIN32+0)
     auto player = m_player.get();

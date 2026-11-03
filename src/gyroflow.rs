@@ -11,6 +11,8 @@ use std::cell::RefCell;
 
 pub use gyroflow_core as core;
 mod crm;
+mod xocn;
+mod xocn_gpu;
 mod mobile_content;
 mod cli;
 pub mod controller;

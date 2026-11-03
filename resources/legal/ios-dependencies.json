@@ -441,7 +441,7 @@
   },
   {
     "name": "bitflags",
-    "version": "2.11.1",
+    "version": "2.13.2",
     "license": "MIT OR Apache-2.0",
     "source": "registry+https://github.com/rust-lang/crates.io-index",
     "repository": "https://github.com/bitflags/bitflags",
@@ -574,7 +574,7 @@
   },
   {
     "name": "cc",
-    "version": "1.2.62",
+    "version": "1.3.0",
     "license": "MIT OR Apache-2.0",
     "source": "registry+https://github.com/rust-lang/crates.io-index",
     "repository": "https://github.com/rust-lang/cc-rs",
@@ -1484,7 +1484,7 @@
   },
   {
     "name": "ffmpeg-next",
-    "version": "8.1.0",
+    "version": "9.0.0",
     "license": "WTFPL",
     "source": "registry+https://github.com/rust-lang/crates.io-index",
     "repository": "https://github.com/zmwangx/rust-ffmpeg",
@@ -1499,7 +1499,7 @@
   },
   {
     "name": "ffmpeg-sys-next",
-    "version": "8.1.0",
+    "version": "9.0.0",
     "license": "WTFPL",
     "source": "registry+https://github.com/rust-lang/crates.io-index",
     "repository": "https://github.com/zmwangx/rust-ffmpeg-sys",
@@ -4110,7 +4110,7 @@
     "name": "qml-video-rs",
     "version": "0.1.0",
     "license": "See accompanying license text",
-    "source": "git+https://github.com/NiYien/qml-video-rs?rev=ef7c419fde0922c96014b5f5ada0fe0c11ebbefc#ef7c419fde0922c96014b5f5ada0fe0c11ebbefc",
+    "source": "https://github.com/NiYien/gyroflow",
     "repository": null,
     "authors": [
       "Adrian <adrian.eddy@gmail.com>"
@@ -4824,6 +4824,26 @@
     ]
   },
   {
+    "name": "shlex",
+    "version": "2.0.1",
+    "license": "MIT OR Apache-2.0",
+    "source": "registry+https://github.com/rust-lang/crates.io-index",
+    "repository": "https://github.com/comex/rust-shlex",
+    "authors": [
+      "comex <comexk@gmail.com>",
+      "Fenhl <fenhl@fenhl.net>",
+      "Adrian Taylor <adetaylor@chromium.org>",
+      "Alex Touchet <alextouchet@outlook.com>",
+      "Daniel Parks <dp+git@oxidized.org>",
+      "Garrett Berg <googberg@gmail.com>"
+    ],
+    "notice_origin": "package or upstream notice",
+    "notice_hashes": [
+      "a759ce38c686a2042f62a0a6b8ea01781e3447726dcb68f4bb8b9f199feff12e",
+      "cc5ba5589dfb7bbc1545df0cd433427aac08b1cdf3484161d6785996317b8c3c"
+    ]
+  },
+  {
     "name": "simba",
     "version": "0.7.3",
     "license": "Apache-2.0",
@@ -5245,7 +5265,7 @@
     "name": "telemetry-parser",
     "version": "0.3.0",
     "license": "MIT OR Apache-2.0",
-    "source": "git+https://github.com/NiYien/telemetry-parser.git?branch=niyien#665a5e887df35f2d52f7523b8b743bb48c1a1c59",
+    "source": "git+https://github.com/NiYien/telemetry-parser.git?branch=niyien#1aa2581bc2f5f06b39a3289536536eafe5b3acff",
     "repository": "https://github.com/AdrianEddy/telemetry-parser",
     "authors": [
       "Adrian <adrian.eddy@gmail.com>"

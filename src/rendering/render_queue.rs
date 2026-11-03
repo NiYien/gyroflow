@@ -6808,11 +6808,10 @@ impl RenderQueue {
             false,
         )
     }
-    // Evaluation order is load-bearing: the unconditional tier short-circuits
-    // first so `.braw` / `.dng` never reach `filesystem::exists`. This runs on
-    // the UI thread via `add_internal`, so widening the set must not widen the
-    // disk IO it performs.
+    // Only MXF needs a header probe to distinguish X-OCN from ordinary video.
+    // The unconditional extensions still avoid sibling-file filesystem checks.
     pub fn is_plugin_only_source(url: &str) -> bool {
+        if crate::xocn::is_source(url) { return true; }
         let filename = filesystem::get_filename(url);
         Self::plugin_only_extension_always(&filename)
             || (Self::plugin_only_extension_unless_sibling_mov(&filename)
@@ -9458,10 +9457,11 @@ impl RenderQueue {
                                         filesystem::get_filename(video_url),
                                         t_proc.elapsed().as_secs_f64() * 1000.0
                                     );
-                                    // CRM honors cancellation before decoding. Request its
-                                    // first frame, then cancel after producing the thumbnail.
+                                    // Native RAW readers honor cancellation before decoding.
+                                    // Request a frame, then cancel after producing the thumbnail.
                                     let native_crm = crate::crm::available() && filesystem::get_filename(video_url).to_ascii_lowercase().ends_with(".crm");
-                                    let thumbnail_cancel = Arc::new(AtomicBool::new(!native_crm));
+                                    let native_thumbnail = native_crm || crate::xocn::is_source(video_url);
+                                    let thumbnail_cancel = Arc::new(AtomicBool::new(!native_thumbnail));
                                     let cancel_after_frame = thumbnail_cancel.clone();
                                     proc.on_frame(move |_timestamp_us, input_frame, _output_frame, converter, _rate_control| {
                                     let sf = converter.scale(input_frame, ffmpeg_next::format::Pixel::RGBA, (50.0 * ratio).round() as u32, 50)?;

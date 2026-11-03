@@ -1,0 +1,15 @@
+The X-OCN reader includes portable LLVC3 primitives adapted from LibRaw.
+Copyright 2026 LibRaw LLC (info@libraw.org).
+Copyright 2026 Jiang Yaogeng (Sony ARW6 CRAW HQ decoder;
+code generated with assistance from GLM-5).
+
+Upstream: https://github.com/LibRaw/LibRaw
+Revision: 2caab57e269cc7fce17c3189e4d4d7e3e5861875
+Original file: src/decoders/sony_arw6.cpp
+Adapted sources: vendor/xocn/libraw_llvc3.h and
+src/rendering/xocn_entropy.wgsl (portable GPU entropy decoding translation).
+
+LibRaw is available under LGPL version 2.1 or CDDL version 1.0.
+This distribution uses the LGPL version 2.1 option. The LGPL text is provided
+in LibRaw-LICENSE.LGPL.txt. The modified source is included in the application
+source repository at https://github.com/NiYien/gyroflow.

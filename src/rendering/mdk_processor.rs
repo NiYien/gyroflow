@@ -84,6 +84,9 @@ impl MDKProcessor {
             custom_decoder = decoder;
             crate::crm::configure_player(&mut mdk, url);
         }
+        if let Some(decoder) = crate::xocn::decoder_for_url(url) {
+            custom_decoder = decoder;
+        }
         ::log::info!("Custom decoder: {custom_decoder}");
 
         // Take the global BRAW lock BEFORE setUrl (which spins up the native
@@ -128,6 +131,16 @@ impl MDKProcessor {
         ranges: Vec<(f64, f64)>,
         cancel_flag: Arc<AtomicBool>,
     ) -> Result<(), FFmpegError> {
+        if self.custom_decoder == "XOCN" {
+            let mut callback = self.on_frame_callback.take();
+            let mut converter = Converter::default();
+            return crate::xocn::process(&self.url, ranges, cancel_flag, move |timestamp, frame| {
+                if let Some(callback) = callback.as_mut() {
+                    callback(timestamp, frame, None, &mut converter, &mut RateControl::default())?;
+                }
+                Ok(())
+            });
+        }
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         if self.custom_decoder.starts_with("CRM:") {
             let mut callback = self.on_frame_callback.take();

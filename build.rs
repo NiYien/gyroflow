@@ -8,6 +8,8 @@ use std::process::Command;
 use walkdir::WalkDir;
 #[path = "_scripts/build_crm.rs"]
 mod crm;
+#[path = "_scripts/build_xocn.rs"]
+mod xocn;
 #[path = "_scripts/android_version.rs"]
 mod android_version;
 
@@ -258,6 +260,7 @@ fn main() {
     let qt_version = env::var("DEP_QT_VERSION").unwrap();
 
     crm::build(&target_os);
+    xocn::build(&target_os);
     if target_os == "macos" {
         println!("cargo:rerun-if-changed=src/rendering/apple_analysis_decoder.cpp");
         cc::Build::new()

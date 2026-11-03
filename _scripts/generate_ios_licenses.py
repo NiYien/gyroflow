@@ -83,6 +83,9 @@ def main():
         parts.append("\n\n" + "=" * 64 + "\n" + ", ".join(notice["packages"]) + "\n\n" + notice["text"])
     for path in sorted((legal / "native").glob("*.txt"), key=lambda path: path.name):
         parts.append("\n\n" + "=" * 64 + "\n" + path.stem + "\n\n" + path.read_text(encoding="utf-8"))
+    for name in ("LibRaw-LICENSE.LGPL.txt", "LibRaw-XOCN-attribution.txt"):
+        path = ROOT / "resources/third_party" / name
+        parts.append("\n\n" + "=" * 64 + "\n" + path.stem + "\n\n" + path.read_text(encoding="utf-8"))
     (legal / "mobile-licenses.txt").write_text("\n".join(parts) + "\n", encoding="utf-8", newline="\n")
     (legal / "ios-dependencies.json").write_text(json.dumps(entries, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
     print(json.dumps({"packages": len(entries), "unique_notices": len(notices), "missing_notice_files": missing}, indent=2))

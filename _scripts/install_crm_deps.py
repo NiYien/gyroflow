@@ -3,6 +3,7 @@
 import hashlib
 from pathlib import Path
 import shutil
+import sys
 import tempfile
 import urllib.request
 import zipfile
@@ -17,9 +18,11 @@ PACKAGES = [
 ]
 
 
-def install():
+def install(only_abi=False):
     DEST.mkdir(parents=True, exist_ok=True)
     for name, url, expected, header in PACKAGES:
+        if only_abi and not name.startswith('mdk-abi-sdk-'):
+            continue
         archive = DEST / name
         stamp = DEST / (name + '.verified')
         if stamp.exists() and stamp.read_text() == expected and (DEST / header).exists():
@@ -32,18 +35,21 @@ def install():
                     shutil.copyfileobj(response, output)
                 except BaseException:
                     output.close()
-                    temporary.unlink(missing_ok=True)
+                    temporary.unlink()
                     raise
             try:
                 if hashlib.sha256(temporary.read_bytes()).hexdigest() != expected:
                     raise RuntimeError(f'SHA256 mismatch: {name}')
                 temporary.replace(archive)
             finally:
-                temporary.unlink(missing_ok=True)
+                if temporary.exists():
+                    temporary.unlink()
         with zipfile.ZipFile(archive) as package:
             for item in package.infolist():
                 target = (DEST / item.filename).resolve()
-                if not target.is_relative_to(DEST.resolve()):
+                try:
+                    target.relative_to(DEST.resolve())
+                except ValueError:
                     raise RuntimeError(f'Unsafe archive path: {item.filename}')
             package.extractall(DEST)
         stamp.write_text(expected)
@@ -51,4 +57,4 @@ def install():
 
 
 if __name__ == '__main__':
-    install()
+    install(only_abi='--abi-only' in sys.argv)

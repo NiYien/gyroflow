@@ -467,6 +467,8 @@ deploy *param: assert-linux-x86-64
     # Niyien: camera_db (populated by src/core/build.rs from niyien-lens-data release)
     mkdir -p "$TARGET/camera_db/"
     cp -f "$PROJECT_DIR/resources/camera_db/"*.json "$TARGET/camera_db/"
+    mkdir -p "$TARGET/licenses/"
+    cp -f "$PROJECT_DIR/resources/third_party/"* "$TARGET/licenses/"
 
     pushd $TARGET/..
     tar -czf {{ArtifactPrefix}}-{{PackageSuffix}}.tar.gz --transform 's!{{PackageSuffix}}!Gyroflow!' {{PackageSuffix}}

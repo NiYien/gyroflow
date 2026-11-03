@@ -4483,6 +4483,7 @@ dependencies = [
  "url",
  "uuid",
  "walkdir",
+ "wgpu 29.0.3",
  "whoami",
  "windows 0.62.2",
  "windows-sys 0.61.2",

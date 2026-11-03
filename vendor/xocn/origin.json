@@ -1,0 +1,8 @@
+{
+  "repository": "https://github.com/LibRaw/LibRaw",
+  "revision": "2caab57e269cc7fce17c3189e4d4d7e3e5861875",
+  "source": "src/decoders/sony_arw6.cpp",
+  "gpu_source": "src/rendering/xocn_entropy.wgsl",
+  "gpu_changes": "Translate LLVC3 record entropy decoding and dequantization to portable WGSL, retaining signed integer output and packet padding semantics.",
+  "changes": "Retain portable entropy, packet, plane, green reconstruction and clipping primitives; replace LibRaw internal header with standard C++ types. X-OCN geometry is implemented separately."
+}
