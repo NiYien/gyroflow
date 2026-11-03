@@ -131,7 +131,6 @@ void MDKPlayer::captureSourceVideoInfo(const std::shared_ptr<SourceVideoInfo> &s
 void MDKPlayer::initPlayer() {
     m_player = std::make_unique<mdk::Player>();
     m_sourceVideoInfo = std::make_shared<SourceVideoInfo>();
-    m_metadata = QJsonObject();
     m_shuttingDown = false;
 
     m_player->setDecoders(mdk::MediaType::Video, defaultDecoderList());
@@ -388,11 +387,6 @@ void MDKPlayer::setupPlayer() {
 #if (_WIN32+0)
             captureSourceVideoInfo(sourceInfo, md);
 #endif
-            QJsonObject obj;
-            for (const auto &x : getMediaInfo(md)) {
-                obj.insert(QString::fromUtf8(x.first.c_str(), x.first.size()), QString::fromUtf8(x.second.c_str(), x.second.size()));
-            }
-            m_metadata = obj;
             for (const auto &stream : md.video) {
                 const auto &codec = stream.codec;
                 qDebug2("m_player->onEvent") << "preview.stream" << "player=" << player
@@ -403,6 +397,9 @@ void MDKPlayer::setupPlayer() {
             }
         }
         if (evt.detail == "size") {
+            // Readers can publish MediaInfo without a metadata event. Read the
+            // current clip when delivering it, rather than caching an early event.
+            auto metadata = getMediaInfo(player->mediaInfo());
             // A size event can arrive before Prepared publishes the new clip's
             // properties. Deliver those properties and completion together so
             // QML cannot initialize this clip with the previous clip's values.
@@ -420,7 +417,9 @@ void MDKPlayer::setupPlayer() {
                 const auto duration = m_duration;
                 const auto width = sourceInfo->width;
                 const auto height = sourceInfo->height;
-                const auto metadata = m_metadata;
+                // RAW codecs may now report preview dimensions in MediaInfo.
+                metadata["stream.video[0].codec.width"] = QString::number(width);
+                metadata["stream.video[0].codec.height"] = QString::number(height);
                 QMetaObject::invokeMethod(m_item, [this, player, duration, frames, fps, width, height, metadata] {
                     if (m_shuttingDown.load() || m_player.get() != player) return;
                     QMetaObject::invokeMethod(m_item, "videoLoaded", Qt::DirectConnection,
@@ -429,7 +428,7 @@ void MDKPlayer::setupPlayer() {
                     QMetaObject::invokeMethod(m_item, "metadataLoaded", Qt::DirectConnection, Q_ARG(QJsonObject, metadata));
                 }, Qt::QueuedConnection);
             } else {
-                QMetaObject::invokeMethod(m_item, "metadataLoaded", Qt::QueuedConnection, Q_ARG(QJsonObject, m_metadata));
+                QMetaObject::invokeMethod(m_item, "metadataLoaded", Qt::QueuedConnection, Q_ARG(QJsonObject, metadata));
             }
 
             m_firstFrameLoaded = true;
@@ -586,12 +585,6 @@ void MDKPlayer::setupPlayer() {
             && m_videoLoaded.compare_exchange_strong(expectedLoaded, true, std::memory_order_acq_rel)) {
             auto md = player->mediaInfo();
 
-            /*QJsonObject obj;
-            for (const auto &x : getMediaInfo(md)) {
-                obj.insert(QString::fromStdString(x.first), QString::fromStdString(x.second));
-            }
-            QMetaObject::invokeMethod(m_item, "metadataLoaded", Q_ARG(QJsonObject, obj));*/
-
             if (!md.video.empty()) {
                 auto v = md.video[0];
                 if (sourceInfo->ready.load(std::memory_order_acquire)) {
@@ -620,7 +613,7 @@ void MDKPlayer::setupPlayer() {
                 m_fps = 0;
 
                 QMetaObject::invokeMethod(m_item, "videoLoaded", Q_ARG(double, m_duration), Q_ARG(qlonglong, 0), Q_ARG(double, 0), Q_ARG(uint, 0), Q_ARG(uint, 0));
-                QMetaObject::invokeMethod(m_item, "metadataLoaded", Qt::QueuedConnection, Q_ARG(QJsonObject, m_metadata));
+                QMetaObject::invokeMethod(m_item, "metadataLoaded", Qt::QueuedConnection, Q_ARG(QJsonObject, getMediaInfo(md)));
                 QMetaObject::invokeMethod(m_item, "update");
                 m_firstFrameLoaded = true;
             }
@@ -1142,12 +1135,12 @@ void MDKPlayer::initProcessingPlayer(uint64_t id, uint64_t width, uint64_t heigh
     player->set(State::Running);
 }
 
-std::map<std::string, std::string> MDKPlayer::getMediaInfo(const MediaInfo &mi) {
+QJsonObject MDKPlayer::getMediaInfo(const MediaInfo &mi) {
     std::map<std::string, std::string> ret;
     ret["start_time"] = std::to_string(mi.start_time);
     ret["bit_rate"]   = std::to_string(mi.bit_rate);
     ret["size"]       = std::to_string(mi.size);
-    ret["format"]     = std::string(mi.format);
+    ret["format"]     = mi.format ? mi.format : "";
     ret["streams"]    = std::to_string(mi.streams);
     for (const auto &x : mi.metadata) {
         ret["metadata." + x.first] = x.second;
@@ -1157,14 +1150,15 @@ std::map<std::string, std::string> MDKPlayer::getMediaInfo(const MediaInfo &mi) 
         std::string key = "stream.video[" + std::to_string(i) + "].";
         ret[key + "index"] = std::to_string(v.index);
         ret[key + "start_time"] = std::to_string(v.start_time);
-        ret[key + "duration"] = std::to_string(m_duration);
+        const double duration = m_overrideFps > 0.0 ? v.duration * v.codec.frame_rate / m_overrideFps : v.duration;
+        ret[key + "duration"] = std::to_string(duration);
         ret[key + "frames"] = std::to_string(v.frames);
         ret[key + "rotation"] = std::to_string(v.rotation);
         for (const auto &x : v.metadata) {
             ret[key + "metadata." + x.first] = x.second;
         }
 
-        ret[key + "codec.name"]         = std::string(v.codec.codec);
+        ret[key + "codec.name"]         = v.codec.codec ? v.codec.codec : "";
         ret[key + "codec.tag"]          = std::to_string(v.codec.codec_tag);
         //ret[key + "codec.extra_data"] = std::to_string(v.codec.extra_data, v.codec.extra_data_size);
         ret[key + "codec.bit_rate"]     = std::to_string(v.codec.bit_rate);
@@ -1172,7 +1166,7 @@ std::map<std::string, std::string> MDKPlayer::getMediaInfo(const MediaInfo &mi) 
         ret[key + "codec.level"]        = std::to_string(v.codec.level);
         ret[key + "codec.frame_rate"]   = std::to_string(m_overrideFps > 0.0? m_overrideFps : v.codec.frame_rate);
         ret[key + "codec.format"]       = std::to_string(v.codec.format);
-        ret[key + "codec.format_name"]  = std::string(v.codec.format_name);
+        ret[key + "codec.format_name"]  = v.codec.format_name ? v.codec.format_name : "";
         ret[key + "codec.width"]        = std::to_string(v.codec.width);
         ret[key + "codec.height"]       = std::to_string(v.codec.height);
         ret[key + "codec.b_frames"]     = std::to_string(v.codec.b_frames);
@@ -1190,7 +1184,7 @@ std::map<std::string, std::string> MDKPlayer::getMediaInfo(const MediaInfo &mi) 
             ret[key + "metadata." + x.first] = x.second;
         }
 
-        ret[key + "codec.name"]            = std::string(a.codec.codec);
+        ret[key + "codec.name"]            = a.codec.codec ? a.codec.codec : "";
         ret[key + "codec.tag"]             = std::to_string(a.codec.codec_tag);
         //ret[key + "codec.extra_data"]    = std::to_string(a.codec.extra_data, a.codec.extra_data_size);
         ret[key + "codec.bit_rate"]        = std::to_string(a.codec.bit_rate);
@@ -1208,7 +1202,11 @@ std::map<std::string, std::string> MDKPlayer::getMediaInfo(const MediaInfo &mi) 
 
         ++i;
     }
-    return ret;
+    QJsonObject metadata;
+    for (const auto &entry : ret) {
+        metadata.insert(QString::fromStdString(entry.first), QString::fromStdString(entry.second));
+    }
+    return metadata;
 }
 
 QSGDefaultRenderContext *MDKPlayer::rhiContext() {

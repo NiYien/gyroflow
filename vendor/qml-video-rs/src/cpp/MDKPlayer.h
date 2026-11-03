@@ -97,7 +97,7 @@ public:
     void initProcessingPlayer(uint64_t id, uint64_t width, uint64_t height, bool yuv, std::string custom_decoder, const std::vector<std::pair<uint64_t, uint64_t>> &ranges, VideoProcessCb &&cb);
     void stopProcessingPlayer(uint64_t id);
 
-    std::map<std::string, std::string> getMediaInfo(const MediaInfo &mi);
+    QJsonObject getMediaInfo(const MediaInfo &mi);
 
     QSGDefaultRenderContext *rhiContext();
     QRhiTexture *rhiTexture();
@@ -175,8 +175,6 @@ private:
     bool m_isR3dFormat{false};
     std::atomic<bool> m_playbackRequested{false};
     int64_t m_playerPosition{0};
-
-    QJsonObject m_metadata;
 
     QSGImageNode *m_node{nullptr};
     QColor m_bgColor;
