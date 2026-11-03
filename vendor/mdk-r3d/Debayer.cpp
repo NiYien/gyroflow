@@ -12,6 +12,9 @@ GpuDebayer::Ptr CreateMTLDebayer();
 #endif
 GpuDebayer::Ptr GpuDebayer::create(int type)
 {
+#if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__))
+    if (type & OPTION_RED_OPENCL) return CreateOpenCLDebayer();
+#endif
 #if  (__APPLE__ + 0)
     if (type & OPTION_RED_METAL) {
         return CreateMTLDebayer();

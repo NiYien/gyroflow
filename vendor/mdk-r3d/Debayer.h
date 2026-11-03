@@ -61,4 +61,8 @@ public:
     virtual Status flush() { return Status_Ok; }
 };
 
+#if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__))
+GpuDebayer::Ptr CreateOpenCLDebayer();
+#endif
+
 MDK_NS_END

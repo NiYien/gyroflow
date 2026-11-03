@@ -109,11 +109,11 @@ public:
             p = reinterpret_cast<value_type*>(std::malloc(n + kAlignment)); // TODO: c++17 aligned_alloc
             if (!p)
                 return false;
-            const uint8_t offset = kAlignment - uint8_t(intptr_t(p) & (kAlignment-1));
+            const uint16_t offset = kAlignment - uint16_t(intptr_t(p) & (kAlignment-1));
             memcpy(p + offset, old + d->offset, size()); // copy old data of size() bytes
             d->offset = offset;
         } else {
-            d->offset = kAlignment - uint8_t(intptr_t(p) & (kAlignment-1));
+            d->offset = kAlignment - uint16_t(intptr_t(p) & (kAlignment-1));
         }
         d->cap = n;
         d->data = p;
@@ -141,7 +141,7 @@ public:
         d->size = old->size;
         d->cap = old->cap;
         d->data = reinterpret_cast<value_type*>(std::malloc(d->cap + kAlignment));
-        d->offset = kAlignment - uint8_t(intptr_t(d->data) & (kAlignment-1));
+        d->offset = kAlignment - uint16_t(intptr_t(d->data) & (kAlignment-1));
         memcpy(data(), old->data + old->offset, d->size);
     }
 private:
@@ -152,7 +152,8 @@ private:
         }
         bool is_owner = true;
         pointer data = nullptr;
-        uint8_t offset = 0;
+        // The offset must represent the full alignment, including 4 KiB RAW blocks.
+        uint16_t offset = 0;
         int size = 0;
         int cap = 0;
     };

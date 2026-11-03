@@ -577,7 +577,8 @@ void MDKPlayer::setupPlayer() {
         //     QString(status & mdk::MediaStatus::Invalid?   "Invalid | "   : "");
 
         bool expectedLoaded = false;
-        if ((status & mdk::MediaStatus::Loaded)
+        if (!(status & mdk::MediaStatus::Invalid)
+            && (status & mdk::MediaStatus::Loaded)
             && (status & mdk::MediaStatus::Prepared)
             && m_videoLoaded.compare_exchange_strong(expectedLoaded, true, std::memory_order_acq_rel)) {
             auto md = player->mediaInfo();
@@ -628,6 +629,8 @@ void MDKPlayer::setupPlayer() {
                 m_connectionScreenChanged = QObject::connect(m_window, &QQuickWindow::screenChanged, [this](QScreen *) { m_item->update(); });
         }
         if (status & mdk::MediaStatus::Invalid) {
+            m_videoLoaded = false;
+            m_firstFrameLoaded = false;
             QMetaObject::invokeMethod(m_item, "videoLoaded", Q_ARG(double, 0), Q_ARG(qlonglong, 0), Q_ARG(double, 0), Q_ARG(uint, 0), Q_ARG(uint, 0));
             QMetaObject::invokeMethod(m_item, "metadataLoaded", Q_ARG(QJsonObject, QJsonObject()));
         }
@@ -1022,10 +1025,16 @@ void MDKPlayer::initProcessingPlayer(uint64_t id, uint64_t width, uint64_t heigh
         }
     };
 
+    player->onMediaStatusChanged([finish](mdk::MediaStatus status) {
+        if (status & mdk::MediaStatus::Invalid) finish(-2);
+        return true;
+    });
+
     player->onFrame<mdk::VideoFrame>([cb, finish, width, height, id, range_id = std::move(range_id), finished, sourceInfo, yuv, ranges, this](mdk::VideoFrame &v, int) -> int {
         if (*finished) return 0;
         if (!v || v.timestamp() == mdk::TimestampEOS) { // AOT frame(1st frame, seek end 1st frame) is not valid, but format is valid. eof frame format is invalid
-            finish(-1);
+            // An invalid format at timestamp zero is a decoder error, not EOS.
+            finish(!v.format() && v.timestamp() == 0 ? -2 : -1);
             return 0;
         }
         if (!v.format()) {

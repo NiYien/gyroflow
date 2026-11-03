@@ -178,6 +178,7 @@ private:
     atomic<uint64_t> index_ = 0; // for stepping frame forward/backward
     int decode_ahead_ = 1;
     bool pipeline_ = false; // Fixed before the output thread starts.
+    bool aligned_opencl_ = false;
     atomic<uint64_t> pipeline_start_ = 0;
     // Protected by decode_submission_mtx_; includes decoded frames waiting for delivery.
     uint64_t next_decode_ = 0;
@@ -437,7 +438,7 @@ bool R3DReader::load()
         clog << "R3D will use software decoder" << endl;
     }
 #if (_WIN32 + 0)
-    pipeline_ = dec_ && decode_ahead_ > 1;
+    pipeline_ = (dec_ || aligned_opencl_) && decode_ahead_ > 1;
 #endif
 
     if (audio_thread_.joinable())
@@ -638,6 +639,7 @@ bool R3DReader::readAt(uint64_t index, int seekId, SeekFlag flag, uint64_t gener
         if (seekId > 0) {
             auto data = (UserData*)job->PrivateData;
             data->seekId = seekId;
+            if (aligned_opencl_) data->completeSeekInCallback = test_flag(flag, SeekFlag::IOCompleteCallback);
             //data->seekWaitFrame = !test_flag(flag & SeekFlag::IOCompleteCallback); // FIXME:
         }
         R3DSDK::DecodeStatus status = R3DSDK::DSDecodeOK;
@@ -648,9 +650,12 @@ bool R3DReader::readAt(uint64_t index, int seekId, SeekFlag flag, uint64_t gener
         }
         if (status != R3DSDK::DSDecodeOK) {
             clog << "decompress error: " << status << endl;
+            auto failed = *(UserData*)job->PrivateData;
+            failed.failed = true;
             delete (UserData*)job->PrivateData;
             { const lock_guard lock(submission_mtx_); job->PrivateData = nullptr; }
-            return false;
+            push(failed);
+            return true;
         }
         return true;
     }
@@ -691,9 +696,12 @@ bool R3DReader::readAt(uint64_t index, int seekId, SeekFlag flag, uint64_t gener
     const auto status = dec_->decode(job);
     if (status != R3DSDK::R3DStatus_Ok) {
         clog << "decode error: " << status << endl;
+        auto failed = *(UserData*)job->privateData;
+        failed.failed = true;
         delete (UserData*)job->privateData;
         { const lock_guard lock(submission_mtx_); job->privateData = nullptr; }
-        return false;
+        push(failed);
+        return true;
     }
     return true;
 }
@@ -856,6 +864,7 @@ void R3DReader::parseDecoderOptions()
 
 bool R3DReader::setupDecoder()
 {
+    aligned_opencl_ = false;
     if (decompress_ == Decompress::Cpu || gpu_ == OPTION_RED_NONE)
         return true;
     if (decompress_ == Decompress::R3D) {
@@ -867,8 +876,31 @@ bool R3DReader::setupDecoder()
 #endif
     }
 
+    if (gpu_ == OPTION_RED_NONE)
+        gpu_ = OPTION_RED_OPENCL;
+    int legacyGpu = gpu_;
+#if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__))
+    if (decompress_ == Decompress::R3D && (gpu_ & OPTION_RED_OPENCL)) {
+        const auto type = R3DSDK::IdentifyFile(url().c_str());
+        if (type == R3DSDK::FileId_NEV_NRAW || type == R3DSDK::FileId_R3D_NE) {
+            debayer_ = CreateOpenCLDebayer();
+            if (debayer_) {
+                aligned_opencl_ = true;
+                async_dec_ = make_unique<R3DSDK::AsyncDecoder>();
+                async_dec_->Open();
+                return true;
+            }
+            legacyGpu &= ~OPTION_RED_OPENCL;
+            if (!legacyGpu) return false;
+        }
+    }
+#endif
     if (decompress_ != Decompress::R3D) {
         debayer_ = GpuDebayer::create(gpu_);
+        if (!debayer_) return false;
+#if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__))
+        aligned_opencl_ = true;
+#endif
     }
     if (decompress_ == Decompress::Gpu) {
         if (auto ret = R3DSDK::GpuDecoder::DecodeSupportedForClip(*clip_.get()); ret != R3DSDK::DSDecodeOK) {
@@ -886,9 +918,6 @@ bool R3DReader::setupDecoder()
         return true;
     }
 
-    if (gpu_ == OPTION_RED_NONE)
-        gpu_ = OPTION_RED_OPENCL;
-
     R3DSDK::R3DDecoderOptions *options = nullptr;
     R3DSDK::R3DStatus status = R3DSDK::R3DDecoderOptions::CreateOptions(&options);
     if (status != R3DSDK::R3DStatus_Ok) {
@@ -904,9 +933,10 @@ bool R3DReader::setupDecoder()
     options->setConcurrentImageCount(0);        //threads to process images/manage state of image processing.
     //options->useRRXAsync(true); // removed in 8.6
 
-    status = SetupCudaCLDevices(options, gpu_);
+    status = SetupCudaCLDevices(options, legacyGpu);
     if (status != R3DSDK::R3DStatus_Ok) {
         clog << "Setup Cuda/OpenCL Devices error: " << status << endl;
+        R3DSDK::R3DDecoderOptions::ReleaseOptions(options);
         return false;
     }
 
@@ -936,7 +966,7 @@ void R3DReader::setupDecodeJobs()
             job->VideoTrackNo = 0;
             job->AbortDecode = false;
             size_t outSize = 0;
-            if (decompress_ == Decompress::Async) {
+            if (async_dec_) {
                 outSize = R3DSDK::AsyncDecoder::GetSizeBufferNeeded(*job);
             } else {
                 outSize = R3DSDK::GpuDecoder::GetSizeBufferNeeded(*job);
@@ -945,7 +975,7 @@ void R3DReader::setupDecodeJobs()
                 clog << "Failed to get decompress job output buffer size" << endl;
                 return;
             }
-            decompress_buf_[i] = ByteArray(outSize);
+            decompress_buf_[i] = ByteArray(outSize, uint16_t(aligned_opencl_ ? 4096 : 64));
             job->OutputBuffer = decompress_buf_[i].data();
             job->OutputBufferSize = outSize;
             job->Callback = [](R3DSDK::AsyncDecompressJob* job, R3DSDK::DecodeStatus decodeStatus) {
@@ -1029,7 +1059,10 @@ R3DSDK::R3DDecodeJob* R3DReader::getJob(size_t index)
 void R3DReader::onJobComplete(R3DSDK::R3DDecodeJob *job, R3DSDK::R3DStatus status)
 {
     auto data = (UserData*)job->privateData;
-    if (status != R3DSDK::R3DStatus_Ok) data->failed = true;
+    if (status != R3DSDK::R3DStatus_Ok) {
+        std::cerr << "R3D decode callback failed: status=" << status << std::endl;
+        data->failed = true;
+    }
     // Normal frames advance the reader position only when delivered in order.
     if (data->failed || (data->completeSeekInCallback && (!pipeline_ || data->seekId > 0)))
         completeVideoJob(*data, !data->failed);
@@ -1073,7 +1106,11 @@ void R3DReader::onJobComplete(R3DSDK::AsyncDecompressJob *job, R3DSDK::DecodeSta
         delete data;
         return;
     }
-    auto debayerJob = debayer_->createJob(decompress_buf_[bufIdx].constData(), decompress_buf_[bufIdx].size(), scaleToW_, scaleToH_, mode_, from(format_), &ipsettings_);
+    // MDK may reapply requested dimensions after load; the raw block keeps its job's mode.
+    const auto outputMode = aligned_opencl_ ? job->Mode : mode_;
+    const auto outputWidth = aligned_opencl_ ? Scale(job->Clip->Width(), outputMode) : scaleToW_;
+    const auto outputHeight = aligned_opencl_ ? Scale(job->Clip->Height(), outputMode) : scaleToH_;
+    auto debayerJob = debayer_->createJob(decompress_buf_[bufIdx].constData(), decompress_buf_[bufIdx].size(), outputWidth, outputHeight, outputMode, from(format_), &ipsettings_);
     if (!debayerJob) {
         clog << "Failed to create a debayer job" << endl;
         { const lock_guard lock(submission_mtx_); job->PrivateData = nullptr; }
@@ -1083,7 +1120,19 @@ void R3DReader::onJobComplete(R3DSDK::AsyncDecompressJob *job, R3DSDK::DecodeSta
         delete data;
         return;
     }
-    debayer_->submit(debayerJob);
+    const auto processed = debayer_->submit(debayerJob);
+    if (aligned_opencl_) {
+        // Complete GPU processing before the SDK is allowed to reuse this raw block.
+        if (processed == GpuDebayer::Status_Ok) data->frame = debayer_->wait(debayerJob, true);
+        data->failed = processed != GpuDebayer::Status_Ok || !data->frame;
+        debayer_->releaseJob(debayerJob);
+        { const lock_guard lock(submission_mtx_); job->PrivateData = nullptr; }
+        if (data->failed || (data->completeSeekInCallback && (!pipeline_ || data->seekId > 0)))
+            completeVideoJob(*data, !data->failed);
+        push(*data);
+        delete data;
+        return;
+    }
 
     { const lock_guard lock(submission_mtx_); job->PrivateData = nullptr; }
     data->debayerJob = debayerJob;
@@ -1100,7 +1149,19 @@ void R3DReader::process(const UserData& data)
     const auto index = data.index;
     const auto seekId = data.seekId;
     const auto seekWaitFrame = data.seekWaitFrame;
-    if (data.failed) return;
+    if (data.failed) {
+        if (data.generation != generation_.load() || unloading_) return;
+        auto completion = data;
+        completeVideoJob(completion, false);
+        MediaEvent event{};
+        event.category = "reader";
+        event.detail = "r3d.decode";
+        event.error = -1;
+        dispatchEvent(event);
+        update(MediaStatus::Invalid);
+        frameAvailable(VideoFrame().setTimestamp(0));
+        return;
+    }
     VideoFrame frame;
     if (data.debayerJob) {
         const lock_guard lock(job_mtx_); // debayer_ reset in unload() after wait done

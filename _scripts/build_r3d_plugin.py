@@ -109,7 +109,11 @@ def build_windows(sdk, source, output, compiler, arch):
         command = [str(compiler), '/nologo', '/utf-8', '/std:c++latest', '/EHsc', '/O2', '/MD', '/LD',
                    '/DBUILD_MDK_LIB', '/DMDK_ABI=abi', '/I' + str(headers),
                    '/I' + str(CACHE / 'R3DSDK/Include')]
+        if arch == 'x64':
+            command += ['/I' + str(ROOT / 'ext/vcpkg/installed/x64-windows/include')]
         command += [str(source / name) for name in ('R3DReader.cpp', 'R3DCxxAbi.cpp', 'Debayer.cpp')]
+        if arch == 'x64':
+            command += [str(source / 'OpenCLDebayer.cpp')]
         command += ['/Fe:' + str(library), '/link', str(sdk / 'lib' / arch / 'mdk.lib'),
                     str(CACHE / 'R3DSDK/Lib' / red_library)]
         subprocess.run(command, cwd=work, check=True)
