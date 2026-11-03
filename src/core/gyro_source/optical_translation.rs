@@ -11,8 +11,8 @@ mod smoothing;
 #[cfg(all(test, feature = "use-opencv"))]
 #[path = "optical_translation/acceptance.rs"]
 mod acceptance;
-pub const GEOMETRY_VERSION: u32 = 4;
-pub const CONDITIONED_GEOMETRY_VERSION: u32 = 5;
+pub const GEOMETRY_VERSION: u32 = 6;
+pub const CONDITIONED_GEOMETRY_VERSION: u32 = 7;
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -51,6 +51,9 @@ pub struct TranslationSample {
     pub layer_motion: [f32; 2],
     #[serde(default)]
     pub layer_scale_rate: f32,
+    /// Visible scale measured independently of the translation depth model; absent when unsupported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_scale_rate: Option<f32>,
     #[serde(default)]
     pub far_beta: f32,
     /// Layer the automatic parameters hold steady, relative like `far_beta`; zero in analyses made before it existed.
@@ -293,6 +296,7 @@ fn filtered_beta(segment: &[TranslationSample], beta: impl Fn(&TranslationSample
 
 /// Unusable layer fits carry no motion and no confidence; the rest keep a confidence within [0, 1].
 fn clean_layer_fit(sample: &mut TranslationSample) {
+    sample.observed_scale_rate = sample.observed_scale_rate.filter(|value| value.is_finite());
     if sample.layer_motion.iter().all(|value| value.is_finite()) && sample.layer_scale_rate.is_finite()
         && sample.far_beta.is_finite() && sample.far_beta > 0.0 && sample.weight.is_finite() {
         sample.weight = sample.weight.clamp(0.0, 1.0);
@@ -382,6 +386,40 @@ fn high_pass(times: &[f64], positions: &[nalgebra::Vector3<f64>], sigma: f64, ca
         request.push(-line);
     }
     Some(request)
+}
+
+/// A single gain avoids introducing motion at confidence transitions. Every local window must support it;
+/// missing observations or a contradictory window disable the axis for this analysed range.
+fn conservative_axial_gain(samples: &[TranslationSample], times: &[f64], curve: &[TranslationCurvePoint],
+    sigma: f64, cancelled: &dyn Fn() -> bool) -> Option<f64> {
+    if samples.len() < 3 { return Some(0.0); }
+    let mut position = 0.0;
+    let mut observed = vec![nalgebra::Vector3::zeros()];
+    for sample in &samples[1..] {
+        let Some(rate) = sample.observed_scale_rate else { return Some(0.0); };
+        position += rate as f64;
+        observed.push(nalgebra::Vector3::new(0.0, 0.0, position));
+    }
+    let target = high_pass(times, &observed, sigma, cancelled)?;
+    let durations: Vec<_> = (0..times.len()).map(|i| sample_duration(times, i)).collect();
+    let mut gain = 1.0_f64;
+    let mut supported = false;
+    for &time in times {
+        if cancelled() { return None; }
+        let left = times.partition_point(|t| *t < time - 0.5);
+        let right = times.partition_point(|t| *t <= time + 0.5);
+        let (mut covariance, mut energy) = (0.0, 0.0);
+        for i in left..right {
+            covariance += durations[i] * target[i].z * curve[i].shift.z;
+            energy += durations[i] * curve[i].shift.z.powi(2);
+        }
+        if energy > f64::EPSILON {
+            supported = true;
+            gain = gain.min((covariance / energy).clamp(0.0, 1.0));
+            if gain == 0.0 { break; }
+        }
+    }
+    Some(if supported { gain } else { 0.0 })
 }
 
 // Automatic smoothness: the strongest smoothing whose request leaves the planning budget for at most
@@ -565,6 +603,11 @@ impl OpticalTranslation {
                         segment[0].segment, segment.len(), error.reason, error.stats.iterations, error.stats.stages, error.stats.line_searches);
                 }
             }
+            if self.settings.along_axis {
+                let Some(gain) = conservative_axial_gain(segment, &times, &curve[curve_start..], sigma, cancelled) else { return false; };
+                for point in &mut curve[curve_start..] { point.shift.z *= gain; }
+                log::debug!(target: "stab.translation", "translation axial segment={} gain={gain:.6}", segment[0].segment);
+            }
             start = end;
         }
         if cancelled() { return false; }
@@ -638,11 +681,11 @@ impl OpticalTranslation {
     pub fn has_valid_geometry(&self) -> bool { self.geometry_valid }
 
     fn geometry_version_matches(&self) -> bool {
-        if self.reconstruction_checksum == 0 { matches!(self.geometry_version, 2 | GEOMETRY_VERSION) }
-        else { matches!(self.geometry_version, 3 | CONDITIONED_GEOMETRY_VERSION) }
+        if self.reconstruction_checksum == 0 { matches!(self.geometry_version, 2 | 4 | GEOMETRY_VERSION) }
+        else { matches!(self.geometry_version, 3 | 5 | CONDITIONED_GEOMETRY_VERSION) }
     }
 
-    fn fixed_depth_units(&self) -> bool { matches!(self.geometry_version, GEOMETRY_VERSION | CONDITIONED_GEOMETRY_VERSION) }
+    fn fixed_depth_units(&self) -> bool { matches!(self.geometry_version, 4 | 5 | GEOMETRY_VERSION | CONDITIONED_GEOMETRY_VERSION) }
 
     pub(crate) fn validate_geometry(&mut self) {
         self.geometry_valid = self.geometry_version_matches() && !self.samples.is_empty()
@@ -686,6 +729,7 @@ impl OpticalTranslation {
             sample.far_beta.to_bits().hash(hasher);
             if sample.auto_beta != 0.0 { sample.auto_beta.to_bits().hash(hasher); }
             sample.weight.to_bits().hash(hasher);
+            if let Some(value) = sample.observed_scale_rate { true.hash(hasher); value.to_bits().hash(hasher); }
         }
     }
 
@@ -718,6 +762,87 @@ impl OpticalTranslation {
 
 #[cfg(test)]
 mod tests {
+    fn axial_fixture() -> (Vec<TranslationSample>, Vec<f64>, Vec<TranslationCurvePoint>) {
+        let times: Vec<_> = (0..301).map(|i| i as f64 / 30.0).collect();
+        let position: Vec<_> = times.iter().map(|t| nalgebra::Vector3::new(0.0, 0.0, 0.01 * (t * 5.0).sin())).collect();
+        let target = high_pass(&times, &position, 0.6, &|| false).unwrap();
+        let samples = times.iter().enumerate().map(|(i, t)| TranslationSample {
+            timestamp_us: (t * 1e6).round() as i64,
+            observed_scale_rate: (i > 0).then(|| (position[i].z - position[i - 1].z) as f32),
+            ..Default::default()
+        }).collect();
+        let curve = times.iter().zip(target).map(|(t, shift)| TranslationCurvePoint {
+            timestamp_us: (t * 1e6).round() as i64, segment: 0, shift,
+        }).collect();
+        (samples, times, curve)
+    }
+
+    #[test]
+    fn translation_axial_support_preserves_correct_motion_and_limits_overcompensation() {
+        let (samples, times, mut curve) = axial_fixture();
+        assert!((conservative_axial_gain(&samples, &times, &curve, 0.6, &|| false).unwrap() - 1.0).abs() < 1e-6);
+        for point in &mut curve { point.shift.z *= 4.0; }
+        assert!((conservative_axial_gain(&samples, &times, &curve, 0.6, &|| false).unwrap() - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn translation_axial_missing_or_locally_opposite_motion_disables_the_range() {
+        let (mut samples, times, mut curve) = axial_fixture();
+        let measurement = samples[120].observed_scale_rate.take();
+        assert_eq!(conservative_axial_gain(&samples, &times, &curve, 0.6, &|| false), Some(0.0));
+        samples[120].observed_scale_rate = measurement;
+        for point in &mut curve[90..151] { point.shift.z = -point.shift.z; }
+        assert_eq!(conservative_axial_gain(&samples, &times, &curve, 0.6, &|| false), Some(0.0));
+        assert_eq!(conservative_axial_gain(&samples, &times, &curve, 0.6, &|| true), None);
+    }
+
+    #[test]
+    fn translation_axial_evidence_roundtrips_and_changes_the_content_hash() {
+        let (samples, _, _) = axial_fixture();
+        let a = OpticalTranslation { samples, ..Default::default() };
+        let encoded = serde_json::to_value(&a).unwrap();
+        let b: OpticalTranslation = serde_json::from_value(encoded).unwrap();
+        assert_eq!(a.samples, b.samples);
+        assert_eq!(a.content_checksum(), b.content_checksum());
+        let mut missing = b.clone();
+        missing.samples[120].observed_scale_rate = None;
+        assert_ne!(a.content_checksum(), missing.content_checksum());
+        let legacy_json = serde_json::to_value(TranslationSample::default()).unwrap();
+        assert!(legacy_json.get("observed_scale_rate").is_none());
+        let legacy: TranslationSample = serde_json::from_value(legacy_json).unwrap();
+        assert_eq!(legacy.observed_scale_rate, None);
+    }
+
+    #[test]
+    fn translation_axial_fallback_keeps_lateral_planning_and_supports_legacy_geometry() {
+        let samples: Vec<_> = (0..301).map(|i| {
+            let t = i as f64 / 30.0;
+            let dt = if i == 0 { 0.0 } else { (t * 5.0).sin() - ((t - 1.0 / 30.0) * 5.0).sin() };
+            TranslationSample {
+                timestamp_us: (t * 1e6).round() as i64,
+                camera_to_world: [1.0, 0.0, 0.0, 0.0], focal_length_over_short_side: 1.0,
+                confidence: 1.0, weight: 1.0, track_age_s: 1.0, far_beta: 1.0, auto_beta: 1.0,
+                layer_motion: [(0.01 * dt) as f32, (0.005 * dt) as f32],
+                layer_scale_rate: (0.005 * dt) as f32, observed_scale_rate: Some((0.005 * dt) as f32),
+                ..Default::default()
+            }
+        }).collect();
+        let settings = OpticalTranslationSettings { auto: true, ..Default::default() };
+        let supported = OpticalTranslation::new(samples.clone(), settings);
+        let mut missing = OpticalTranslation::new(samples.into_iter().map(|mut s| { s.observed_scale_rate = None; s }).collect(), settings);
+        assert!(supported.curve.iter().any(|p| p.shift.z.abs() > 0.001));
+        assert!(missing.curve.iter().all(|p| p.shift.z == 0.0));
+        assert_eq!(supported.effective_smoothness_s, missing.effective_smoothness_s);
+        for (a, b) in supported.curve.iter().zip(&missing.curve) {
+            assert_eq!(a.shift.x.to_bits(), b.shift.x.to_bits());
+            assert_eq!(a.shift.y.to_bits(), b.shift.y.to_bits());
+        }
+        for (version, dependency) in [(2, 0), (4, 0), (3, 1), (5, 1)] {
+            missing.geometry_version = version; missing.reconstruction_checksum = dependency;
+            missing.validate_geometry();
+            assert!(missing.has_valid_geometry());
+        }
+    }
     use super::*;
 
     fn geometry_sample() -> TranslationSample {
@@ -1013,7 +1138,7 @@ mod tests {
     }
 
     #[test]
-    fn translation_full_confidence_builds_the_curve_of_the_velocity_weighted_formula() {
+    fn translation_full_confidence_keeps_the_lateral_velocity_weighted_curve() {
         let (samples, path) = trusted_sway();
         for (u, s) in blended_layer_motion(&samples).iter().zip(&samples) {
             assert_eq!(*u, nalgebra::Vector3::new(s.layer_motion[0] as f64, s.layer_motion[1] as f64, s.layer_scale_rate as f64));
@@ -1045,7 +1170,9 @@ mod tests {
             // The stored curve points, since shift_at takes milliseconds and may interpolate in the last bit
             assert_eq!(t.curve.len(), request.len());
             for (point, want) in t.curve.iter().zip(&request) {
-                assert_eq!(point.shift, *want, "auto={auto} at {}", point.timestamp_us);
+                assert_eq!(point.shift.xy(), want.xy(), "auto={auto} at {}", point.timestamp_us);
+                // Translation confidence alone is no longer evidence for the axial component.
+                assert_eq!(point.shift.z, 0.0);
             }
         }
     }

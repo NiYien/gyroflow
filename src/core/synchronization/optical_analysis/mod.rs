@@ -1258,6 +1258,7 @@ impl OpticalMotionAnalysis {
             #[cfg(feature="use-opencv")]
             let pending_layer=if use_gpu {image_space::prepare(&points,&result,&output_projections[&pair.b.index],(params.output_width,params.output_height))}else{None};
             let layer=if use_gpu {image_space::LayerMotion::default()}else{image_space::fit(&points,&result,&output_projections[&pair.b.index],(params.output_width,params.output_height))};
+            let observed_scale_rate = image_space::observed_scale(&points, focal_px);
             state.layer_time += started.elapsed();
             if result.new_segment { state.position = Vector3::zeros(); }
             if result.confidence > 0.0 {
@@ -1276,6 +1277,7 @@ impl OpticalMotionAnalysis {
                 focal_length_over_short_side: focal_ratios[&pair.b.index],
                 layer_motion: layer.motion,
                 layer_scale_rate: layer.scale_rate,
+                observed_scale_rate,
                 far_beta: layer.far_beta,
                 weight: layer.weight,
                 ..Default::default()

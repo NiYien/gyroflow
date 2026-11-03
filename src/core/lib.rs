@@ -6219,7 +6219,7 @@ mod tests {
             camera_to_world: [1.0, 0.0, 0.0, 0.0], focal_length_over_short_side: 1.0,
             layer_motion: [0.01 * ((i as f32 * std::f32::consts::TAU * 3.0 / 30.0).sin()
                 - ((i as f32 - 1.0) * std::f32::consts::TAU * 3.0 / 30.0).sin()), 0.0],
-            far_beta: 1.0, auto_beta: 1.0, weight: 1.0, layer_scale_rate: 0.0,
+            far_beta: 1.0, auto_beta: 1.0, weight: 1.0, layer_scale_rate: 0.0, observed_scale_rate: Some(0.0),
         }).collect()
     }
 

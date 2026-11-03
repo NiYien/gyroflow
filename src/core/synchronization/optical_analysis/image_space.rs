@@ -61,6 +61,34 @@ fn plane(ray: Vector3<f64>) -> Option<Vector2<f64>> {
         .then(|| Vector2::new(-ray.x / ray.z, ray.y / ray.z))
 }
 
+/// Check the visible expansion independently of the depth model, which can absorb a moving foreground.
+pub(super) fn observed_scale(points: &[PairPoint], focal_px: f64) -> Option<f32> {
+    #[cfg(feature = "use-opencv")]
+    {
+        use opencv::{core::{Mat, Point2f, Vector}, prelude::*};
+        let mut before = Vector::<Point2f>::new();
+        let mut after = Vector::<Point2f>::new();
+        for point in points {
+            if let (Some(a), Some(b)) = (plane(point.p), plane(point.p + point.r)) {
+                before.push(Point2f::new(a.x as f32, a.y as f32));
+                after.push(Point2f::new(b.x as f32, b.y as f32));
+            }
+        }
+        if before.len() < super::MIN_BAND_POINTS { return None; }
+        let mut inliers = Mat::default();
+        let affine = opencv::calib3d::estimate_affine_partial_2d(&before, &after, &mut inliers,
+            opencv::calib3d::RANSAC, super::odometry::ROBUST_PX / focal_px, 2000, 0.99, 10).ok()?;
+        let count = inliers.data_typed::<u8>().ok()?.iter().filter(|v| **v != 0).count();
+        if count < super::MIN_BAND_POINTS || count * 2 < before.len() { return None; }
+        let matrix = affine.data_typed::<f64>().ok()?;
+        if matrix.len() != 6 { return None; }
+        let scale = matrix[0].hypot(matrix[3]).ln();
+        scale.is_finite().then_some(scale as f32)
+    }
+    #[cfg(not(feature = "use-opencv"))]
+    { let _ = (points, focal_px); None }
+}
+
 /// `projection` maps upright source camera rays to the analysis output, including its crop.
 pub(super) fn fit(points: &[PairPoint], pair: &PairTranslation, projection: &Matrix3<f64>, size: (usize, usize)) -> LayerMotion {
     prepare(points,pair,projection,size).map_or_else(LayerMotion::default,|input|fit_prepared(&input))
@@ -165,6 +193,22 @@ pub(super) fn fixture_input()->LayerInput {
 mod tests {
     use super::*;
     use std::collections::{HashMap, HashSet};
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn translation_observed_scale_rejects_a_moving_minority_and_measures_expansion() {
+        let mut points = Vec::new();
+        for y in 0..10 { for x in 0..12 {
+            let xy = Vector2::new((x as f64 - 5.5) * 0.05, (y as f64 - 4.5) * 0.05);
+            let scale = if x < 2 { -0.1 } else { 0.002 };
+            let moved = xy * (1.0 + scale) + Vector2::new(0.003, -0.001);
+            let p = Vector3::new(xy.x, -xy.y, -1.0).normalize();
+            let b = Vector3::new(moved.x, -moved.y, -1.0).normalize();
+            points.push(PairPoint { id: points.len() as u32, band: 0, p, r: b-p, texture: f32::NAN });
+        }}
+        assert!((observed_scale(&points, 1000.0).unwrap() as f64 - 1.002_f64.ln()).abs() < 1e-6);
+        assert!(observed_scale(&points[..20], 1000.0).is_none());
+    }
 
     #[cfg(feature="use-opencv")]
     #[test]
