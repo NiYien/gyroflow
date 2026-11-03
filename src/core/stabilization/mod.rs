@@ -1135,6 +1135,44 @@ impl Stabilization {
         }
     }
 
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    pub(crate) fn try_process_cuda<T: PixelType>(
+        &mut self,
+        timestamp_us: i64,
+        frame: Option<usize>,
+        buffers: &mut Buffers,
+    ) -> Option<ProcessedInfo> {
+        use crate::gpu::cuda_native;
+        if !cuda_native::enabled_for::<T>(buffers) { return None; }
+        if let Some(dev) = self.pending_device_change.take() { self.update_device(dev, buffers); }
+        if matches!(self.initialized_backend, BackendType::Cpu(_)) { return None; }
+
+        let started = std::time::Instant::now();
+        let uncached;
+        let transform = if self.cache_frame_transform {
+            self.ensure_stab_data_at_timestamp::<T>(timestamp_us, frame, buffers, false);
+            self.stab_data.get(&timestamp_us)?
+        } else {
+            uncached = self.get_frame_transform_at::<T>(timestamp_us, frame, buffers);
+            &uncached
+        };
+        let result = cuda_native::process(buffers, transform, &self.compute_params.distortion_model,
+            self.compute_params.digital_lens.as_ref(), self.drawing.get_buffer());
+        match result {
+            Ok(()) => {
+                add_and_maybe_emit("cuda", 0, started.elapsed().as_millis() as u64, 0);
+                Some(ProcessedInfo { fov: transform.fov, minimal_fov: transform.minimal_fov,
+                    focal_length: transform.focal_length, backend: "CUDA" })
+            }
+            Err(error) => {
+                if crate::log_throttle::try_emit(("native-cuda", "fallback"), 1000) {
+                    log::warn!("Native CUDA unavailable; using legacy backend: {error}");
+                }
+                None
+            }
+        }
+    }
+
     pub fn ensure_ready_for_processing<T: PixelType>(
         &mut self,
         timestamp_us: i64,

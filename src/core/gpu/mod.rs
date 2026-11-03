@@ -5,6 +5,8 @@
 pub mod opencl;
 pub mod wgpu;
 pub mod timing;
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+pub mod cuda_native;
 
 pub mod wgpu_interop;
 #[cfg(any(target_os = "windows", target_os = "linux"))]

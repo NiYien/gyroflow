@@ -2689,6 +2689,22 @@ impl StabilizationManager {
             self.undistortion_invalidated.store(false, SeqCst);
         }
 
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        if gpu::cuda_native::has_host_stream(buffers) {
+            let mut undist = self.stabilization.try_write_for(std::time::Duration::from_secs(30))
+                .ok_or(GyroflowCoreError::Unknown)?;
+            self.draw_overlays(&mut undist.drawing, timestamp_us);
+            if let Some(info) = undist.try_process_cuda::<T>(timestamp_us, frame, buffers) {
+                return Ok(info);
+            }
+            // Legacy backends do not consume the host's non-default stream.
+            // Establish input readiness before initializing or calling them.
+            gpu::cuda_native::wait_for_host_stream().map_err(|error| {
+                log::error!("Cannot safely fall back after native CUDA failure: {error}");
+                GyroflowCoreError::Unknown
+            })?;
+        }
+
         let (use_cache, hash, current_hash) = {
             let stab = self.stabilization.read();
             (
