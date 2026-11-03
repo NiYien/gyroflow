@@ -88,6 +88,10 @@ MenuItem {
         }
         outputSettingsReady = true;
         root.syncQueueOutputPath();
+        simpleOutputSizeDivisor = Math.max(1, Math.min(4, Math.round(+settings.value("simpleOutputSizeDivisor", 1)) || 1));
+        const storedBitrate = +settings.value("simpleOutputBitrate", 0);
+        simpleOutputBitrate = [0, 100, 50, 20].includes(storedBitrate) ? storedBitrate : 0;
+        if (simpleOutputSizeDivisor !== 1 || simpleOutputBitrate !== 0) syncSimpleExportSettings();
     }
 
     Item {
@@ -151,6 +155,25 @@ MenuItem {
     property bool mobileSaveToGallery: false
     property bool outputSettingsReady: false
     property bool committingOutputFolder: false
+    property int simpleOutputSizeDivisor: 1
+    property real simpleOutputBitrate: 0
+    readonly property real effectiveBitrate: window.isSimpleMode ? (simpleOutputBitrate || sourceBitrate || outBitrate) : outBitrate
+    readonly property var simpleOutputSizeModel: [qsTranslate("Export", "Original"), "1/2", "1/3", "1/4"]
+    readonly property var simpleOutputBitrateModel: [qsTranslate("Export", "Original"), "100 Mbps", "50 Mbps", "20 Mbps"]
+    readonly property var simpleOutputBitrates: [0, 100, 50, 20]
+    function syncSimpleExportSettings(): void {
+        render_queue.set_simple_export_settings(simpleOutputSizeDivisor, simpleOutputBitrate);
+    }
+    function setSimpleOutputSize(index: int): void {
+        simpleOutputSizeDivisor = index + 1;
+        settings.setValue("simpleOutputSizeDivisor", simpleOutputSizeDivisor);
+        syncSimpleExportSettings();
+    }
+    function setSimpleOutputBitrate(index: int): void {
+        simpleOutputBitrate = simpleOutputBitrates[index];
+        settings.setValue("simpleOutputBitrate", simpleOutputBitrate);
+        syncSimpleExportSettings();
+    }
     onMobileSaveToGalleryChanged: {
         if (outputSettingsReady) settings.setValue("mobileSaveToGallery", mobileSaveToGallery);
         syncQueueOutputPath();
@@ -227,7 +250,8 @@ MenuItem {
             output_filename:  window.outputFile.filename,
             output_width:   root.outWidth,
             output_height:  root.outHeight,
-            bitrate:        root.outBitrate,
+            bitrate:        root.effectiveBitrate,
+            source_bitrate: root.sourceBitrate,
             // Final choke point for the GPU capability constraint. updateGpuStatus
             // already forces the toggle off when `enabled2` is false, but paths that
             // write outGpu without going through it — setExportOptions restoring a

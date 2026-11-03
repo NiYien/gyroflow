@@ -54,11 +54,12 @@ const ALLOW_EXACT: &[&str] = &[
     "mountingCustomPitch",
     "mountingCustomRoll",
     "mountingCustomYaw",
-    // SimpleExport: the output-location combo and its fixed-path field are the
-    // only export controls not hidden in Simple mode.
+    // SimpleExport exposes output location, source-size fractions and Mbps presets.
     "queueOutputMode",
     "queueFixedOutputPath",
     "mobileSaveToGallery",
+    "simpleOutputSizeDivisor",
+    "simpleOutputBitrate",
     // Simple settings exposes a physical-GPU selector. Keep both the current
     // backend descriptor and the stable physical ID so backend ordering can
     // change without losing the user's device choice.
@@ -338,6 +339,8 @@ mod tests {
             "mountingMode",
             "queueOutputMode",
             "queueFixedOutputPath",
+            "simpleOutputSizeDivisor",
+            "simpleOutputBitrate",
             "processingDevice",
             "processingDeviceIndex",
             "processingDevicePhysicalId",

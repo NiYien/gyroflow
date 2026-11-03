@@ -102,6 +102,22 @@ Column {
         width: parent.width; unit: root.unit; dark: root.dark
         enabled: !root.busy; opacity: enabled ? 1 : 0.4
         contentSpacing: 8 * root.unit
+        MobileText { width: parent.width; height: 36 * root.unit; unit: root.unit; dark: root.dark; text: qsTranslate("Export", "Output size") }
+        MobileChoice {
+            objectName: "mobileOutputSizeChoice"
+            width: parent.width; unit: root.unit; dark: root.dark
+            model: root.host && root.host.exportSettings ? root.host.exportSettings.simpleOutputSizeModel : []
+            currentIndex: root.host && root.host.exportSettings ? root.host.exportSettings.simpleOutputSizeDivisor - 1 : 0
+            onActivated: index => { if (root.host && root.host.exportSettings) root.host.exportSettings.setSimpleOutputSize(index); }
+        }
+        MobileText { width: parent.width; height: 36 * root.unit; unit: root.unit; dark: root.dark; text: qsTranslate("Export", "Bitrate") }
+        MobileChoice {
+            objectName: "mobileOutputBitrateChoice"
+            width: parent.width; unit: root.unit; dark: root.dark
+            model: root.host && root.host.exportSettings ? root.host.exportSettings.simpleOutputBitrateModel : []
+            currentIndex: root.host && root.host.exportSettings ? root.host.exportSettings.simpleOutputBitrates.indexOf(root.host.exportSettings.simpleOutputBitrate) : 0
+            onActivated: index => { if (root.host && root.host.exportSettings) root.host.exportSettings.setSimpleOutputBitrate(index); }
+        }
         MobileText { width: parent.width; height: 36 * root.unit; unit: root.unit; dark: root.dark; text: qsTranslate("SettingsSelector", "Output path") }
         MobileTabs {
             id: outputMode

@@ -110,6 +110,35 @@ Column {
         }
     }
 
+    Label {
+        position: Label.LeftPosition;
+        text: qsTranslate("Export", "Output size");
+        width: parent.width;
+        enabled: !!exportSettings && render_queue.status !== "active";
+        opacity: enabled ? 1.0 : 0.5;
+        ComboBox {
+            objectName: "simpleOutputSizeChoice";
+            width: parent.width;
+            model: exportSettings ? exportSettings.simpleOutputSizeModel : [];
+            currentIndex: exportSettings ? exportSettings.simpleOutputSizeDivisor - 1 : 0;
+            onActivated: if (exportSettings) exportSettings.setSimpleOutputSize(currentIndex);
+        }
+    }
+    Label {
+        position: Label.LeftPosition;
+        text: qsTranslate("Export", "Bitrate");
+        width: parent.width;
+        enabled: !!exportSettings && render_queue.status !== "active";
+        opacity: enabled ? 1.0 : 0.5;
+        ComboBox {
+            objectName: "simpleOutputBitrateChoice";
+            width: parent.width;
+            model: exportSettings ? exportSettings.simpleOutputBitrateModel : [];
+            currentIndex: exportSettings ? exportSettings.simpleOutputBitrates.indexOf(exportSettings.simpleOutputBitrate) : 0;
+            onActivated: if (exportSettings) exportSettings.setSimpleOutputBitrate(currentIndex);
+        }
+    }
+
     // ── Output Resolution with preset button ──
     Label {
         position: Label.LeftPosition;

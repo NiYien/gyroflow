@@ -797,6 +797,10 @@ pub struct RenderOptions {
     pub input_filename: String,
     pub input_url: String,
     pub bitrate: f64,
+    #[serde(skip)]
+    pub source_bitrate: Option<f64>,
+    #[serde(skip)]
+    pub source_output_size: Option<(usize, usize)>,
     pub use_gpu: bool,
     pub audio: bool,
     pub pixel_format: String,
@@ -881,6 +885,9 @@ impl RenderOptions {
             }
             if let Some(v) = obj.get("bitrate").and_then(|x| x.as_f64()) {
                 self.bitrate = v;
+            }
+            if let Some(v) = obj.get("source_bitrate").and_then(|x| x.as_f64()).filter(|v| v.is_finite() && *v >= 0.0) {
+                self.source_bitrate = Some(v);
             }
             if let Some(v) = obj.get("use_gpu").and_then(|x| x.as_bool()) {
                 self.use_gpu = v;
@@ -1963,6 +1970,7 @@ pub struct RenderQueue {
     // a user edit. None until the first edit of this run: the queue then behaves
     // exactly as before. Never persisted.
     optical_settings: Option<QueueOpticalSettings>,
+    simple_export_settings: Option<(usize, f64)>,
 
     add: qt_method!(fn(&mut self, additional_data: String, thumbnail_url: QString) -> u32),
     remove: qt_method!(fn(&mut self, job_id: u32)),
@@ -2058,6 +2066,7 @@ pub struct RenderQueue {
 
     apply_to_all: qt_method!(fn(&mut self, data: String, additional_data: String, to_job_id: u32)),
     set_pending_output_format: qt_method!(fn(&mut self, options_json: String)),
+    set_simple_export_settings: qt_method!(fn(&mut self, size_divisor: u32, bitrate: f64)),
     set_jobs_sync_offset_method: qt_method!(fn(&mut self, method: u32)),
     // mounting-rotation-propagation: called by MountingPresetSelector on every
     // mounting change so already-queued jobs follow the new device orientation
@@ -5669,7 +5678,20 @@ impl RenderQueue {
             let lens = stab.lens.read();
             Some(JobLensMetadataBackup::from_metadata_and_lens(&md, &lens))
         };
-        let base_render_output_size = (render_options.output_width, render_options.output_height);
+        let existing_export_base = self.jobs.get(&job_id)
+            .filter(|_| self.simple_mode && self.simple_export_settings.is_some());
+        let base_render_output_size = existing_export_base.and_then(|job| job.base_render_output_size)
+            .unwrap_or_else(|| {
+                if self.simple_mode && self.simple_export_settings.is_some() {
+                    let params = stab.params.read();
+                    core::rotated_output_dim(params.size, params.video_rotation)
+                } else {
+                    (render_options.output_width, render_options.output_height)
+                }
+            });
+        render_options.source_bitrate = existing_export_base.and_then(|job| job.render_options.source_bitrate)
+            .or(render_options.source_bitrate).or(Some(render_options.bitrate));
+        render_options.source_output_size = existing_export_base.and_then(|job| job.render_options.source_output_size);
         let lens_group_index = {
             let gyro = stab.gyro.read();
             let md = gyro.file_metadata.read();
@@ -5684,17 +5706,19 @@ impl RenderQueue {
             read_additional_data_focal_length_override(&additional_data);
         // [T20] 在 stab 释放前保存 video_created_at
         let video_created_at = stab.params.read().video_created_at;
-        let original_video_rotation = stab.params.read().video_rotation;
+        let original_video_rotation = existing_export_base.map(|job| job.original_video_rotation)
+            .unwrap_or_else(|| stab.params.read().video_rotation);
         // Sensor-space accounting: un-swap the display-space render_options so
         // apply_match's "reset to original -> Priority-1 metadata rotation swap"
         // round-trips (rotated_output_dim is an involution for 90/270, identity
         // otherwise). base_render_output_size above intentionally stays
         // display-space (render target semantics) — the two fields diverge on
         // purpose, do not merge or substitute one for the other.
-        let original_output_size = gyroflow_core::rotated_output_dim(
-            (render_options.output_width, render_options.output_height),
-            original_video_rotation,
-        );
+        let original_output_size = if self.simple_mode && self.simple_export_settings.is_some() {
+            stab.params.read().size
+        } else {
+            gyroflow_core::rotated_output_dim(base_render_output_size, original_video_rotation)
+        };
         let lens_apply_guard = self
             .jobs
             .get(&job_id)
@@ -5737,6 +5761,7 @@ impl RenderQueue {
         self.update_queue_indices();
 
         self.apply_simple_mode_to_job(job_id);
+        self.apply_simple_export_to_job(job_id);
 
         self.queue_changed();
         self.handle_manual_camera_queue_change(manual_camera_eligible_before, Some(job_id));
@@ -7803,6 +7828,7 @@ impl RenderQueue {
 
     pub fn render_job(&mut self, job_id: u32) {
         self.apply_simple_mode_to_job(job_id);
+        self.apply_simple_export_to_job(job_id);
         if self.jobs.get(&job_id).is_some_and(|job| job.stab.is_none() && job.project_data.is_some())
             && self.job_original_stabilization_requirement(job_id)
         {
@@ -9556,10 +9582,9 @@ impl RenderQueue {
                                                 as serde_json::Result<RenderOptions>
                                         {
                                             render_options2.update_from_json(out);
-                                            // No ffmpeg probe on the project-restore
-                                            // path; `add_internal` probes the video
-                                            // the project points at.
-                                            loaded((render_options2, None));
+                                            let source_info = rendering::VideoProcessor::get_video_info(&stab.input_file.read().url).ok();
+                                            render_options2.source_bitrate = source_info.as_ref().map(|info| info.bitrate);
+                                            loaded((render_options2, source_info.map(|info| info.pix_fmt)));
                                         }
                                     }
                                     if let Some(out) = obj.get("videofile").and_then(|x| x.as_str())
@@ -9681,6 +9706,7 @@ impl RenderQueue {
 
                                     render_options.bitrate =
                                         render_options.bitrate.max(info.bitrate);
+                                    render_options.source_bitrate = Some(info.bitrate);
                                     // Computed before the per-source size fallback so the
                                     // fallback can be display-space; the same value feeds
                                     // set_video_rotation below (single source of truth).
@@ -11158,6 +11184,7 @@ impl RenderQueue {
             let job_ids: Vec<u32> = self.jobs.keys().copied().collect();
             for job_id in job_ids {
                 self.apply_simple_mode_to_job(job_id);
+                self.apply_simple_export_to_job(job_id);
             }
         }
     }
@@ -11323,6 +11350,79 @@ impl RenderQueue {
             self.update_status();
         }
         self.progress_changed();
+    }
+
+    pub fn set_simple_export_settings(&mut self, size_divisor: u32, bitrate: f64) {
+        if !(1..=4).contains(&size_divisor) || ![0.0, 20.0, 50.0, 100.0].contains(&bitrate) {
+            return;
+        }
+        self.simple_export_settings = Some((size_divisor as usize, bitrate));
+        let job_ids: Vec<_> = self.jobs.keys().copied().collect();
+        for job_id in job_ids {
+            self.apply_simple_export_to_job(job_id);
+        }
+        self.queue_changed();
+    }
+
+    fn apply_simple_export_to_job(&mut self, job_id: u32) {
+        if !self.simple_mode || self.deep_match_pending.contains_key(&job_id) { return; }
+        let Some((divisor, bitrate)) = self.simple_export_settings else { return; };
+        let Some(job) = self.jobs.get_mut(&job_id) else { return; };
+        let mut queue = self.queue.borrow_mut();
+        if job.queue_index >= queue.row_count() as usize { return; }
+        let mut item = queue[job.queue_index].clone();
+        if item.status == JobStatus::Rendering
+            || (item.status == JobStatus::Finished && matches!(job.last_finished_export_project, Some(0 | 4)))
+            || job.pending_reset_requeue
+            || Self::error_string_is_pending_question(&item.error_string.to_string())
+            || job.stab.as_ref().is_some_and(|stab| stab.in_flight_count.load(SeqCst) > 0)
+        {
+            return;
+        }
+        // Keep the unscaled geometry separate from the encoder target: matching
+        // and lens edits rebuild it, and preview write-back must not shrink it again.
+        let mut base = job.base_render_output_size.unwrap_or((job.render_options.output_width, job.render_options.output_height));
+        let source_size = if let Some(stab) = &job.stab {
+            let params = stab.params.read();
+            let rotation = params.video_rotation;
+            if params.size.0 > 0 && params.size.1 > 0 {
+                base = core::rotated_output_dim(params.size, rotation);
+                job.base_render_output_size = Some(base);
+                job.original_output_size = params.size;
+            }
+            drop(params);
+            stab.lens.read().output_dimension.as_ref()
+                .map(|dim| core::rotated_output_dim((dim.w, dim.h), rotation)).unwrap_or(base)
+        } else {
+            job.render_options.source_output_size.unwrap_or(base)
+        };
+        if source_size.0 == 0 || source_size.1 == 0 { return; }
+        let opts = &mut job.render_options;
+        opts.source_output_size = Some(source_size);
+        let source_bitrate = *opts.source_bitrate.get_or_insert(opts.bitrate);
+        opts.output_width = (source_size.0 / divisor / 2 * 2).max(2);
+        opts.output_height = (source_size.1 / divisor / 2 * 2).max(2);
+        opts.bitrate = if bitrate == 0.0 { source_bitrate } else { bitrate };
+        if let Some(stab) = &job.stab {
+            stab.set_output_size(opts.output_width, opts.output_height);
+        }
+        if let Some(data) = job.project_data.as_mut() { deref_project_file_reference(data); }
+        for data in std::iter::once(&mut job.additional_data).chain(job.project_data.iter_mut()) {
+            let Ok(mut snapshot) = serde_json::from_str::<serde_json::Value>(data) else { continue; };
+            if !snapshot.is_object() { continue; }
+            if !snapshot.get("output").is_some_and(|v| v.is_object()) {
+                snapshot["output"] = serde_json::json!({});
+            }
+            snapshot["output"]["output_width"] = opts.output_width.into();
+            snapshot["output"]["output_height"] = opts.output_height.into();
+            snapshot["output"]["bitrate"] = opts.bitrate.into();
+            *data = snapshot.to_string();
+        }
+        let fps = job.stab.as_ref().map(|stab| stab.params.read().get_scaled_fps())
+            .unwrap_or_else(|| item.export_settings.to_string().split_whitespace().nth(1)
+                .and_then(|value| value.trim_end_matches("fps").parse::<f64>().ok()).unwrap_or(0.0));
+        item.export_settings = QString::from(opts.settings_string(fps));
+        queue.change_line(job.queue_index, item);
     }
 
     pub fn set_pending_output_format(&mut self, options_json: String) {
@@ -13313,6 +13413,7 @@ impl RenderQueue {
                             reset_requeue_job_ids.push(job_id);
                         }
                     }
+                    this.apply_simple_export_to_job(job_id);
                 }
                 let reset_requeued = !reset_requeue_job_ids.is_empty();
                 for job_id in reset_requeue_job_ids {
@@ -13899,6 +14000,7 @@ impl RenderQueue {
                             itm.export_settings = QString::from(export_settings.as_str());
                         });
                     }
+                    this.apply_simple_export_to_job(job_id);
                 }
                 ::log::info!(
                     "[apply_match] project/render_options update: {:.1}ms ({} jobs)",
@@ -21641,6 +21743,103 @@ mod tests {
             },
         );
         queue
+    }
+
+    fn simple_export_test_queue(status: JobStatus) -> RenderQueue {
+        let mut queue = queue_with_eta_job(status);
+        queue.simple_mode = true;
+        let job = queue.jobs.get_mut(&1).unwrap();
+        job.stab.as_ref().unwrap().params.write().size = (3840, 2160);
+        job.render_options = RenderOptions {
+            codec: "H.265/HEVC".into(), output_width: 3840, output_height: 2160,
+            bitrate: 180.0, ..Default::default()
+        };
+        job.additional_data = serde_json::json!({"synchronization": {"do_autosync": false}}).to_string();
+        job.project_data = Some(serde_json::json!({"offsets": {"1000": 12.5}}).to_string());
+        queue
+    }
+
+    #[test]
+    fn simple_export_settings_use_source_size_and_mbps_without_accumulating() {
+        let mut queue = simple_export_test_queue(JobStatus::Queued);
+        for (divisor, width, height, bitrate) in [(2, 1920, 1080, 20.0), (3, 1280, 720, 50.0), (4, 960, 540, 100.0), (1, 3840, 2160, 0.0), (2, 1920, 1080, 20.0)] {
+            queue.set_simple_export_settings(divisor, bitrate);
+            let job = &queue.jobs[&1];
+            assert_eq!((job.render_options.output_width, job.render_options.output_height), (width, height));
+            assert_eq!(job.render_options.bitrate, if bitrate == 0.0 {180.0} else {bitrate});
+            assert_eq!(job.base_render_output_size, Some((3840, 2160)));
+            assert_eq!(job.original_output_size, (3840, 2160));
+            let project: serde_json::Value = serde_json::from_str(job.project_data.as_ref().unwrap()).unwrap();
+            assert_eq!(project["offsets"]["1000"], 12.5);
+            assert_eq!(project["output"]["output_width"], width);
+        }
+        queue.set_simple_export_settings(0, 20.0);
+        queue.set_simple_export_settings(2, f64::NAN);
+        assert_eq!(queue.jobs[&1].render_options.bitrate, 20.0);
+    }
+
+    #[test]
+    fn simple_export_settings_keep_portrait_and_rebuilt_lens_geometry() {
+        let mut queue = simple_export_test_queue(JobStatus::Queued);
+        let stab = queue.jobs[&1].stab.as_ref().unwrap().clone();
+        stab.params.write().video_rotation = 90.0;
+        queue.set_simple_export_settings(2, 50.0);
+        assert_eq!((queue.jobs[&1].render_options.output_width, queue.jobs[&1].render_options.output_height), (1080, 1920));
+        assert_eq!(queue.jobs[&1].original_output_size, (3840, 2160));
+        stab.lens.write().output_dimension = Some(core::lens_profile::Dimensions { w: 5119, h: 2160 });
+        queue.apply_simple_export_to_job(1);
+        assert_eq!((queue.jobs[&1].render_options.output_width, queue.jobs[&1].render_options.output_height), (1080, 2558));
+        stab.lens.write().output_dimension = None;
+        queue.apply_simple_export_to_job(1);
+        assert_eq!((queue.jobs[&1].render_options.output_width, queue.jobs[&1].render_options.output_height), (1080, 1920));
+    }
+
+    #[test]
+    fn simple_export_settings_filter_busy_and_completed_jobs() {
+        for (status, finished_mode, update) in [
+            (JobStatus::Queued, None, true), (JobStatus::Error, None, true),
+            (JobStatus::Rendering, None, false), (JobStatus::Finished, Some(2), true),
+            (JobStatus::Finished, Some(4), false), (JobStatus::Finished, Some(0), false),
+        ] {
+            let mut queue = simple_export_test_queue(status.clone());
+            queue.jobs.get_mut(&1).unwrap().last_finished_export_project = finished_mode;
+            queue.set_simple_export_settings(2, 20.0);
+            assert_eq!(queue.jobs[&1].render_options.output_width, if update {1920} else {3840});
+            assert_eq!(queue.queue.borrow()[0].status, status);
+            assert_eq!(queue.jobs[&1].last_finished_export_project, finished_mode);
+        }
+        let mut queue = simple_export_test_queue(JobStatus::Queued);
+        let stab = queue.jobs[&1].stab.as_ref().unwrap().clone();
+        stab.in_flight_count.store(1, SeqCst);
+        queue.set_simple_export_settings(2, 20.0);
+        assert_eq!(queue.jobs[&1].render_options.output_width, 3840);
+        stab.in_flight_count.store(0, SeqCst);
+        let mut item = queue.queue.borrow()[0].clone();
+        item.error_string = QString::from("file_exists:{}");
+        queue.queue.borrow_mut().change_line(0, item);
+        queue.apply_simple_export_to_job(1);
+        assert_eq!(queue.jobs[&1].render_options.output_width, 3840);
+    }
+
+    #[test]
+    fn simple_export_settings_survive_edit_and_serialized_project_output() {
+        let mut queue = simple_export_test_queue(JobStatus::Finished);
+        queue.jobs.get_mut(&1).unwrap().last_finished_export_project = Some(2);
+        queue.set_simple_export_settings(2, 20.0);
+        let stab = queue.jobs[&1].stab.as_ref().unwrap().clone();
+        let options = queue.jobs[&1].render_options.clone();
+        queue.add_internal(1, stab.clone(), options.clone(), "{}".into(), QString::default(), None);
+        assert_eq!(queue.jobs[&1].base_render_output_size, Some((3840, 2160)));
+        assert_eq!(queue.jobs[&1].render_options.output_width, 1920);
+        assert_eq!(queue.jobs[&1].last_finished_export_project, Some(2));
+        let serialized = serde_json::to_value(options).unwrap();
+        let restored: RenderOptions = serde_json::from_value(serialized).unwrap();
+        let mut restored_queue = RenderQueue::default();
+        restored_queue.simple_mode = true;
+        restored_queue.set_simple_export_settings(2, 20.0);
+        restored_queue.add_internal(1, stab, restored, "{}".into(), QString::default(), None);
+        assert_eq!(restored_queue.jobs[&1].base_render_output_size, Some((3840, 2160)));
+        assert_eq!(restored_queue.jobs[&1].render_options.output_width, 1920);
     }
 
     #[test]
