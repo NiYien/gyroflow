@@ -2603,6 +2603,11 @@ Vil du sende inn profilen din?</translation>
         <source>Apply globally</source>
         <translation type="vanished">Bruk globalt</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="712"/>
+        <source>Set focal length (&gt; 5 mm) when telemetry is missing, or configure an anamorphic lens. Values are kept when turned off.</source>
+        <translation>Angi brennvidde (&gt; 5 mm) hvis metadata mangler, eller konfigurer et anamorfisk objektiv. Verdiene beholdes når dette slås av.</translation>
+    </message>
 </context>
 <context>
     <name>LensProfile</name>
@@ -3307,6 +3312,41 @@ Vil du sende inn profilen din?</translation>
         <location filename="../../src/ui/menu/MotionData.qml" line="566"/>
         <source>Far</source>
         <translation>Fjern</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="590"/>
+        <source>Use video analysis to correct motion data, or estimate motion when none is available.</source>
+        <translation>Korriger bevegelsesdata med videoanalyse, eller beregn bevegelsen hvis data mangler.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="611"/>
+        <source>Estimate camera motion from the video instead of using the file's motion data.</source>
+        <translation>Beregn kamerabevegelsen fra videoen i stedet for filens bevegelsesdata.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="622"/>
+        <source>Higher values correct larger gyro errors but are more sensitive to moving objects.</source>
+        <translation>Høyere verdier korrigerer større gyrofeil, men påvirkes mer av objekter i bevegelse.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="656"/>
+        <source>Reduce sideways and vertical shake using video analysis. Requires motion data.</source>
+        <translation>Reduser sideveis og vertikale rystelser med videoanalyse. Krever bevegelsesdata.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="674"/>
+        <source>Use the analysis to set reference distance and smoothness.</source>
+        <translation>Still inn referanseavstand og utjevning ut fra analysen.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="702"/>
+        <source>Choose the distance to stabilize. The middle position favors distant scenery.</source>
+        <translation>Velg avstanden som skal stabiliseres. Midtstillingen prioriterer fjerne motiver.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="790"/>
+        <source>Reconstruct missing IBIS/OIS compensation from video and motion data. Also enables translation stabilization.</source>
+        <translation>Gjenskap manglende IBIS/OIS-kompensasjon fra video og bevegelsesdata. Aktiverer også forskyvningsstabilisering.</translation>
     </message>
 </context>
 <context>

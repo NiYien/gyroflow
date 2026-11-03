@@ -2602,6 +2602,11 @@ Voulez-vous soumettre votre profil ?</translation>
         <source>Apply globally</source>
         <translation type="vanished">Appliquer globalement</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="712"/>
+        <source>Set focal length (&gt; 5 mm) when telemetry is missing, or configure an anamorphic lens. Values are kept when turned off.</source>
+        <translation>Saisissez la focale (&gt; 5 mm) si les métadonnées sont absentes, ou configurez un objectif anamorphique. La désactivation conserve les valeurs.</translation>
+    </message>
 </context>
 <context>
     <name>LensProfile</name>
@@ -3306,6 +3311,41 @@ Voulez-vous soumettre votre profil ?</translation>
         <location filename="../../src/ui/menu/MotionData.qml" line="566"/>
         <source>Far</source>
         <translation>Loin</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="590"/>
+        <source>Use video analysis to correct motion data, or estimate motion when none is available.</source>
+        <translation>Corrige les données de mouvement par analyse vidéo, ou estime le mouvement si elles sont absentes.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="611"/>
+        <source>Estimate camera motion from the video instead of using the file's motion data.</source>
+        <translation>Estime le mouvement de la caméra à partir du vidéo plutôt que des données du fichier.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="622"/>
+        <source>Higher values correct larger gyro errors but are more sensitive to moving objects.</source>
+        <translation>Des valeurs élevées corrigent de plus grandes erreurs du gyroscope, mais sont plus sensibles aux objets en mouvement.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="656"/>
+        <source>Reduce sideways and vertical shake using video analysis. Requires motion data.</source>
+        <translation>Réduit les secousses latérales et verticales par analyse vidéo. Nécessite des données de mouvement.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="674"/>
+        <source>Use the analysis to set reference distance and smoothness.</source>
+        <translation>Règle la distance de référence et le lissage d’après l’analyse.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="702"/>
+        <source>Choose the distance to stabilize. The middle position favors distant scenery.</source>
+        <translation>Choisissez la distance à stabiliser. La position centrale privilégie les plans éloignés.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="790"/>
+        <source>Reconstruct missing IBIS/OIS compensation from video and motion data. Also enables translation stabilization.</source>
+        <translation>Reconstruit la compensation IBIS/OIS manquante à partir du vidéo et des données de mouvement. Active aussi la stabilisation de translation.</translation>
     </message>
 </context>
 <context>

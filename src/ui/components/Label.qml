@@ -33,7 +33,7 @@ Grid {
         verticalAlignment: Text.AlignVCenter;
         height: root.effectivePosition === Label.TopPosition? undefined : inner.height;
         width: root.mobileStyle && root.mobileStacked ? root.width : undefined;
-        font.pixelSize: (root.mobileStyle ? Mobile.MobileStyle.caption : 12) * dpiScale;
+        font.pixelSize: (root.mobileStyle ? Mobile.MobileStyle.caption : 14) * dpiScale;
         color: root.mobileStyle ? Mobile.MobileStyle.secondary(style === "dark") : styleTextColor;
         wrapMode: root.mobileStyle && root.mobileStacked ? Text.WordWrap : Text.NoWrap;
         MouseArea {

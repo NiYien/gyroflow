@@ -2599,6 +2599,11 @@ Profilinizi yüklemek istiyor musunuz?</translation>
         <source>Apply globally</source>
         <translation type="vanished">Genel olarak uygula</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="712"/>
+        <source>Set focal length (&gt; 5 mm) when telemetry is missing, or configure an anamorphic lens. Values are kept when turned off.</source>
+        <translation>Meta veri yoksa odak uzaklığını (&gt; 5 mm) girin veya anamorfik lensi yapılandırın. Kapatıldığında değerler korunur.</translation>
+    </message>
 </context>
 <context>
     <name>LensProfile</name>
@@ -3303,6 +3308,41 @@ Profilinizi yüklemek istiyor musunuz?</translation>
         <location filename="../../src/ui/menu/MotionData.qml" line="566"/>
         <source>Far</source>
         <translation>Uzak</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="590"/>
+        <source>Use video analysis to correct motion data, or estimate motion when none is available.</source>
+        <translation>Video analiziyle hareket verisini düzeltir; veri yoksa hareketi tahmin eder.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="611"/>
+        <source>Estimate camera motion from the video instead of using the file's motion data.</source>
+        <translation>Dosyanın hareket verisi yerine videodan kamera hareketini tahmin eder.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="622"/>
+        <source>Higher values correct larger gyro errors but are more sensitive to moving objects.</source>
+        <translation>Yüksek değerler daha büyük jiroskop hatalarını düzeltir, ancak hareketli nesnelerden daha fazla etkilenir.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="656"/>
+        <source>Reduce sideways and vertical shake using video analysis. Requires motion data.</source>
+        <translation>Video analiziyle yatay ve dikey sarsıntıyı azaltır. Hareket verisi gerektirir.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="674"/>
+        <source>Use the analysis to set reference distance and smoothness.</source>
+        <translation>Analize göre referans mesafesini ve yumuşatmayı ayarlar.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="702"/>
+        <source>Choose the distance to stabilize. The middle position favors distant scenery.</source>
+        <translation>Sabitlenecek mesafeyi seçin. Orta konum uzak manzarayı önceliklendirir.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="790"/>
+        <source>Reconstruct missing IBIS/OIS compensation from video and motion data. Also enables translation stabilization.</source>
+        <translation>Video ve hareket verisinden eksik IBIS/OIS telafisini yeniden oluşturur. Öteleme sabitlemesini de etkinleştirir.</translation>
     </message>
 </context>
 <context>

@@ -2603,6 +2603,11 @@ Do you want to submit your profile?</source>
         <source>Apply globally</source>
         <translation type="vanished">Καθολική εφαρμογή</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="712"/>
+        <source>Set focal length (&gt; 5 mm) when telemetry is missing, or configure an anamorphic lens. Values are kept when turned off.</source>
+        <translation>Ορίστε εστιακή απόσταση (&gt; 5 mm) όταν λείπουν τα μεταδεδομένα ή ρυθμίστε αναμορφικό φακό. Οι τιμές διατηρούνται κατά την απενεργοποίηση.</translation>
+    </message>
 </context>
 <context>
     <name>LensProfile</name>
@@ -3307,6 +3312,41 @@ Do you want to submit your profile?</source>
         <location filename="../../src/ui/menu/MotionData.qml" line="566"/>
         <source>Far</source>
         <translation>Μακριά</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="590"/>
+        <source>Use video analysis to correct motion data, or estimate motion when none is available.</source>
+        <translation>Διόρθωση δεδομένων κίνησης μέσω ανάλυσης βίντεο ή εκτίμηση κίνησης όταν δεν υπάρχουν δεδομένα.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="611"/>
+        <source>Estimate camera motion from the video instead of using the file's motion data.</source>
+        <translation>Εκτίμηση κίνησης της κάμερας από το βίντεο αντί για τα δεδομένα κίνησης του αρχείου.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="622"/>
+        <source>Higher values correct larger gyro errors but are more sensitive to moving objects.</source>
+        <translation>Υψηλότερες τιμές διορθώνουν μεγαλύτερα σφάλματα γυροσκοπίου, αλλά επηρεάζονται περισσότερο από κινούμενα αντικείμενα.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="656"/>
+        <source>Reduce sideways and vertical shake using video analysis. Requires motion data.</source>
+        <translation>Μείωση οριζόντιων και κατακόρυφων κραδασμών μέσω ανάλυσης βίντεο. Απαιτούνται δεδομένα κίνησης.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="674"/>
+        <source>Use the analysis to set reference distance and smoothness.</source>
+        <translation>Ρύθμιση απόστασης αναφοράς και εξομάλυνσης βάσει της ανάλυσης.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="702"/>
+        <source>Choose the distance to stabilize. The middle position favors distant scenery.</source>
+        <translation>Επιλέξτε την απόσταση σταθεροποίησης. Η μεσαία θέση ευνοεί το μακρινό τοπίο.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="790"/>
+        <source>Reconstruct missing IBIS/OIS compensation from video and motion data. Also enables translation stabilization.</source>
+        <translation>Ανακατασκευή της ελλείπουσας αντιστάθμισης IBIS/OIS από βίντεο και δεδομένα κίνησης. Ενεργοποιεί και τη σταθεροποίηση μετατόπισης.</translation>
     </message>
 </context>
 <context>

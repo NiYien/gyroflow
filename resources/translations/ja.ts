@@ -2604,6 +2604,11 @@ Do you want to submit your profile?</source>
         <source>Apply globally</source>
         <translation type="vanished">全体に適用</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="712"/>
+        <source>Set focal length (&gt; 5 mm) when telemetry is missing, or configure an anamorphic lens. Values are kept when turned off.</source>
+        <translation>メタデータに焦点距離がない場合は手入力（5 mm超）し、またはアナモフィックレンズを設定します。オフにしても値は保持されます。</translation>
+    </message>
 </context>
 <context>
     <name>LensProfile</name>
@@ -3308,6 +3313,41 @@ Do you want to submit your profile?</source>
         <location filename="../../src/ui/menu/MotionData.qml" line="566"/>
         <source>Far</source>
         <translation>遠方</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="590"/>
+        <source>Use video analysis to correct motion data, or estimate motion when none is available.</source>
+        <translation>映像解析でモーションデータを補正し、データがない場合は動きを推定します。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="611"/>
+        <source>Estimate camera motion from the video instead of using the file's motion data.</source>
+        <translation>ファイルのモーションデータを使わず、映像からカメラの動きを推定します。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="622"/>
+        <source>Higher values correct larger gyro errors but are more sensitive to moving objects.</source>
+        <translation>値を上げると大きなジャイロ誤差を補正できますが、動く被写体の影響も受けやすくなります。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="656"/>
+        <source>Reduce sideways and vertical shake using video analysis. Requires motion data.</source>
+        <translation>映像解析で左右・上下の揺れを抑えます。モーションデータが必要です。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="674"/>
+        <source>Use the analysis to set reference distance and smoothness.</source>
+        <translation>解析結果から基準距離と滑らかさを設定します。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="702"/>
+        <source>Choose the distance to stabilize. The middle position favors distant scenery.</source>
+        <translation>安定させる距離を選びます。中央では遠方の風景を優先します。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="790"/>
+        <source>Reconstruct missing IBIS/OIS compensation from video and motion data. Also enables translation stabilization.</source>
+        <translation>映像とモーションデータから欠落したIBIS/OIS補正を再構築します。並進手ぶれ補正も有効になります。</translation>
     </message>
 </context>
 <context>

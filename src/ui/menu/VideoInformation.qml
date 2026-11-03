@@ -271,6 +271,7 @@ MenuItem {
 
     TableList {
         id: list;
+        visible: window.videoArea.vid.loaded;
         columnSpacing: 6 * dpiScale;
         editableFields: isCalibrator? ({}) : ({
             "Rotation": {

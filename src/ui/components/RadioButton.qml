@@ -37,7 +37,7 @@ QQC.RadioButton {
     }
     contentItem: Text {
         text: root.text;
-        font.pixelSize: (root.mobileStyle ? Mobile.MobileStyle.body : 13) * dpiScale;
+        font.pixelSize: (root.mobileStyle ? Mobile.MobileStyle.body : 14) * dpiScale;
         font.family: root.mobileStyle ? Mobile.MobileStyle.fontFamily : styleFont;
         wrapMode: root.mobileStyle ? Text.WordWrap : Text.NoWrap;
         color: styleTextColor;

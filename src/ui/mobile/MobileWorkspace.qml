@@ -737,8 +737,6 @@ Rectangle {
         anchors.centerIn: grid
         width: Math.min(300 * root.unit, grid.width)
         spacing: 16 * root.unit
-        MobileText { unit: root.unit; dark: root.dark; width: parent.width; text: qsTr("Your videos, ready to stabilize"); heading: true; wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignHCenter; color: root.textColor }
-        MobileText { unit: root.unit; dark: root.dark; width: parent.width; text: qsTr("Add videos to get started."); wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignHCenter; color: root.mutedColor }
         MobileButton { objectName: "mobileEmptyAddButton"; anchors.horizontalCenter: parent.horizontalCenter; unit: root.unit; dark: root.dark; emphasized: true; text: qsTr("Add media"); enabled: !root.busy; onClicked: root.showPanel("add") }
     }
     Rectangle {

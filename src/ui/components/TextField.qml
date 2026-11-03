@@ -45,7 +45,7 @@ QQC.TextField {
     opacity: enabled? 1.0 : 0.5;
     verticalAlignment: Text.AlignVCenter;
     font.family: mobileStyle ? Mobile.MobileStyle.fontFamily : styleFont;
-    font.pixelSize: (mobileStyle ? Mobile.MobileStyle.body : 13) * dpiScale;
+    font.pixelSize: (mobileStyle ? Mobile.MobileStyle.body : 14) * dpiScale;
     bottomPadding: 5 * dpiScale;
     topPadding: 5 * dpiScale;
     leftPadding: (mobileStyle ? 12 : 6) * dpiScale;

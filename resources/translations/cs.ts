@@ -2603,6 +2603,11 @@ Chcete odeslat svůj profil?</translation>
         <source>Apply globally</source>
         <translation type="vanished">Použít globálně</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="712"/>
+        <source>Set focal length (&gt; 5 mm) when telemetry is missing, or configure an anamorphic lens. Values are kept when turned off.</source>
+        <translation>Pokud chybí ohnisko v metadatech, zadejte je ručně (&gt; 5 mm), nebo nastavte anamorfní objektiv. Vypnutí hodnoty zachová.</translation>
+    </message>
 </context>
 <context>
     <name>LensProfile</name>
@@ -3307,6 +3312,41 @@ Chcete odeslat svůj profil?</translation>
         <location filename="../../src/ui/menu/MotionData.qml" line="566"/>
         <source>Far</source>
         <translation>Daleko</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="590"/>
+        <source>Use video analysis to correct motion data, or estimate motion when none is available.</source>
+        <translation>Analýzou videa opraví pohybová data, nebo odhadne pohyb, pokud data chybí.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="611"/>
+        <source>Estimate camera motion from the video instead of using the file's motion data.</source>
+        <translation>Odhadne pohyb kamery z videa místo použití pohybových dat ze souboru.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="622"/>
+        <source>Higher values correct larger gyro errors but are more sensitive to moving objects.</source>
+        <translation>Vyšší hodnoty opraví větší chyby gyroskopu, ale více je ovlivňují pohybující se objekty.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="656"/>
+        <source>Reduce sideways and vertical shake using video analysis. Requires motion data.</source>
+        <translation>Analýzou videa omezí boční a svislé chvění. Vyžaduje pohybová data.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="674"/>
+        <source>Use the analysis to set reference distance and smoothness.</source>
+        <translation>Nastaví referenční vzdálenost a vyhlazení podle analýzy.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="702"/>
+        <source>Choose the distance to stabilize. The middle position favors distant scenery.</source>
+        <translation>Zvolte vzdálenost pro stabilizaci. Střední poloha upřednostňuje vzdálenou scénu.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="790"/>
+        <source>Reconstruct missing IBIS/OIS compensation from video and motion data. Also enables translation stabilization.</source>
+        <translation>Z videa a pohybových dat obnoví chybějící kompenzaci IBIS/OIS. Zapne také stabilizaci posunu.</translation>
     </message>
 </context>
 <context>

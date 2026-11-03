@@ -272,7 +272,7 @@ MenuItem {
             anchors.verticalCenter: parent.verticalCenter;
             text: "i";
             color: styleAccentColor;
-            font.pixelSize: 11 * dpiScale;
+            font.pixelSize: 12 * dpiScale;
             font.bold: true;
             leftPadding: 0;
         }
@@ -283,7 +283,7 @@ MenuItem {
             anchors.verticalCenter: parent.verticalCenter;
             text: qsTr("The device mounting position is relative to the camera, regardless of landscape or portrait orientation.");
             color: styleTextColor;
-            font.pixelSize: (root.mobileStyle ? 14 : 11) * dpiScale;
+            font.pixelSize: (root.mobileStyle ? 14 : 12) * dpiScale;
             opacity: root.mobileStyle ? 0.65 : 1;
             wrapMode: Text.WordWrap;
             leftPadding: 0;
@@ -294,7 +294,7 @@ MenuItem {
     ComboBox {
         id: modeCombo;
         model: root.modeLabels;
-        font.pixelSize: (root.mobileStyle ? 17 : 12) * dpiScale;
+        font.pixelSize: (root.mobileStyle ? 17 : 14) * dpiScale;
         width: parent.width;
         currentIndex: 0;
         onCurrentIndexChanged: {

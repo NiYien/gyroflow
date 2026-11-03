@@ -709,7 +709,7 @@ MenuItem {
                         width: parent.width
                         textOff: qsTr("Auto-focus lens")
                         textOn: qsTr("Manual-focus or anamorphic lens")
-                        tooltip: qsTr("Turn on for manual-focus or anamorphic lenses: manually-entered focal length (> 5mm) applies when the video has no telemetry focal length, and anamorphic settings apply when enabled. Turning it off hides the fields but keeps the entered values.")
+                        tooltip: qsTr("Set focal length (> 5 mm) when telemetry is missing, or configure an anamorphic lens. Values are kept when turned off.")
                         checked: controller.lens_group_manual_edit
                         onCheckedChanged: {
                             if (checked === controller.lens_group_manual_edit) return

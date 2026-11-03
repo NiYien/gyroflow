@@ -2602,6 +2602,11 @@ Haluatko lähettää profiilisi tähän?</translation>
         <source>Apply globally</source>
         <translation type="vanished">Käytä yleisesti</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="712"/>
+        <source>Set focal length (&gt; 5 mm) when telemetry is missing, or configure an anamorphic lens. Values are kept when turned off.</source>
+        <translation>Aseta polttoväli (&gt; 5 mm), jos metatiedot puuttuvat, tai määritä anamorfinen objektiivi. Arvot säilyvät poistettaessa käytöstä.</translation>
+    </message>
 </context>
 <context>
     <name>LensProfile</name>
@@ -3306,6 +3311,41 @@ Haluatko lähettää profiilisi tähän?</translation>
         <location filename="../../src/ui/menu/MotionData.qml" line="566"/>
         <source>Far</source>
         <translation>Kaukana</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="590"/>
+        <source>Use video analysis to correct motion data, or estimate motion when none is available.</source>
+        <translation>Korjaa liiketiedot videoanalyysillä tai arvioi liike, jos tietoja ei ole.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="611"/>
+        <source>Estimate camera motion from the video instead of using the file's motion data.</source>
+        <translation>Arvioi kameran liike videosta tiedoston liiketietojen sijaan.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="622"/>
+        <source>Higher values correct larger gyro errors but are more sensitive to moving objects.</source>
+        <translation>Suuremmat arvot korjaavat suurempia gyrovirheitä, mutta ovat herkempiä liikkuville kohteille.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="656"/>
+        <source>Reduce sideways and vertical shake using video analysis. Requires motion data.</source>
+        <translation>Vähentää sivu- ja pystysuuntaista tärinää videoanalyysillä. Vaatii liiketiedot.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="674"/>
+        <source>Use the analysis to set reference distance and smoothness.</source>
+        <translation>Asettaa vertailuetäisyyden ja tasoituksen analyysin perusteella.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="702"/>
+        <source>Choose the distance to stabilize. The middle position favors distant scenery.</source>
+        <translation>Valitse vakautettava etäisyys. Keskiasento suosii kaukaisia kohteita.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="790"/>
+        <source>Reconstruct missing IBIS/OIS compensation from video and motion data. Also enables translation stabilization.</source>
+        <translation>Palauttaa puuttuvan IBIS/OIS-kompensoinnin videosta ja liiketiedoista. Ottaa käyttöön myös siirtovakautuksen.</translation>
     </message>
 </context>
 <context>

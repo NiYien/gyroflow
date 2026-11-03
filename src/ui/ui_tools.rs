@@ -27,7 +27,7 @@ cpp! {{
     #include <QElapsedTimer>
     #include <qpa/qplatformwindow.h>
 
-    static QString mobileUiFont(const QString &language = QString()) {
+    static QString interfaceFont(const QString &language = QString()) {
         static const QString systemFamily = QGuiApplication::font().family();
         static QString activeLanguage = QLocale::system().name();
         if (!language.isEmpty()) activeLanguage = language;
@@ -36,6 +36,13 @@ cpp! {{
         else if (activeLanguage == "zh_TW") preferred = { "Noto Sans CJK TC", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei UI" };
         else if (activeLanguage == "ja") preferred = { "Noto Sans CJK JP", "Noto Sans JP", "Hiragino Sans" };
         else if (activeLanguage == "ko") preferred = { "Noto Sans CJK KR", "Noto Sans KR", "Apple SD Gothic Neo" };
+        #ifdef Q_OS_WIN
+        if (activeLanguage == "zh_CN") preferred.prepend("Microsoft YaHei UI");
+        else if (activeLanguage == "zh_TW") preferred.prepend("Microsoft JhengHei UI");
+        #elif defined(Q_OS_MACOS)
+        if (activeLanguage == "zh_CN") preferred.prepend("PingFang SC");
+        else if (activeLanguage == "zh_TW") preferred.prepend("PingFang TC");
+        #endif
         if (!preferred.isEmpty()) {
             auto families = QFontDatabase::families();
             for (const auto &family : preferred) if (families.contains(family)) return family;
@@ -176,14 +183,18 @@ impl UITools {
 
                 engine_ptr->retranslate();
             });
-            if mobile_ui {
-                let selected_font = cpp!(unsafe [lang_for_signal as "QString"] -> QString as "QString" {
-                    const auto family = mobileUiFont(lang_for_signal);
-                    qInfo() << "[mobile.font] language=" << lang_for_signal << "family=" << family;
-                    return family;
-                });
-                engine.set_property("mobileFont".into(), selected_font.into());
-            }
+            let selected_font = cpp!(unsafe [lang_for_signal as "QString"] -> QString as "QString" {
+                const auto family = interfaceFont(lang_for_signal);
+                #if !defined(Q_OS_ANDROID) && !defined(Q_OS_IOS)
+                auto font = QGuiApplication::font();
+                font.setFamily(family);
+                QGuiApplication::setFont(font);
+                #endif
+                qInfo() << "[ui.font] language=" << lang_for_signal << "family=" << family;
+                return family;
+            });
+            engine.set_property("styleFont".into(), selected_font.clone().into());
+            engine.set_property("mobileFont".into(), selected_font.into());
             *self.applied_language.borrow_mut() = Some(language);
             self.language_changed(lang_for_signal);
         }
@@ -209,13 +220,17 @@ impl UITools {
         if let Some(engine) = self.engine_ptr {
             let engine = unsafe { &mut *(engine) };
 
-            let mobile_font = cpp!(unsafe [] -> QString as "QString" {
-                return mobileUiFont();
+            let interface_font = cpp!(unsafe [] -> QString as "QString" {
+                const auto family = interfaceFont();
+                #if !defined(Q_OS_ANDROID) && !defined(Q_OS_IOS)
+                auto font = QGuiApplication::font();
+                font.setFamily(family);
+                QGuiApplication::setFont(font);
+                #endif
+                return family;
             });
-            engine.set_property("mobileFont".into(), mobile_font.into());
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
-            cpp!(unsafe [] { auto f = QGuiApplication::font(); f.setFamily("Arial"); QGuiApplication::setFont(f); });
-            engine.set_property("styleFont".into(), QString::from("Arial").into());
+            engine.set_property("styleFont".into(), interface_font.clone().into());
+            engine.set_property("mobileFont".into(), interface_font.into());
 
             let force_mobile = theme.starts_with("mobile_");
             let force_destop = theme.starts_with("desktop_");

@@ -302,6 +302,9 @@ Rectangle {
                 pushToEnd(simpleExportStabilizedBtn, simpleExportBtnRow);
                 simpleAutoSyncBtn.width         = Qt.binding(function() { return simpleAutoSyncBtn.implicitWidth; });
                 simpleExportStabilizedBtn.width = Qt.binding(function() { return simpleExportStabilizedBtn.implicitWidth; });
+                // Clear the positions left by the mobile Column before desktop layout.
+                simpleAutoSyncBtn.y = 0;
+                simpleExportStabilizedBtn.y = 0;
                 // Restore original child order in renderBtnRow:
                 // resetPairingBtn, clearQueueBtn, saveProjectBtn, queueBtn.
                 pushToEnd(resetPairingBtn, renderBtnRow);
@@ -1044,7 +1047,7 @@ Rectangle {
             Rectangle {
                 id: exportbar;
                 width: parent.width;
-                height: 60 * dpiScale;
+                height: window.isSimpleMode ? Math.max(60 * dpiScale, simpleExportBtnRow.implicitHeight + 24 * dpiScale) : 60 * dpiScale;
                 color: styleBackground2;
                 visible: !isMobileLayout;
 
@@ -1077,12 +1080,15 @@ Rectangle {
 
                 // [simple-mode] Bottom two-button row: Auto sync (export .gyroflow with gyro data) + Export stabilized video
                 // Both act on the entire render queue — same scope as the old RenderQueue top-right Start button
-                Row {
+                Flow {
                     id: simpleExportBtnRow;
                     visible: window.isSimpleMode;
+                    width: window.isSimpleMode && !isMobileLayout
+                        ? Math.min(simpleAutoSyncBtn.width + simpleExportStabilizedBtn.width + spacing,
+                            parent.width - renderBtnRow.width - 24 * dpiScale) : 0;
                     anchors.verticalCenter: parent.verticalCenter;
                     anchors.horizontalCenter: parent.horizontalCenter;
-                    anchors.horizontalCenterOffset: -(queueBtn.width + spacing) / 2;
+                    anchors.horizontalCenterOffset: -(renderBtnRow.width + spacing) / 2;
                     spacing: 10 * dpiScale;
                     property int queueRowCount: 0;
                     function refreshQueueRowCount(): void {
@@ -1100,6 +1106,7 @@ Rectangle {
                     Component.onCompleted: refreshQueueRowCount();
                     Button {
                         id: simpleAutoSyncBtn;
+                        objectName: "simpleAutoSyncButton";
                         text: qsTr("Stabilize (or use with plugins)");
                         // Peer-level accent style: both export buttons share the same blue accent.
                         accent: true;
@@ -1132,6 +1139,7 @@ Rectangle {
                     }
                     Button {
                         id: simpleExportStabilizedBtn;
+                        objectName: "simpleExportStabilizedButton";
                         // [simple-mode] Dual-path Export:
                         //   - render_queue active     → Stop
                         //   - queue panel open + jobs → batch start (entire queue)
@@ -1505,8 +1513,8 @@ Rectangle {
                     // clearQueueBtn (see reparentSimplePanels).
                     Item {
                         id: resetPairingBtn;
-                        width: 36 * dpiScale;
-                        height: 44 * dpiScale;
+                        width: Math.max(36 * dpiScale, resetPairingAction.implicitWidth);
+                        height: Math.max(44 * dpiScale, resetPairingAction.implicitHeight);
                         // Mobile Simple reparents this into mobileQueueBtnCol (Column),
                         // where verticalCenter anchors are ignored by the positioner.
                         anchors.verticalCenter: (window.isMobileLayout && window.isSimpleMode) ? undefined : parent.verticalCenter;
@@ -1552,8 +1560,8 @@ Rectangle {
                     // [clear-queue] Clear render queue shortcut — visible only when the queue panel is open
                     Item {
                         id: clearQueueBtn;
-                        width: 36 * dpiScale;
-                        height: 44 * dpiScale;
+                        width: Math.max(36 * dpiScale, clearQueueAction.implicitWidth);
+                        height: Math.max(44 * dpiScale, clearQueueAction.implicitHeight);
                         // Mobile Simple reparents this into mobileQueueBtnCol (Column),
                         // where verticalCenter anchors are ignored by the positioner.
                         anchors.verticalCenter: (window.isMobileLayout && window.isSimpleMode) ? undefined : parent.verticalCenter;
@@ -1586,17 +1594,15 @@ Rectangle {
                     // Clicking is exactly Ctrl+S / Cmd+S - no second save semantic.
                     Item {
                         id: saveProjectBtn;
-                        // Sized to match queueBtn, not clearQueueBtn: the save button is
-                        // only ever on screen while the queue tool buttons are hidden, so
-                        // its only visual neighbour is the queue icon and it must not read
-                        // as a smaller, secondary control next to it.
-                        width: 44 * dpiScale;
-                        height: 44 * dpiScale;
+                        // Include the button's full hit area at fractional UI scales.
+                        width: Math.max(44 * dpiScale, saveProjectAction.implicitWidth);
+                        height: Math.max(44 * dpiScale, saveProjectAction.implicitHeight);
                         // Mobile Simple reparents this into mobileQueueBtnCol (Column),
                         // where verticalCenter anchors are ignored by the positioner.
                         anchors.verticalCenter: (window.isMobileLayout && window.isSimpleMode) ? undefined : parent.verticalCenter;
                         visible: !videoArea.queue.shown;
                         LinkButton {
+                            id: saveProjectAction;
                             anchors.centerIn: parent;
                             // save.svg bakes in a wide dead margin: its glyph spans
                             // 7690..32490 of a 42100 viewBox (58.9% fill), while queue.svg
@@ -1626,13 +1632,14 @@ Rectangle {
                     // [queue-gyro-column T12] 渲染队列入口按钮：增大图标 + 数量角标 + 移动端暗色主题增强
                     Item {
                         id: queueBtn;
-                        width: 44 * dpiScale;
-                        height: 44 * dpiScale;
+                        width: Math.max(44 * dpiScale, queueAction.implicitWidth);
+                        height: Math.max(44 * dpiScale, queueAction.implicitHeight);
                         // Mobile Simple reparents this into mobileQueueBtnCol (Column),
                         // where verticalCenter anchors are ignored by the positioner.
                         anchors.verticalCenter: (window.isMobileLayout && window.isSimpleMode) ? undefined : parent.verticalCenter;
                         // [T17] 移除了移动端圆形背景 Rectangle
                         LinkButton {
+                            id: queueAction;
                             anchors.centerIn: parent;
                             leftPadding: 10 * dpiScale;
                             rightPadding: 10 * dpiScale;
@@ -1741,7 +1748,9 @@ Rectangle {
                 anchors.bottom: parent.bottom;
                 anchors.bottomMargin: safeAreaBottom;
                 width: parent.width;
-                height: visible ? 108 * dpiScale : 0;
+                height: visible ? Math.max(108 * dpiScale,
+                    mobileSimpleExportBtnCol.height + 24 * dpiScale,
+                    mobileQueueBtnCol.height + 24 * dpiScale) : 0;
                 visible: isMobileLayout && window.isSimpleMode;
                 color: styleBackground2;
                 z: 100;
@@ -1929,6 +1938,7 @@ Rectangle {
                     }
                     TableList {
                         id: simpleInfoList;
+                        visible: window.videoArea.vid.loaded;
                         width: parent.width;
                         model: window.vidInfo ? window.vidInfo.infoList.model : ({});
                         // [simple-mode] Mirror incremental updates emitted by VideoInformation.updateEntry
@@ -1962,7 +1972,7 @@ Rectangle {
                         text: window.motionData ? window.motionData.detectedFormat : "";
                         color: styleTextColor;
                         opacity: 0.7;
-                        font.pixelSize: (window.useMobileWorkspace ? 14 : 11) * dpiScale;
+                        font.pixelSize: (window.useMobileWorkspace ? 14 : 12) * dpiScale;
                     }
 
                     Rectangle {
@@ -2101,7 +2111,7 @@ Rectangle {
                             id: simpleLang;
                             property var langs: window.advanced ? window.advanced.langList.langs : [];
                             model: langs.map(x => x[0]);
-                            font.pixelSize: 11 * dpiScale;
+                            font.pixelSize: 14 * dpiScale;
                             width: parent.width;
                             currentIndex: window.advanced ? window.advanced.langList.currentIndex : 0;
                             onCurrentIndexChanged: {
@@ -2118,7 +2128,7 @@ Rectangle {
                         ComboBox {
                             id: simpleTheme;
                             model: window.advanced ? window.advanced.themeList.model : [];
-                            font.pixelSize: 11 * dpiScale;
+                            font.pixelSize: 14 * dpiScale;
                             width: parent.width;
                             currentIndex: window.advanced ? window.advanced.themeList.currentIndex : 1;
                             onActivated: (index) => {

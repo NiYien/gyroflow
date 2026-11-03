@@ -2602,6 +2602,11 @@ Do you want to submit your profile?</source>
         <source>Apply globally</source>
         <translation type="vanished">전역 적용</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="712"/>
+        <source>Set focal length (&gt; 5 mm) when telemetry is missing, or configure an anamorphic lens. Values are kept when turned off.</source>
+        <translation>메타데이터가 없으면 초점 거리(5 mm 초과)를 입력하거나 아나모픽 렌즈를 설정합니다. 꺼도 값은 유지됩니다.</translation>
+    </message>
 </context>
 <context>
     <name>LensProfile</name>
@@ -3306,6 +3311,41 @@ Do you want to submit your profile?</source>
         <location filename="../../src/ui/menu/MotionData.qml" line="566"/>
         <source>Far</source>
         <translation>멀리</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="590"/>
+        <source>Use video analysis to correct motion data, or estimate motion when none is available.</source>
+        <translation>영상 분석으로 모션 데이터를 보정하고, 데이터가 없으면 움직임을 추정합니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="611"/>
+        <source>Estimate camera motion from the video instead of using the file's motion data.</source>
+        <translation>파일의 모션 데이터 대신 영상에서 카메라 움직임을 추정합니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="622"/>
+        <source>Higher values correct larger gyro errors but are more sensitive to moving objects.</source>
+        <translation>값이 클수록 큰 자이로 오차를 보정하지만 움직이는 물체의 영향도 더 많이 받습니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="656"/>
+        <source>Reduce sideways and vertical shake using video analysis. Requires motion data.</source>
+        <translation>영상 분석으로 좌우 및 상하 흔들림을 줄입니다. 모션 데이터가 필요합니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="674"/>
+        <source>Use the analysis to set reference distance and smoothness.</source>
+        <translation>분석 결과로 기준 거리와 부드러움을 설정합니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="702"/>
+        <source>Choose the distance to stabilize. The middle position favors distant scenery.</source>
+        <translation>안정화할 거리를 선택합니다. 중앙 위치는 원경을 우선합니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="790"/>
+        <source>Reconstruct missing IBIS/OIS compensation from video and motion data. Also enables translation stabilization.</source>
+        <translation>영상과 모션 데이터로 누락된 IBIS/OIS 보정을 재구성합니다. 이동 안정화도 활성화합니다.</translation>
     </message>
 </context>
 <context>

@@ -29,7 +29,7 @@ Column {
         }
         BasicText {
             text: label;
-            font.pixelSize: 11 * dpiScale;
+            font.pixelSize: 12 * dpiScale;
             font.bold: true;
             color: styleTextColor;
             opacity: 0.55;

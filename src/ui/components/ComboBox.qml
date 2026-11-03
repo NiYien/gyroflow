@@ -15,7 +15,7 @@ QQC.ComboBox {
     implicitWidth: 150 * dpiScale;
     height: (mobileStyle ? 48 : 35) * dpiScale;
 
-    font.pixelSize: (mobileStyle ? Mobile.MobileStyle.body : 13) * dpiScale;
+    font.pixelSize: (mobileStyle ? Mobile.MobileStyle.body : 14) * dpiScale;
     font.family: mobileStyle ? Mobile.MobileStyle.fontFamily : styleFont;
 
     hoverEnabled: enabled;

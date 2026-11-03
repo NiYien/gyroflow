@@ -1101,7 +1101,7 @@ Item {
     Item {
         id: vidParentParent;
         width: parent.width;
-        height: parent.height - (root.fullScreen || window.isMobileLayout || window.useMobileWorkspace? 0 : tlcol.height);
+        height: parent.height - (root.fullScreen || window.isMobileLayout || !tlcol.visible? 0 : tlcol.height);
 
         Grid {
             readonly property bool vertical: vidParentParent.height - vidParent.height * 2 > vidParentParent.width - vidParent.width * 2;
@@ -1408,7 +1408,6 @@ Item {
             BasicText {
                 id: dropText;
                 property string loadingFile: "";
-                // [queue-gyro-column] 拖拽提示更新，支持陀螺仪数据
                 text: loadingFile? qsTr("Loading %1...").arg(loadingFile) : (Qt.platform.os == "ios" || Qt.platform.os == "android"? qsTr("Click here to open a video file") : qsTranslate("RenderQueue", "Drop video files or gyroscope data here"));
                 font.pixelSize: (window.isMobileLayout? 23 : 30) * dpiScale;
                 anchors.centerIn: parent;
@@ -1653,7 +1652,7 @@ Item {
 
     Column {
         id: tlcol;
-        visible: !window.useMobileWorkspace;
+        visible: !window.useMobileWorkspace && vid.loaded;
         width: parent.width;
         anchors.horizontalCenter: parent.horizontalCenter;
         anchors.bottom: parent.bottom;

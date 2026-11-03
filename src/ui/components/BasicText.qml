@@ -10,7 +10,7 @@ Text {
     leftPadding: 10 * dpiScale;
     onLinkActivated: (link) => Qt.openUrlExternally(link);
     color: styleTextColor;
-    font.pixelSize: (mobileStyle ? Mobile.MobileStyle.body : 12) * dpiScale;
+    font.pixelSize: (mobileStyle ? Mobile.MobileStyle.body : 14) * dpiScale;
     font.family: mobileStyle ? Mobile.MobileStyle.fontFamily : styleFont;
     opacity: enabled? 1.0 : 0.6;
     linkColor: styleAccentColor;

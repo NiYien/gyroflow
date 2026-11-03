@@ -587,7 +587,7 @@ MenuItem {
         id: opticalcb;
         visible: !window.isSimpleMode;
         text: window.isSimpleMode ? qsTr("Optical stabilization") : qsTr("Optical correction");
-        cb.tooltip: qsTr("Measure the camera rotation from the video itself and correct the motion data where they disagree. Useful when vibrations corrupt the gyro data, e.g. on a hard-mounted FPV camera. The analysis samples frames at an integer interval near 25 fps within the selected trim range.");
+        cb.tooltip: qsTr("Use video analysis to correct motion data, or estimate motion when none is available.");
         property var info: ({ available: false });
         onCheckedChanged: root.changeOpticalMode("optical", checked);
 
@@ -608,7 +608,7 @@ MenuItem {
             // The reconstruction is measured against the file's motion data: it can't be set aside meanwhile
             visible: !stabcb.checked;
             text: qsTr("Ignore motion data from the file");
-            tooltip: qsTr("Measure all of the camera motion from the video, like for a file without motion data, instead of correcting the motion data. For motion data too broken to correct, e.g. a gyro that glitches or saturates for seconds at a time.");
+            tooltip: qsTr("Estimate camera motion from the video instead of using the file's motion data.");
             onCheckedChanged: if (root.initialized && !root.updatingOpticalControls) { controller.set_ignore_file_motion(checked); root.pushQueueOpticalSettings(); }
         }
 
@@ -619,7 +619,7 @@ MenuItem {
             // the same tracks: the correction only refines within the frames, the strength changes next to nothing.
             // With motion data the analysis chooses the strength itself; only a correction saved before that has one
             visible: !!opticalcb.info.has_motion && !!opticalcb.info.legacy_strength;
-            tooltip: qsTr("How far the correction may take the motion data from what it says. Lower values only correct small, fast errors like vibration. Higher values let the image override the motion data also where it's off by a lot or for longer, like gyro glitches, but follow the image's own mistakes (moving objects, water) more too.");
+            tooltip: qsTr("Higher values correct larger gyro errors but are more sensitive to moving objects.");
             SliderWithField {
                 id: opticalStrength;
                 defaultValue: 50;
@@ -653,7 +653,7 @@ MenuItem {
         objectName: "translationStabilization";
         text: qsTr("Translation stabilization");
         cb.unavailable: stabcb.checked;
-        cb.tooltip: qsTr("Measure from the video how the camera moved sideways and up and down, and shift the whole picture to hold one distance steady. Needs motion data from the file; the analysis samples frames at an integer interval near 25 fps within the selected trim range. Can't be used together with in-camera stabilization reconstruction. The reported shift is sampled at frame centers; output cropping changes its apparent size.");
+        cb.tooltip: qsTr("Reduce sideways and vertical shake using video analysis. Requires motion data.");
         cb.rightPadding: translationAuto.visible ? translationAuto.width + 10 * dpiScale : 0;
         cb.implicitHeight: Math.max(root.mobileStyle ? 44 * dpiScale : 30 * dpiScale, cb.contentItem.implicitHeight + 12 * dpiScale);
         property var info: ({ available: false });
@@ -671,7 +671,7 @@ MenuItem {
             anchors.verticalCenter: parent.verticalCenter;
             visible: !window.isSimpleMode && translationcb.checked;
             text: qsTr("Automatic parameters");
-            tooltip: qsTr("Choose the reference distance and the smoothness from the analysis: hold the distant scenery steady, or the subject once it fills most of the picture, and smooth as much as the shift range allows.");
+            tooltip: qsTr("Use the analysis to set reference distance and smoothness.");
             checked: true;
             onCheckedChanged: if (root.initialized && !root.updatingOpticalControls) {
                 if (window.isSimpleMode) {
@@ -699,7 +699,7 @@ MenuItem {
             text: qsTr("Reference distance");
             width: parent.width;
             visible: !window.isSimpleMode && !translationAuto.checked;
-            tooltip: qsTr("Move toward Near to stabilize closer objects, or toward Far to stabilize more distant content. The middle position stabilizes the farther parts of the image (default).");
+            tooltip: qsTr("Choose the distance to stabilize. The middle position favors distant scenery.");
             Row {
                 width: parent.width;
                 spacing: 5 * dpiScale;
@@ -787,7 +787,7 @@ MenuItem {
     CheckBoxWithContent {
         id: stabcb;
         text: qsTr("Reconstruct in-camera stabilization");
-        cb.tooltip: qsTr("For footage shot with in-camera stabilization (IBIS or lens OIS) on but without its data in the file: measure what the camera compensated from the video, so it isn't compensated twice. Can't be used together with Translation stabilization or Optical correction.");
+        cb.tooltip: qsTr("Reconstruct missing IBIS/OIS compensation from video and motion data. Also enables translation stabilization.");
         property var info: ({ available: false });
         onCheckedChanged: root.changeOpticalMode("stab", checked);
         BasicText {

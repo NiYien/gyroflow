@@ -2591,6 +2591,11 @@ Do you want to submit your profile?</source>
         <source>Apply globally</source>
         <translation type="vanished">全域套用</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="712"/>
+        <source>Set focal length (&gt; 5 mm) when telemetry is missing, or configure an anamorphic lens. Values are kept when turned off.</source>
+        <translation>素材無焦距資訊時，可手動填寫焦距（&gt; 5 mm），或設定變形鏡頭。關閉時保留設定。</translation>
+    </message>
 </context>
 <context>
     <name>LensProfile</name>
@@ -3265,6 +3270,41 @@ Do you want to submit your profile?</source>
         <location filename="../../src/ui/menu/MotionData.qml" line="846"/>
         <source>Export project file (including processed gyro data)</source>
         <translation>匯出專案檔案 (包含處理過的陀螺儀數據)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="590"/>
+        <source>Use video analysis to correct motion data, or estimate motion when none is available.</source>
+        <translation>以畫面分析校正運動資料；無運動資料時從畫面估算運動。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="611"/>
+        <source>Estimate camera motion from the video instead of using the file's motion data.</source>
+        <translation>改以畫面估算相機運動，不使用檔案中的運動資料。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="622"/>
+        <source>Higher values correct larger gyro errors but are more sensitive to moving objects.</source>
+        <translation>數值越大，可校正的陀螺儀誤差越大，也越容易受移動物體影響。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="656"/>
+        <source>Reduce sideways and vertical shake using video analysis. Requires motion data.</source>
+        <translation>透過畫面分析減少左右和上下抖動，需要運動資料。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="674"/>
+        <source>Use the analysis to set reference distance and smoothness.</source>
+        <translation>根據分析結果設定參考距離和平滑度。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="702"/>
+        <source>Choose the distance to stabilize. The middle position favors distant scenery.</source>
+        <translation>選擇要穩定的距離；中間位置偏向遠景。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="790"/>
+        <source>Reconstruct missing IBIS/OIS compensation from video and motion data. Also enables translation stabilization.</source>
+        <translation>結合畫面和運動資料重建缺失的 IBIS/OIS 補償，同時啟用位移防抖。</translation>
     </message>
 </context>
 <context>

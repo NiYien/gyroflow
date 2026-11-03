@@ -2600,6 +2600,11 @@ Do you want to submit your profile?</source>
         <source>Apply globally</source>
         <translation type="vanished">Terapkan secara global</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="712"/>
+        <source>Set focal length (&gt; 5 mm) when telemetry is missing, or configure an anamorphic lens. Values are kept when turned off.</source>
+        <translation>Isi panjang fokus (&gt; 5 mm) jika metadata tidak tersedia, atau atur lensa anamorfik. Nilai tetap disimpan saat dinonaktifkan.</translation>
+    </message>
 </context>
 <context>
     <name>LensProfile</name>
@@ -3304,6 +3309,41 @@ Do you want to submit your profile?</source>
         <location filename="../../src/ui/menu/MotionData.qml" line="566"/>
         <source>Far</source>
         <translation>Jauh</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="590"/>
+        <source>Use video analysis to correct motion data, or estimate motion when none is available.</source>
+        <translation>Koreksi data gerakan dengan analisis video, atau perkirakan gerakan jika datanya tidak tersedia.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="611"/>
+        <source>Estimate camera motion from the video instead of using the file's motion data.</source>
+        <translation>Perkirakan gerakan kamera dari video, bukan dari data gerakan file.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="622"/>
+        <source>Higher values correct larger gyro errors but are more sensitive to moving objects.</source>
+        <translation>Nilai lebih tinggi mengoreksi kesalahan giroskop yang lebih besar, tetapi lebih terpengaruh objek bergerak.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="656"/>
+        <source>Reduce sideways and vertical shake using video analysis. Requires motion data.</source>
+        <translation>Kurangi guncangan menyamping dan vertikal dengan analisis video. Memerlukan data gerakan.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="674"/>
+        <source>Use the analysis to set reference distance and smoothness.</source>
+        <translation>Atur jarak acuan dan penghalusan berdasarkan analisis.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="702"/>
+        <source>Choose the distance to stabilize. The middle position favors distant scenery.</source>
+        <translation>Pilih jarak yang akan distabilkan. Posisi tengah mengutamakan pemandangan jauh.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/MotionData.qml" line="790"/>
+        <source>Reconstruct missing IBIS/OIS compensation from video and motion data. Also enables translation stabilization.</source>
+        <translation>Rekonstruksi kompensasi IBIS/OIS yang hilang dari video dan data gerakan. Juga mengaktifkan stabilisasi translasi.</translation>
     </message>
 </context>
 <context>

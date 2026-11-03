@@ -99,7 +99,7 @@ Item {
             contentItem.alignment = Qt.AlignLeft;
         }
 
-        font.pixelSize: (root.mobileStyle ? Mobile.MobileStyle.body : 14) * dpiScale;
+        font.pixelSize: (root.mobileStyle ? Mobile.MobileStyle.body : 16) * dpiScale;
         font.family: root.mobileStyle ? Mobile.MobileStyle.fontFamily : styleFont;
         font.weight: root.mobileStyle ? Font.DemiBold : Font.Normal;
         font.capitalization: Font.Normal

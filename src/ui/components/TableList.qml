@@ -3,6 +3,7 @@
 
 import QtQuick
 import QtQuick.Controls as QQC
+import "../mobile" as Mobile
 
 Row {
     id: tl;
@@ -49,6 +50,7 @@ Row {
                 onTextChanged: Qt.callLater(updateHeights);
                 anchors.right: parent.right;
                 leftPadding: 0;
+                font.pixelSize: (mobileStyle ? Mobile.MobileStyle.body : 12) * dpiScale;
                 objectName: "left";
             }
         }
@@ -68,7 +70,7 @@ Row {
                     // the user's language (same context as the key column).
                     text: modelData? qsTr(modelData) : "";
                     onTextChanged: Qt.callLater(updateHeights);
-                    font.bold: true;
+                    font.weight: mobileStyle ? Font.Bold : Font.Medium;
                     MouseArea {
                         enabled: tl.copyable;
                         anchors.fill: parent;

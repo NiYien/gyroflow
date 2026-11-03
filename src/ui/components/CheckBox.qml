@@ -87,7 +87,7 @@ QQC.CheckBox {
 
     contentItem: Text {
         text: cb.text;
-        font.pixelSize: (cb.mobileStyle ? Mobile.MobileStyle.body : 13) * dpiScale;
+        font.pixelSize: (cb.mobileStyle ? Mobile.MobileStyle.body : 14) * dpiScale;
         font.family: cb.mobileStyle ? Mobile.MobileStyle.fontFamily : styleFont;
         wrapMode: cb.mobileStyle ? Text.WordWrap : Text.NoWrap;
         color: styleTextColor;

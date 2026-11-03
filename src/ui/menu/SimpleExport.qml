@@ -27,7 +27,7 @@ Column {
         ComboBox {
             id: simpleQueueOutputMode;
             model: [qsTranslate("Export", "Same as source file"), qsTranslate("Export", "Fixed path")];
-            font.pixelSize: 12 * dpiScale;
+            font.pixelSize: 14 * dpiScale;
             width: parent.width;
             currentIndex: exportSettings ? exportSettings.queueOutputMode : 0;
             onCurrentIndexChanged: {
