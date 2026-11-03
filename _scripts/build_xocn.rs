@@ -82,6 +82,10 @@ pub fn build(target_os: &str) {
     if target_os == "windows" {
         native.flag("/utf-8").flag("/EHsc");
     }
+    if target_os == "macos" {
+        // MDK does not export FrameReader RTTI on macOS.
+        native.flag("-fno-rtti");
+    }
     if target_os == "linux" {
         // The Linux MDK plugin ABI uses libc++; keep this choice local to X-OCN.
         native

@@ -32,7 +32,7 @@ install-deps: assert-linux-x86-64
     if [ "{{AptGetExists}}" == "true" ]; then
         command -v sudo >/dev/null || { echo "Required Linux dependency installer is missing: sudo" >&2; exit 1; }
         sudo apt-get install -y p7zip-full python3-pip python3-venv python3-requests nodejs clang libclang-dev bison pkg-config gperf curl unzip zip git
-        sudo apt-get install -y libc++-dev libva-dev libvdpau-dev libvdpau1 mesa-va-drivers ocl-icd-opencl-dev opencl-headers
+        sudo apt-get install -y libc++-dev libc++abi-dev libva-dev libvdpau-dev libvdpau1 mesa-va-drivers ocl-icd-opencl-dev opencl-headers
         sudo apt-get install -y libpulse-dev libasound-dev libxkbcommon-dev
         sudo apt-get install -y libfontconfig1 libfreetype6
         sudo apt-get install -y libstdc++-12-dev || true
