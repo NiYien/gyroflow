@@ -39,6 +39,39 @@ MenuItem {
         || translationSmoothnessTimer.running || translationAlongAxisTimer.running || translationAutoTimer.running
         || (opticalcb.checked && opticalcb.info.available && opticalcb.info.outdated);
 
+    component OpticalAnalysisActions: Row {
+        anchors.horizontalCenter: parent.horizontalCenter;
+        spacing: 5 * dpiScale;
+        Button {
+            id: analyzeButton;
+            objectName: "analyzeOpticalButton";
+            text: qsTr("Analyze");
+            iconName: "spinner";
+            width: mobileStyle ? Math.max(120 * dpiScale, Math.ceil(analyzeTextMetrics.advanceWidth)
+                + icon.width + spacing + leftPadding + rightPadding) : implicitWidth;
+            TextMetrics {
+                id: analyzeTextMetrics;
+                text: analyzeButton.text;
+                font: analyzeButton.font;
+            }
+            // Returning to the mobile list can leave an older video in the player.
+            visible: window.videoArea.vid.loaded
+                && (!window.useMobileWorkspace || !!window.mobileUI && window.mobileUI.hasExperimentalPreview);
+            enabled: visible && !controller.sync_in_progress;
+            onClicked: root.analyzeOpticalModes();
+        }
+        LinkButton {
+            objectName: "clearOpticalButton";
+            anchors.verticalCenter: parent.verticalCenter;
+            text: qsTr("Clear");
+            leftPadding: 6 * dpiScale;
+            rightPadding: 6 * dpiScale;
+            visible: !!opticalcb.info.available || !!translationcb.info.available || !!stabcb.info.available;
+            enabled: !controller.sync_in_progress;
+            onClicked: controller.clear_optical_correction();
+        }
+    }
+
     function moveExperimentalControls(target: var): void {
         experimentalControls.parent = target || opticalControlsHost;
     }
@@ -695,6 +728,10 @@ MenuItem {
                   !translationcb.info.available ? "" :
                   qsTr("Measured in %1 of %2 frames, applied shift up to %3% of the source frame's short side").arg(translationcb.info.measured_frames).arg(translationcb.info.frames).arg((+translationcb.info.max_shift_pct).toFixed(1));
         }
+        OpticalAnalysisActions {
+            objectName: "translationAnalysisActions";
+            visible: window.isSimpleMode && translationcb.checked;
+        }
         Label {
             text: qsTr("Reference distance");
             width: parent.width;
@@ -803,36 +840,9 @@ MenuItem {
                   qsTr("Measured in %1 of %2 frames, compensation up to %3°, cut-off %4 Hz").arg(stabcb.info.measured_frames).arg(stabcb.info.frames).arg((+stabcb.info.max_deg).toFixed(2)).arg((+stabcb.info.cutoff_hz).toFixed(2));
         }
     }
-    Row {
-        anchors.horizontalCenter: parent.horizontalCenter;
-        spacing: 5 * dpiScale;
+    OpticalAnalysisActions {
+        objectName: "experimentalAnalysisActions";
         visible: opticalcb.checked || translationcb.checked || stabcb.checked;
-        Button {
-            id: analyzeButton;
-            text: qsTr("Analyze");
-            iconName: "spinner";
-            width: mobileStyle ? Math.max(120 * dpiScale, Math.ceil(analyzeTextMetrics.advanceWidth)
-                + icon.width + spacing + leftPadding + rightPadding) : implicitWidth;
-            TextMetrics {
-                id: analyzeTextMetrics;
-                text: analyzeButton.text;
-                font: analyzeButton.font;
-            }
-            // A loaded video may belong to an earlier preview after returning to the mobile list.
-            visible: window.videoArea.vid.loaded
-                && (!window.useMobileWorkspace || !!window.mobileUI && window.mobileUI.hasExperimentalPreview);
-            enabled: visible && !controller.sync_in_progress;
-            onClicked: root.analyzeOpticalModes();
-        }
-        LinkButton {
-            anchors.verticalCenter: parent.verticalCenter;
-            text: qsTr("Clear");
-            leftPadding: 6 * dpiScale;
-            rightPadding: 6 * dpiScale;
-            visible: !!opticalcb.info.available || !!translationcb.info.available || !!stabcb.info.available;
-            enabled: !controller.sync_in_progress;
-            onClicked: controller.clear_optical_correction();
-        }
     }
     }
     }

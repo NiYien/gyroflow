@@ -60,11 +60,14 @@ TestCase {
         property bool translationAlongAxis: true;
         property bool translationAuto: true;
         property bool reconstructionRequested: false;
+        property bool translationAvailable: false;
+        property int analyzeCalls: 0;
+        property int clearCalls: 0;
         function optical_correction_info() { return JSON.stringify(opticalInfo); }
         function translation_stabilization_info() {
             return JSON.stringify({ "requested": translationRequested, "reference": translationReference,
                 "smoothness_s": translationSmoothness, "along_axis": translationAlongAxis,
-                "auto": translationAuto, "has_motion": true });
+                "auto": translationAuto, "has_motion": true, "available": translationAvailable });
         }
         function stab_reconstruction_info() { return JSON.stringify({ "requested": reconstructionRequested, "has_motion": true }); }
         function set_stab_reconstruction_enabled(enabled) {
@@ -78,6 +81,8 @@ TestCase {
         function set_translation_auto(value) { translationAuto = value; optical_correction_changed(); }
         function set_optical_correction_enabled(enabled) { }
         function set_ignore_file_motion(enabled) { }
+        function analyze_optically() { analyzeCalls++; }
+        function clear_optical_correction() { clearCalls++; translationAvailable = false; optical_correction_changed(); }
         function set_integration_method(index) { }
         function set_imu_lpf(v) { }
         function set_imu_median_filter(v) { }
@@ -178,6 +183,9 @@ TestCase {
         controllerStub.translationAlongAxis = true;
         controllerStub.translationAuto = true;
         controllerStub.reconstructionRequested = false;
+        controllerStub.translationAvailable = false;
+        controllerStub.analyzeCalls = 0;
+        controllerStub.clearCalls = 0;
         controllerStub.opticalInfo = { "available": false, "ignore_file_motion": false, "has_motion": true };
         motion = createTemporaryObject(factory, testCase, { width: 380 });
         verify(motion !== null);
@@ -213,7 +221,7 @@ TestCase {
         motion.restoreOpticalControls(false);
         const translation = controlMatching(motion.experimentalControls, x => x.text === "Translation stabilization");
         const reconstruction = controlMatching(motion.experimentalControls, x => x.text === "Reconstruct in-camera stabilization");
-        const analyze = controlMatching(motion.experimentalControls, x => x.iconName === "spinner");
+        const analyze = controlMatching(controlMatching(motion.experimentalControls, x => x.objectName === "experimentalAnalysisActions"), x => x.iconName === "spinner");
         verify(translation && reconstruction && analyze);
         verify(translation.enabled && reconstruction.enabled);
         verify(!analyze.enabled);
@@ -243,7 +251,7 @@ TestCase {
         windowStub.isSimpleMode = data.simple;
         motion.opened = true;
         motion.restoreOpticalControls(false);
-        const analyze = controlMatching(motion.experimentalControls, x => x.iconName === "spinner");
+        const analyze = controlMatching(controlMatching(motion.experimentalControls, x => x.objectName === "experimentalAnalysisActions"), x => x.iconName === "spinner");
         verify(analyze !== null);
         windowStub.videoArea.vid.loaded = false;
         verify(!analyze.visible);
@@ -378,6 +386,51 @@ TestCase {
         motion.moveTranslationControls(null);
         compare(translation.parent, originalParent);
         compare(motion.translationControls, translation);
+    }
+
+    function test_moved_simple_translation_keeps_analysis_and_clear_actions() {
+        motion.opened = true;
+        motion.restoreOpticalControls(false);
+        const simpleHost = createTemporaryObject(translationHostFactory, testCase);
+        const hiddenExperimentalHost = createTemporaryObject(translationHostFactory, testCase, {visible:false});
+        motion.moveExperimentalControls(hiddenExperimentalHost);
+        motion.moveTranslationControls(simpleHost);
+        const translation = motion.translationControls;
+        const analyze = controlMatching(translation, x => x.objectName === "analyzeOpticalButton");
+        const clear = controlMatching(translation, x => x.objectName === "clearOpticalButton");
+        verify(analyze && clear);
+        tryVerify(function() { return analyze.visible && analyze.enabled; }, 2000, "the moved controls retain their analysis entry point");
+        analyze.clicked();
+        compare(controllerStub.analyzeCalls, 1);
+        verify(!clear.visible);
+        controllerStub.translationAvailable = true;
+        motion.restoreOpticalControls(false);
+        verify(clear.visible && clear.enabled);
+        clear.clicked();
+        compare(controllerStub.clearCalls, 1);
+        controllerStub.sync_in_progress = true;
+        verify(analyze.visible && !analyze.enabled);
+        controllerStub.sync_in_progress = false;
+        windowStub.videoArea.vid.loaded = false;
+        verify(!analyze.visible);
+        windowStub.videoArea.vid.loaded = true;
+        windowStub.useMobileWorkspace = true;
+        verify(!analyze.visible, "a retained mobile video is not an active preview");
+        windowStub.mobileUI.hasExperimentalPreview = true;
+        verify(analyze.visible && analyze.enabled);
+    }
+
+    function test_full_mode_retains_the_shared_analysis_actions() {
+        windowStub.isSimpleMode = false;
+        motion.opened = true;
+        motion.restoreOpticalControls(false);
+        const localActions = controlMatching(motion.translationControls, x => x.objectName === "translationAnalysisActions");
+        const sharedActions = controlMatching(motion.experimentalControls, x => x.objectName === "experimentalAnalysisActions");
+        verify(localActions && !localActions.visible);
+        const analyze = controlMatching(sharedActions, x => x.objectName === "analyzeOpticalButton");
+        verify(analyze.visible && analyze.enabled);
+        analyze.clicked();
+        compare(controllerStub.analyzeCalls, 1);
     }
 
     function test_project_readback_wins_without_changing_saved_preferences() {
