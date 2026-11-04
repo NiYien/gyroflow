@@ -25,6 +25,8 @@ pub mod translation;
 pub mod residual_rotation;
 mod image_space;
 #[cfg(feature = "use-opencv")]
+mod motion_consistency;
+#[cfg(feature = "use-opencv")]
 pub mod pipeline;
 #[cfg(test)] mod translation_stress;
 pub(crate) mod sensor;
@@ -363,6 +365,8 @@ fn to_quat_frame(b: (f32, f32)) -> Vector3<f64> {
 
 struct TranslationState {
     solver: TranslationSolver,
+    #[cfg(feature="use-opencv")]
+    motion_consistency: motion_consistency::MotionConsistency,
     solve_time: std::time::Duration,
     layer_time: std::time::Duration,
     measured_pairs: usize,
@@ -678,7 +682,9 @@ impl TranslationState {
             #[cfg(feature="use-opencv")] pending_layers: Vec::new(),
             solve_time: std::time::Duration::ZERO, layer_time: std::time::Duration::ZERO, measured_pairs: 0,
             next_seq: 0, pairs: HashMap::new(), position: Vector3::zeros(), segment: 0, depth_segment: 0,
-            samples: Vec::new(), median_depths: Vec::new(), dominant: Vec::new() }
+            samples: Vec::new(), median_depths: Vec::new(), dominant: Vec::new(),
+            #[cfg(feature="use-opencv")]
+            motion_consistency: motion_consistency::MotionConsistency::new() }
     }
     fn with_device(device:i32)->Self {
         #[allow(unused_mut)] let mut state=Self::new();
@@ -1206,6 +1212,8 @@ impl OpticalMotionAnalysis {
 
     fn measure_translation_pairs(params: &ComputeParams, state: &mut TranslationState, pairs: &VecDeque<Pair>,
         next_seq: usize, focal_px: f64, derived: &mut [Derived], remove_parallax: bool, cancel:&dyn Fn()->bool) {
+        #[cfg(feature="use-opencv")]
+        let Some(rejected) = state.motion_consistency.filter(params, pairs, derived, focal_px, state.next_seq, cancel) else { return; };
         // Lens queries take the gyro lock themselves. Complete them before reading poses.
         let mut focal_ratios = HashMap::new();
         let mut output_projections = HashMap::new();
@@ -1230,7 +1238,10 @@ impl OpticalMotionAnalysis {
         let from_seq=state.next_seq;
         for pair in pairs.iter().filter(|pair| pair.seq >= from_seq) {
             if cancel(){return;}
-            let points = points_of.remove(&pair.seq).unwrap_or_default();
+            #[allow(unused_mut)]
+            let mut points = points_of.remove(&pair.seq).unwrap_or_default();
+            #[cfg(feature="use-opencv")]
+            points.retain(|p| !rejected.contains(&(pair.b.index, p.id)));
             let start_us = (pair.a.mid_ms * 1000.0).round() as i64;
             if state.samples.last().is_none_or(|s| s.timestamp_us != start_us) {
                 if !state.samples.is_empty() { state.segment += 1; }

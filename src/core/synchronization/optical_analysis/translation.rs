@@ -94,6 +94,8 @@ pub struct TranslationSolver {
     lambda: f64,
     first_seen: HashMap<u32, f64>,
     pred: Option<f64>,
+    #[cfg(feature="use-opencv")]
+    last_rotation: Matrix3<f64>,
 }
 
 fn median(mut values: Vec<f64>) -> f64 {
@@ -104,10 +106,15 @@ fn median(mut values: Vec<f64>) -> f64 {
 impl TranslationSolver {
     pub fn new(config: TranslationSolverConfig) -> Self {
         Self { config, depth: HashMap::new(), velocity: Vector3::zeros(),
-            lambda: 1.0, first_seen: HashMap::new(), pred: None }
+            lambda: 1.0, first_seen: HashMap::new(), pred: None,
+            #[cfg(feature="use-opencv")]
+            last_rotation: Matrix3::identity() }
     }
 
     pub(super) fn reset(&mut self) { *self = Self::new(self.config); }
+
+    #[cfg(feature="use-opencv")]
+    pub(super) fn last_rotation(&self) -> Matrix3<f64> { self.last_rotation }
 
     fn failed(&mut self) -> PairTranslation {
         self.reset();
@@ -275,6 +282,8 @@ impl TranslationSolver {
         self.depth = pts.iter().map(|p| p.id).zip(depth).collect();
         self.velocity = v * s;
         self.lambda /= s;
+        #[cfg(feature="use-opencv")]
+        { self.last_rotation = m; }
         output
     }
 
