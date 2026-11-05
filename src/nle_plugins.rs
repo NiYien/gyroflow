@@ -2,6 +2,7 @@
 // Copyright © 2024 Adrian <adrian.eddy at gmail>
 
 mod finalcut_transaction;
+mod jianying;
 
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -125,7 +126,7 @@ pub fn get_path(typ: &str) -> &'static str {
 fn plugin_available_on_platform(typ: &str, platform: PluginPlatform) -> bool {
     match platform {
         PluginPlatform::Linux => typ == "openfx",
-        PluginPlatform::Windows => typ == "openfx" || typ == "adobe",
+        PluginPlatform::Windows => matches!(typ, "openfx" | "adobe" | "jianying"),
         PluginPlatform::Macos => typ == "openfx" || typ == "adobe" || typ == "finalcut",
     }
 }
@@ -655,6 +656,7 @@ fn nightly_artifact_name_for_plugin_on_platform(
         ("adobe", PluginPlatform::Windows) => Some("GyroflowNiyien-Adobe-windows"),
         ("adobe", PluginPlatform::Macos) => Some("GyroflowNiyien-Adobe-macos-zip"),
         ("finalcut", PluginPlatform::Macos) => Some(FINALCUT_ARTIFACT_NAME),
+        ("jianying", PluginPlatform::Windows) => Some("GyroflowNiyien-Jianying-windows"),
         _ => None,
     }
 }
@@ -687,6 +689,7 @@ fn plugin_package_for_platform(
             "/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/",
         )),
         ("finalcut", PluginPlatform::Macos) => Some((FINALCUT_ASSET_NAME, "/Applications/")),
+        ("jianying", PluginPlatform::Windows) => Some((jianying::ASSET_NAME, "")),
         _ => None,
     }
 }
@@ -2008,6 +2011,35 @@ fn replace_finalcut_app_for_test(
     Ok(())
 }
 
+fn install_jianying() -> io::Result<String> {
+    let manifest = crate::distribution::fetch_manifest(false)
+        .map_err(|error| io::Error::new(io::ErrorKind::Other, error))?;
+    let package = manifest.plugins_packages.get(jianying::ASSET_NAME).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::NotFound, "PLUGIN_PACKAGE_UNAVAILABLE:jianying")
+    })?;
+    let base = manifest.plugins_base.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return Err(io::Error::new(io::ErrorKind::NotFound, "PLUGIN_PACKAGE_UNAVAILABLE:jianying"));
+    }
+    let nightly = base.contains("nightly.link");
+    let url = format!("{base}/{}", jianying::ASSET_NAME);
+    jianying::host()?;
+    crate::network::prewarm_url(&url);
+    let content = crate::network::download_plugin("plugin:jianying", &url)
+        .map_err(|error| io::Error::new(io::ErrorKind::Other, error))?;
+    let content = jianying::verify_delivery(content, nightly, &package.sha256, package.size)?;
+    let version = jianying::install_archive(content)?;
+    let latest = LatestPluginInfo {
+        version: latest_version_token(&manifest.plugins_source_ref, &manifest.plugins_source_tag, base),
+        source_ref: manifest.plugins_source_ref,
+        source_tag: manifest.plugins_source_tag,
+        source_base: base.to_owned(),
+        source_mode: manifest.plugins_source_mode,
+    };
+    remember_installed_plugin("jianying", &version, &latest);
+    Ok(version)
+}
+
 pub fn install(typ: &str, plugins_base: String) -> io::Result<String> {
     let platform = current_plugin_platform();
     if !plugin_available_on_platform(typ, platform) {
@@ -2018,6 +2050,9 @@ pub fn install(typ: &str, plugins_base: String) -> io::Result<String> {
     }
     if typ == "finalcut" {
         return install_finalcut(plugins_base);
+    }
+    if typ == "jianying" {
+        return install_jianying();
     }
     // Single base for all plugin downloads — manifest.plugins_base when present,
     // GitHub releases as offline fallback. Filenames are fixed and match
@@ -2237,6 +2272,10 @@ fn nle_detection_paths_for_platform(
 }
 
 pub fn is_nle_installed(typ: &str) -> bool {
+    if typ == "jianying" {
+        return current_plugin_platform() == PluginPlatform::Windows
+            && jianying::host().is_ok();
+    }
     nle_detection_paths_for_platform(
         typ,
         current_plugin_platform(),
@@ -2314,6 +2353,38 @@ pub fn latest_version() -> Option<String> {
 
 pub fn status_json(typ: &str) -> io::Result<String> {
     let latest = latest_plugin_info();
+    if typ == "jianying" {
+        let supported = current_plugin_platform() == PluginPlatform::Windows;
+        let host = supported.then(jianying::host).transpose();
+        let available = supported && crate::distribution::plugin_package_info(jianying::ASSET_NAME).is_some();
+        let installed_version = detect(typ)?;
+        let installed = load_installed_plugin_info(typ, &installed_version);
+        let source_changed = source_changed(&installed, &latest);
+        let update_available = available && matches!(&host, Ok(Some(_)))
+            && (installed_version.is_empty() || source_changed
+                || compare_plugin_versions(&latest.version, &installed_version) == Ordering::Greater);
+        let detail = match &host {
+            Ok(Some(host)) => format!("Jianying {}", host.version),
+            Ok(None) => "Jianying on macOS and Linux has not been verified".to_owned(),
+            Err(error) => error.to_string(),
+        };
+        let state = if !supported { "unsupported" }
+            else if host.is_err() { "host_missing" }
+            else if !available { "unavailable" }
+            else if installed_version.is_empty() { "not_installed" }
+            else if update_available { "update_available" }
+            else { "installed" };
+        return serde_json::to_string(&PluginStatus {
+            typ: typ.to_owned(), installed_version: installed_version.clone(),
+            installed_source_ref: installed.source_ref, installed_source_base: installed.source_base,
+            latest_version: latest.version.clone(), latest_source_ref: latest.source_ref.clone(),
+            latest_source_tag: latest.source_tag.clone(), latest_source_base: latest.source_base.clone(),
+            latest_source_mode: latest.source_mode.clone(), latest_label: latest_display_label(&latest),
+            source_changed, update_available,
+            is_latest: available && !update_available && !installed_version.is_empty(),
+            state: state.to_owned(), repair_required: false, detail,
+        }).map_err(|error| io::Error::new(io::ErrorKind::Other, error));
+    }
     if typ == "finalcut" && current_plugin_platform() == PluginPlatform::Macos {
         let detection = detect_finalcut(&latest.version)?;
         let installed = load_installed_plugin_info(typ, &detection.version);
@@ -2394,6 +2465,9 @@ pub fn status_json(typ: &str) -> io::Result<String> {
 pub fn detect(typ: &str) -> io::Result<String> {
     if !plugin_available_on_platform(typ, current_plugin_platform()) {
         return Ok(String::new());
+    }
+    if typ == "jianying" {
+        return jianying::installed_version();
     }
     let path = get_path(typ);
     ::log::info!(

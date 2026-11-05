@@ -1818,6 +1818,14 @@ class Api:
                                 f"⚠ {len(tried_names)} 个 artifact name 都没有未过期的 run, "
                                 f"global_plugins_base 留空(docs 将回退到 release-latest)"
                             )
+            if plugin_mode == "release" and plugin_tag != str(current_envs.get("NIYIEN_PLUGINS_TAG", "")).strip():
+                plugin_dir_tag = self._resolve_plugin_bundle_tag_for_source_ref(
+                    cfg=cfg,
+                    vercel_envs=current_envs,
+                    current_tag=plugin_dir_tag,
+                    target_source_ref=plugin_tag,
+                )
+                mapping["NIYIEN_PLUGIN_RELEASE_TAG"] = plugin_dir_tag
             if plugin_mode == "artifact":
                 target_plugin_source_ref = (
                     f"actions-run-{int(plugin_run_id)}" if int(plugin_run_id or 0) > 0 else ""
@@ -1890,7 +1898,7 @@ class Api:
         client_secret = self._get_publish_secret("PAN123_CLIENT_SECRET", vercel_envs=vercel_envs, cfg=cfg)
         root_id = self._pan123_releases_root_id(cfg=cfg, vercel_envs=vercel_envs)
         if not (client_id and client_secret and root_id):
-            raise RuntimeError("artifact 模式需要 PAN123 凭据来确认对应的 plugin bundle")
+            raise RuntimeError("切换插件来源需要 PAN123 凭据来确认对应的 plugin bundle")
         client = Pan123Client(client_id, client_secret, proxy_url=cfg.get("network_proxy", ""))
         bundles = self._list_plugin_bundle_sources(client, root_id)
         return self._select_plugin_bundle_tag_for_source_ref(
@@ -1920,14 +1928,61 @@ class Api:
             }
             files_missing = [name for name in EXPECTED_PLUGIN_FILENAMES if name not in file_names]
             manifest, manifest_error = self._read_plugin_bundle_manifest(client, entries)
+            declared_files = [str(item.get("path", "")) for item in manifest.get("files", []) if isinstance(item, dict)]
+            files_missing.extend(name for name in declared_files if name not in file_names and name not in files_missing)
             bundles.append({
                 "tag": tag,
                 "plugin_source_ref": str(manifest.get("plugin_source_ref", "")).strip(),
                 "complete": not files_missing,
                 "files_missing": files_missing,
                 "manifest_error": manifest_error,
+                "plugins_packages": self._plugin_packages_from_manifest(manifest),
             })
         return bundles
+
+    @staticmethod
+    def _plugin_packages_from_manifest(manifest: dict) -> dict:
+        packages = {}
+        for item in manifest.get("files", []):
+            if not isinstance(item, dict):
+                continue
+            name, sha, size = item.get("path"), item.get("sha256"), item.get("size")
+            if name not in EXPECTED_PLUGIN_ASSETS or not isinstance(sha, str):
+                continue
+            if len(sha) != 64 or any(c not in "0123456789abcdefABCDEF" for c in sha):
+                continue
+            if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
+                continue
+            packages[name] = {"sha256": sha.lower(), "size": size}
+        return packages
+
+    @staticmethod
+    def _plugin_packages_env(summary: dict) -> str:
+        import json as _json
+        return _json.dumps({
+            "plugin_tag": summary["plugin_tag"],
+            "plugin_source_ref": summary.get("plugin_source_ref", ""),
+            "global_plugins_base": summary.get("global_plugins_base", ""),
+            "packages": summary.get("plugins_packages", {}),
+        }, separators=(",", ":"))
+
+    def _plugin_packages_for_bundle(self, cfg: dict, envs: dict, tag: str, source_ref: str) -> dict:
+        import json as _json
+        try:
+            stored = _json.loads(envs.get("NIYIEN_PLUGINS_PACKAGES_JSON", "{}"))
+        except (TypeError, ValueError):
+            stored = {}
+        if isinstance(stored, dict) and stored.get("plugin_tag") == tag and stored.get("plugin_source_ref") == source_ref:
+            return stored.get("packages", {})
+        client_id = self._get_publish_secret("PAN123_CLIENT_ID", vercel_envs=envs, cfg=cfg)
+        client_secret = self._get_publish_secret("PAN123_CLIENT_SECRET", vercel_envs=envs, cfg=cfg)
+        root_id = self._pan123_releases_root_id(cfg=cfg, vercel_envs=envs)
+        if not (client_id and client_secret and root_id and tag and source_ref):
+            return {}
+        client = Pan123Client(client_id, client_secret, proxy_url=cfg.get("network_proxy", ""))
+        bundle = next((item for item in self._list_plugin_bundle_sources(client, root_id)
+                       if item["tag"] == tag and item["plugin_source_ref"] == source_ref and item["complete"]), None)
+        return bundle["plugins_packages"] if bundle else {}
 
     def _read_plugin_bundle_manifest(self, client: Pan123Client, entries: list[dict]) -> tuple[dict, str]:
         manifest_entry = next(
@@ -2044,6 +2099,10 @@ class Api:
             if plugin_release_tag:
                 plugins_source_ref = plugin_release_tag
                 plugins_source_tag = plugin_release_tag
+                global_plugins_base = (
+                    f"https://github.com/{plugin_owner}/{plugin_repo}/releases/download/{plugin_release_tag}/"
+                )
+        plugin_packages = self._plugin_packages_for_bundle(cfg, envs, plugin_dir_tag, plugins_source_ref) if plugin_mode_norm else None
         changed_entries = 0
         for entry in versions:
             if not isinstance(entry, dict):
@@ -2063,6 +2122,9 @@ class Api:
                 entry["lens_sha256"] = lens_sha
                 entry_changed = True
             # Plugin
+            if plugin_packages is not None and entry.get("plugins_packages") != plugin_packages:
+                entry["plugins_packages"] = plugin_packages
+                entry_changed = True
             if plugin_mode_norm and entry.get("plugins_source_mode") != plugin_mode_norm:
                 entry["plugins_source_mode"] = plugin_mode_norm
                 entry_changed = True
@@ -2078,13 +2140,6 @@ class Api:
             if plugins_source_tag and entry.get("plugins_source_tag") != plugins_source_tag:
                 entry["plugins_source_tag"] = plugins_source_tag
                 entry_changed = True
-            # Mode switched away from artifact → strip stale nightly.link state
-            # so the docs Global branch falls back to the release-latest base
-            # instead of pinning to a stale run.
-            if plugin_mode_norm == "release":
-                if entry.get("global_plugins_base"):
-                    entry["global_plugins_base"] = ""
-                    entry_changed = True
             if entry_changed:
                 changed_entries += 1
         if not changed_entries:
@@ -2423,6 +2478,7 @@ class Api:
         if finalize_summary.get("plugin_tag"):
             upsert["NIYIEN_PLUGIN_RELEASE_TAG"] = str(finalize_summary["plugin_tag"])
             upsert["NIYIEN_PLUGINS_DISABLED"] = ""
+            upsert["NIYIEN_PLUGINS_PACKAGES_JSON"] = self._plugin_packages_env(finalize_summary)
         if finalize_summary.get("lens_version") is not None:
             upsert["NIYIEN_LENS_VERSION"] = str(finalize_summary["lens_version"])
         if finalize_summary.get("lens_sha256"):
@@ -2781,6 +2837,7 @@ class Api:
         "plugin_tag",
         "plugins_release_tag",
         "global_plugins_base",
+        "plugins_packages",
         "lens_tag",
         "lens_release_tag",
         "lens_version",
@@ -3066,6 +3123,7 @@ class Api:
                 "plugins_source_ref",
                 "plugins_source_tag",
                 "global_plugins_base",
+                "plugins_packages",
             ),
             "sdk": ("global_sdk_base",),
         }
@@ -3082,6 +3140,7 @@ class Api:
                 "NIYIEN_PLUGINS_ARTIFACT_NAME",
                 "NIYIEN_PLUGINS_RUN_ID",
                 "NIYIEN_PLUGIN_RELEASE_TAG",
+                "NIYIEN_PLUGINS_PACKAGES_JSON",
             ),
             "sdk": ("NIYIEN_SDK_BASE",),
         }
@@ -3112,15 +3171,25 @@ class Api:
                 plugin_tag = str(envs.get("NIYIEN_PLUGINS_TAG", "")).strip()
                 artifact = str(envs.get("NIYIEN_PLUGINS_ARTIFACT_NAME", "")).strip()
                 run_id = str(envs.get("NIYIEN_PLUGINS_RUN_ID", "")).strip()
+                source_ref = f"actions-run-{run_id}" if mode == "artifact" and run_id else plugin_tag if mode == "release" else ""
                 if str(envs.get("NIYIEN_PLUGIN_RELEASE_TAG", "")).strip():
                     preserved["plugin_tag"] = str(envs["NIYIEN_PLUGIN_RELEASE_TAG"]).strip()
+                import json as _json
+                try:
+                    stored = _json.loads(envs.get("NIYIEN_PLUGINS_PACKAGES_JSON", "{}"))
+                except (TypeError, ValueError):
+                    stored = {}
+                if isinstance(stored, dict) and stored.get("plugin_tag") == preserved.get("plugin_tag") and stored.get("plugin_source_ref") == source_ref:
+                    preserved["plugins_packages"] = stored.get("packages", {})
+                    if stored.get("global_plugins_base"):
+                        preserved["global_plugins_base"] = stored["global_plugins_base"]
                 if mode:
                     preserved["plugins_source_mode"] = mode
                 if mode == "release" and plugin_tag:
                     preserved["plugins_release_tag"] = plugin_tag
                     preserved["plugins_source_ref"] = plugin_tag
                     preserved["plugins_source_tag"] = plugin_tag
-                    preserved["global_plugins_base"] = ""
+                    preserved.setdefault("global_plugins_base", "")
                 elif mode == "artifact":
                     if run_id:
                         preserved["plugins_source_ref"] = f"actions-run-{run_id}"
@@ -3427,6 +3496,7 @@ class Api:
                         target["lens_tag"] = str(finalize_summary["lens_tag"])
                     if finalize_summary.get("plugin_tag"):
                         target["plugin_tag"] = str(finalize_summary["plugin_tag"])
+                        target["plugins_packages"] = finalize_summary.get("plugins_packages", {})
                     if finalize_summary.get("lens_release_tag"):
                         target["lens_release_tag"] = str(finalize_summary["lens_release_tag"])
                     if finalize_summary.get("lens_version") is not None:
@@ -3470,6 +3540,7 @@ class Api:
             if finalize_summary.get("plugin_tag"):
                 upsert_map["NIYIEN_PLUGIN_RELEASE_TAG"] = str(finalize_summary["plugin_tag"])
                 upsert_map["NIYIEN_PLUGINS_DISABLED"] = ""
+                upsert_map["NIYIEN_PLUGINS_PACKAGES_JSON"] = self._plugin_packages_env(finalize_summary)
             if finalize_summary.get("lens_version") is not None:
                 upsert_map["NIYIEN_LENS_VERSION"] = str(finalize_summary["lens_version"])
             if finalize_summary.get("lens_sha256"):

@@ -27,6 +27,8 @@ pub struct Manifest {
     #[serde(default)]
     pub plugins_source_tag: String,
     #[serde(default)]
+    pub plugins_packages: BTreeMap<String, PluginPackageRelease>,
+    #[serde(default)]
     pub country: String,
     #[serde(default)]
     pub region: String,
@@ -36,6 +38,12 @@ pub struct Manifest {
     pub country_source: String,
     #[serde(default)]
     pub selected_source: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
+pub struct PluginPackageRelease {
+    pub sha256: String,
+    pub size: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
@@ -2499,6 +2507,10 @@ pub fn plugin_source_base() -> String {
         Ok(manifest) if !manifest.plugins_base.is_empty() => manifest.plugins_base,
         Ok(_) | Err(_) => gyroflow_core::settings::get_str("pluginsBase", ""),
     }
+}
+
+pub fn plugin_package_info(filename: &str) -> Option<PluginPackageRelease> {
+    fetch_manifest(false).ok()?.plugins_packages.remove(filename)
 }
 
 pub fn plugin_source_mode() -> String {

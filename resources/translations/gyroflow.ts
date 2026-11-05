@@ -3234,6 +3234,23 @@ Check your network connection and try again later.</source>
 Close and reopen Final Cut Pro before using the effect.</source>
         <translation type="unfinished"></translation>
     </message>
+    <message>
+        <source>Jianying plugin installed.
+Reopen Jianying before using the effect.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Save your work and close Jianying before installing the plugin.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Jianying is not installed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Not available in this release</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>NumberField</name>

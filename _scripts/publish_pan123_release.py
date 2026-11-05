@@ -110,7 +110,10 @@ PLUGIN_ASSET_NAMES = (
     "GyroflowNiyien-Adobe-macos.zip",
     "GyroflowNiyien-OpenFX-linux.zip",
     "GyroflowNiyien-FinalCut-macos.zip",
+    "GyroflowNiyien-Jianying-windows.zip",
 )
+OPTIONAL_PLUGIN_ASSET_NAMES = ("GyroflowNiyien-Jianying-windows.zip",)
+REQUIRED_PLUGIN_ASSET_NAMES = tuple(name for name in PLUGIN_ASSET_NAMES if name not in OPTIONAL_PLUGIN_ASSET_NAMES)
 
 SDK_FILENAMES = (
     "Blackmagic_RAW_SDK_Windows_6.0.0.tar.gz",
@@ -176,7 +179,7 @@ EXPECTED_LENS_FILENAMES: tuple[str, ...] = (
     LENS_METADATA_ASSET_NAME,
     LENS_MANIFEST_ASSET_NAME,
 )
-EXPECTED_PLUGIN_FILENAMES: tuple[str, ...] = tuple(PLUGIN_ASSET_NAMES) + (PLUGIN_MANIFEST_ASSET_NAME,)
+EXPECTED_PLUGIN_FILENAMES: tuple[str, ...] = REQUIRED_PLUGIN_ASSET_NAMES + (PLUGIN_MANIFEST_ASSET_NAME,)
 DEFAULT_SDK_BASE = "https://www.niyien.com/api/sdk"
 DEFAULT_GLOBAL_PLUGINS_BASE = "https://github.com/NiYien/gyroflow-plugins/releases/latest/download"
 DEFAULT_GITHUB_API = "https://api.github.com"
@@ -1225,7 +1228,8 @@ def main() -> int:
                 pan123.releases_root_id, plugin_tag, expected_type=1
             )
             if existing_plugin and bundle_complete(
-                pan123, int(existing_plugin["fileId"]), EXPECTED_PLUGIN_FILENAMES
+                pan123, int(existing_plugin["fileId"]),
+                tuple(entry["path"] for entry in plugin_manifest["files"]) + (PLUGIN_MANIFEST_ASSET_NAME,),
             ):
                 emit_log(f"Plugin bundle reused (skip upload): {plugin_tag}")
                 emit_progress(phase="upload", label=plugin_tag, message="plugin bundle reused")
@@ -1239,11 +1243,13 @@ def main() -> int:
                 if plugin_source.release else ""
             )
             finalize_event["plugin_tag"] = plugin_tag
+            finalize_event["plugins_packages"] = plugin_manifest["plugins_packages"]
             finalize_event["plugins_release_tag"] = plugin_release_tag
             finalize_event["plugin_source_mode"] = plugin_source.mode
             finalize_event["plugin_source_ref"] = plugin_source.source_ref
             finalize_event["plugin_source_tag"] = plugin_source.display_name
             summary_payload["plugin_tag"] = plugin_tag
+            summary_payload["plugins_packages"] = plugin_manifest["plugins_packages"]
             summary_payload["plugins_release_tag"] = plugin_release_tag
             summary_payload["plugin_source_mode"] = plugin_source.mode
             summary_payload["plugin_source_ref"] = plugin_source.source_ref
@@ -1691,6 +1697,8 @@ def resolve_plugin_asset_files(
         for asset_name in PLUGIN_ASSET_NAMES:
             asset = plugin_assets.get(asset_name)
             if not asset:
+                if asset_name in OPTIONAL_PLUGIN_ASSET_NAMES:
+                    continue
                 raise RuntimeError(f"Missing plugin asset {asset_name} in {plugin_source.source_ref}")
             destination = temp_root / "plugins" / asset_name
             expected = {
@@ -1743,6 +1751,9 @@ def resolve_plugin_assets_from_artifacts(
     archives_root = temp_root / "plugin_artifacts" / str(run_id)
     extract_root = temp_root / "plugin_extract" / str(run_id)
     plugin_root = temp_root / "plugins"
+    artifact_names = {str(item.get("name", "")) for item in artifacts}
+    required_assets = set(REQUIRED_PLUGIN_ASSET_NAMES)
+    required_assets.update(name for name in OPTIONAL_PLUGIN_ASSET_NAMES if Path(name).stem in artifact_names)
     artifact_signatures = sorted(
         f"{int(item.get('id', 0) or 0)}:{str(item.get('digest', '')).strip()}:{str(item.get('name', '')).strip()}"
         for item in artifacts
@@ -1789,7 +1800,8 @@ def resolve_plugin_assets_from_artifacts(
     for asset_name in PLUGIN_ASSET_NAMES:
         matches = sorted(extract_root.rglob(asset_name))
         if not matches:
-            missing.append(asset_name)
+            if asset_name in required_assets:
+                missing.append(asset_name)
             continue
         destination = plugin_root / asset_name
         copy_file(matches[0], destination)
@@ -2052,7 +2064,7 @@ def build_plugin_manifest(
     *, plugin_source: PluginSource, downloaded_plugin: list[DownloadedFile]
 ) -> tuple[dict[str, Any], str]:
     downloaded_names = [Path(item.logical_path).name for item in downloaded_plugin]
-    missing = [name for name in PLUGIN_ASSET_NAMES if name not in downloaded_names]
+    missing = [name for name in REQUIRED_PLUGIN_ASSET_NAMES if name not in downloaded_names]
     unexpected = [name for name in downloaded_names if name not in PLUGIN_ASSET_NAMES]
     duplicates = sorted({name for name in downloaded_names if downloaded_names.count(name) > 1})
     if missing or unexpected or duplicates:
@@ -2064,7 +2076,7 @@ def build_plugin_manifest(
         if duplicates:
             problems.append(f"duplicates: {', '.join(duplicates)}")
         raise RuntimeError(
-            "Plugin manifest requires exactly the six expected assets ("
+            "Plugin manifest requires the supported assets ("
             + "; ".join(problems)
             + ")"
         )
@@ -2084,6 +2096,10 @@ def build_plugin_manifest(
             if plugin_source.release else ""
         ),
         "files": file_entries,
+        "plugins_packages": {
+            entry["path"]: {"sha256": entry["sha256"], "size": entry["size"]}
+            for entry in file_entries
+        },
     }
     return manifest, plugin_tag
 
@@ -2204,14 +2220,14 @@ def add_asset_metadata(
 def derive_global_plugins_base(plugin_source: PluginSource) -> str:
     """Compose the GitHub-side global URL base for plugin assets.
 
-    `release` mode → releases/latest/download/.
+    `release` mode → the exact release tag whose package hashes were published.
     `artifact` mode → nightly.link, where the client unwraps the V4 short
     artifact zip wrapper (see src/nle_plugins.rs::install).
     """
     if plugin_source.mode == "release" and plugin_source.owner and plugin_source.repo:
         return (
             f"https://github.com/{quote(plugin_source.owner, safe='')}/"
-            f"{quote(plugin_source.repo, safe='')}/releases/latest/download/"
+            f"{quote(plugin_source.repo, safe='')}/releases/download/{quote(plugin_source.source_ref, safe='')}/"
         )
     if (
         plugin_source.mode == "artifact"

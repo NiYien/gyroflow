@@ -14,9 +14,11 @@ MenuItem {
     property var openfx_status: ({});
     property var adobe_status: ({});
     property var finalcut_status: ({});
+    property var jianying_status: ({});
     property string initiatedInstallType: "";
     readonly property bool adobeSupported: Qt.platform.os !== "linux";
     readonly property bool finalcutSupported: Qt.platform.os === "osx";
+    readonly property bool jianyingSupported: Qt.platform.os === "windows";
 
     Component.onCompleted: {
         refreshStatuses();
@@ -25,6 +27,7 @@ MenuItem {
         controller.nle_plugins("status", "openfx");
         if (root.adobeSupported) controller.nle_plugins("status", "adobe");
         if (root.finalcutSupported) controller.nle_plugins("status", "finalcut");
+        if (root.jianyingSupported) controller.nle_plugins("status", "jianying");
     }
     function parseStatus(result: string): var {
         try {
@@ -36,6 +39,7 @@ MenuItem {
     function statusFor(type: string): var {
         if (type === "openfx") return openfx_status;
         if (type === "adobe") return adobe_status;
+        if (type === "jianying") return jianying_status;
         return finalcut_status;
     }
     function installedVersion(type: string): string {
@@ -128,6 +132,8 @@ MenuItem {
                     adobe_status = status;
                 } else if (status.typ === "finalcut") {
                     finalcut_status = status;
+                } else if (status.typ === "jianying") {
+                    jianying_status = status;
                 }
             }
             if (command == "install") {
@@ -143,6 +149,8 @@ MenuItem {
                         messageBox(Modal.Error, qsTr("The Final Cut App was installed, but its Motion template could not be verified.\nClose Final Cut Pro and Motion, then click Repair again."), [ { text: qsTr("Ok"), accent: true } ]);
                     } else if (root.initiatedInstallType === "finalcut" && (result.includes("code signature") || result.includes("Gatekeeper"))) {
                         messageBox(Modal.Error, qsTr("The downloaded Final Cut integration could not be verified as trusted. No App was installed.\nCheck your network connection and try again later."), [ { text: qsTr("Ok"), accent: true } ]);
+                    } else if (result.includes("PLUGIN_PACKAGE_UNAVAILABLE:jianying")) {
+                        messageBox(Modal.Error, qsTr("Not available in this release"), [ { text: qsTr("Ok"), accent: true } ]);
                     } else if (result.includes("PLUGIN_MANUAL_INSTALL_REQUIRED:")) {
                         const source = result.split("PLUGIN_MANUAL_INSTALL_REQUIRED:").pop().split("|")[0];
                         const mb = messageBox(Modal.Error, qsTr("Automatic installation could not be completed. Open Terminal and run the following command:"), [ { text: qsTr("Ok"), accent: true } ]);
@@ -154,7 +162,7 @@ MenuItem {
                         // Sentinel from nle_plugins.rs copy_files: the elevated copy failed,
                         // most likely because the host editor has the plugin file loaded.
                         // Host app names are static per plugin type by design (no process detection).
-                        const names = result.includes("PLUGIN_COPY_BLOCKED:adobe")? "Premiere Pro / After Effects / Media Encoder" : "DaVinci Resolve / VEGAS";
+                        const names = result.includes("PLUGIN_COPY_BLOCKED:jianying")? "剪映" : result.includes("PLUGIN_COPY_BLOCKED:adobe")? "Premiere Pro / After Effects / Media Encoder" : "DaVinci Resolve / VEGAS";
                         messageBox(Modal.Error, qsTr("Unable to install the plugin because the plugin file is in use.\nIf %1 is currently running, please close it and then click install again.").arg(names), [ { text: qsTr("Ok"), accent: true } ]);
                     } else if (result.includes("Failed to copy files from ") && result.includes("PermissionDenied")) {
                         const parts = result.split("Failed to copy files from \\\"").pop().split("\\\" to \\\"");
@@ -174,11 +182,45 @@ MenuItem {
                     }
                 } else if (root.loader && root.initiatedInstallType === "finalcut") {
                     messageBox(Modal.Success, qsTr("Final Cut integration installed.\nClose and reopen Final Cut Pro before using the effect."), [ { text: qsTr("Ok"), accent: true } ]);
+                } else if (root.loader && root.initiatedInstallType === "jianying") {
+                    messageBox(Modal.Success, qsTr("Jianying plugin installed.\nReopen Jianying before using the effect."), [ { text: qsTr("Ok"), accent: true } ]);
                 }
                 refreshStatuses();
                 root.loader = false;
                 root.initiatedInstallType = "";
             }
+        }
+    }
+
+    Row {
+        objectName: "jianyingPluginInstallRow";
+        visible: root.jianyingSupported;
+        BasicText {
+            text: pluginVersionText("jianying", "剪映");
+            textFormat: Text.StyledText;
+            anchors.verticalCenter: parent.verticalCenter;
+        }
+        LinkButton {
+            objectName: "jianyingPluginInstallButton";
+            enabled: !root.loader;
+            visible: needsUpdate("jianying");
+            text: installedVersion("jianying")? qsTr("Update") : qsTr("Install");
+            leftPadding: 7 * dpiScale;
+            rightPadding: 7 * dpiScale;
+            onClicked: {
+                messageBox(Modal.Info, qsTr("Save your work and close Jianying before installing the plugin."), [ { text: qsTr("Install"), accent: true, clicked: () => {
+                    root.loader = true;
+                    root.initiatedInstallType = "jianying";
+                    controller.nle_plugins("install", "jianying");
+                } }, { text: qsTr("Cancel") } ]);
+            }
+            anchors.verticalCenter: parent.verticalCenter;
+        }
+        BasicText {
+            visible: jianying_status.state === "host_missing" || jianying_status.state === "unavailable";
+            text: jianying_status.state === "host_missing"? qsTr("Jianying is not installed") : qsTr("Not available in this release");
+            leftPadding: 7 * dpiScale;
+            anchors.verticalCenter: parent.verticalCenter;
         }
     }
 

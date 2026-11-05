@@ -3548,6 +3548,24 @@ Close and reopen Final Cut Pro before using the effect.</source>
         <translation>Final Cut 連携をインストールしました。
 エフェクトを使用する前に Final Cut Pro を終了して再度開いてください。</translation>
     </message>
+    <message>
+        <source>Jianying plugin installed.
+Reopen Jianying before using the effect.</source>
+        <translation>剪映プラグインをインストールしました。
+エフェクトを使用する前に剪映を再起動してください。</translation>
+    </message>
+    <message>
+        <source>Save your work and close Jianying before installing the plugin.</source>
+        <translation>プラグインをインストールする前に、作業を保存して剪映を終了してください。</translation>
+    </message>
+    <message>
+        <source>Jianying is not installed</source>
+        <translation>剪映がインストールされていません</translation>
+    </message>
+    <message>
+        <source>Not available in this release</source>
+        <translation>このリリースでは利用できません</translation>
+    </message>
 </context>
 <context>
     <name>NumberField</name>
