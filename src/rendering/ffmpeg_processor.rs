@@ -846,6 +846,7 @@ impl<'a> FfmpegProcessor<'a> {
             }
 
             // Drain delayed video frames at EOF before deciding where this range ends.
+            // Once the trim range ended, cached frames are past it and must not move the audio boundary.
             if encoding_video && !cancel_flag.load(Relaxed) {
                 let decoder = self.video.decoder.as_mut().ok_or(Error::DecoderNotFound)?;
                 measure(&timing, Stage::Decode, || decoder.send_eof())
