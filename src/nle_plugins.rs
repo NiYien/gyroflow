@@ -127,7 +127,8 @@ fn plugin_available_on_platform(typ: &str, platform: PluginPlatform) -> bool {
     match platform {
         PluginPlatform::Linux => typ == "openfx",
         PluginPlatform::Windows => matches!(typ, "openfx" | "adobe" | "jianying"),
-        PluginPlatform::Macos => typ == "openfx" || typ == "adobe" || typ == "finalcut",
+        PluginPlatform::Macos => matches!(typ, "openfx" | "adobe" | "finalcut")
+            || typ == "jianying" && cfg!(target_arch = "aarch64"),
     }
 }
 
@@ -657,6 +658,7 @@ fn nightly_artifact_name_for_plugin_on_platform(
         ("adobe", PluginPlatform::Macos) => Some("GyroflowNiyien-Adobe-macos-zip"),
         ("finalcut", PluginPlatform::Macos) => Some(FINALCUT_ARTIFACT_NAME),
         ("jianying", PluginPlatform::Windows) => Some("GyroflowNiyien-Jianying-windows"),
+        ("jianying", PluginPlatform::Macos) => Some("GyroflowNiyien-Jianying-macos"),
         _ => None,
     }
 }
@@ -689,7 +691,8 @@ fn plugin_package_for_platform(
             "/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/",
         )),
         ("finalcut", PluginPlatform::Macos) => Some((FINALCUT_ASSET_NAME, "/Applications/")),
-        ("jianying", PluginPlatform::Windows) => Some((jianying::ASSET_NAME, "")),
+        ("jianying", PluginPlatform::Windows) => Some(("GyroflowNiyien-Jianying-windows.zip", "")),
+        ("jianying", PluginPlatform::Macos) => Some(("GyroflowNiyien-Jianying-macos.zip", "")),
         _ => None,
     }
 }
@@ -2273,8 +2276,7 @@ fn nle_detection_paths_for_platform(
 
 pub fn is_nle_installed(typ: &str) -> bool {
     if typ == "jianying" {
-        return current_plugin_platform() == PluginPlatform::Windows
-            && jianying::host().is_ok();
+        return jianying::platform_supported() && jianying::host().is_ok();
     }
     nle_detection_paths_for_platform(
         typ,
@@ -2354,7 +2356,7 @@ pub fn latest_version() -> Option<String> {
 pub fn status_json(typ: &str) -> io::Result<String> {
     let latest = latest_plugin_info();
     if typ == "jianying" {
-        let supported = current_plugin_platform() == PluginPlatform::Windows;
+        let supported = jianying::platform_supported();
         let host = supported.then(jianying::host).transpose();
         let available = supported && crate::distribution::plugin_package_info(jianying::ASSET_NAME).is_some();
         let installed_version = detect(typ)?;
@@ -2365,10 +2367,11 @@ pub fn status_json(typ: &str) -> io::Result<String> {
                 || compare_plugin_versions(&latest.version, &installed_version) == Ordering::Greater);
         let detail = match &host {
             Ok(Some(host)) => format!("Jianying {}", host.version),
-            Ok(None) => "Jianying on macOS and Linux has not been verified".to_owned(),
+            Ok(None) => "Jianying requires Windows or native Apple Silicon macOS".to_owned(),
             Err(error) => error.to_string(),
         };
         let state = if !supported { "unsupported" }
+            else if host.as_ref().err().map(|e| e.kind()) == Some(io::ErrorKind::Unsupported) { "unsupported_host" }
             else if host.is_err() { "host_missing" }
             else if !available { "unavailable" }
             else if installed_version.is_empty() { "not_installed" }

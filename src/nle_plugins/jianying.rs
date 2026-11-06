@@ -2,11 +2,35 @@
 
 use super::*;
 
+#[cfg(target_os = "macos")]
+mod macos;
+
+#[cfg(not(target_os = "macos"))]
 pub(super) const ASSET_NAME: &str = "GyroflowNiyien-Jianying-windows.zip";
+#[cfg(target_os = "macos")]
+pub(super) const ASSET_NAME: &str = "GyroflowNiyien-Jianying-macos.zip";
 pub(super) const BUNDLE_NAME: &str = "GyroflowJianyingBatch11.ofx.bundle";
 const PLUGIN_ID: &str = "xyz.niyien.gyroflow.jianying.batch11";
+#[cfg(not(target_os = "macos"))]
 const WRAPPER: &str = "Contents/Win64/GyroflowJianyingBatch11.ofx";
+#[cfg(target_os = "macos")]
+const WRAPPER: &str = "Contents/MacOS/GyroflowJianyingBatch11.ofx";
+#[cfg(not(target_os = "macos"))]
 const CORE: &str = "Contents/Win64/gyroflow_ofx.dll";
+#[cfg(target_os = "macos")]
+const CORE: &str = "Contents/MacOS/libgyroflow_ofx.dylib";
+#[cfg(not(target_os = "macos"))]
+const MANIFEST: &str = "Contents/package-manifest.json";
+#[cfg(target_os = "macos")]
+const MANIFEST: &str = "Contents/Resources/package-manifest.json";
+#[cfg(not(target_os = "macos"))]
+const VERSION_FILE: &str = "Contents/version.txt";
+#[cfg(target_os = "macos")]
+const VERSION_FILE: &str = "Contents/Resources/version.txt";
+
+pub(super) fn platform_supported() -> bool {
+    cfg!(target_os = "windows") || cfg!(all(target_os = "macos", target_arch = "aarch64"))
+}
 
 pub(super) struct Host {
     pub version: String,
@@ -20,6 +44,9 @@ fn local_root() -> io::Result<PathBuf> {
 }
 
 pub(super) fn host() -> io::Result<Host> {
+    #[cfg(target_os = "macos")]
+    { return macos::host(); }
+    #[cfg(not(target_os = "macos"))]
     find_host(&local_root()?.join("JianyingPro"))
 }
 
@@ -50,6 +77,9 @@ fn find_host(root: &Path) -> io::Result<Host> {
 }
 
 fn installed_bundle() -> io::Result<PathBuf> {
+    #[cfg(target_os = "macos")]
+    { return Ok(macos::user_root()?.join("User Data/Cache/OFX").join(BUNDLE_NAME)); }
+    #[cfg(not(target_os = "macos"))]
     Ok(local_root()?
         .join("JianyingPro/User Data/Cache/OFX")
         .join(BUNDLE_NAME))
@@ -61,6 +91,14 @@ struct PackageManifest {
     plugin_id: String,
     version: String,
     files: Vec<PackageFile>,
+    #[serde(default)]
+    platform: Option<String>,
+    #[serde(default)]
+    architecture: Option<String>,
+    #[serde(default)]
+    candidate: Option<bool>,
+    #[serde(default)]
+    fragment_sampling_policy: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -72,17 +110,25 @@ struct PackageFile {
 fn validate_bundle(bundle: &Path) -> io::Result<String> {
     let invalid = |message: &str| io::Error::new(io::ErrorKind::InvalidData, message);
     let manifest: PackageManifest = serde_json::from_slice(&std::fs::read(
-        bundle.join("Contents/package-manifest.json"),
+        bundle.join(MANIFEST),
     )?)
     .map_err(|error| invalid(&format!("Invalid Jianying package manifest: {error}")))?;
     if manifest.schema_version != 1
         || manifest.plugin_id != PLUGIN_ID
         || manifest.version.trim().is_empty()
-        || std::fs::read_to_string(bundle.join("Contents/version.txt"))?.trim() != manifest.version
+        || std::fs::read_to_string(bundle.join(VERSION_FILE))?.trim() != manifest.version
     {
         return Err(invalid(
             "Jianying package identity or version does not match",
         ));
+    }
+    #[cfg(target_os = "macos")]
+    if manifest.platform.as_deref() != Some("macos")
+        || manifest.architecture.as_deref() != Some("arm64")
+        || manifest.candidate != Some(false)
+        || manifest.fragment_sampling_policy.as_deref() != Some("core-default")
+    {
+        return Err(invalid("Jianying macOS requires a formal arm64 package using core-default sampling"));
     }
     let mut listed = std::collections::HashSet::new();
     for file in manifest.files {
@@ -106,18 +152,33 @@ fn validate_bundle(bundle: &Path) -> io::Result<String> {
             )));
         }
     }
-    if !listed.contains(WRAPPER) || !listed.contains(CORE) {
+    if !bundle.join(WRAPPER).is_file() || !listed.contains(CORE) {
         return Err(invalid(
             "Jianying package is missing its wrapper or shared OFX core",
         ));
     }
+    #[cfg(not(target_os = "macos"))]
+    if !listed.contains(WRAPPER) {
+        return Err(invalid("Jianying package does not cover its wrapper"));
+    }
     Ok(manifest.version)
+}
+
+fn validate_trusted_bundle(bundle: &Path) -> io::Result<String> {
+    let version = validate_bundle(bundle)?;
+    #[cfg(target_os = "macos")]
+    macos::verify_trust(bundle)?;
+    Ok(version)
 }
 
 pub(super) fn installed_version() -> io::Result<String> {
     let bundle = installed_bundle()?;
-    if bundle.join("Contents/package-manifest.json").is_file() {
-        return match validate_bundle(&bundle) {
+    #[cfg(target_os = "macos")]
+    if let Some(version) = macos::local_candidate_version(&bundle) {
+        return Ok(version);
+    }
+    if bundle.join(MANIFEST).is_file() {
+        return match validate_trusted_bundle(&bundle) {
             Ok(version) => Ok(version),
             Err(error) => {
                 log::warn!(target: "plugin", "[nle jianying] installed package needs repair: {error}");
@@ -162,6 +223,7 @@ pub(super) fn verify_delivery(
     Ok(content)
 }
 
+#[cfg(not(target_os = "macos"))]
 fn ensure_host_closed() -> io::Result<()> {
     let output = Command::new("powershell.exe").args([
         "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
@@ -186,11 +248,18 @@ fn ensure_host_closed() -> io::Result<()> {
 }
 
 fn replace_bundle(staged: &Path, destination: &Path, backup: &Path) -> io::Result<String> {
+    replace_bundle_with(staged, destination, backup, validate_bundle)
+}
+
+fn replace_bundle_with(
+    staged: &Path, destination: &Path, backup: &Path,
+    verify: impl FnOnce(&Path) -> io::Result<String>,
+) -> io::Result<String> {
     let had_previous = destination.exists();
     if had_previous {
         std::fs::rename(destination, backup)?;
     }
-    let result = std::fs::rename(staged, destination).and_then(|()| validate_bundle(destination));
+    let result = std::fs::rename(staged, destination).and_then(|()| verify(destination));
     if let Err(install_error) = &result {
         if destination.exists() {
             std::fs::rename(destination, staged).map_err(|error| {
@@ -217,16 +286,24 @@ fn replace_bundle(staged: &Path, destination: &Path, backup: &Path) -> io::Resul
 
 pub(super) fn install_archive(content: Vec<u8>) -> io::Result<String> {
     let host = host()?;
+    #[cfg(target_os = "macos")]
+    use macos::ensure_host_closed;
     ensure_host_closed()?;
     let cache = host.root.join("User Data/Cache/OFX");
     std::fs::create_dir_all(&cache)?;
     let stage = tempfile::Builder::new()
         .prefix(".gyroflow-jianying-")
         .tempdir_in(&cache)?;
-    zip::ZipArchive::new(Cursor::new(content))?.extract(stage.path())?;
+    let mut archive = zip::ZipArchive::new(Cursor::new(content))?;
+    #[cfg(target_os = "macos")]
+    macos::validate_archive(&mut archive)?;
+    archive.extract(stage.path())?;
     let source = stage.path().join(BUNDLE_NAME);
-    validate_bundle(&source)?;
+    validate_trusted_bundle(&source)?;
+    #[cfg(not(target_os = "macos"))]
     let backup_root = local_root()?.join("Gyroflow/Plugin Backups/jianying");
+    #[cfg(target_os = "macos")]
+    let backup_root = macos::backup_root()?;
     std::fs::create_dir_all(&backup_root)?;
     let backup_dir = tempfile::Builder::new()
         .prefix("previous-")
@@ -234,7 +311,7 @@ pub(super) fn install_archive(content: Vec<u8>) -> io::Result<String> {
         .keep();
     let backup = backup_dir.join(BUNDLE_NAME);
     ensure_host_closed()?;
-    let version = replace_bundle(&source, &cache.join(BUNDLE_NAME), &backup)?;
+    let version = replace_bundle_with(&source, &cache.join(BUNDLE_NAME), &backup, validate_trusted_bundle)?;
     log::info!(target: "plugin", "[nle jianying] installed version={version} host={} backup={}", host.version, backup.display());
     Ok(version)
 }
@@ -245,20 +322,23 @@ mod tests {
 
     fn package(root: &Path, version: &str) -> PathBuf {
         let bundle = root.join(BUNDLE_NAME);
-        std::fs::create_dir_all(bundle.join("Contents/Win64")).unwrap();
+        std::fs::create_dir_all(bundle.join(WRAPPER).parent().unwrap()).unwrap();
+        std::fs::create_dir_all(bundle.join(MANIFEST).parent().unwrap()).unwrap();
         let mut files = Vec::new();
         for (path, contents) in [
             (WRAPPER, "wrapper"),
             (CORE, "core"),
-            ("Contents/version.txt", version),
+            (VERSION_FILE, version),
         ] {
             std::fs::write(bundle.join(path), contents).unwrap();
             files.push(serde_json::json!({"path":path,"sha256":format!("{:x}",Sha256::digest(contents.as_bytes()))}));
         }
         std::fs::write(
-            bundle.join("Contents/package-manifest.json"),
+            bundle.join(MANIFEST),
             serde_json::to_vec(&serde_json::json!({
-                "schema_version":1,"plugin_id":PLUGIN_ID,"version":version,"files":files
+                "schema_version":1,"plugin_id":PLUGIN_ID,"version":version,"files":files,
+                "platform":"macos","architecture":"arm64","candidate":false,
+                "fragment_sampling_policy":"core-default"
             }))
             .unwrap(),
         )

@@ -37,7 +37,9 @@ class JianyingDistributionTests(unittest.TestCase):
             actual = next(item for item in downloads if item.logical_path == JIAN_YING_ASSET)
             self.assertEqual(manifest["plugins_packages"][JIAN_YING_ASSET], {"sha256": actual.sha256, "size": actual.size})
             self.assertEqual(Api._plugin_packages_from_manifest(manifest), manifest["plugins_packages"])
-            legacy, legacy_tag = publish.build_plugin_manifest(plugin_source=self.source(), downloaded_plugin=downloads[:-1])
+            legacy, legacy_tag = publish.build_plugin_manifest(
+                plugin_source=self.source(),
+                downloaded_plugin=[item for item in downloads if item.logical_path != JIAN_YING_ASSET])
             self.assertNotIn(JIAN_YING_ASSET, legacy["plugins_packages"])
             self.assertNotEqual(tag, legacy_tag)
 
@@ -97,6 +99,16 @@ class JianyingDistributionTests(unittest.TestCase):
     def test_global_download_source_is_the_hashed_release_or_run(self):
         self.assertEqual(publish.derive_global_plugins_base(self.source()), "https://github.com/NiYien/gyroflow-plugins/releases/download/v2.2.0/")
         self.assertEqual(publish.derive_global_plugins_base(self.source("artifact")), "https://nightly.link/NiYien/gyroflow-plugins/actions/runs/123/")
+
+    def test_optional_platforms_keep_legacy_sources_usable_independently(self):
+        for selected in ["GyroflowNiyien-Jianying-windows.zip", "GyroflowNiyien-Jianying-macos.zip"]:
+            with self.subTest(selected=selected), tempfile.TemporaryDirectory() as directory:
+                names = (*publish.REQUIRED_PLUGIN_ASSET_NAMES, selected)
+                downloads = self.downloads(Path(directory), names)
+                manifest, _ = publish.build_plugin_manifest(plugin_source=self.source(), downloaded_plugin=downloads)
+                self.assertIn(selected, manifest["plugins_packages"])
+                other = next(name for name in publish.OPTIONAL_PLUGIN_ASSET_NAMES if name != selected)
+                self.assertNotIn(other, manifest["plugins_packages"])
 
     def test_switching_identity_clears_previous_package_metadata(self):
         info = {JIAN_YING_ASSET: {"sha256": "a" * 64, "size": 123}}

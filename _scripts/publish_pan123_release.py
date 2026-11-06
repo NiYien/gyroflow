@@ -111,8 +111,9 @@ PLUGIN_ASSET_NAMES = (
     "GyroflowNiyien-OpenFX-linux.zip",
     "GyroflowNiyien-FinalCut-macos.zip",
     "GyroflowNiyien-Jianying-windows.zip",
+    "GyroflowNiyien-Jianying-macos.zip",
 )
-OPTIONAL_PLUGIN_ASSET_NAMES = ("GyroflowNiyien-Jianying-windows.zip",)
+OPTIONAL_PLUGIN_ASSET_NAMES = ("GyroflowNiyien-Jianying-windows.zip", "GyroflowNiyien-Jianying-macos.zip")
 REQUIRED_PLUGIN_ASSET_NAMES = tuple(name for name in PLUGIN_ASSET_NAMES if name not in OPTIONAL_PLUGIN_ASSET_NAMES)
 
 SDK_FILENAMES = (

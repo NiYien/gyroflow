@@ -361,7 +361,7 @@ class LinuxPublisherContractTests(unittest.TestCase):
         self.assertIn("GyroflowNiyien-OpenFX-linux.zip", publish.PLUGIN_ASSET_NAMES)
         self.assertIn("GyroflowNiyien-FinalCut-macos.zip", publish.PLUGIN_ASSET_NAMES)
         self.assertNotIn("GyroflowNiyien-Adobe-linux.zip", publish.PLUGIN_ASSET_NAMES)
-        self.assertEqual(len(publish.PLUGIN_ASSET_NAMES), 6)
+        self.assertEqual(len(publish.REQUIRED_PLUGIN_ASSET_NAMES), 6)
 
 
 class LinuxPackageProducerTests(unittest.TestCase):

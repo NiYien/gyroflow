@@ -83,9 +83,11 @@ def downloaded(name: str, path: Path) -> publish.DownloadedFile:
 
 
 class FinalCutReleaseContractTests(unittest.TestCase):
-    def test_publish_and_inventory_expect_exactly_six_plugin_assets(self):
-        self.assertEqual(publish.PLUGIN_ASSET_NAMES, EXPECTED_PLUGIN_ASSETS)
-        self.assertEqual(control_center_api.EXPECTED_PLUGIN_ASSETS, EXPECTED_PLUGIN_ASSETS)
+    def test_publish_keeps_six_required_assets_and_optional_jianying_platforms(self):
+        self.assertEqual(publish.REQUIRED_PLUGIN_ASSET_NAMES, EXPECTED_PLUGIN_ASSETS)
+        self.assertEqual(control_center_api.EXPECTED_PLUGIN_ASSETS, publish.PLUGIN_ASSET_NAMES)
+        self.assertEqual(set(publish.OPTIONAL_PLUGIN_ASSET_NAMES), {
+            "GyroflowNiyien-Jianying-windows.zip", "GyroflowNiyien-Jianying-macos.zip"})
         self.assertEqual(
             publish.EXPECTED_PLUGIN_FILENAMES,
             EXPECTED_PLUGIN_ASSETS + (publish.PLUGIN_MANIFEST_ASSET_NAME,),

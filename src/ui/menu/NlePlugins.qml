@@ -18,7 +18,7 @@ MenuItem {
     property string initiatedInstallType: "";
     readonly property bool adobeSupported: Qt.platform.os !== "linux";
     readonly property bool finalcutSupported: Qt.platform.os === "osx";
-    readonly property bool jianyingSupported: Qt.platform.os === "windows";
+    readonly property bool jianyingSupported: (Qt.platform.os === "windows" || Qt.platform.os === "osx") && jianying_status.state !== "unsupported";
 
     Component.onCompleted: {
         refreshStatuses();
@@ -217,8 +217,8 @@ MenuItem {
             anchors.verticalCenter: parent.verticalCenter;
         }
         BasicText {
-            visible: jianying_status.state === "host_missing" || jianying_status.state === "unavailable";
-            text: jianying_status.state === "host_missing"? qsTr("Jianying is not installed") : qsTr("Not available in this release");
+            visible: jianying_status.state === "host_missing" || jianying_status.state === "unavailable" || jianying_status.state === "unsupported_host";
+            text: jianying_status.state === "host_missing"? qsTr("Jianying is not installed") : jianying_status.state === "unsupported_host"? qsTr("This Jianying version is not supported") : qsTr("Not available in this release");
             leftPadding: 7 * dpiScale;
             anchors.verticalCenter: parent.verticalCenter;
         }
