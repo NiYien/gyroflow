@@ -10,6 +10,7 @@
 #include <mutex>
 #include <limits>
 #include <cmath>
+#include "../../vendor/qml-video-rs/src/cpp/HevcParameterSetWorkaround.h"
 
 struct AppleAnalysisRange { double from, to; };
 using SelectFrame = int (*)(void *, int64_t); // -1: stop, 0: skip, 1: retain
@@ -34,8 +35,14 @@ struct Session {
 };
 }
 
+extern "C" bool niyien_apple_analysis_hevc_workaround(const char *codec, const uint8_t *extra,
+    size_t size, bool enhancementSignalled, size_t videoTracks) {
+    return niyien::needsHevcParameterSetWorkaround(codec, extra, size, enhancementSignalled, videoTracks);
+}
+
 extern "C" int niyien_apple_analysis_read(const char *path, const AppleAnalysisRange *ranges,
-    size_t count, SelectFrame select, ReceiveFrame receive, Cancelled cancelled, void *user) {
+    size_t count, SelectFrame select, ReceiveFrame receive, Cancelled cancelled, void *user,
+    bool hevcWorkaround) {
     try {
         if (mdk::abiVersion() != MDK_ABI_VERSION) return 1;
         const AppleAnalysisRange whole{0, std::numeric_limits<double>::max()};
@@ -47,7 +54,7 @@ extern "C" int niyien_apple_analysis_read(const char *path, const AppleAnalysisR
             auto &reader = session.reader;
             if (!reader) return 1;
             reader->setMedia(path);
-            reader->setDecoders(mdk::MediaType::Video, {"VT"});
+            reader->setDecoders(mdk::MediaType::Video, {hevcWorkaround ? "VT:el=0" : "VT"});
             reader->setActiveTracks(mdk::MediaType::Video, {0});
             reader->setActiveTracks(mdk::MediaType::Audio, {});
             reader->setBufferRange(0, 100, false);

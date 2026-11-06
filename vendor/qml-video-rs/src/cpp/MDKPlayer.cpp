@@ -12,6 +12,9 @@
 
 #include "mdk/Player.h"
 #include "mdk/VideoFrame.h"
+#if defined(Q_OS_MACOS)
+#include "HevcParameterSetWorkaround.h"
+#endif
 using namespace mdk;
 
 #if (_WIN32+0)
@@ -314,6 +317,29 @@ void MDKPlayer::setUrl(const QUrl &url, const QString &customDecoder) {
         if (!info.video.empty() && !hardwareDecoderSupports(info.video[0].codec)) {
             player->setDecoders(mdk::MediaType::Video, {"FFmpeg"});
             qDebug2("setUrl") << "Software decoder selected for" << info.video[0].codec.codec << info.video[0].codec.format_name;
+        }
+        return true;
+    });
+#elif defined(Q_OS_MACOS)
+    auto player = m_player.get();
+    const bool autoDecoders = QString(qgetenv("MDK_DECODERS")).trimmed().isEmpty()
+        && (customDecoder.isEmpty() || customDecoder.startsWith("FFmpeg:avformat_options=")
+            || customDecoder.startsWith("headers:"));
+    const auto decoders = defaultDecoderList();
+    player->prepare(0, [player, autoDecoders, decoders](int64_t position, bool *) {
+        if (position < 0 || !autoDecoders) return true;
+        const auto &info = player->mediaInfo();
+        if (info.video.size() != 1) return true;
+        const auto &codec = info.video[0].codec;
+        if (niyien::needsHevcParameterSetWorkaround(codec.codec, codec.extra_data,
+            codec.extra_data_size > 0 ? size_t(codec.extra_data_size) : 0,
+            codec.dovi_profile != 0, info.video.size())) {
+            auto selected = decoders;
+            for (auto &decoder : selected) {
+                if (decoder == "VT" || decoder.rfind("VT:", 0) == 0) decoder += ":el=0";
+            }
+            player->setDecoders(mdk::MediaType::Video, selected);
+            qDebug2("prepare") << "preview.decoder VT:el=0 for single-layer HEVC with multiple PPS";
         }
         return true;
     });

@@ -263,6 +263,7 @@ fn main() {
     xocn::build(&target_os);
     if target_os == "macos" {
         println!("cargo:rerun-if-changed=src/rendering/apple_analysis_decoder.cpp");
+        println!("cargo:rerun-if-changed=vendor/qml-video-rs/src/cpp/HevcParameterSetWorkaround.h");
         cc::Build::new()
             .cpp(true).flag("-std=c++2b").flag("-fno-rtti").warnings(false)
             .include("ext/crm/include/abi")

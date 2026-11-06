@@ -9,6 +9,15 @@ type Callback = dyn FnMut(i64, &mut frame::Video, Option<&mut frame::Video>, &mu
 #[repr(C)]
 struct Range { from: f64, to: f64 }
 unsafe extern "C" {
+    #[cfg(target_os = "macos")]
+    fn niyien_apple_analysis_hevc_workaround(codec: *const c_char, extra: *const u8, size: usize,
+        enhancement_signalled: bool, video_tracks: usize) -> bool;
+    #[cfg(target_os = "macos")]
+    fn niyien_apple_analysis_read(path: *const c_char, ranges: *const Range, count: usize,
+        select: unsafe extern "C" fn(*mut c_void, i64) -> i32,
+        receive: unsafe extern "C" fn(*mut c_void, i64, u32, u32, *const c_char, *const *const u8, *const i32) -> bool,
+        cancelled: unsafe extern "C" fn(*mut c_void) -> bool, user: *mut c_void, hevc_workaround: bool) -> i32;
+    #[cfg(target_os = "ios")]
     fn niyien_apple_analysis_read(path: *const c_char, ranges: *const Range, count: usize,
         select: unsafe extern "C" fn(*mut c_void, i64) -> i32,
         receive: unsafe extern "C" fn(*mut c_void, i64, u32, u32, *const c_char, *const *const u8, *const i32) -> bool,
@@ -20,6 +29,8 @@ pub struct AppleAnalysisDecoder {
     time_base: ffmpeg_next::Rational,
     retain_code: i32,
     size: (u32, u32),
+    #[cfg(target_os = "macos")]
+    hevc_workaround: bool,
     pub sampling: (usize, f64),
     pub callback: Option<Box<Callback>>,
 }
@@ -33,6 +44,18 @@ impl AppleAnalysisDecoder {
         let parameters = stream.parameters();
         let size = unsafe { ((*parameters.as_ptr()).width, (*parameters.as_ptr()).height) };
         if size.0 <= 0 || size.1 <= 0 { return Err(FFmpegError::AsyncDecodingFailed); }
+        #[cfg(target_os = "macos")]
+        let hevc_workaround = {
+            use ffmpeg_next::codec::packet::side_data::Type;
+            let enhancement_signalled = stream.side_data().any(|side| matches!(side.kind(),
+                Type::DOVI_CONF | Type::HEVC_CONF | Type::Stereo3d));
+            let video_tracks = input.streams().filter(|s| s.parameters().medium() == ffmpeg_next::media::Type::Video).count();
+            unsafe {
+                let params = &*parameters.as_ptr();
+                niyien_apple_analysis_hevc_workaround(ffi::avcodec_get_name(params.codec_id),
+                    params.extradata, params.extradata_size.max(0) as usize, enhancement_signalled, video_tracks)
+            }
+        };
         #[cfg(target_os = "ios")]
         let retain_code = unsafe {
             let pixel = ffi::av_pix_fmt_desc_get(std::mem::transmute::<i32, ffi::AVPixelFormat>((*parameters.as_ptr()).format));
@@ -45,7 +68,10 @@ impl AppleAnalysisDecoder {
         };
         #[cfg(not(target_os = "ios"))]
         let retain_code = 1;
-        Ok(Self { url: url.into(), time_base: stream.time_base(), retain_code, size: (size.0 as u32, size.1 as u32), sampling: (1, 0.0), callback: None })
+        Ok(Self { url: url.into(), time_base: stream.time_base(), retain_code, size: (size.0 as u32, size.1 as u32),
+            #[cfg(target_os = "macos")]
+            hevc_workaround,
+            sampling: (1, 0.0), callback: None })
     }
     pub fn start(&mut self, ranges: Vec<(f64, f64)>, cancel: Arc<AtomicBool>) -> Result<(), FFmpegError> {
         let path = CString::new(gyroflow_core::filesystem::url_to_path(&self.url)).map_err(|_| FFmpegError::GPUDecodingFailed)?;
@@ -57,6 +83,14 @@ impl AppleAnalysisDecoder {
         let mut context = Context { callback: self.callback.take(), cancel, sampling: self.sampling, time_base: self.time_base, retain_code: self.retain_code, size: self.size,
             converter: Converter::default(), frame: None, error: None, decoded: 0, retained: 0 };
         ::log::info!(target: "video.codec", "Optical analysis decoder: asynchronous VideoToolbox (MDK)");
+        #[cfg(target_os = "macos")]
+        if self.hevc_workaround {
+            ::log::info!(target: "video.codec", "Using VT:el=0 for single-layer HEVC with multiple PPS");
+        }
+        #[cfg(target_os = "macos")]
+        let result = unsafe { niyien_apple_analysis_read(path.as_ptr(), ranges.as_ptr(), ranges.len(),
+            select, receive, cancelled, &mut context as *mut _ as *mut c_void, self.hevc_workaround) };
+        #[cfg(target_os = "ios")]
         let result = unsafe { niyien_apple_analysis_read(path.as_ptr(), ranges.as_ptr(), ranges.len(),
             select, receive, cancelled, &mut context as *mut _ as *mut c_void) };
         ::log::debug!(target: "sync", "[optical] async VT sampling: decoded={} retained={}", context.decoded, context.retained);

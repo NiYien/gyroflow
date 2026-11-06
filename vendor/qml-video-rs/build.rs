@@ -17,6 +17,7 @@ fn main() {
 
     println!("cargo:rerun-if-changed=src/cpp/MDKPlayer.cpp");
     println!("cargo:rerun-if-changed=src/cpp/MDKPlayer.h");
+    println!("cargo:rerun-if-changed=src/cpp/HevcParameterSetWorkaround.h");
     println!("cargo:rerun-if-changed=src/cpp/VideoTextureNode.cpp");
     println!("cargo:rerun-if-changed=src/cpp/VideoTextureNode.h");
 
