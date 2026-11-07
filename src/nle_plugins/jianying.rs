@@ -18,7 +18,7 @@ const WRAPPER: &str = "Contents/MacOS/GyroflowJianyingBatch11.ofx";
 #[cfg(not(target_os = "macos"))]
 const CORE: &str = "Contents/Win64/gyroflow_ofx.dll";
 #[cfg(target_os = "macos")]
-const CORE: &str = "Contents/MacOS/libgyroflow_ofx.dylib";
+const CORE: &str = "Contents/PlugIns/GyroflowNiyien.ofx.bundle/Contents/MacOS/GyroflowNiyien.ofx";
 #[cfg(not(target_os = "macos"))]
 const MANIFEST: &str = "Contents/package-manifest.json";
 #[cfg(target_os = "macos")]
@@ -322,15 +322,15 @@ mod tests {
 
     fn package(root: &Path, version: &str) -> PathBuf {
         let bundle = root.join(BUNDLE_NAME);
-        std::fs::create_dir_all(bundle.join(WRAPPER).parent().unwrap()).unwrap();
-        std::fs::create_dir_all(bundle.join(MANIFEST).parent().unwrap()).unwrap();
         let mut files = Vec::new();
         for (path, contents) in [
             (WRAPPER, "wrapper"),
             (CORE, "core"),
             (VERSION_FILE, version),
         ] {
-            std::fs::write(bundle.join(path), contents).unwrap();
+            let destination = bundle.join(path);
+            std::fs::create_dir_all(destination.parent().unwrap()).unwrap();
+            std::fs::write(destination, contents).unwrap();
             files.push(serde_json::json!({"path":path,"sha256":format!("{:x}",Sha256::digest(contents.as_bytes()))}));
         }
         std::fs::write(

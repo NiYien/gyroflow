@@ -23,7 +23,7 @@ pub(super) fn local_candidate_version(bundle: &Path) -> Option<String> {
     if manifest.schema_version != 1 || manifest.plugin_id != PLUGIN_ID
         || manifest.platform.as_deref() != Some("macos") || manifest.architecture.as_deref() != Some("arm64")
         || manifest.candidate != Some(true) || manifest.version.trim().is_empty()
-        || !bundle.join(WRAPPER).is_file() || !bundle.join(CORE).is_file()
+        || !bundle.join(WRAPPER).is_file() || !bundle.join("Contents/MacOS/libgyroflow_ofx.dylib").is_file()
         || std::fs::read_to_string(bundle.join(VERSION_FILE)).ok()?.trim() != manifest.version
         || plist_string(&bundle.join("Contents/Info.plist"), "CFBundleIdentifier").ok()? != PLUGIN_ID
         || plist_string(&bundle.join("Contents/Info.plist"), "NiYienPackageVersion").ok()? != manifest.version {
@@ -190,7 +190,7 @@ mod tests {
         std::fs::create_dir_all(bundle.join("Contents/Resources")).unwrap();
         std::fs::create_dir_all(bundle.join("Contents/MacOS")).unwrap();
         std::fs::write(bundle.join(WRAPPER), b"owned wrapper").unwrap();
-        std::fs::write(bundle.join(CORE), b"owned core").unwrap();
+        std::fs::write(bundle.join("Contents/MacOS/libgyroflow_ofx.dylib"), b"owned core").unwrap();
         std::fs::write(bundle.join(VERSION_FILE), "2.1.2-macos-candidate.14\n").unwrap();
         std::fs::write(bundle.join(MANIFEST), serde_json::to_vec(&serde_json::json!({
             "schema_version":1, "plugin_id":PLUGIN_ID, "version":"2.1.2-macos-candidate.14",
