@@ -34,7 +34,7 @@ macro_rules! connect {
     };
 }
 
-/** Gyroflow v1.6.3
+/** Gyroflow v1.7.0
 Video stabilization using gyroscope data
 */
 #[derive(FromArgs)]
