@@ -49,7 +49,7 @@ jobs:
       matrix:
         targets: [
           { os: ubuntu-22.04,   type: linux },
-          { os: macos-14,      type: macos },
+          { os: macos-15,      type: macos },
           { os: windows-2022,  type: windows },
           { os: windows-2022,  type: android },
           { os: macos-26,      type: ios }
@@ -157,7 +157,7 @@ jobs:
           rm -r -force ${{ github.workspace }}/target/release/build/qml-video-rs* -ErrorAction SilentlyContinue
 
       - name: Install Mac certificates
-        if: ${{ matrix.targets.os == 'macos-14' || matrix.targets.os == 'macos-15' }}
+        if: ${{ matrix.targets.type == 'macos' }}
         uses: apple-actions/import-codesign-certs@v3
         with:
           p12-file-base64: ${{ secrets.MACOS_CERTIFICATES }}
