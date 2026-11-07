@@ -102,7 +102,7 @@ pub(super) fn verify_trust(bundle: &Path) -> io::Result<()> {
     if !status.success() { return Err(invalid()); }
     for path in [bundle.to_path_buf(), bundle.join(CORE)] {
         let requirement = format!(
-            "anchor apple generic and certificate leaf[subject.OU] = \"{FINALCUT_TEAM_ID}\" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists");
+            "=anchor apple generic and certificate leaf[subject.OU] = \"{FINALCUT_TEAM_ID}\" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists");
         if !Command::new("/usr/bin/codesign")
             .args(["--verify", "--strict", "--all-architectures", "-R", &requirement])
             .arg(&path).status()?.success() {
@@ -118,7 +118,7 @@ pub(super) fn verify_trust(bundle: &Path) -> io::Result<()> {
         }
     }
     for path in [bundle.join(WRAPPER), bundle.join(CORE)] {
-        if !Command::new("/usr/bin/lipo").arg("-verify_arch").arg("arm64").arg(path).status()?.success() {
+        if !Command::new("/usr/bin/lipo").arg(path).args(["-verify_arch", "arm64"]).status()?.success() {
             return Err(invalid());
         }
     }

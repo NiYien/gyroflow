@@ -431,7 +431,7 @@ mod tests {
         let archive = std::fs::File::open(path).unwrap();
         let temporary = tempfile::tempdir().unwrap();
         zip::ZipArchive::new(archive).unwrap().extract(temporary.path()).unwrap();
-        let version = validate_bundle(&temporary.path().join(BUNDLE_NAME)).unwrap();
+        let version = validate_trusted_bundle(&temporary.path().join(BUNDLE_NAME)).unwrap();
         println!("Validated actual Jianying distribution package: version={version}");
     }
 }
