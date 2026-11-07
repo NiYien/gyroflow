@@ -1081,7 +1081,7 @@ def main() -> int:
         emit_progress(phase="resolve", message="resolve app artifacts", mode="indeterminate")
         app_assets = resolve_app_asset_files(
             github=github,
-            workspace=workspace,
+            app_tag=args.app_tag,
             temp_root=temp_root,
             app_source_mode=args.app_source_mode,
             app_owner=args.app_owner,
@@ -1304,15 +1304,6 @@ def main() -> int:
     return 0
 
 
-def discover_app_assets(workspace: Path) -> dict[str, Path]:
-    found: dict[str, Path] = {}
-    for asset_name in APP_ASSET_NAMES:
-        matches = sorted(workspace.rglob(asset_name))
-        if matches:
-            found[asset_name] = matches[0]
-    return found
-
-
 def missing_required_app_assets(
     app_assets: dict[str, Path],
     required_assets: Iterable[str] = REQUIRED_APP_ASSET_NAMES,
@@ -1334,7 +1325,7 @@ def ensure_required_app_assets(
 def resolve_app_asset_files(
     *,
     github: GitHubClient,
-    workspace: Path,
+    app_tag: str,
     temp_root: Path,
     app_source_mode: str,
     app_owner: str,
@@ -1348,8 +1339,36 @@ def resolve_app_asset_files(
         allowed=APP_SOURCE_MODES,
     )
     if mode == "release":
-        app_assets = discover_app_assets(workspace)
-        ensure_required_app_assets(app_assets, context="release workspace")
+        if not app_owner or not app_repo or not app_tag:
+            raise RuntimeError("Release app source requires app owner, repo, and tag")
+        assets = map_assets(github.get_release(app_owner, app_repo, app_tag))
+        app_root = temp_root / "app"
+        app_assets = {name: app_root / name for name in APP_ASSET_NAMES if name in assets}
+        ensure_required_app_assets(app_assets, context=f"GitHub release {app_tag}")
+        app_root.mkdir(parents=True, exist_ok=True)
+        for asset_name, destination in app_assets.items():
+            asset = assets[asset_name]
+            expected = {
+                "kind": "github_release_asset",
+                "owner": app_owner,
+                "repo": app_repo,
+                "asset_id": int(asset["id"]),
+                "asset_name": asset_name,
+                "updated_at": str(asset["updated_at"]),
+                "source_tag": app_tag,
+                "size": int(asset["size"]),
+                "digest": str(asset.get("digest") or ""),
+            }
+            if is_cached_file_match(destination, expected):
+                emit_log(f"Reusing local app asset from {app_tag}: {asset_name}")
+            else:
+                emit_progress(phase="download", label=asset_name, message=f"download app asset from {app_tag}")
+                github.download_asset(asset["browser_download_url"], destination)
+                if destination.stat().st_size != expected["size"]:
+                    raise RuntimeError(f"GitHub release asset size mismatch: {asset_name}")
+                if expected["digest"].startswith("sha256:") and sha256_file(destination) != expected["digest"][7:]:
+                    raise RuntimeError(f"GitHub release asset SHA256 mismatch: {asset_name}")
+                write_cached_metadata(destination, expected)
         return app_assets
     if not app_owner or not app_repo or app_run_id <= 0:
         raise RuntimeError("Artifact app source requires app owner, repo, and run id")

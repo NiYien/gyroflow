@@ -430,11 +430,13 @@ jobs:
           path: ./release_artifacts
           pattern: gyroflow-niyien*
           merge-multiple: true
+          skip-decompress: true
 
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:
           prerelease: false
+          fail_on_unmatched_files: true
           files: |
             ./release_artifacts/gyroflow-niyien-windows64-setup.exe
             ./release_artifacts/gyroflow-niyien-windows64.zip
