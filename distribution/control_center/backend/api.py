@@ -794,6 +794,24 @@ class Api:
         except Exception as e:
             return _error(e, "list_action_builds")
 
+    def get_action_build_base_version(self, head_sha: str) -> dict:
+        """Read the app version at the selected build's immutable commit."""
+        import base64
+
+        try:
+            if not isinstance(head_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", head_sha):
+                raise ValueError("构建提交 SHA 无效")
+            payload = self._github().get_contents(path="Cargo.toml", ref=head_sha)
+            if payload is None:
+                raise RuntimeError("所选构建的提交中没有 Cargo.toml")
+            text = base64.b64decode(payload["content"]).decode("utf-8")
+            version = cargo_ops.parse_workspace_version(text)
+            if not version or not re.fullmatch(r"\d{1,3}\.\d{1,3}\.\d{1,3}", version):
+                raise RuntimeError("所选构建的 Cargo.toml 中没有有效的 workspace.package.version")
+            return {"ok": True, "version": version}
+        except Exception as e:
+            return _error(e, "get_action_build_base_version")
+
     def _ios_source_eligible(self, run: dict, gh) -> bool:
         return bool(
             run.get("status") == "completed"

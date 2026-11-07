@@ -26,8 +26,16 @@ def read_workspace_version(cargo_path: Path) -> str | None:
     if not cargo_path.exists():
         return None
     try:
-        data = tomllib.loads(cargo_path.read_text(encoding="utf-8"))
+        return parse_workspace_version(cargo_path.read_text(encoding="utf-8"))
     except Exception:
+        return None
+
+
+def parse_workspace_version(text: str) -> str | None:
+    """Read the workspace version from local or GitHub Cargo.toml content."""
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
         return None
     workspace = data.get("workspace")
     if not isinstance(workspace, dict):

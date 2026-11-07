@@ -101,7 +101,7 @@ class ReleaseCenterUiTests(unittest.TestCase):
 
     def test_changelog_reuse_lookup_wired_in_publisher_js(self):
         # Verify the publisher app.js declares the reuse state, fetches
-        # the lookup map at startup, exposes the helper functions that
+        # the lookup map before showing sources, exposes the helper functions that
         # selectSourceItem uses, and binds the manual control buttons.
         app_js = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
 
@@ -144,12 +144,11 @@ class ReleaseCenterUiTests(unittest.TestCase):
         self.assertGreater(func_start, 0)
         body_window = app_js[func_start:func_start + 1000]
         self.assertIn("updateChangelogReuseBar()", body_window)
-        # reload-sources-btn must also refresh the reuse map so concurrent
-        # policy edits show up on the same gesture the publisher already
-        # uses to re-pull source lists.
+        # Loading sources must await the reuse map so first selection and
+        # refresh both see published notes.
         self.assertRegex(
             app_js,
-            r"reload-sources-btn[\s\S]*?loadChangelogReuseMap\(\)",
+            r"async function loadSourceList[\s\S]*?await Promise.all\([\s\S]*?loadChangelogReuseMap\(\)",
         )
 
     def test_lens_tag_has_latest_release_refresh_button(self):
