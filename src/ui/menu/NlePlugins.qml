@@ -63,9 +63,13 @@ MenuItem {
         }
         return isLatest(type)? "#10ee14" : "red";
     }
+    function displayedPluginVersion(version: string): string {
+        const candidate = /^(\d+\.\d+\.\d+)-(?:[A-Za-z0-9_-]+-)?candidate\.(\d+)$/.exec(version);
+        return candidate? candidate[1] + "." + candidate[2] : version;
+    }
     function finalcutStatusText(): string {
         const status = finalcut_status;
-        const version = status.installed_version || "---";
+        const version = displayedPluginVersion(status.installed_version || "---");
         switch (status.state) {
             case "installed":
                 return version + " — " + qsTr("Installed");
@@ -97,7 +101,7 @@ MenuItem {
     }
     function pluginVersionText(type: string, label: string): string {
         return '%1: <b><font color="%2">%3</font></b>'
-            .arg(label).arg(statusColor(type)).arg(installedVersion(type) || "---");
+            .arg(label).arg(statusColor(type)).arg(displayedPluginVersion(installedVersion(type) || "---"));
     }
     function selectFolder(type: string, folder: string) {
         const dialog = Qt.createQmlObject("import QtQuick.Dialogs; FolderDialog {}", root, "selectFolderNle");
@@ -162,7 +166,7 @@ MenuItem {
                         // Sentinel from nle_plugins.rs copy_files: the elevated copy failed,
                         // most likely because the host editor has the plugin file loaded.
                         // Host app names are static per plugin type by design (no process detection).
-                        const names = result.includes("PLUGIN_COPY_BLOCKED:jianying")? "剪映" : result.includes("PLUGIN_COPY_BLOCKED:adobe")? "Premiere Pro / After Effects / Media Encoder" : "DaVinci Resolve / VEGAS";
+                        const names = result.includes("PLUGIN_COPY_BLOCKED:jianying")? qsTr("CapCut") : result.includes("PLUGIN_COPY_BLOCKED:adobe")? "Premiere Pro / After Effects / Media Encoder" : "DaVinci Resolve / VEGAS";
                         messageBox(Modal.Error, qsTr("Unable to install the plugin because the plugin file is in use.\nIf %1 is currently running, please close it and then click install again.").arg(names), [ { text: qsTr("Ok"), accent: true } ]);
                     } else if (result.includes("Failed to copy files from ") && result.includes("PermissionDenied")) {
                         const parts = result.split("Failed to copy files from \\\"").pop().split("\\\" to \\\"");
@@ -183,7 +187,7 @@ MenuItem {
                 } else if (root.loader && root.initiatedInstallType === "finalcut") {
                     messageBox(Modal.Success, qsTr("Final Cut integration installed.\nClose and reopen Final Cut Pro before using the effect."), [ { text: qsTr("Ok"), accent: true } ]);
                 } else if (root.loader && root.initiatedInstallType === "jianying") {
-                    messageBox(Modal.Success, qsTr("Jianying plugin installed.\nReopen Jianying before using the effect."), [ { text: qsTr("Ok"), accent: true } ]);
+                    messageBox(Modal.Success, qsTr("CapCut plugin installed.\nReopen CapCut before using the effect."), [ { text: qsTr("Ok"), accent: true } ]);
                 }
                 refreshStatuses();
                 root.loader = false;
@@ -195,31 +199,30 @@ MenuItem {
     Row {
         objectName: "jianyingPluginInstallRow";
         visible: root.jianyingSupported;
+        width: parent.width;
         BasicText {
-            text: pluginVersionText("jianying", "剪映");
+            width: Math.min(implicitWidth, Math.max(0, parent.width - (capcutAction.visible? capcutAction.width : 0)));
+            elide: Text.ElideRight;
+            text: pluginVersionText("jianying", qsTr("CapCut"));
             textFormat: Text.StyledText;
             anchors.verticalCenter: parent.verticalCenter;
         }
         LinkButton {
+            id: capcutAction;
             objectName: "jianyingPluginInstallButton";
-            enabled: !root.loader;
-            visible: needsUpdate("jianying");
+            enabled: !root.loader && needsUpdate("jianying");
+            visible: !isLatest("jianying");
+            opacity: enabled? 1.0 : 0.45;
             text: installedVersion("jianying")? qsTr("Update") : qsTr("Install");
             leftPadding: 7 * dpiScale;
             rightPadding: 7 * dpiScale;
             onClicked: {
-                messageBox(Modal.Info, qsTr("Save your work and close Jianying before installing the plugin."), [ { text: qsTr("Install"), accent: true, clicked: () => {
+                messageBox(Modal.Info, qsTr("Save your work and close CapCut before installing the plugin."), [ { text: qsTr("Install"), accent: true, clicked: () => {
                     root.loader = true;
                     root.initiatedInstallType = "jianying";
                     controller.nle_plugins("install", "jianying");
                 } }, { text: qsTr("Cancel") } ]);
             }
-            anchors.verticalCenter: parent.verticalCenter;
-        }
-        BasicText {
-            visible: jianying_status.state === "host_missing" || jianying_status.state === "unavailable" || jianying_status.state === "unsupported_host";
-            text: jianying_status.state === "host_missing"? qsTr("Jianying is not installed") : jianying_status.state === "unsupported_host"? qsTr("This Jianying version is not supported") : qsTr("Not available in this release");
-            leftPadding: 7 * dpiScale;
             anchors.verticalCenter: parent.verticalCenter;
         }
     }

@@ -3545,22 +3545,30 @@ Close and reopen Final Cut Pro before using the effect.</source>
 Tutup dan buka kembali Final Cut Pro sebelum menggunakan efek.</translation>
     </message>
     <message>
-        <source>Jianying plugin installed.
-Reopen Jianying before using the effect.</source>
-        <translation>Plugin 剪映 terpasang.
-Buka kembali 剪映 sebelum menggunakan efek.</translation>
+        <source>CapCut plugin installed.
+Reopen CapCut before using the effect.</source>
+        <translation>Plugin CapCut terpasang.
+Buka kembali CapCut sebelum menggunakan efek.</translation>
     </message>
     <message>
-        <source>Save your work and close Jianying before installing the plugin.</source>
-        <translation>Simpan pekerjaan dan tutup 剪映 sebelum memasang plugin.</translation>
+        <source>Save your work and close CapCut before installing the plugin.</source>
+        <translation>Simpan pekerjaan dan tutup CapCut sebelum memasang plugin.</translation>
     </message>
     <message>
-        <source>Jianying is not installed</source>
-        <translation>剪映 belum terpasang</translation>
+        <source>CapCut is not installed</source>
+        <translation>CapCut belum terpasang</translation>
     </message>
     <message>
         <source>Not available in this release</source>
         <translation>Tidak tersedia dalam rilis ini</translation>
+    </message>
+    <message>
+        <source>CapCut</source>
+        <translation>CapCut</translation>
+    </message>
+    <message>
+        <source>This CapCut version is not supported</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>

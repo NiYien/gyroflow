@@ -3547,22 +3547,30 @@ Close and reopen Final Cut Pro before using the effect.</source>
 효과를 사용하기 전에 Final Cut Pro를 종료했다가 다시 여세요.</translation>
     </message>
     <message>
-        <source>Jianying plugin installed.
-Reopen Jianying before using the effect.</source>
-        <translation>剪映 플러그인이 설치되었습니다.
-효과를 사용하기 전에 剪映을 다시 여세요.</translation>
+        <source>CapCut plugin installed.
+Reopen CapCut before using the effect.</source>
+        <translation>CapCut 플러그인이 설치되었습니다.
+효과를 사용하기 전에 CapCut을 다시 여세요.</translation>
     </message>
     <message>
-        <source>Save your work and close Jianying before installing the plugin.</source>
-        <translation>플러그인을 설치하기 전에 작업을 저장하고 剪映을 종료하세요.</translation>
+        <source>Save your work and close CapCut before installing the plugin.</source>
+        <translation>플러그인을 설치하기 전에 작업을 저장하고 CapCut을 종료하세요.</translation>
     </message>
     <message>
-        <source>Jianying is not installed</source>
-        <translation>剪映이 설치되지 않았습니다</translation>
+        <source>CapCut is not installed</source>
+        <translation>CapCut이 설치되지 않았습니다</translation>
     </message>
     <message>
         <source>Not available in this release</source>
         <translation>이 릴리스에서는 사용할 수 없습니다</translation>
+    </message>
+    <message>
+        <source>CapCut</source>
+        <translation>CapCut</translation>
+    </message>
+    <message>
+        <source>This CapCut version is not supported</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
