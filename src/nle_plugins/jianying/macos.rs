@@ -2,7 +2,6 @@
 use super::*;
 
 const HOST_ID: &str = "com.lemon.lvpro";
-const HOST_LIBRARY_SHA256: &str = "8db71da2f613404b3c6ad5edd91d33af4ad877b54aa52dec3730d6cf3922d503";
 
 fn home() -> io::Result<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
@@ -32,19 +31,13 @@ pub(super) fn local_candidate_version(bundle: &Path) -> Option<String> {
     Some(manifest.version)
 }
 
-fn inspect_host(app: &Path, root: PathBuf, expected_library: &str) -> io::Result<Host> {
+fn inspect_host(app: &Path, root: PathBuf) -> io::Result<Host> {
     let info = app.join("Contents/Info.plist");
     if plist_string(&info, "CFBundleIdentifier")? != HOST_ID {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "Unexpected Jianying application identity"));
     }
-    let version = plist_string(&info, "CFBundleShortVersionString")?;
-    if parse_numeric_dotted_version(&version).is_none()
-        || format!("{:x}", Sha256::digest(std::fs::read(app.join("Contents/Frameworks/libcccreator.dylib"))?))
-            != expected_library
-    {
-        return Err(io::Error::new(io::ErrorKind::Unsupported,
-            "This Jianying build has not been verified for the macOS plugin"));
-    }
+    // The version is display-only; the application identity is sufficient for host detection.
+    let version = plist_string(&info, "CFBundleShortVersionString").unwrap_or_default();
     Ok(Host { version, root })
 }
 
@@ -57,7 +50,7 @@ pub(super) fn host() -> io::Result<Host> {
         home()?.join("Applications/VideoFusion-macOS.app")];
     let app = candidates.iter().find(|p| p.is_dir()).ok_or_else(||
         io::Error::new(io::ErrorKind::NotFound, "Jianying is not installed"))?;
-    inspect_host(app, user_root()?, HOST_LIBRARY_SHA256)
+    inspect_host(app, user_root()?)
 }
 
 fn editor_process(line: &str) -> bool {
@@ -158,17 +151,30 @@ mod tests {
     }
 
     #[test]
-    fn host_identity_checks_library_content_not_version_alone() {
+    fn host_detection_only_requires_jianying_identity() {
         let temp = tempfile::tempdir().unwrap();
         let app = temp.path().join("VideoFusion-macOS.app");
-        std::fs::create_dir_all(app.join("Contents/Frameworks")).unwrap();
+        std::fs::create_dir_all(app.join("Contents")).unwrap();
+        for (identity, version, accepted) in [
+            ("com.lemon.lvpro", "11.7.0", true),
+            ("com.lemon.lvpro", "11.8.0", true),
+            ("com.lemon.lvpro", "non-numeric", true),
+            ("com.example.other", "11.8.0", false),
+        ] {
+            std::fs::write(app.join("Contents/Info.plist"), format!(
+                "<?xml version=\"1.0\"?><plist><dict><key>CFBundleIdentifier</key><string>{identity}</string>\
+                 <key>CFBundleShortVersionString</key><string>{version}</string></dict></plist>"
+            )).unwrap();
+            let result = inspect_host(&app, temp.path().to_owned());
+            if accepted {
+                assert_eq!(result.unwrap().version, version);
+            } else {
+                assert_eq!(result.err().unwrap().kind(), io::ErrorKind::InvalidData);
+            }
+        }
         std::fs::write(app.join("Contents/Info.plist"), br#"<?xml version="1.0"?><plist><dict>
-          <key>CFBundleIdentifier</key><string>com.lemon.lvpro</string>
-          <key>CFBundleShortVersionString</key><string>11.7.0</string></dict></plist>"#).unwrap();
-        std::fs::write(app.join("Contents/Frameworks/libcccreator.dylib"), b"owned fixture").unwrap();
-        let expected = format!("{:x}", Sha256::digest(b"owned fixture"));
-        assert_eq!(inspect_host(&app, temp.path().to_owned(), &expected).unwrap().version, "11.7.0");
-        assert!(inspect_host(&app, temp.path().to_owned(), HOST_LIBRARY_SHA256).is_err());
+          <key>CFBundleIdentifier</key><string>com.lemon.lvpro</string></dict></plist>"#).unwrap();
+        assert!(inspect_host(&app, temp.path().to_owned()).unwrap().version.is_empty());
     }
 
     #[test]

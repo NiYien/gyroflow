@@ -64,8 +64,9 @@ MenuItem {
         return isLatest(type)? "#10ee14" : "red";
     }
     function displayedPluginVersion(version: string): string {
-        const candidate = /^(\d+\.\d+\.\d+)-(?:[A-Za-z0-9_-]+-)?candidate\.(\d+)$/.exec(version);
-        return candidate? candidate[1] + "." + candidate[2] : version;
+        const normalized = version.trim().replace(/^[vV](\d)/, "$1").replace(/^(\d+\.\d+\.\d+)\.0$/, "$1");
+        const candidate = /^(\d+\.\d+\.\d+)-(?:[A-Za-z0-9_-]+-)?candidate\.(\d+)$/.exec(normalized);
+        return candidate? candidate[1] + "." + candidate[2] : normalized;
     }
     function finalcutStatusText(): string {
         const status = finalcut_status;
@@ -225,6 +226,15 @@ MenuItem {
             }
             anchors.verticalCenter: parent.verticalCenter;
         }
+    }
+
+    BasicText {
+        objectName: "jianyingPluginUnavailableReason";
+        visible: root.jianyingSupported && (jianying_status.state === "host_missing" || jianying_status.state === "unavailable");
+        width: parent.width;
+        wrapMode: Text.Wrap;
+        opacity: 0.7;
+        text: jianying_status.state === "unavailable"? qsTr("Not available in this release") : qsTr("CapCut is not installed");
     }
 
     Row {
