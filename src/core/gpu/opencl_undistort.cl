@@ -299,6 +299,10 @@ inline float bc2(float x, __global KernelParams *params) {
 ////////////////////////////// EWA (Elliptical Weighted Average) CubicBC sampling //////////////////////////////
 
 DATA_TYPEF sample_input_at(float2 uv, float4 jac, __global const uchar *srcptr, __global KernelParams *params, __global const uchar *drawing, DATA_TYPEF bg) {
+    if ((params->flags & 32768) && params->input_rotation != 0.0f) { // Input rotation uses pixel centres
+        float angle = params->input_rotation * (M_PI_F / 180.0f);
+        uv += rotate_point((float2)(0.5f), angle, (float2)(0.0f), (float2)(0.0f)) - (float2)(0.5f);
+    }
     bool fix_range = (params->flags & 1);
 
     DATA_TYPEF sum = 0;

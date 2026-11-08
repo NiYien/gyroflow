@@ -66,6 +66,11 @@ pub fn sample_input_at(
             );
         }
 
+        if (_flags & 32768) != 0 && params.input_rotation != 0.0 {
+            let angle = params.input_rotation * (core::f32::consts::PI / 180.0);
+            uv += rotate_point(vec2(0.5, 0.5), angle, Vec2::ZERO) - vec2(0.5, 0.5);
+        }
+
         let u = uv.x - offset;
         let v = uv.y - offset;
 
