@@ -277,6 +277,7 @@ deploy *param:
             Copy-Item -LiteralPath "$Env:FFMPEG_DIR\lib\lib$Library.so" -Destination "$ProjectDir\target\android-build\libs\arm64-v8a\" -Force -ErrorAction Stop
         }
         # Copy-Item -Path "$ProjectDir\_deployment\android\src" -Destination "$ProjectDir\target\android-build\" -Recurse -Force
+        Copy-Item -Path "$ProjectDir\target\aarch64-linux-android\$CargoApkProfile\libmdk.so" -Destination "$ProjectDir\target\android-build\libs\arm64-v8a\" -Force -ErrorAction Stop
         Copy-Item -Path "$ProjectDir\target\aarch64-linux-android\$CargoApkProfile\libffmpeg.so" -Destination "$ProjectDir\target\android-build\libs\arm64-v8a\" -Force
         # Copy-Item -Path "$ProjectDir\target\aarch64-linux-android\$CargoApkProfile\libqtav-mediacodec.so" -Destination "$ProjectDir\target\android-build\libs\arm64-v8a\" -Force
         Move-Item -Path "$ProjectDir\target\android-build\libs\arm64-v8a\libgyroflow.so" -Destination "$ProjectDir\target\android-build\libs\arm64-v8a\libgyroflow_arm64-v8a.so" -Force
