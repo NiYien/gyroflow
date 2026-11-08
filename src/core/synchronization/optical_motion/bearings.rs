@@ -54,7 +54,7 @@ pub fn build_window_tracks(raw: &RawWindow, params: &ComputeParams, horizontal: 
 
 /// Unit bearings of points tracked at `track_size`, in the quaternions' frame: the axis flips the renderer applies
 /// (`F·R·F`, F = diag(1, -1, -1)). None for a point the undistortion could not invert
-fn bearings(params: &ComputeParams, track_size: (u32, u32), pts: &[(f32, f32)], frame: &FrameTiming) -> Vec<Option<Vector3<f64>>> {
+pub(super) fn bearings(params: &ComputeParams, track_size: (u32, u32), pts: &[(f32, f32)], frame: &FrameTiming) -> Vec<Option<Vector3<f64>>> {
     undistort_points_to_plane(pts, frame.ts_ms, frame.index, params, track_size)
         .into_iter()
         .map(|p| p.map(|(x, y)| Vector3::new(x as f64, -y as f64, -1.0).normalize()))

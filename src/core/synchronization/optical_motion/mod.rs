@@ -9,6 +9,7 @@
 //! row per window.
 
 pub mod bearings;
+pub(crate) mod cached_rates;
 pub mod config;
 pub mod cost;
 pub mod judge;

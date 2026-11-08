@@ -546,6 +546,16 @@ fn forward_rescore(
     let min_cands = dm::fwd_min_candidates();
     let candidates = dm::forward_candidates(&curves, lattice_ms, nms_ms, top_n);
     if candidates.len() < min_cands {
+        if sync_params.of_method == 2 && dm::verify_enabled() && dm::optical_judge_armed().is_none()
+            && params.scaled_duration_ms <= dm::MIN_VERIFY_SPACING_MS
+            && !dm::long_match_enabled(params.scaled_duration_ms)
+            && matches!(initial_verdict, dm::DeepMatchVerdict::Inconsistent { .. }) {
+            let bounds = (sync_params.initial_offset - sync_params.search_size, sync_params.initial_offset + sync_params.search_size);
+            if let Some(offset_ms) = crate::synchronization::optical_motion::cached_rates::confirm(estimator, ranges, params, bounds, cancel_flag) {
+                dm::record_forward(dm::ForwardOutcome::AngularConfirmed { offset_ms });
+                return;
+            }
+        }
         dm::record_forward(dm::ForwardOutcome::Abstained { reason: "too_few_candidates" });
         ::log::info!(
             target: "sync",

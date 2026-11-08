@@ -183,6 +183,9 @@ pub fn peek_curves() -> Vec<DeepMatchWindowCurve> {
 /// `cost_min` comparison).
 #[derive(Debug, Clone, PartialEq)]
 pub enum ForwardOutcome {
+    /// Independent windows agreed on the change in angular rates extracted
+    /// from the already cached frame pairs.
+    AngularConfirmed { offset_ms: f64 },
     /// A forward-accepted candidate was confirmed by a full rs-sync call.
     /// `offset_ms` is the median of the confirmation's per-window offsets
     /// (LBFGS precision — this is what gets written back).
@@ -1504,6 +1507,8 @@ pub fn forward_floor_decision(
     ForwardFloorVerdict { decision, floor, dispersion, best_ratio }
 }
 
+pub(crate) const MIN_VERIFY_SPACING_MS: f64 = 60_000.0;
+
 /// Pick verification-window positions (video timestamps, ms) by scanning the
 /// loaded chunk gyro's angular-rate series for motion hotspots under the
 /// hypothesis `video_ts = gyro_ts + delta_ms` (same offset convention as
@@ -1569,7 +1574,7 @@ pub fn pick_verify_windows(
         return Vec::new();
     }
     candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-    let spacing = (video_duration_ms / 10.0).max(60_000.0);
+    let spacing = (video_duration_ms / 10.0).max(MIN_VERIFY_SPACING_MS);
     let ok = |pos: f64, picked: &[(f64, f64)]| {
         scanned_centers_ms.iter().all(|c| (c - pos).abs() >= spacing)
             && picked.iter().all(|(p, _)| (p - pos).abs() >= spacing)
@@ -2092,12 +2097,95 @@ pub fn fwd_floor_dispersion_max() -> f64 {
 }
 /// Minimum scored candidates required for usable floor statistics (clamp >=3).
 pub fn fwd_min_candidates() -> usize {
-    (env_f64("GYROFLOW_DEEP_MATCH_FWD_MIN_CANDIDATES", 8.0) as usize).max(3)
+    fwd_min_candidates_or(8)
+}
+pub(super) fn fwd_min_candidates_or(default: usize) -> usize {
+    (env_f64("GYROFLOW_DEEP_MATCH_FWD_MIN_CANDIDATES", default as f64) as usize).max(3)
+}
+
+pub struct OpticalRetrySearch {
+    pub windows_ms: Vec<f64>,
+    pub center_ms: f64,
+    pub radius_ms: f64,
+}
+
+impl OpticalRetrySearch {
+    pub(super) fn within_budget(windows_ms: Vec<f64>, lo: f64, hi: f64) -> Option<Self> {
+        let radius_ms = (hi - lo) / 2.0;
+        (10.0..=fwd_confirm_radius_ms()).contains(&radius_ms)
+            .then_some(Self { windows_ms, center_ms: (lo + hi) / 2.0, radius_ms })
+    }
+}
+
+/// Search all offsets that can cover every verification window, within the
+/// existing forward confirmation budget. Do not narrow a larger domain to fit.
+pub fn optical_retry_search(video_ms: f64, gyro_span: (f64, f64)) -> Option<OpticalRetrySearch> {
+    let window = per_window_ms();
+    let (n, _) = plan_windows(video_ms, candidates_count(), scan_short(), scan_long(), long_min_ms(), window);
+    let windows_ms = window_positions_ms(video_ms, n);
+    if windows_ms.len() < 2 || windows_ms[1] - windows_ms[0] < window { return None; }
+    let lo = windows_ms.last()? + window / 2.0 - gyro_span.1;
+    let hi = windows_ms.first()? - window / 2.0 - gyro_span.0;
+    OpticalRetrySearch::within_budget(windows_ms, lo, hi)
+}
+
+/// Only full-confidence optical valleys can establish the match. Other usable
+/// measurements can veto it, and overlapping observations cannot confirm it twice.
+pub fn optical_retry_offset(rows: impl Iterator<Item = (f64, f64, f64)>, video_ms: f64) -> Option<f64> {
+    independent_retry_offset(rows, video_ms, per_window_ms())
+}
+
+pub(super) fn independent_retry_offset(rows: impl Iterator<Item = (f64, f64, f64)>, video_ms: f64, window_ms: f64) -> Option<f64> {
+    let usable: Vec<_> = rows.filter(|&(ts, offset, conf)| ts.is_finite() && offset.is_finite() && conf >= 0.4).collect();
+    let (lo, hi) = usable.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), row| {
+        (lo.min(row.1), hi.max(row.1))
+    });
+    if hi - lo > drift_tolerance_ms(video_ms, drift_rate_ms_per_min(), drift_floor_ms()) { return None; }
+    let strong: Vec<_> = usable.iter().filter(|r| r.2 >= 1.0).collect();
+    if !strong.iter().enumerate().any(|(i, a)| strong[i + 1..].iter().any(|b| (a.0 - b.0).abs() >= window_ms)) {
+        return None;
+    }
+    let mut offsets: Vec<_> = strong.iter().map(|r| r.1).collect();
+    Some(median_of(&mut offsets))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn optical_retry_requires_a_bounded_common_domain() {
+        let plan = optical_retry_search(28320.0, (1000.0, 35525.0)).unwrap();
+        let lo = plan.center_ms - plan.radius_ms;
+        let hi = plan.center_ms + plan.radius_ms;
+        assert_eq!(plan.windows_ms, vec![5664.0, 11328.0, 16992.0, 22656.0]);
+        assert_eq!(lo, 22656.0 + 1250.0 - 35525.0);
+        assert_eq!(hi, 5664.0 - 1250.0 - 1000.0);
+        assert!(optical_retry_search(28320.0, (0.0, 7200000.0)).is_none());
+        assert!(optical_retry_search(28320.0, (0.0, 1000.0)).is_none());
+        assert!(optical_retry_search(3000.0, (0.0, 30000.0)).is_none());
+    }
+
+    #[test]
+    fn optical_retry_requires_independent_agreeing_optical_points() {
+        let measure = |rows: &[(f64,f64,f64)]| optical_retry_offset(rows.iter().copied(), 28320.0);
+        let a = (5664.0, -3864.0, 1.0);
+        let b = (11328.0, -3866.0, 1.0);
+        assert_eq!(measure(&[a,b,(16992.0,0.0,0.0)]),Some(-3865.0));
+        assert_eq!(measure(&[a,(5800.0,b.1,1.0)]),None);
+        assert_eq!(measure(&[a,(b.0,b.1,0.6)]),None);
+        assert_eq!(measure(&[a,b,(22656.0,-3840.0,0.55)]),None);
+    }
+
+    #[test]
+    fn short_angular_halves_must_both_independently_confirm() {
+        let check = |second, offset, confidence| independent_retry_offset(
+            [(750.0, -1205.0, 1.0), (second, offset, confidence)].into_iter(), 3000.0, 1500.0);
+        assert_eq!(check(2250.0, -1207.0, 1.0), Some(-1206.0));
+        assert_eq!(check(2249.0, -1207.0, 1.0), None);
+        assert_eq!(check(2250.0, -1207.0, 0.99), None);
+        assert_eq!(check(2250.0, -1300.0, 1.0), None);
+    }
 
     #[test]
     fn optical_judge_slots_reset_on_arm_and_take() {

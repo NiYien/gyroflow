@@ -4406,7 +4406,7 @@ impl FindOffsetsRssync<'_> {
             })
     }
 
-    fn collect_points(
+    pub(crate) fn collect_points(
         sync_results: Arc<RwLock<BTreeMap<i64, FrameResult>>>,
         ranges: &[(i64, i64)],
     ) -> Vec<

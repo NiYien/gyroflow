@@ -1048,6 +1048,7 @@ struct DeepMatchState {
     // Posterior-peak verification pass (deep-match-peak-verification):
     // present while a verification probe is in flight for the current chunk.
     verify: Option<DeepMatchVerify>,
+    optical_retry: Option<gyroflow_core::synchronization::deep_match::DeepMatchVerdict>,
 }
 
 // One in-flight verification pass: local-scan probe windows placed at gyro
@@ -16180,6 +16181,7 @@ impl RenderQueue {
             pool_run: false,
             optical_judge: false,
             verify: None,
+            optical_retry: None,
         }
     }
 
@@ -16202,6 +16204,11 @@ impl RenderQueue {
     }
 
     fn finish_deep_match_decode_failure(&mut self, job_id: u32, failure: DeepMatchDecodeFailure) {
+        if self.deep_match_pending.get(&job_id).is_some_and(|state| state.optical_retry.is_some()) {
+            ::log::warn!(target: "sync", "[deep-match] optical retry decode failed: job={job_id} detail={failure:?}");
+            self.finish_deep_match(job_id, &[]);
+            return;
+        }
         let Some(state) = self.deep_match_pending.remove(&job_id) else {
             return;
         };
@@ -16282,6 +16289,16 @@ impl RenderQueue {
         }
 
         if !cancelled {
+            if let Some(original) = self.deep_match_pending.get_mut(&job_id).and_then(|s| s.optical_retry.take()) {
+                let confirmed = stab.as_ref().and_then(|stab| deep_match::optical_retry_offset(
+                    points.iter().map(|p| (p.timestamp_ms, p.offset_ms, p.confidence)),
+                    stab.params.read().get_scaled_duration_ms(),
+                ));
+                ::log::info!(target: "sync", "[deep-match] optical retry finish: job={job_id} confirmed={confirmed:?}");
+                let verdict = confirmed.map_or(original, |offset_ms| deep_match::DeepMatchVerdict::Accepted { offset_ms });
+                self.consume_deep_match_verdict(job_id, stab, verdict);
+                return;
+            }
             // A verification probe reports back through the same divert; its
             // curves are the verification windows, not a chunk scan — hand
             // them to the strict re-decision instead of the verdict logic.
@@ -16304,6 +16321,8 @@ impl RenderQueue {
                 self.consume_deep_match_verdict(job_id, stab, verdict);
                 return;
             }
+            let too_few_for_forward = optical.is_none()
+                && matches!(&forward, Some(deep_match::ForwardOutcome::Abstained { reason: "too_few_candidates" }));
             match optical {
                 Some(JudgeOutcome { mode: JudgeMode::On, verdict }) => {
                     let found = matches!(&verdict, JudgeVerdict::Found { .. });
@@ -16381,6 +16400,10 @@ impl RenderQueue {
                 // Abstained (dispersed floor etc.) or not-run falls through to
                 // the pre-existing posterior verdict path unchanged.
                 match forward {
+                    Some(deep_match::ForwardOutcome::AngularConfirmed { offset_ms }) => {
+                        ::log::info!(target: "sync", "[deep-match] cached angular rates confirmed: offset={offset_ms:.2}ms");
+                        deep_match::DeepMatchVerdict::Accepted { offset_ms }
+                    }
                     Some(deep_match::ForwardOutcome::Confirmed {
                         offset_ms, fwd_ratio, full_cost, spread_ms, windows,
                     }) => {
@@ -16475,7 +16498,8 @@ impl RenderQueue {
                 verdict,
                 deep_match::DeepMatchVerdict::Inconsistent { .. }
                     | deep_match::DeepMatchVerdict::WeakValley { .. }
-            ) && self.try_start_deep_match_verification(job_id, &stab, &curves, &verdict)
+            ) && (self.try_start_deep_match_verification(job_id, &stab, &curves, &verdict)
+                || (too_few_for_forward && self.try_start_optical_retry(job_id, &stab, &verdict)))
             {
                 return;
             }
@@ -16687,9 +16711,47 @@ impl RenderQueue {
         )
     }
 
-    // Launches the local-scan verification probe: one-shot sync params
-    // centered on the hypothesis with a ±(local + T(D)) search radius,
-    // re-armed collector, same sync-only launch path as the chunk probe.
+    fn try_start_optical_retry(
+        &mut self, job_id: u32, stab: &Option<Arc<StabilizationManager>>,
+        verdict: &gyroflow_core::synchronization::deep_match::DeepMatchVerdict,
+    ) -> bool {
+        use gyroflow_core::synchronization::deep_match as dm;
+        if !cfg!(feature = "opencv") || !dm::verify_enabled() || self.is_auto_probe_run(job_id) { return false; }
+        let Some(stab) = stab else { return false; };
+        let (video_ms, playback_ms) = {
+            let p = stab.params.read();
+            (p.get_scaled_duration_ms(), p.duration_ms)
+        };
+        if dm::long_match_enabled(video_ms) { return false; }
+        let search = {
+            let gyro = stab.gyro.read();
+            let (Some((&first, _)), Some((&last, _))) =
+                (gyro.quaternions.first_key_value(), gyro.quaternions.last_key_value()) else { return false; };
+            dm::optical_retry_search(video_ms, (first as f64 / 1000.0, last as f64 / 1000.0))
+        };
+        let Some(search) = search else { return false; };
+        let pattern: Vec<_> = search.windows_ms.iter().map(|w| format!("{}ms", w * playback_ms / video_ms)).collect();
+        ::log::info!(target: "sync", "[deep-match] optical retry: job={job_id} center={:.1}ms radius={:.1}ms windows={pattern:?}",
+            search.center_ms, search.radius_ms);
+        stab.lens.write().sync_settings = Some(serde_json::json!({
+            "initial_offset": search.center_ms / 1000.0,
+            "initial_offset_inv": false,
+            "search_size": search.radius_ms / 1000.0,
+            "calc_initial_fast": false,
+            "max_sync_points": pattern.len(),
+            "time_per_syncpoint": dm::per_window_ms() / 1000.0,
+            "offset_method": 3,
+            "auto_sync_points": false,
+            "custom_sync_pattern": pattern,
+            "do_autosync": true,
+        }));
+        self.deep_match_pending.get_mut(&job_id).unwrap().optical_retry = Some(verdict.clone());
+        self.run_deep_match_verification(job_id, 0);
+        true
+    }
+
+    // The local essential scan verifies one posterior peak; the optical retry
+    // searches the common gyro coverage of multiple windows instead.
     fn launch_deep_match_verify_probe(
         &mut self,
         job_id: u32,
@@ -16725,6 +16787,11 @@ impl RenderQueue {
                 "do_autosync": true,
             }));
         }
+        self.run_deep_match_verification(job_id, windows.len());
+    }
+
+    fn run_deep_match_verification(&mut self, job_id: u32, scan_k: usize) {
+        use gyroflow_core::synchronization::deep_match;
         update_model!(self, job_id, itm {
             itm.status = JobStatus::Queued;
             itm.current_frame = 0;
@@ -16732,7 +16799,7 @@ impl RenderQueue {
             itm.error_string = QString::default();
         });
         // Scan every verification window (no top-K-by-motion truncation).
-        deep_match::arm(windows.len());
+        deep_match::arm(scan_k);
         self.export_project = 2;
         self.batch_sync_job_ids.insert(job_id);
         self.expected_batch_sync_job_ids = std::iter::once(job_id).collect();

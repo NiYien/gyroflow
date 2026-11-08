@@ -200,8 +200,7 @@ pub fn failed(reason: FailReason, init_ms: f64) -> SearchOutcome {
 /// evaluated so far kept for diagnostics. Everything, the full evaluations' own parallelism included, runs on `pool`.
 pub fn run_search(p: &SearchParams, coarse: &(dyn Fn(f64) -> Option<f64> + Sync), full: &(dyn Fn(f64) -> Option<FullEval> + Sync),
                   pool: &rayon::ThreadPool, cancel: &AtomicBool) -> Option<SearchOutcome> {
-    if p.total_pairs < MIN_PAIRS { return Some(failed(FailReason::WindowTooShort, p.init_ms)); }
-    pool.install(|| search(p, coarse, full, cancel))
+    pool.install(|| search(p, coarse, full, cancel, false))
 }
 
 /// A full evaluation as the search uses it: +inf and no measured pairs when the closure gave None or a non-finite cost
@@ -321,8 +320,9 @@ fn near_twin_ms(near_lows: &[Sample], output: (Kind, Sample), c1: &Sample) -> Op
     Some(twin.x - output.1.x)
 }
 
-fn search(p: &SearchParams, coarse: &(dyn Fn(f64) -> Option<f64> + Sync), full: &(dyn Fn(f64) -> Option<FullEval> + Sync),
-          cancel: &AtomicBool) -> Option<SearchOutcome> {
+pub(super) fn search(p: &SearchParams, coarse: &(dyn Fn(f64) -> Option<f64> + Sync), full: &(dyn Fn(f64) -> Option<FullEval> + Sync),
+          cancel: &AtomicBool, refine_competitors: bool) -> Option<SearchOutcome> {
+    if p.total_pairs < MIN_PAIRS { return Some(failed(FailReason::WindowTooShort, p.init_ms)); }
     // Coarse scan
     let intervals = search_intervals(p.init_ms, p.search_ms, p.check_negative);
     let mut xs = Vec::new();
@@ -358,7 +358,9 @@ fn search(p: &SearchParams, coarse: &(dyn Fn(f64) -> Option<f64> + Sync), full: 
     let c1 = evals.refine(xs[c1_grid], C1_REFINE_MS)?;
     let mut far_valleys = Vec::with_capacity(far.len());
     for &i in &far {
-        far_valleys.push(evals.lowest(xs[i], &FAR_PROBES_MS)?);
+        // For a cheap angular-rate evaluation, refine competing peaks to the
+        // same precision as c1. A periodic echo can lie between grid points.
+        far_valleys.push(if refine_competitors { evals.refine(xs[i], FAR_REFINE_MS)? } else { evals.lowest(xs[i], &FAR_PROBES_MS)? });
     }
 
     // Near check: refined c1 and the probes around it as one sequence at NEAR_STEP_MS spacing
@@ -366,10 +368,16 @@ fn search(p: &SearchParams, coarse: &(dyn Fn(f64) -> Option<f64> + Sync), full: 
     for (k, probe) in probes.iter_mut().enumerate() {
         if k != NEAR_PROBES { *probe = evals.eval(c1.x + (k as f64 - NEAR_PROBES as f64) * NEAR_STEP_MS)?; }
     }
-    let near_lows: Vec<Sample> = NEAR_LOW_STEPS.iter().rev().map(|&s| NEAR_PROBES - s).chain(NEAR_LOW_STEPS.iter().map(|&s| NEAR_PROBES + s))
+    let mut near_lows: Vec<Sample> = NEAR_LOW_STEPS.iter().rev().map(|&s| NEAR_PROBES - s).chain(NEAR_LOW_STEPS.iter().map(|&s| NEAR_PROBES + s))
         .filter(|&k| probes[k].measured() && probes[k].cost < probes[k - 1].cost && probes[k].cost < probes[k + 1].cost)
         .map(|k| probes[k])
         .collect();
+    if refine_competitors {
+        for valley in &mut near_lows {
+            let refined = evals.refine(valley.x, NEAR_REFINE_MS)?;
+            if refined.cost < valley.cost { *valley = refined; }
+        }
+    }
 
     // Output valley: the lowest measured valley, c1 first on ties; the others are competitors
     let mut valleys: Vec<(Kind, Sample)> = std::iter::once((Kind::C1, c1))

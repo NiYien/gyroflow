@@ -250,14 +250,18 @@ fn irls_rotation(n: usize, point: impl Fn(usize) -> (Vector3<f64>, Vector3<f64>)
 /// Pure rotation between the two frames of a pair, fitted to all of its bearings without the high-pass, as an
 /// angular velocity in the quaternions' frame (rad/s). None with fewer than MIN_RATE_POINTS bearings or a degenerate fit.
 pub fn pair_rotation_rate(pair: &PairData) -> Option<Vector3<f64>> {
-    if pair.va.len() < MIN_RATE_POINTS { return None; }
     let dt = (pair.b.mid_ms - pair.a.mid_ms) / 1000.0;
     if dt <= 0.0 { return None; }
-    let (rho, _, w, _) = irls_rotation(pair.va.len(), |k| (pair.va[k], pair.vb[k] - pair.va[k]), IRLS_ROUNDS)?;
-    let sw: f64 = w.iter().sum();
-    if sw < MIN_RATE_POINTS as f64 * 0.5 { return None; }
+    let (rho, _, _) = pair_rotation_fit(&pair.va, &pair.vb)?;
     let rate = rho / dt;
     if rate.iter().all(|v| v.is_finite()) { Some(rate) } else { None }
+}
+
+pub(super) fn pair_rotation_fit(va: &[Vector3<f64>], vb: &[Vector3<f64>])
+    -> Option<(Vector3<f64>, Matrix3<f64>, Vec<f64>)> {
+    if va.len() < MIN_RATE_POINTS { return None; }
+    let (rho, h, weights, _) = irls_rotation(va.len(), |i| (va[i], vb[i] - va[i]), IRLS_ROUNDS)?;
+    (weights.iter().sum::<f64>() >= MIN_RATE_POINTS as f64 * 0.5).then_some((rho, h, weights))
 }
 /// Gyro time = video time − offset_ms. None when the window's time span minus the offset is not fully covered by gyro
 /// data. A window without observations has nothing to cover and gives Some(empty). The fits are sorted by (seq, band).

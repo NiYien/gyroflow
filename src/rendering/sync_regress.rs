@@ -693,7 +693,7 @@ fn run_method(stab: &Arc<StabilizationManager>, clip: &Clip, info: &ClipInfo, me
         let stats = dm::take();
         let offsets: Vec<_> = result.lock().as_ref().map(|r| r.0.iter().map(|p| p.1).collect()).unwrap_or_default();
         let mut verdict = short.clone().unwrap_or_else(|| match forward {
-            Some(dm::ForwardOutcome::Confirmed { offset_ms, .. }) => dm::DeepMatchVerdict::Accepted { offset_ms },
+            Some(dm::ForwardOutcome::Confirmed { offset_ms, .. } | dm::ForwardOutcome::AngularConfirmed { offset_ms }) => dm::DeepMatchVerdict::Accepted { offset_ms },
             _ if !curves.is_empty() && dm::posterior_enabled() => dm::decide_posterior(&curves, scanned, gated,
                 info.duration_ms, dm::post_conf_min(), dm::post_ci95_base_ms(), dm::drift_rate_ms_per_min(), dm::drift_floor_ms()),
             _ => dm::evaluate(&offsets, &stats, scanned, gated, dm::spread_max_ms(), dm::cost_ratio_max(), dm::tight_spread_ms(), dm::cost_ratio_tight()),

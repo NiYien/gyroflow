@@ -79,7 +79,14 @@ pub(super) fn validate(
     let started = std::time::Instant::now();
     log::info!(target: "sync", "[deep-match] short-overlap: physical_ms={:.1} window_ms={:.1} windows={} unique_windows={} unique_samples={} duplicated_samples={}",
         params.scaled_duration_ms, sp.time_per_syncpoint, selected.len(), merged.len(), samples.iter().map(Vec::len).sum::<usize>(), duplicates);
-    let verdict = validate_unique(estimator, &merged, samples, &curves, sp, params, cancel).unwrap_or_else(rejected);
+    let verdict = validate_unique(estimator, &merged, samples, &curves, sp, params, cancel).or_else(|| {
+        let &[range] = merged.as_slice() else { return None; };
+        if sp.of_method != 2 || !dm::forward_enabled() || !dm::verify_enabled()
+            || dm::optical_judge_armed().is_some() || cancel.load(Relaxed) { return None; }
+        let bounds = (sp.initial_offset - sp.search_size, sp.initial_offset + sp.search_size);
+        crate::synchronization::optical_motion::cached_rates::confirm_short(estimator, range, params, bounds, cancel)
+            .map(|offset_ms| dm::DeepMatchVerdict::Accepted { offset_ms })
+    }).unwrap_or_else(rejected);
     log::info!(target: "sync", "[deep-match] short-overlap: verdict={:?} elapsed_ms={:.0}", verdict, started.elapsed().as_secs_f64() * 1000.0);
     Some(verdict)
 }
@@ -162,7 +169,7 @@ fn validate_unique(
     }).collect();
     scored.sort_by(|a, b| a.1.total_cmp(&b.1));
     let costs: Vec<_> = scored.iter().map(|x| x.1).collect();
-    let floor = dm::forward_floor_decision(&costs, dm::fwd_accept_ratio(), dm::fwd_floor_dispersion_max(), dm::fwd_min_candidates());
+    let floor = dm::forward_floor_decision(&costs, dm::fwd_accept_ratio(), dm::fwd_floor_dispersion_max(), dm::fwd_min_candidates_or(3));
     log::info!(target: "sync", "[deep-match] short-overlap forward: candidates={} ratio={:.3} dispersion={:.3} decision={:?}", scored.len(), floor.best_ratio, floor.dispersion, floor.decision);
     if cancel.load(Relaxed) || floor.decision != dm::ForwardFloorDecision::Accept { return None; }
     for &(center, cost) in scored.iter().filter(|x| x.1 / floor.floor <= dm::fwd_accept_ratio()).take(dm::fwd_confirm_n()) {
