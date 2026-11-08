@@ -173,7 +173,7 @@ begin
     if not LoadStringFromFile(GetSwitchValue('JSONTEST', ''), JsonText) then
       RaiseException('Failed to read the JSON fixture.');
     try
-      Outcome := ReadManifestSource(String(JsonText));
+      Outcome := ReadManifestSource(Utf8Decode(JsonText));
     except
       Outcome := 'error:' + GetExceptionMessage;
     end;
@@ -270,6 +270,21 @@ end;
         outcome, log = self.run_setup()
         self.assertEqual(outcome, "ok", log)
         self.assertEqual(self.requests, ["/manifest", self.cn_path])
+
+    def test_utf8_manifest_with_multilingual_changelogs_downloads_pinned_package(self):
+        for source, package_path in (("cn", self.cn_path), ("global", self.global_path)):
+            with self.subTest(source=source):
+                self.requests.clear()
+                manifest = json.loads(self.manifest(source))
+                manifest["app"]["changelogs"] = {
+                    "zh": "修复问题。",
+                    "ja": 'バグを修正。\nパスに \\ と "引用符" を含む',
+                    "ru": "Исправлены ошибки",
+                }
+                self.responses["/manifest"] = (200, json.dumps(manifest, ensure_ascii=False).encode("utf-8"))
+                outcome, log = self.run_setup()
+                self.assertEqual(outcome, "ok", log)
+                self.assertEqual(self.requests, ["/manifest", package_path])
 
     def test_global_unwraps_pinned_actions_package(self):
         self.responses["/manifest"] = (200, self.manifest("global"))

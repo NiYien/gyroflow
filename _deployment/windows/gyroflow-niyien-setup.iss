@@ -522,7 +522,7 @@ begin
   DownloadTemporaryFile('{#ManifestUrl}', 'niyien-setup-manifest.json', '', nil);
   if not LoadStringFromFile(ExpandConstant('{tmp}\niyien-setup-manifest.json'), ManifestText) then
     RaiseException('Failed to read the download manifest.');
-  Source := ReadManifestSource(String(ManifestText));
+  Source := ReadManifestSource(Utf8Decode(ManifestText));
   // Only routing comes from the live manifest; both package URLs are build-pinned.
   if Source = 'cn' then
     ActivePackageUrl := '{#PackageCnUrl}'
