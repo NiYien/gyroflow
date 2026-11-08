@@ -66,8 +66,8 @@ struct KernelParams {
 @group(0) @binding(5) @fragment var input_texture: texture_2d<SCALAR>;
 // {/texture_input}
 // {buffer_input}
-@group(0) @binding(5) @fragment var<storage, read> input_buffer: array<SCALAR>;
-@group(0) @binding(6) @fragment var<storage, read_write> output_buffer: array<SCALAR>;
+@group(0) @binding(5) @fragment var<storage, read> input_buffer: array<BUFFER_SCALAR>;
+@group(0) @binding(6) @fragment var<storage, read_write> output_buffer: array<BUFFER_SCALAR>;
 // {/buffer_input}
 
 LENS_MODEL_FUNCTIONS;
@@ -134,6 +134,11 @@ fn read_input_at(uv: vec2<i32>) -> vec4<f32> {
     return vec4<f32>(textureLoad(input_texture, uv, 0));
     // {/texture_input}
     // {buffer_input}
+    // {packed_buffer_pixels}
+    let packed = input_buffer[u32(uv.y * (params.stride / 8) + uv.x)];
+    return vec4<f32>(f32(packed.x & 65535u), f32(packed.x >> 16u), f32(packed.y & 65535u), f32(packed.y >> 16u));
+    // {/packed_buffer_pixels}
+    // {scalar_buffer_pixels}
     let stride_px = params.stride / (bytes_per_pixel / pix_element_count);
     let buffer_pos = u32((uv.y * stride_px) + uv.x * pix_element_count);
     return vec4<f32>(
@@ -142,6 +147,7 @@ fn read_input_at(uv: vec2<i32>) -> vec4<f32> {
         f32(input_buffer[buffer_pos + 2u]),
         f32(input_buffer[buffer_pos + 3u])
     );
+    // {/scalar_buffer_pixels}
     // {/buffer_input}
 }
 
@@ -214,6 +220,100 @@ fn bc2(x_param: f32) -> f32 {
 }
 ////////////////////////////// EWA (Elliptical Weighted Average) CubicBC sampling //////////////////////////////
 
+// Preserve the general sampler's tap order while exposing constant offsets.
+fn sample_lanczos_interior(sx: i32, sy: i32, cx: i32, cy: i32) -> vec4<f32> {
+    let wx0 = coeffs[cx + 0];
+    let wx1 = coeffs[cx + 1];
+    let wx2 = coeffs[cx + 2];
+    let wx3 = coeffs[cx + 3];
+    let wx4 = coeffs[cx + 4];
+    let wx5 = coeffs[cx + 5];
+    let wx6 = coeffs[cx + 6];
+    let wx7 = coeffs[cx + 7];
+    var sum = vec4<f32>(0.0);
+    var row0 = vec4<f32>(0.0);
+    row0 = row0 + draw_pixel(read_input_at(vec2<i32>(sx + 0, sy + 0)), u32(sx + 0), u32(sy + 0), true) * wx0;
+    row0 = row0 + draw_pixel(read_input_at(vec2<i32>(sx + 1, sy + 0)), u32(sx + 1), u32(sy + 0), true) * wx1;
+    row0 = row0 + draw_pixel(read_input_at(vec2<i32>(sx + 2, sy + 0)), u32(sx + 2), u32(sy + 0), true) * wx2;
+    row0 = row0 + draw_pixel(read_input_at(vec2<i32>(sx + 3, sy + 0)), u32(sx + 3), u32(sy + 0), true) * wx3;
+    row0 = row0 + draw_pixel(read_input_at(vec2<i32>(sx + 4, sy + 0)), u32(sx + 4), u32(sy + 0), true) * wx4;
+    row0 = row0 + draw_pixel(read_input_at(vec2<i32>(sx + 5, sy + 0)), u32(sx + 5), u32(sy + 0), true) * wx5;
+    row0 = row0 + draw_pixel(read_input_at(vec2<i32>(sx + 6, sy + 0)), u32(sx + 6), u32(sy + 0), true) * wx6;
+    row0 = row0 + draw_pixel(read_input_at(vec2<i32>(sx + 7, sy + 0)), u32(sx + 7), u32(sy + 0), true) * wx7;
+    sum = sum + row0 * coeffs[cy + 0];
+    var row1 = vec4<f32>(0.0);
+    row1 = row1 + draw_pixel(read_input_at(vec2<i32>(sx + 0, sy + 1)), u32(sx + 0), u32(sy + 1), true) * wx0;
+    row1 = row1 + draw_pixel(read_input_at(vec2<i32>(sx + 1, sy + 1)), u32(sx + 1), u32(sy + 1), true) * wx1;
+    row1 = row1 + draw_pixel(read_input_at(vec2<i32>(sx + 2, sy + 1)), u32(sx + 2), u32(sy + 1), true) * wx2;
+    row1 = row1 + draw_pixel(read_input_at(vec2<i32>(sx + 3, sy + 1)), u32(sx + 3), u32(sy + 1), true) * wx3;
+    row1 = row1 + draw_pixel(read_input_at(vec2<i32>(sx + 4, sy + 1)), u32(sx + 4), u32(sy + 1), true) * wx4;
+    row1 = row1 + draw_pixel(read_input_at(vec2<i32>(sx + 5, sy + 1)), u32(sx + 5), u32(sy + 1), true) * wx5;
+    row1 = row1 + draw_pixel(read_input_at(vec2<i32>(sx + 6, sy + 1)), u32(sx + 6), u32(sy + 1), true) * wx6;
+    row1 = row1 + draw_pixel(read_input_at(vec2<i32>(sx + 7, sy + 1)), u32(sx + 7), u32(sy + 1), true) * wx7;
+    sum = sum + row1 * coeffs[cy + 1];
+    var row2 = vec4<f32>(0.0);
+    row2 = row2 + draw_pixel(read_input_at(vec2<i32>(sx + 0, sy + 2)), u32(sx + 0), u32(sy + 2), true) * wx0;
+    row2 = row2 + draw_pixel(read_input_at(vec2<i32>(sx + 1, sy + 2)), u32(sx + 1), u32(sy + 2), true) * wx1;
+    row2 = row2 + draw_pixel(read_input_at(vec2<i32>(sx + 2, sy + 2)), u32(sx + 2), u32(sy + 2), true) * wx2;
+    row2 = row2 + draw_pixel(read_input_at(vec2<i32>(sx + 3, sy + 2)), u32(sx + 3), u32(sy + 2), true) * wx3;
+    row2 = row2 + draw_pixel(read_input_at(vec2<i32>(sx + 4, sy + 2)), u32(sx + 4), u32(sy + 2), true) * wx4;
+    row2 = row2 + draw_pixel(read_input_at(vec2<i32>(sx + 5, sy + 2)), u32(sx + 5), u32(sy + 2), true) * wx5;
+    row2 = row2 + draw_pixel(read_input_at(vec2<i32>(sx + 6, sy + 2)), u32(sx + 6), u32(sy + 2), true) * wx6;
+    row2 = row2 + draw_pixel(read_input_at(vec2<i32>(sx + 7, sy + 2)), u32(sx + 7), u32(sy + 2), true) * wx7;
+    sum = sum + row2 * coeffs[cy + 2];
+    var row3 = vec4<f32>(0.0);
+    row3 = row3 + draw_pixel(read_input_at(vec2<i32>(sx + 0, sy + 3)), u32(sx + 0), u32(sy + 3), true) * wx0;
+    row3 = row3 + draw_pixel(read_input_at(vec2<i32>(sx + 1, sy + 3)), u32(sx + 1), u32(sy + 3), true) * wx1;
+    row3 = row3 + draw_pixel(read_input_at(vec2<i32>(sx + 2, sy + 3)), u32(sx + 2), u32(sy + 3), true) * wx2;
+    row3 = row3 + draw_pixel(read_input_at(vec2<i32>(sx + 3, sy + 3)), u32(sx + 3), u32(sy + 3), true) * wx3;
+    row3 = row3 + draw_pixel(read_input_at(vec2<i32>(sx + 4, sy + 3)), u32(sx + 4), u32(sy + 3), true) * wx4;
+    row3 = row3 + draw_pixel(read_input_at(vec2<i32>(sx + 5, sy + 3)), u32(sx + 5), u32(sy + 3), true) * wx5;
+    row3 = row3 + draw_pixel(read_input_at(vec2<i32>(sx + 6, sy + 3)), u32(sx + 6), u32(sy + 3), true) * wx6;
+    row3 = row3 + draw_pixel(read_input_at(vec2<i32>(sx + 7, sy + 3)), u32(sx + 7), u32(sy + 3), true) * wx7;
+    sum = sum + row3 * coeffs[cy + 3];
+    var row4 = vec4<f32>(0.0);
+    row4 = row4 + draw_pixel(read_input_at(vec2<i32>(sx + 0, sy + 4)), u32(sx + 0), u32(sy + 4), true) * wx0;
+    row4 = row4 + draw_pixel(read_input_at(vec2<i32>(sx + 1, sy + 4)), u32(sx + 1), u32(sy + 4), true) * wx1;
+    row4 = row4 + draw_pixel(read_input_at(vec2<i32>(sx + 2, sy + 4)), u32(sx + 2), u32(sy + 4), true) * wx2;
+    row4 = row4 + draw_pixel(read_input_at(vec2<i32>(sx + 3, sy + 4)), u32(sx + 3), u32(sy + 4), true) * wx3;
+    row4 = row4 + draw_pixel(read_input_at(vec2<i32>(sx + 4, sy + 4)), u32(sx + 4), u32(sy + 4), true) * wx4;
+    row4 = row4 + draw_pixel(read_input_at(vec2<i32>(sx + 5, sy + 4)), u32(sx + 5), u32(sy + 4), true) * wx5;
+    row4 = row4 + draw_pixel(read_input_at(vec2<i32>(sx + 6, sy + 4)), u32(sx + 6), u32(sy + 4), true) * wx6;
+    row4 = row4 + draw_pixel(read_input_at(vec2<i32>(sx + 7, sy + 4)), u32(sx + 7), u32(sy + 4), true) * wx7;
+    sum = sum + row4 * coeffs[cy + 4];
+    var row5 = vec4<f32>(0.0);
+    row5 = row5 + draw_pixel(read_input_at(vec2<i32>(sx + 0, sy + 5)), u32(sx + 0), u32(sy + 5), true) * wx0;
+    row5 = row5 + draw_pixel(read_input_at(vec2<i32>(sx + 1, sy + 5)), u32(sx + 1), u32(sy + 5), true) * wx1;
+    row5 = row5 + draw_pixel(read_input_at(vec2<i32>(sx + 2, sy + 5)), u32(sx + 2), u32(sy + 5), true) * wx2;
+    row5 = row5 + draw_pixel(read_input_at(vec2<i32>(sx + 3, sy + 5)), u32(sx + 3), u32(sy + 5), true) * wx3;
+    row5 = row5 + draw_pixel(read_input_at(vec2<i32>(sx + 4, sy + 5)), u32(sx + 4), u32(sy + 5), true) * wx4;
+    row5 = row5 + draw_pixel(read_input_at(vec2<i32>(sx + 5, sy + 5)), u32(sx + 5), u32(sy + 5), true) * wx5;
+    row5 = row5 + draw_pixel(read_input_at(vec2<i32>(sx + 6, sy + 5)), u32(sx + 6), u32(sy + 5), true) * wx6;
+    row5 = row5 + draw_pixel(read_input_at(vec2<i32>(sx + 7, sy + 5)), u32(sx + 7), u32(sy + 5), true) * wx7;
+    sum = sum + row5 * coeffs[cy + 5];
+    var row6 = vec4<f32>(0.0);
+    row6 = row6 + draw_pixel(read_input_at(vec2<i32>(sx + 0, sy + 6)), u32(sx + 0), u32(sy + 6), true) * wx0;
+    row6 = row6 + draw_pixel(read_input_at(vec2<i32>(sx + 1, sy + 6)), u32(sx + 1), u32(sy + 6), true) * wx1;
+    row6 = row6 + draw_pixel(read_input_at(vec2<i32>(sx + 2, sy + 6)), u32(sx + 2), u32(sy + 6), true) * wx2;
+    row6 = row6 + draw_pixel(read_input_at(vec2<i32>(sx + 3, sy + 6)), u32(sx + 3), u32(sy + 6), true) * wx3;
+    row6 = row6 + draw_pixel(read_input_at(vec2<i32>(sx + 4, sy + 6)), u32(sx + 4), u32(sy + 6), true) * wx4;
+    row6 = row6 + draw_pixel(read_input_at(vec2<i32>(sx + 5, sy + 6)), u32(sx + 5), u32(sy + 6), true) * wx5;
+    row6 = row6 + draw_pixel(read_input_at(vec2<i32>(sx + 6, sy + 6)), u32(sx + 6), u32(sy + 6), true) * wx6;
+    row6 = row6 + draw_pixel(read_input_at(vec2<i32>(sx + 7, sy + 6)), u32(sx + 7), u32(sy + 6), true) * wx7;
+    sum = sum + row6 * coeffs[cy + 6];
+    var row7 = vec4<f32>(0.0);
+    row7 = row7 + draw_pixel(read_input_at(vec2<i32>(sx + 0, sy + 7)), u32(sx + 0), u32(sy + 7), true) * wx0;
+    row7 = row7 + draw_pixel(read_input_at(vec2<i32>(sx + 1, sy + 7)), u32(sx + 1), u32(sy + 7), true) * wx1;
+    row7 = row7 + draw_pixel(read_input_at(vec2<i32>(sx + 2, sy + 7)), u32(sx + 2), u32(sy + 7), true) * wx2;
+    row7 = row7 + draw_pixel(read_input_at(vec2<i32>(sx + 3, sy + 7)), u32(sx + 3), u32(sy + 7), true) * wx3;
+    row7 = row7 + draw_pixel(read_input_at(vec2<i32>(sx + 4, sy + 7)), u32(sx + 4), u32(sy + 7), true) * wx4;
+    row7 = row7 + draw_pixel(read_input_at(vec2<i32>(sx + 5, sy + 7)), u32(sx + 5), u32(sy + 7), true) * wx5;
+    row7 = row7 + draw_pixel(read_input_at(vec2<i32>(sx + 6, sy + 7)), u32(sx + 6), u32(sy + 7), true) * wx6;
+    row7 = row7 + draw_pixel(read_input_at(vec2<i32>(sx + 7, sy + 7)), u32(sx + 7), u32(sy + 7), true) * wx7;
+    sum = sum + row7 * coeffs[cy + 7];
+    return sum;
+}
+
 fn sample_input_at(uv_param: vec2<f32>, jac: vec4<f32>) -> vec4<f32> {
     var uv = uv_param;
     let fix_range = bool(flags & 1);
@@ -273,22 +373,30 @@ fn sample_input_at(uv_param: vec2<f32>, jac: vec4<f32>) -> vec4<f32> {
         let coeffs_x = i32(ind + ((sx0 & (INTER_TAB_SIZE - 1)) << shift));
         let coeffs_y = i32(ind + ((sy0 & (INTER_TAB_SIZE - 1)) << shift));
 
-        for (var yp: i32 = 0; yp < i32(interpolation); yp = yp + 1) {
-            if (sy + yp >= params.source_rect.y && sy + yp < params.source_rect.y + params.source_rect.w) {
-                var xsum = vec4<f32>(0.0, 0.0, 0.0, 0.0);
-                for (var xp: i32 = 0; xp < i32(interpolation); xp = xp + 1) {
-                    var pixel: vec4<f32>;
-                    if (sx + xp >= params.source_rect.x && sx + xp < params.source_rect.x + params.source_rect.z) {
-                        pixel = read_input_at(vec2<i32>(sx + xp, sy + yp));
-                        pixel = draw_pixel(pixel, u32(sx + xp), u32(sy + yp), true);
-                    } else {
-                        pixel = bg;
+        // The interior sampler is independent of pixel storage and host transport.
+        if (interpolation == 8u
+            && sx >= params.source_rect.x && sy >= params.source_rect.y
+            && sx + 8 <= params.source_rect.x + params.source_rect.z
+            && sy + 8 <= params.source_rect.y + params.source_rect.w) {
+            sum = sample_lanczos_interior(sx, sy, coeffs_x, coeffs_y);
+        } else {
+            for (var yp: i32 = 0; yp < i32(interpolation); yp = yp + 1) {
+                if (sy + yp >= params.source_rect.y && sy + yp < params.source_rect.y + params.source_rect.w) {
+                    var xsum = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+                    for (var xp: i32 = 0; xp < i32(interpolation); xp = xp + 1) {
+                        var pixel: vec4<f32>;
+                        if (sx + xp >= params.source_rect.x && sx + xp < params.source_rect.x + params.source_rect.z) {
+                            pixel = read_input_at(vec2<i32>(sx + xp, sy + yp));
+                            pixel = draw_pixel(pixel, u32(sx + xp), u32(sy + yp), true);
+                        } else {
+                            pixel = bg;
+                        }
+                        xsum = xsum + (pixel * coeffs[coeffs_x + xp]);
                     }
-                    xsum = xsum + (pixel * coeffs[coeffs_x + xp]);
+                    sum = sum + xsum * coeffs[coeffs_y + yp];
+                } else {
+                    sum = sum + bg * coeffs[coeffs_y + yp];
                 }
-                sum = sum + xsum * coeffs[coeffs_y + yp];
-            } else {
-                sum = sum + bg * coeffs[coeffs_y + yp];
             }
         }
     }
@@ -697,6 +805,22 @@ fn undistort_fragment(@builtin(position) position: vec4<f32>) -> @location(0) ve
 // {buffer_input}
 @compute @workgroup_size(8, 8)
 fn undistort_compute(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    // {packed_buffer_pixels}
+    let pixel_stride = u32(params.output_stride / 8);
+    let index = global_id.y * pixel_stride + global_id.x;
+    // The output rectangle is validated as the full physical host buffer.
+    // Logical output dimensions may differ when the host requests a proxy.
+    if (global_id.x >= u32(params.output_rect.z) || global_id.y >= u32(params.output_rect.w)
+        || global_id.x + 1u > pixel_stride || index + 1u > arrayLength(&output_buffer)) {
+        return;
+    }
+    // Preserve the existing fragment pixel-center domain and interpolation.
+    let pixel = undistort(vec2<f32>(global_id.xy) + vec2<f32>(0.5));
+    output_buffer[index] = vec2<u32>(
+        (u32(pixel.x) & 65535u) | ((u32(pixel.y) & 65535u) << 16u),
+        (u32(pixel.z) & 65535u) | ((u32(pixel.w) & 65535u) << 16u));
+    // {/packed_buffer_pixels}
+    // {scalar_buffer_pixels}
     let stride_px = params.output_stride / (bytes_per_pixel / pix_element_count);
     let buffer_pos = (global_id.y * u32(stride_px) + global_id.x * u32(pix_element_count));
     // The dispatch is ceil(size/8) workgroups, so phantom threads exist whenever the
@@ -714,5 +838,6 @@ fn undistort_compute(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (pix_element_count >= 2) { output_buffer[buffer_pos + 1u] = final_px.y; }
     if (pix_element_count >= 3) { output_buffer[buffer_pos + 2u] = final_px.z; }
     if (pix_element_count >= 4) { output_buffer[buffer_pos + 3u] = final_px.w; }
+    // {/scalar_buffer_pixels}
 }
 // {/buffer_input}

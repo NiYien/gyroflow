@@ -3,7 +3,7 @@
 
 use super::wgpu_interop::*;
 use crate::gpu::{BufferSource, Buffers, ProcessingDeviceInfo, ProcessingDeviceType};
-use crate::stabilization::KernelParams;
+use crate::stabilization::{KernelParams, KernelParamsFlags};
 use crate::stabilization::distortion_models::DistortionModel;
 use parking_lot::{Mutex, RwLock};
 use std::borrow::Cow;
@@ -69,6 +69,7 @@ pub struct WgpuWrapper {
     timestamps: Option<PassTimestamps>,
     device_name: String,
     buf_matrices: Option<wgpu::Buffer>,
+    buf_coeffs: Option<wgpu::Buffer>,
     buf_params: Option<wgpu::Buffer>,
     buf_mesh_data: Option<wgpu::Buffer>,
     buf_drawing: Option<wgpu::Buffer>,
@@ -88,6 +89,28 @@ pub struct WgpuWrapper {
     out_size: u64,
     params_size: u64,
     drawing_size: u64,
+    metal_u16_buffer_compute: bool,
+}
+
+fn metal_u16_buffers_eligible(buffers: &Buffers, params: &KernelParams, format: wgpu::TextureFormat) -> bool {
+    if format != wgpu::TextureFormat::Rgba16Uint || params.bytes_per_pixel != 8 || params.pix_element_count != 4
+        || !buffers.input.texture_copy || !buffers.output.texture_copy
+        || buffers.input.size.2 % 8 != 0 || buffers.output.size.2 % 8 != 0
+        || buffers.input.size.0 == 0 || buffers.input.size.1 == 0
+        || buffers.output.size.0 == 0 || buffers.output.size.1 == 0
+        || buffers.input.size.0.checked_mul(8).is_none_or(|size| size > buffers.input.size.2)
+        || buffers.output.size.0.checked_mul(8).is_none_or(|size| size > buffers.output.size.2)
+        || buffers.output.rect.is_some_and(|r| r != (0, 0, buffers.output.size.0, buffers.output.size.1))
+        || params.output_rect != [0, 0, buffers.output.size.0 as i32, buffers.output.size.1 as i32] {
+        return false;
+    }
+    #[cfg(target_os = "macos")]
+    if let (BufferSource::MetalBuffer { buffer: input, command_queue: input_queue },
+            BufferSource::MetalBuffer { buffer: output, command_queue: output_queue }) = (&buffers.input.data, &buffers.output.data) {
+        return !input.is_null() && !output.is_null() && input != output
+            && !input_queue.is_null() && input_queue == output_queue;
+    }
+    false
 }
 
 struct PassTimestamps {
@@ -301,6 +324,10 @@ impl WgpuWrapper {
 
         let output_height = buffers.output.size.1 as i32;
         let output_stride = buffers.output.size.2 as i32;
+        let metal_u16_buffer_compute = params.flags & KernelParamsFlags::METAL_U16_BUFFER_COMPUTE.bits() != 0;
+        if metal_u16_buffer_compute && !metal_u16_buffers_eligible(buffers, params, wgpu_format.0) {
+            return Err(WgpuError::ParamCheck);
+        }
 
         let in_size = (buffers.input.size.2 * buffers.input.size.1) as wgpu::BufferAddress;
         let out_size = (buffers.output.size.2 * buffers.output.size.1) as wgpu::BufferAddress;
@@ -497,8 +524,17 @@ impl WgpuWrapper {
 
             let init_t_alloc = std::time::Instant::now();
             let backend = adapter.get_info().backend;
-            let in_texture = init_texture(&device, backend, &buffers.input, wgpu_format.0, true);
-            let out_texture = init_texture(&device, backend, &buffers.output, wgpu_format.0, false);
+            // Placeholder bindings avoid retaining a host image in the wrapper cache.
+            let placeholder = || TextureHolder {
+                wgpu_texture: None, native_texture: None,
+                wgpu_buffer: Some(device.create_buffer(&wgpu::BufferDescriptor {
+                    label: None, size: 16, usage: BufferUsages::STORAGE, mapped_at_creation: false,
+                })),
+            };
+            let in_texture = if metal_u16_buffer_compute { placeholder() }
+                else { init_texture(&device, backend, &buffers.input, wgpu_format.0, true) };
+            let out_texture = if metal_u16_buffer_compute { placeholder() }
+                else { init_texture(&device, backend, &buffers.output, wgpu_format.0, false) };
 
             let uses_textures = in_texture.wgpu_texture.is_some();
             // Kernel source assembly, only needed on a pipeline-cache miss.
@@ -516,6 +552,7 @@ impl WgpuWrapper {
                         .unwrap_or(default_digital_lens),
                 );
                 kernel = kernel.replace("LENS_MODEL_FUNCTIONS;", &lens_model_functions);
+                kernel = kernel.replace("BUFFER_SCALAR", if metal_u16_buffer_compute { "vec2<u32>" } else { wgpu_format.1 });
                 kernel = kernel.replace("SCALAR", wgpu_format.1);
                 if uses_textures {
                     while let Some(pos) = kernel.find("{buffer_input}") {
@@ -525,6 +562,13 @@ impl WgpuWrapper {
                     while let Some(pos) = kernel.find("{texture_input}") {
                         kernel.replace_range(pos..kernel.find("{/texture_input}").unwrap() + 16, "");
                     }
+                }
+                let (open, close) = if metal_u16_buffer_compute {
+                    ("{scalar_buffer_pixels}", "{/scalar_buffer_pixels}")
+                } else { ("{packed_buffer_pixels}", "{/packed_buffer_pixels}") };
+                while let Some(start) = kernel.find(open) {
+                    let end = kernel.find(close).unwrap() + close.len();
+                    kernel.replace_range(start..end, "");
                 }
                 // log::info!("Using kernel: {kernel}");
                 kernel
@@ -536,7 +580,7 @@ impl WgpuWrapper {
             let staging_size = padded_out_stride * output_height;
 
             let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                size: staging_size as u64,
+                size: if metal_u16_buffer_compute { 16 } else { staging_size as u64 },
                 usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
                 label: None,
                 mapped_at_creation: false,
@@ -944,6 +988,7 @@ impl WgpuWrapper {
                 out_texture,
                 in_texture,
                 buf_matrices: Some(buf_matrices),
+                buf_coeffs: Some(buf_coeffs),
                 buf_params: Some(buf_params),
                 buf_drawing: Some(buf_drawing),
                 buf_mesh_data: Some(buf_mesh_data),
@@ -955,6 +1000,7 @@ impl WgpuWrapper {
                 drawing_size: drawing_len as u64,
                 pixel_format: wgpu_format.0,
                 padded_out_stride: padded_out_stride as u32,
+                metal_u16_buffer_compute,
             })
         } else {
             Err(WgpuError::NoAvailableAdapter)
@@ -981,12 +1027,39 @@ impl WgpuWrapper {
             return false;
         }
 
+        let direct_bind_group = if self.metal_u16_buffer_compute {
+            if !metal_u16_buffers_eligible(buffers, &itm.kernel_params, self.pixel_format) { return false; }
+            #[cfg(target_os = "macos")]
+            {
+                let (BufferSource::MetalBuffer { buffer: input, .. },
+                     BufferSource::MetalBuffer { buffer: output, .. }, PipelineType::Compute(pipeline))
+                    = (&buffers.input.data, &buffers.output.data, &self.pipeline) else { return false; };
+                let input = super::wgpu_interop_metal::create_buffer_from_metal(&self.device, *input,
+                    self.in_size, BufferUsages::STORAGE);
+                let output = super::wgpu_interop_metal::create_buffer_from_metal(&self.device, *output,
+                    self.out_size, BufferUsages::STORAGE);
+                Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: None, layout: &pipeline.get_bind_group_layout(0), entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: self.buf_params.as_ref().unwrap().as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 1, resource: self.buf_matrices.as_ref().unwrap().as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 2, resource: self.buf_coeffs.as_ref().unwrap().as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 3, resource: self.buf_mesh_data.as_ref().unwrap().as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 4, resource: self.buf_drawing.as_ref().unwrap().as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 5, resource: input.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 6, resource: output.as_entire_binding() },
+                    ],
+                }))
+            }
+            #[cfg(not(target_os = "macos"))]
+            { return false; }
+        } else { None };
+
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
         let upload_timer = super::timing::StageTimer::new(super::timing::Stage::Upload);
-        let _temp_texture = handle_input_texture(
+        let _temp_texture = if self.metal_u16_buffer_compute { None } else { handle_input_texture(
             &self.device,
             &buffers.input,
             &self.queue,
@@ -994,7 +1067,7 @@ impl WgpuWrapper {
             &self.in_texture,
             self.pixel_format,
             self.padded_out_stride,
-        );
+        ) };
         drop(upload_timer);
 
         if self.params_size < matrices.len() as u64 {
@@ -1058,7 +1131,7 @@ impl WgpuWrapper {
                     }),
                 });
                 cpass.set_pipeline(p);
-                cpass.set_bind_group(0, self.bind_group.as_ref(), &[]);
+                cpass.set_bind_group(0, direct_bind_group.as_ref().or(self.bind_group.as_ref()), &[]);
                 cpass.dispatch_workgroups(
                     (buffers.output.size.0 as f32 / 8.0).ceil() as u32,
                     (buffers.output.size.1 as f32 / 8.0).ceil() as u32,
@@ -1096,7 +1169,7 @@ impl WgpuWrapper {
             }
         }
 
-        let _temp_texture2 = handle_output_texture(
+        let _temp_texture2 = if self.metal_u16_buffer_compute { None } else { handle_output_texture(
             &self.device,
             &buffers.output,
             &self.queue,
@@ -1105,7 +1178,7 @@ impl WgpuWrapper {
             self.pixel_format,
             self.staging_buffer.as_ref().unwrap(),
             self.padded_out_stride,
-        );
+        ) };
 
         if let Some(t) = timestamps {
             encoder.resolve_query_set(&t.queries, 0..2, &t.resolved, 0);
@@ -1230,6 +1303,44 @@ pub fn is_buffer_supported(buffers: &Buffers) -> bool {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn metal_u16_buffer_requires_distinct_aligned_rgba16_on_one_queue() {
+        use crate::gpu::BufferDescription;
+        let descriptor = |pointer: usize, queue: usize, stride, copy| BufferDescription {
+            size: (16, 16, stride), rect: None,
+            data: BufferSource::MetalBuffer { buffer: pointer as _, command_queue: queue as _ },
+            rotation: None, texture_copy: copy, post_affine: None, flip_h: false, flip_v: false,
+        };
+        let mut buffers = Buffers { input: descriptor(1, 3, 128, true), output: descriptor(2, 3, 128, true) };
+        let mut params = KernelParams::default();
+        params.bytes_per_pixel = 8; params.pix_element_count = 4;
+        params.output_rect = [0, 0, 16, 16];
+        let valid = |buffers: &Buffers, params: &KernelParams| metal_u16_buffers_eligible(buffers, params, wgpu::TextureFormat::Rgba16Uint);
+        assert!(valid(&buffers, &params));
+        buffers.output.rect = Some((1, 0, 15, 16)); assert!(!valid(&buffers, &params));
+        buffers.output.rect = None;
+        assert!(!metal_u16_buffers_eligible(&buffers, &params, wgpu::TextureFormat::Rgba16Float));
+        params.bytes_per_pixel = 4; assert!(!valid(&buffers, &params)); params.bytes_per_pixel = 8;
+        buffers.output = descriptor(1, 3, 128, true); assert!(!valid(&buffers, &params));
+        buffers.output = descriptor(2, 4, 128, true); assert!(!valid(&buffers, &params));
+        buffers.output = descriptor(2, 3, 130, true); assert!(!valid(&buffers, &params));
+        buffers.output = descriptor(2, 3, 132, true); assert!(!valid(&buffers, &params));
+        buffers.output = descriptor(2, 3, 120, true); assert!(!valid(&buffers, &params));
+        buffers.output = descriptor(2, 3, 128, false); assert!(!valid(&buffers, &params));
+        buffers.input = descriptor(0, 3, 128, true); assert!(!valid(&buffers, &params));
+        buffers.input = descriptor(1, 0, 128, true); buffers.output = descriptor(2, 0, 128, true);
+        assert!(!valid(&buffers, &params));
+    }
+
+    #[test]
+    fn metal_u16_buffer_compute_wgsl_is_well_formed() {
+        for scalar in ["f32", "u32"] {
+            validate_kernel_variant(DistortionModel::default(), scalar, false, false);
+        }
+        validate_kernel_variant(DistortionModel::default(), "u32", false, true);
+    }
+
     #[test]
     fn post_affine_scale_wgsl_is_well_formed() {
         validate_lens_kernel(DistortionModel::default());
@@ -1241,19 +1352,11 @@ mod tests {
     }
 
     fn validate_lens_kernel(model: DistortionModel) {
-        let mut kernel = include_str!("wgpu_undistort.wgsl").to_string();
-        let mut lens_functions = model.wgsl_functions().to_string();
-        lens_functions.push_str(
-            "fn digital_undistort_point(uv: vec2<f32>) -> vec2<f32> { return uv; }\n\
-             fn digital_distort_point(uv: vec2<f32>) -> vec2<f32> { return uv; }",
-        );
-        kernel = kernel.replace("LENS_MODEL_FUNCTIONS;", &lens_functions);
-        kernel = kernel.replace("SCALAR", "f32");
-        while let Some(start) = kernel.find("{buffer_input}") {
-            let end = kernel.find("{/buffer_input}").unwrap() + "{/buffer_input}".len();
-            kernel.replace_range(start..end, "");
-        }
+        validate_kernel_variant(model, "f32", true, false);
+    }
 
+    fn validate_kernel_variant(model: DistortionModel, scalar: &str, textures: bool, packed: bool) {
+        let kernel = assemble_kernel_variant(model, scalar, textures, packed);
         let module = wgpu::naga::front::wgsl::parse_str(&kernel)
             .unwrap_or_else(|error| panic!("{}", error.emit_to_string(&kernel)));
         wgpu::naga::valid::Validator::new(
@@ -1263,4 +1366,34 @@ mod tests {
         .validate(&module)
         .expect("assembled lens and post-affine WGSL must validate");
     }
+
+    pub(super) fn assemble_kernel_variant(model: DistortionModel, scalar: &str, textures: bool, packed: bool) -> String {
+        let mut kernel = include_str!("wgpu_undistort.wgsl").to_string();
+        let mut lens_functions = model.wgsl_functions().to_string();
+        lens_functions.push_str(
+            "fn digital_undistort_point(uv: vec2<f32>) -> vec2<f32> { return uv; }\n\
+             fn digital_distort_point(uv: vec2<f32>) -> vec2<f32> { return uv; }",
+        );
+        kernel = kernel.replace("LENS_MODEL_FUNCTIONS;", &lens_functions);
+        kernel = kernel.replace("BUFFER_SCALAR", if packed { "vec2<u32>" } else { scalar });
+        kernel = kernel.replace("SCALAR", scalar);
+        let (open, close) = if textures { ("{buffer_input}", "{/buffer_input}") }
+            else { ("{texture_input}", "{/texture_input}") };
+        while let Some(start) = kernel.find(open) {
+            let end = kernel.find(close).unwrap() + close.len();
+            kernel.replace_range(start..end, "");
+        }
+        let (open, close) = if packed { ("{scalar_buffer_pixels}", "{/scalar_buffer_pixels}") }
+            else { ("{packed_buffer_pixels}", "{/packed_buffer_pixels}") };
+        while let Some(start) = kernel.find(open) {
+            let end = kernel.find(close).unwrap() + close.len();
+            kernel.replace_range(start..end, "");
+        }
+
+        kernel
+    }
 }
+
+#[cfg(test)]
+#[path = "wgpu_sampling_tests.rs"]
+mod sampling_tests;

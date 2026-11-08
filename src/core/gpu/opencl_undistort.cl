@@ -358,6 +358,26 @@ DATA_TYPEF sample_input_at(float2 uv, float4 jac, __global const uchar *srcptr, 
 
         int src_index = sy * params->stride + sx * PIXEL_BYTES;
 
+#       if INTERPOLATION == 8
+        // Keep all taps and their accumulation order; only the interior skips bounds checks.
+        if (sx >= params->source_rect.x && sy >= params->source_rect.y
+            && sx + 8 <= params->source_rect.x + params->source_rect.z
+            && sy + 8 <= params->source_rect.y + params->source_rect.w) {
+            #pragma unroll
+            for (int yp = 0; yp < 8; ++yp) {
+                DATA_TYPEF xsum = 0.0f;
+                #pragma unroll
+                for (int xp = 0; xp < 8; ++xp) {
+                    DATA_TYPE src_px = *(__global const DATA_TYPE *)&srcptr[src_index + PIXEL_BYTES * xp];
+                    draw_pixel(&src_px, sx + xp, sy + yp, true, max(params->width, params->output_width), params, drawing);
+                    DATA_TYPEF srcpx = DATA_CONVERTF(src_px);
+                    xsum += srcpx * coeffs_x[xp];
+                }
+                sum += xsum * coeffs_y[yp];
+                src_index += params->stride;
+            }
+        } else
+#       endif
         #pragma unroll
         for (int yp = 0; yp < INTERPOLATION; ++yp) {
             if (sy + yp >= params->source_rect.y && sy + yp < params->source_rect.y + params->source_rect.w) {

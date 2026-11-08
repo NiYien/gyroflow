@@ -140,6 +140,8 @@ bitflags::bitflags! {
         // bits clear) is byte-equivalent to the prior kernel.
         const FLIP_H               = 1 << 12; // 4096
         const FLIP_V               = 1 << 13; // 8192
+        // Opt-in packed RGBA16 compute on distinct, aligned host Metal buffers.
+        const METAL_U16_BUFFER_COMPUTE = 1 << 16; // 65536
     }
 }
 

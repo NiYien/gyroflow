@@ -561,3 +561,14 @@ fn native_cuda_gpu_compare_legacy_pixels_and_throughput() {
         }
     }
 }
+
+#[test]
+fn lanczos_interior_preserves_cuda_shared_weights_and_fma() {
+    let params = KernelParams { interpolation: 8, ..Default::default() };
+    let source = shader_source(&params, &DistortionModel::default(), None);
+    assert!(!source.contains("coeffs_x[xp]"));
+    assert!(!source.contains("coeffs_y[yp]"));
+    assert_eq!(source.matches("xsum = color_mad(srcpx, weights[xp*32+(sx0 & 31)], xsum);").count(), 2);
+    assert_eq!(source.matches("sum = color_mad(xsum, weights[yp*32+(sy0 & 31)], sum);").count(), 2);
+    assert!(source.find("__syncthreads();").unwrap() < source.find("if (buf_x >= buf_width").unwrap());
+}

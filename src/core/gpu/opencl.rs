@@ -31,6 +31,10 @@ mod sony_kernel_tests {
 }
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
 
+#[cfg(test)]
+#[path = "opencl_sampling_tests.rs"]
+mod sampling_tests;
+
 use super::*;
 use crate::stabilization::KernelParams;
 use crate::stabilization::distortion_models::DistortionModel;
