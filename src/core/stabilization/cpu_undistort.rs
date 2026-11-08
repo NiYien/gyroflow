@@ -4,7 +4,7 @@
 use crate::gpu::{BufferSource, Buffers, PostAffine};
 
 use super::{
-    ComputeParams, FrameTransform, KernelParams, PixelType, Stabilization,
+    ComputeParams, FrameTransform, KernelParams, KernelParamsFlags, PixelType, Stabilization,
     distortion_models::DistortionModel,
 };
 use crate::util::map_coord;
@@ -558,13 +558,20 @@ impl Stabilization {
         ////////////////////////////// EWA (Elliptical Weighted Average) CubicBC sampling //////////////////////////////
 
         fn sample_input_at<const I: i32, T: PixelType>(
-            uv: Vector2<f32>,
+            mut uv: Vector2<f32>,
             jac: &Vector4<f32>,
             input: &[u8],
             params: &KernelParams,
             bg: &Vector4<f32>,
             _drawing: &[u8],
         ) -> Vector4<f32> {
+            if params.flags & KernelParamsFlags::INPUT_ROTATION_PIXEL_CENTERS.bits() != 0
+                && params.input_rotation != 0.0
+            {
+                let angle = params.input_rotation.to_radians();
+                let centre = rotate_point((0.5, 0.5), angle, (0.0, 0.0), (0.0, 0.0));
+                uv += Vector2::new(centre.0 - 0.5, centre.1 - 0.5);
+            }
             let mut sum = Vector4::from_element(0.0);
             if I > 8 {
                 // find how many pixels we need around that pixel in each direction

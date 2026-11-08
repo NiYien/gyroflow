@@ -140,6 +140,8 @@ bitflags::bitflags! {
         // bits clear) is byte-equivalent to the prior kernel.
         const FLIP_H               = 1 << 12; // 4096
         const FLIP_V               = 1 << 13; // 8192
+        // Opt-in for hosts that pre-rotate discrete pixels around their pixel centres.
+        const INPUT_ROTATION_PIXEL_CENTERS = 1 << 15;
     }
 }
 
