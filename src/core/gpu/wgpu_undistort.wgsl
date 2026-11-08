@@ -316,6 +316,10 @@ fn sample_lanczos_interior(sx: i32, sy: i32, cx: i32, cy: i32) -> vec4<f32> {
 
 fn sample_input_at(uv_param: vec2<f32>, jac: vec4<f32>) -> vec4<f32> {
     var uv = uv_param;
+    if (bool(flags & 32768) && params.input_rotation != 0.0) { // Input rotation uses pixel centres
+        let angle = params.input_rotation * (3.14159265359 / 180.0);
+        uv += rotate_point(vec2<f32>(0.5), angle, vec2<f32>(0.0), vec2<f32>(0.0)) - vec2<f32>(0.5);
+    }
     let fix_range = bool(flags & 1);
 
     let bg = params.background * params.max_pixel_value;

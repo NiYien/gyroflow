@@ -578,7 +578,7 @@ const publishState = {
   mode: null,       // 'trigger' | 'tag' | 'select' | 'ios-upload'
   source: null,     // 'release' | 'artifact' (only for mode=select)
   selected: null,   // selected release/artifact entry
-  // Lookup map cached at startup. `null` means "not loaded / load failed"
+  // Lookup map refreshed with the source list. `null` means "not loaded / load failed"
   // — selectSourceItem then degrades to the commit-name fallback. Shape:
   // { version: { changelog: string, changelogs: { lang: string } } }
   changelogReuseMap: null,
@@ -787,8 +787,7 @@ function updateTranslateButtons() {
 }
 
 async function loadChangelogReuseMap() {
-  // Pull `{version: {changelog, changelogs}}` from policy.versions[] once
-  // and cache it so selectSourceItem can pre-fill tabs without a round trip.
+  // Load before displaying sources so the first selection can restore notes.
   // Failure path: leave the cache as `null` (the source-select code treats
   // that as "reuse unavailable" and degrades to the commit-name fallback).
   try {
@@ -909,7 +908,6 @@ document.addEventListener('DOMContentLoaded', () => {
   updateChangelogValidationHint();
   updateTranslateButtons();
   checkTranslateAvailability();
-  loadChangelogReuseMap();
   const editor = document.getElementById('pub-changelog-active');
   if (editor) {
     editor.addEventListener('input', () => {
@@ -1567,21 +1565,19 @@ document.querySelectorAll('.source-btn').forEach(btn => {
 
 document.getElementById('reload-sources-btn')?.addEventListener('click', () => {
   if (publishState.source) loadSourceList(publishState.source);
-  // Concurrent policy edits (other browser tab, CLI) won't appear in our
-  // cached reuse map otherwise — refresh on the same gesture that already
-  // re-pulls the source list.
-  loadChangelogReuseMap();
 });
 
 async function loadSourceList(source) {
   const container = document.getElementById('source-list');
+  publishState.selected = null;
+  document.getElementById('execute-publish-btn').disabled = true;
   container.innerHTML = '<div class="p-3 text-xs text-slate-500">加载中...</div>';
   try {
-    const r = source === 'release'
-      ? await pywebview.api.list_releases()
+    const [r] = await Promise.all([source === 'release'
+      ? pywebview.api.list_releases()
       : source === 'artifact'
-      ? await pywebview.api.list_action_builds()
-      : await pywebview.api.list_policy_orphan_versions();
+      ? pywebview.api.list_action_builds()
+      : pywebview.api.list_policy_orphan_versions(), loadChangelogReuseMap()]);
     if (!r.ok) {
       container.innerHTML = `<div class="p-3 text-xs text-red-600">加载失败: ${escapeHtml(r.error)}</div>`;
       return;
@@ -1759,9 +1755,10 @@ document.addEventListener('DOMContentLoaded', () => {
     ?.addEventListener('click', relookupChangelogReuse);
 });
 
-function selectSourceItem(el, items) {
+async function selectSourceItem(el, items) {
   document.querySelectorAll('.source-item').forEach(i => i.classList.remove('active'));
   el.classList.add('active');
+  clearChangelogReuseWarning();
   const kind = el.dataset.kind;
   let entry;
   if (kind === 'release') {
@@ -1788,9 +1785,44 @@ function selectSourceItem(el, items) {
     }
   } else if (kind === 'artifact') {
     entry = items.find(x => String(x.run_id) === el.dataset.runId);
-    publishState.selected = { kind: 'artifact', ...entry };
-    // Keep existing major/minor/patch, set suffix based on run_number
-    document.getElementById('pub-suffix').textContent = `-ni.${entry.run_number}`;
+    const selected = { kind: 'artifact', ...entry };
+    publishState.selected = selected;
+    const suffix = `-ni.${entry.run_number}`;
+    const publishedVersions = Object.keys(publishState.changelogReuseMap || {})
+      .filter(version => /^\d+\.\d+\.\d+-ni\.\d+$/.test(version) && version.endsWith(suffix));
+    let baseVersion;
+    if (publishedVersions.length === 1) {
+      baseVersion = publishedVersions[0].split('-')[0];
+    } else {
+      document.getElementById('execute-publish-btn').disabled = true;
+      document.getElementById('execute-publish-result').textContent = '正在读取所选构建的版本号...';
+      ['pub-major', 'pub-minor', 'pub-patch'].forEach(id => {
+        document.getElementById(id).value = '';
+      });
+      document.getElementById('pub-suffix').textContent = suffix;
+      document.getElementById('pub-final').textContent = '读取中...';
+      clearChangelogTabs();
+      publishState.reuseSnapshotVersion = '';
+      updateChangelogReuseBar();
+      try {
+        const r = await pywebview.api.get_action_build_base_version(entry.head_sha);
+        if (publishState.selected !== selected) return;
+        if (!r.ok) throw new Error(r.error);
+        baseVersion = r.version;
+      } catch (e) {
+        if (publishState.selected !== selected) return;
+        publishState.selected = null;
+        document.getElementById('pub-final').textContent = '读取失败';
+        document.getElementById('execute-publish-result').textContent = `版本号读取失败，请重新选择构建重试：${e.message || e}`;
+        refreshReleasePlanChecklist();
+        return;
+      }
+    }
+    const v = baseVersion.split('.');
+    document.getElementById('pub-major').value = v[0];
+    document.getElementById('pub-minor').value = v[1];
+    document.getElementById('pub-patch').value = v[2];
+    document.getElementById('pub-suffix').textContent = suffix;
     // Same reuse / fallback logic as the release branch — artifact final
     // versions follow the `<base>-ni.<run_number>` shape, so the lookup
     // key is still computeFinalVersion() with the suffix now applied.
@@ -1825,9 +1857,9 @@ function selectSourceItem(el, items) {
     actionSel.value = 'hide_version';
     actionSel.dispatchEvent(new Event('change'));
   }
-  // Any stale "未找到" warning from a previous re-lookup is cleared on
-  // every fresh source selection — the new selection has its own outcome.
-  clearChangelogReuseWarning();
+  if (kind !== 'orphan' && !publishState.changelogReuseMap) {
+    setChangelogReuseWarning('历史更新说明加载失败，请刷新版本列表后重试。');
+  }
   updateFinalVersion();
   updateChangelogReuseBar();
   document.getElementById('execute-publish-btn').disabled = false;
@@ -1997,10 +2029,12 @@ async function pan123StartPolling(token, opts = {}) {
     document.getElementById('pan123-elapsed').textContent = `${sec}s`;
 
     if (r.finished) {
+      pan123StopPolling();
       let finalLine;
       let resultLine;  // for the inline result span next to the button
       let alertMsg = null;
       if (r.task_ok) {
+        await loadChangelogReuseMap();
         // Two-phase commit done — manifest push runs inside the runner
         // BEFORE finished=true, so summary.manifest_finalize_note is
         // set by the time we see this poll.
@@ -2052,7 +2086,6 @@ async function pan123StartPolling(token, opts = {}) {
         resultEl.textContent = resultLine;
         resultEl.className = r.task_ok ? 'text-sm text-emerald-600' : 'text-sm text-red-600';
       }
-      pan123StopPolling();
       // Auto-refresh inventory after a successful sync — the new files
       // should now show up in the version list.
       if (r.task_ok) {
@@ -2235,6 +2268,7 @@ document.getElementById('execute-publish-btn')?.addEventListener('click', async 
         setReleasePlanControlsLocked(false);
         refreshReleasePlanChecklist();
       } else {
+        await loadChangelogReuseMap();
         releasePlanState.running = false;
         releasePlanState.lastResult = (!useReleasePlan || r.deploy_hook) ? 'success' : '';
         setReleasePlanControlsLocked(false);
