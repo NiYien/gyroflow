@@ -919,9 +919,6 @@ Item {
                 root._batchSyncInFlight = false;
                 window.syncDirty = false;
                 window.deepMatchStabilizePending = false;
-                messageBox(Modal.Warning, qsTr("Batch sync verification may be inaccurate. Individual sync results have been kept. Please check the stabilization."), [
-                    { text: qsTr("Ok") }
-                ]);
             } else if (kind === "all_yellow") {
                 // Replaced the old 3-section calibration-video guide (2026-06-12
                 // UX feedback): deep match is now the primary recovery path

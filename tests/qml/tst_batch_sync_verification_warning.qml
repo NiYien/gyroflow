@@ -41,27 +41,24 @@ TestCase {
             + source.slice(start, end + 10) + '}', testCase, "warningHandler");
     }
     function cleanup() { root.destroy(); }
-    function test_verification_failure_only_warns_data() {
+    function test_verification_failure_finishes_silently_data() {
         return [{ tag: "desktop", mobile: false }, { tag: "mobile", mobile: true }];
     }
-    function test_verification_failure_only_warns(data) {
+    function test_verification_failure_finishes_silently(data) {
         useMobileWorkspace = data.mobile;
         backend.kind = "verification_warning";
         root.onBatch_sync_status_changed();
-        compare(notices.length, 1);
-        compare(notices[0].kind, Modal.Warning);
-        verify(notices[0].text.indexOf("Individual sync results have been kept") >= 0);
-        compare(notices[0].buttons.length, 1);
+        compare(notices.length, 0);
         compare(root._batchSyncInFlight, false);
         compare(syncDirty, false);
         compare(deepMatchStabilizePending, false);
         root.onBatch_sync_status_changed();
-        compare(notices.length, 1);
+        compare(notices.length, 0);
         backend.kind = "none";
         root.onBatch_sync_status_changed();
         backend.kind = "verification_warning";
         root.onBatch_sync_status_changed();
-        compare(notices.length, 2);
+        compare(notices.length, 0);
     }
     function test_no_gyro_keeps_deep_match_guidance() {
         useMobileWorkspace = false;
