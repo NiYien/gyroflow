@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
 
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use std::sync::Arc;
 use std::sync::atomic::{
     AtomicBool, AtomicU64, AtomicUsize, Ordering::AcqRel, Ordering::Relaxed, Ordering::SeqCst,
@@ -29,6 +29,15 @@ pub enum AutosyncError {
     InvalidParameters,
     /// `estimate_lens_delay`: the lens metadata records no zoom to measure the delay on
     NoZoomInMetadata,
+}
+
+struct OpticalVerification {
+    decode_range_us: (i64, i64),
+    scaled_range_us: (i64, i64),
+    windows: Vec<super::optical_motion::tracks::WindowTracks>,
+    outcomes: Vec<super::optical_motion::search::SearchOutcome>,
+    session: super::optical_motion::OpticalSession,
+    search_ms: f64,
 }
 
 pub struct AutosyncProcess {
@@ -75,6 +84,7 @@ pub struct AutosyncProcess {
     /// Optical motion method (`offset_method` 3 in `synchronize` mode): the feature tracking session. None for every
     /// other run, which then takes none of the optical paths below
     optical: Option<super::optical_motion::OpticalSession>,
+    optical_verification: Mutex<Option<OpticalVerification>>,
     /// Separate tracking session for the armed deep-match optical judge.
     optical_judge: Option<super::optical_motion::OpticalSession>,
     judge_every_nth: usize,
@@ -489,6 +499,7 @@ impl AutosyncProcess {
             probe_candidate_scaled_us,
             probe_pending: AtomicBool::new(false),
             probe_active: AtomicBool::new(false),
+            optical_verification: Mutex::new(None),
             lazy_probe_unavailable,
             estimator,
             fps_scale,
@@ -623,8 +634,12 @@ impl AutosyncProcess {
         // Optical motion method: the frame goes to the tracking thread of every window it falls in (same window test
         // as above), and to nothing else: no NV12 copy, no frame task on the Sync pool, no `detect_features`
         if let Some(session) = &self.optical {
-            let windows =
-                super::optical_motion::windows_containing(&self.scaled_ranges_us, timestamp_us);
+            let verification = self.optical_verification.lock();
+            let (session, windows) = if let Some(probe) = verification.as_ref().filter(|_| self.probe_active.load(SeqCst)) {
+                (&probe.session, if in_probe { vec![0] } else { Vec::new() })
+            } else {
+                (session, super::optical_motion::windows_containing(&self.scaled_ranges_us, timestamp_us))
+            };
             let Some(img) = img.filter(|_| !windows.is_empty()) else {
                 return false;
             };
@@ -746,7 +761,10 @@ impl AutosyncProcess {
     pub fn finished_feeding_frames(&self) {
         // Optical motion method: close the tracking queues and wait for the tracking threads. Every frame fed has
         // then been reported done, so the spin-wait below ends at once
-        let optical_raw = self.optical.as_ref().map(|session| session.finish());
+        let verification = self.optical_verification.lock().take();
+        let optical_raw = self.optical.as_ref().map(|session| {
+            verification.as_ref().map_or_else(|| session.finish(), |probe| probe.session.finish())
+        });
         let judge_raw = self.optical_judge.as_ref().map(|session| session.finish());
         // §5.1/§5.2 were once early-return cancel checks but they leaked
         // stale rayon-pool tasks: the run_threaded OpGuard would drop while
@@ -785,10 +803,11 @@ impl AutosyncProcess {
             let mut params = self.compute_params.read().clone();
             params.framebuffer_inverted = false;
             let quats = params.gyro.read().quaternions.clone();
-            let (ranges, horizontal) = (&self.scaled_ranges_us, self.horizontal_readout);
-            let windows: Vec<optical::tracks::WindowTracks> = self.thread_pool.install(|| {
+            let mut ranges = verification.as_ref().map_or_else(|| self.scaled_ranges_us.clone(), |probe| vec![probe.scaled_range_us]);
+            let horizontal = self.horizontal_readout;
+            let mut windows: Vec<optical::tracks::WindowTracks> = self.thread_pool.install(|| {
                 raw.iter()
-                    .zip(ranges)
+                    .zip(&ranges)
                     .map(|(r, &(from, to))| {
                         optical::bearings::build_window_tracks(r, &params, horizontal, (from + to) as f64 / 2.0 / 1000.0)
                     })
@@ -796,7 +815,7 @@ impl AutosyncProcess {
             });
             drop(raw);
             let input = optical::SolveInput {
-                ranges_us: &self.scaled_ranges_us,
+                ranges_us: &ranges,
                 sync_params: &self.sync_params,
                 quats: &quats,
                 cfg: optical::config::config(),
@@ -814,20 +833,58 @@ impl AutosyncProcess {
                 }
             };
             let t_search = std::time::Instant::now();
-            let Some(rows) = optical::solve_windows(&windows, &input, &self.thread_pool, &self.cancel_flag, &progress) else {
+            let first_index = verification.as_ref().map_or(0, |probe| probe.outcomes.len());
+            let Some(mut outcomes) = optical::measure_windows(&windows, &input, &self.thread_pool, &self.cancel_flag, first_index, &progress) else {
                 log::info!(target: "lifecycle", "autosync canceled during the optical offset search");
                 self.emit_canceled_progress();
                 return;
             };
-            let search_ms = t_search.elapsed().as_secs_f64() * 1000.0;
+            let verification_timings = verification.as_ref().map(|probe| probe.session.timings());
+            let previous_search_ms = verification.as_ref().map_or(0.0, |probe| probe.search_ms);
+            if let Some(mut probe) = verification {
+                probe.windows.append(&mut windows);
+                windows = probe.windows;
+                probe.outcomes.append(&mut outcomes);
+                outcomes = probe.outcomes;
+                ranges = self.scaled_ranges_us.clone();
+                ranges.push(probe.scaled_range_us);
+            }
+            if !self.probe_active.load(SeqCst) {
+                if let Some(weak) = optical::pending_low_support(&windows, &outcomes, &ranges) {
+                    let scale = self.fps_scale.unwrap_or(1.0);
+                    if let Some(decode_range_us) = pick_optical_verification_range(
+                        &self.ranges_us, weak, self.compute_params.read().scaled_duration_ms * scale,
+                        self.sync_params.time_per_syncpoint * scale,
+                    ) {
+                        let scaled_range_us = ((decode_range_us.0 as f64 / scale).round() as i64,
+                            (decode_range_us.1 as f64 / scale).round() as i64);
+                        let session = self.optical.as_ref().unwrap().verification_session(self.scaled_fps,
+                            self.sync_params.every_nth_frame, self.compute_params.read().processing_device, self.cancel_flag.clone());
+                        *self.optical_verification.lock() = Some(OpticalVerification {
+                            decode_range_us, scaled_range_us, windows, outcomes, session,
+                            search_ms: t_search.elapsed().as_secs_f64() * 1000.0,
+                        });
+                        self.probe_pending.store(true, SeqCst);
+                        log::info!(target: "sync", "[optical] low support: requesting one verification window");
+                        return;
+                    }
+                }
+            }
+            let rows = optical::confirmed_rows(&windows, &outcomes, &ranges, self.sync_params.initial_offset);
+            let search_ms = previous_search_ms + t_search.elapsed().as_secs_f64() * 1000.0;
             let samples = self.thread_pool.install(|| optical::rates::interpolated_rate_samples(&windows, self.sync_params.every_nth_frame));
             for (i, &row) in rows.iter().enumerate() {
                 optical::log_rate_fit(i, &windows[i], &quats, row);
             }
-            self.estimator.replace_optical_rates(&self.scaled_ranges_us, samples);
+            self.estimator.replace_optical_rates(&ranges, samples);
             self.estimator.recalculate_gyro_data(self.org_fps, true);
             if let Some(session) = &self.optical {
-                optical::log_run(rows.len(), &session.timings(), search_ms);
+                let mut timings = session.timings();
+                if let Some(probe) = verification_timings {
+                    timings.track_ms += probe.track_ms;
+                    timings.decode_wait_ms += probe.decode_wait_ms;
+                }
+                optical::log_run(rows.len(), &timings, search_ms);
             }
             if let Some(cb) = &self.finished_cb {
                 cb(AutosyncResult::Offsets(rows));
@@ -1182,7 +1239,8 @@ impl AutosyncProcess {
     /// The lazy probe's scaled range, only once activated by escalation.
     fn lazy_probe_scaled_range(&self) -> Option<(i64, i64)> {
         if self.probe_active.load(SeqCst) {
-            self.probe_candidate_scaled_us
+            self.optical_verification.lock().as_ref().map(|probe| probe.scaled_range_us)
+                .or(self.probe_candidate_scaled_us)
         } else {
             None
         }
@@ -1233,7 +1291,8 @@ impl AutosyncProcess {
             self.emit_canceled_progress();
             return None;
         }
-        let (f, t) = match self.probe_candidate_us {
+        let optical_range = self.optical_verification.lock().as_ref().map(|probe| probe.decode_range_us);
+        let (f, t) = match optical_range.or(self.probe_candidate_us) {
             Some(r) => r,
             None => {
                 self.emit_canceled_progress();
@@ -1248,7 +1307,8 @@ impl AutosyncProcess {
         }
         log::info!(
             target: "sync",
-            "[posterior] probe escalation: decoding probe window {:.1}-{:.1}ms",
+            "[{}] probe escalation: decoding probe window {:.1}-{:.1}ms",
+            if optical_range.is_some() { "optical" } else { "posterior" },
             f as f64 / 1000.0,
             t as f64 / 1000.0
         );
@@ -1269,6 +1329,32 @@ impl AutosyncProcess {
         F: Fn(AutosyncResult) + Send + Sync + 'static,
     {
         self.finished_cb = Some(Arc::new(Box::new(cb)));
+    }
+}
+
+fn pick_optical_verification_range(ranges: &[(i64, i64)], weak: usize, duration_ms: f64, window_ms: f64) -> Option<(i64, i64)> {
+    let center = (ranges[weak].0 + ranges[weak].1) as f64 / 2000.0;
+    let mut candidates = super::deep_match::window_positions_ms(duration_ms, super::deep_match::candidates_count());
+    candidates.sort_by(|a, b| (b - center).abs().total_cmp(&(a - center).abs()));
+    candidates.into_iter().find_map(|candidate| {
+        let from = candidate - window_ms / 2.0;
+        let to = candidate + window_ms / 2.0;
+        if from < 0.0 || to > duration_ms { return None; }
+        let range = ((from * 1000.0).round() as i64, (to * 1000.0).round() as i64);
+        ranges.iter().all(|other| range.1 < other.0 || other.1 < range.0).then_some(range)
+    })
+}
+
+#[cfg(test)]
+mod optical_verification_tests {
+    use super::pick_optical_verification_range;
+
+    #[test]
+    fn verification_uses_one_disjoint_existing_plan_window() {
+        let ranges = [(14_277_412, 16_777_412)];
+        assert_eq!(pick_optical_verification_range(&ranges, 0, 28320.0, 2500.0), Some((4_414_000, 6_914_000)));
+        let covered = [(0, 28_320_000)];
+        assert_eq!(pick_optical_verification_range(&covered, 0, 28320.0, 2500.0), None);
     }
 }
 
@@ -1503,7 +1589,8 @@ mod tests {
         let optical = feed.find("if let Some(session) = &self.optical").expect("optical branch in feed_frame");
         assert!(optical < feed.find("self.thread_pool.spawn").unwrap(), "optical frames must not reach the Sync pool");
         let fin = &src[src.find("pub fn finished_feeding_frames").unwrap()..];
-        assert!(fin.find("solve_windows").unwrap() < fin.find("neuflow_processing").unwrap());
+        assert!(fin.find("optical::measure_windows").unwrap() < fin.find("neuflow_processing").unwrap());
+        assert!(fin.find("optical::confirmed_rows").unwrap() < fin.find("neuflow_processing").unwrap());
         assert!(fin.find("rate_samples").unwrap() < fin.find("cb(AutosyncResult::Offsets(rows))").unwrap());
         assert!(src.contains("sync_params.offset_method == 3 && mode == \"synchronize\""));
     }

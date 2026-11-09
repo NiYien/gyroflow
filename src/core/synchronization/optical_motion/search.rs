@@ -28,6 +28,8 @@ use rayon::prelude::*;
 pub(super) const MIN_PAIRS: usize = 20;
 /// The output valley also needs this fraction of the window's frame pairs measured
 pub(super) const MIN_MEASURED_FRACTION: f64 = 0.3;
+const LOW_MEASURED_PAIRS: usize = 10;
+const LOW_MEASURED_FRACTION: f64 = 0.1;
 /// The best coarse point may not lie within this many grid steps of a search interval end or an invalid grid point
 pub(super) const EDGE_STEPS: f64 = 2.0;
 /// Valleys closer to c1 than this are left to the near check, ms
@@ -81,6 +83,8 @@ pub struct FullEval { pub cost: f64, pub pairs_measured: usize }
 #[derive(Clone, Debug)]
 pub struct SearchOutcome {
     pub offset_ms: f64, pub cost_px: f64, pub conf: f64, pub g: f64,
+    /// Effective frame pairs at the selected valley, retained for cross-window confirmation.
+    pub pairs_measured: usize,
     /// Position of the lowest-cost competitor
     pub second_ms: Option<f64>,
     /// Far candidates evaluated
@@ -92,6 +96,13 @@ pub struct SearchOutcome {
     pub coarse: Vec<(f64, f64)>,
     /// (offset, full cost) of every full evaluation in evaluation order, NaN where the closure returned None
     pub fine: Vec<(f64, f64)>,
+}
+
+impl SearchOutcome {
+    pub(super) fn has_high_support(&self, total_pairs: usize) -> bool {
+        self.pairs_measured >= MIN_PAIRS
+            && self.pairs_measured as f64 >= MIN_MEASURED_FRACTION * total_pairs as f64
+    }
 }
 
 /// `[init − search, init + search]`, plus `[−init − search, −init + search]` when `check_negative` and |init| > 1 ms.
@@ -189,6 +200,7 @@ pub fn conf_from_g(g: f64, g_full: f64) -> f64 {
 pub fn failed(reason: FailReason, init_ms: f64) -> SearchOutcome {
     SearchOutcome {
         offset_ms: init_ms, cost_px: 0.0, conf: 0.0, g: 1.0,
+        pairs_measured: 0,
         second_ms: None, far_candidates: 0, near_ms: None,
         fail: Some(reason), coarse: Vec::new(), fine: Vec::new(),
     }
@@ -201,6 +213,12 @@ pub fn failed(reason: FailReason, init_ms: f64) -> SearchOutcome {
 pub fn run_search(p: &SearchParams, coarse: &(dyn Fn(f64) -> Option<f64> + Sync), full: &(dyn Fn(f64) -> Option<FullEval> + Sync),
                   pool: &rayon::ThreadPool, cancel: &AtomicBool) -> Option<SearchOutcome> {
     pool.install(|| search(p, coarse, full, cancel, false))
+}
+
+/// Keeps intermediate-support valleys as candidates; the caller must confirm them independently.
+pub(super) fn run_search_with_low_support(p: &SearchParams, coarse: &(dyn Fn(f64) -> Option<f64> + Sync),
+    full: &(dyn Fn(f64) -> Option<FullEval> + Sync), pool: &rayon::ThreadPool, cancel: &AtomicBool) -> Option<SearchOutcome> {
+    pool.install(|| search_with_support(p, coarse, full, cancel, false, true))
 }
 
 /// A full evaluation as the search uses it: +inf and no measured pairs when the closure gave None or a non-finite cost
@@ -322,6 +340,11 @@ fn near_twin_ms(near_lows: &[Sample], output: (Kind, Sample), c1: &Sample) -> Op
 
 pub(super) fn search(p: &SearchParams, coarse: &(dyn Fn(f64) -> Option<f64> + Sync), full: &(dyn Fn(f64) -> Option<FullEval> + Sync),
           cancel: &AtomicBool, refine_competitors: bool) -> Option<SearchOutcome> {
+    search_with_support(p, coarse, full, cancel, refine_competitors, false)
+}
+
+fn search_with_support(p: &SearchParams, coarse: &(dyn Fn(f64) -> Option<f64> + Sync), full: &(dyn Fn(f64) -> Option<FullEval> + Sync),
+          cancel: &AtomicBool, refine_competitors: bool, allow_low_support: bool) -> Option<SearchOutcome> {
     if p.total_pairs < MIN_PAIRS { return Some(failed(FailReason::WindowTooShort, p.init_ms)); }
     // Coarse scan
     let intervals = search_intervals(p.init_ms, p.search_ms, p.check_negative);
@@ -401,12 +424,18 @@ pub(super) fn search(p: &SearchParams, coarse: &(dyn Fn(f64) -> Option<f64> + Sy
         return fail(FailReason::NoContrast, evals.log);
     };
     let pairs = output.1.pairs;
-    if pairs < MIN_PAIRS || (pairs as f64) < MIN_MEASURED_FRACTION * p.total_pairs as f64 {
-        return fail(FailReason::FewMeasurements, evals.log);
+    let (minimum, fraction) = if allow_low_support {
+        (LOW_MEASURED_PAIRS, LOW_MEASURED_FRACTION)
+    } else { (MIN_PAIRS, MIN_MEASURED_FRACTION) };
+    if pairs < minimum || (pairs as f64) < fraction * p.total_pairs as f64 {
+        let mut outcome = fail(FailReason::FewMeasurements, evals.log)?;
+        outcome.pairs_measured = pairs;
+        return Some(outcome);
     }
     let g = g_ratio(second.cost, output.1.cost);
     Some(SearchOutcome {
         offset_ms: output.1.x, cost_px: output.1.cost, conf: conf_from_g(g, p.g_full), g,
+        pairs_measured: pairs,
         second_ms: Some(second.x), far_candidates: far.len(), near_ms: near_twin_ms(&near_lows, output, &c1),
         fail: None, coarse: curve, fine: evals.log,
     })
@@ -464,6 +493,29 @@ mod tests {
         let f = valleys(&[(-703.4, 0.9, 12.0)]);
         let o = run_search(&params(), &|d| Some(f(d)), &|d| Some(FullEval { cost: f(d), pairs_measured: 19 }), &pool(), &AtomicBool::new(false)).unwrap();
         assert_eq!(o.fail, Some(FailReason::FewMeasurements));
+    }
+    #[test] fn low_support_requires_ten_pairs_and_ten_percent() {
+        let f = valleys(&[(-703.4, 0.9, 12.0)]);
+        for (total, measured, accepted, high) in [
+            (62, 9, false, false), (62, 10, true, false), (62, 15, true, false),
+            (62, 20, true, true), (200, 19, false, false), (200, 20, true, false),
+            (100, 29, true, false), (100, 30, true, true),
+        ] {
+            let p = SearchParams { total_pairs: total, ..params() };
+            let full = |d| Some(FullEval { cost: f(d), pairs_measured: measured });
+            let outcome = run_search_with_low_support(&p, &|d| Some(f(d)), &full, &pool(), &AtomicBool::new(false)).unwrap();
+            assert_eq!(outcome.fail.is_none(), accepted, "{total}/{measured}");
+            if accepted {
+                assert!((outcome.offset_ms + 703.4).abs() < 0.3 && outcome.conf == 1.0);
+                assert_eq!(outcome.pairs_measured, measured);
+                assert_eq!(outcome.has_high_support(total), high);
+            }
+            let strict = run_search(&p, &|d| Some(f(d)), &full, &pool(), &AtomicBool::new(false)).unwrap();
+            assert_eq!(strict.fail.is_none(), high, "strict {total}/{measured}");
+        }
+        let p = SearchParams { total_pairs: 19, ..params() };
+        assert_eq!(run_search_with_low_support(&p, &|_| panic!("short window must not scan"), &|_| None,
+            &pool(), &AtomicBool::new(false)).unwrap().fail, Some(FailReason::WindowTooShort));
     }
     #[test] fn tiny_search_range_is_no_contrast() {
         let o = run(&SearchParams { search_ms: 40.0, ..params() }, valleys(&[(3.0, 0.9, 12.0)]));

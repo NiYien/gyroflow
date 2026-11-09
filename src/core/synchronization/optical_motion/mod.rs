@@ -39,7 +39,7 @@ use crate::synchronization::{ sync_diag, GrayImage, SyncParams };
 use self::config::OpticalConfig;
 use self::cost::{ eval_coarse, eval_full, CostContext, SgCache };
 use self::quat_table::QuatTable;
-use self::search::{ failed, grid, run_search, search_intervals, FailReason, FullEval, SearchOutcome, SearchParams };
+use self::search::{ failed, grid, run_search_with_low_support, search_intervals, FailReason, FullEval, SearchOutcome, SearchParams };
 use self::tracks::{ frame_index, row_time_ms, FrameStep, Observation, RawFrame, RawWindow, WindowBuilder, WindowTracks };
 
 /// Tracks kept alive per frame (upstream value)
@@ -190,6 +190,10 @@ impl OpticalSession {
 
     pub fn has_tracker(&self) -> bool { self.has_tracker }
 
+    pub(crate) fn verification_session(&self, fps: f64, every_nth: usize, device: i32, cancel: Arc<AtomicBool>) -> Self {
+        Self::new(1, fps, every_nth, cancel, &|| default_tracker(config::config(), device), self.on_frame_done.clone())
+    }
+
     pub fn timings(&self) -> SessionTimings {
         SessionTimings {
             track_ms: self.counters.track_ns.load(Relaxed) as f64 / 1e6,
@@ -285,28 +289,74 @@ pub struct SolveInput<'a> { pub ranges_us: &'a [(i64, i64)], pub sync_params: &'
 /// (target `sync`): `[optical] seg i: …` with the result, or `[optical] seg i: failed reason=…`.
 pub fn solve_windows(windows: &[WindowTracks], input: &SolveInput, pool: &rayon::ThreadPool, cancel: &AtomicBool,
                      progress: &(dyn Fn(f64) + Sync)) -> Option<Vec<(f64, f64, f64, f64)>> {
+    let outcomes = measure_windows(windows, input, pool, cancel, 0, progress)?;
+    Some(confirmed_rows(windows, &outcomes, input.ranges_us, input.sync_params.initial_offset))
+}
+
+pub(crate) fn measure_windows(windows: &[WindowTracks], input: &SolveInput, pool: &rayon::ThreadPool, cancel: &AtomicBool, first_index: usize,
+                     progress: &(dyn Fn(f64) + Sync)) -> Option<Vec<SearchOutcome>> {
     if input.sync_params.calc_initial_fast {
         log::info!(target: "sync", "[optical] calc_initial_fast ignored (not applicable to the optical method)");
     }
     let n = input.ranges_us.len();
     let sg = SgCache::with_frame_step(input.sync_params.every_nth_frame);
     let no_tracks = WindowTracks { pairs: Vec::new(), focal_px: 0.0 };
-    let mut rows = Vec::with_capacity(n);
+    let mut outcomes = Vec::with_capacity(n);
     progress(0.0);
-    for (i, &(from, to)) in input.ranges_us.iter().enumerate() {
+    for i in 0..n {
         if cancel.load(Relaxed) { return None; }
         let outcome = if input.has_tracker {
-            solve_window(i, windows.get(i).unwrap_or(&no_tracks), input, &sg, pool, cancel)?
+            solve_window(i + first_index, windows.get(i).unwrap_or(&no_tracks), input, &sg, pool, cancel)?
         } else {
             let o = failed(FailReason::NoOpencv, input.sync_params.initial_offset);
             log::info!(target: "sync", "[optical] seg {}: failed reason={}", i, FailReason::NoOpencv.as_str());
             o
         };
-        rows.push(((from + to) as f64 / 2.0 / 1000.0, outcome.offset_ms, outcome.cost_px, outcome.conf));
+        outcomes.push(outcome);
         progress((i + 1) as f64 / n as f64);
     }
     if cancel.load(Relaxed) { return None; }
-    Some(rows)
+    Some(outcomes)
+}
+
+fn measurement_confirmed(i: usize, windows: &[WindowTracks], outcomes: &[SearchOutcome], ranges: &[(i64, i64)]) -> bool {
+    let outcome = &outcomes[i];
+    if outcome.fail.is_some() { return false; }
+    if outcome.has_high_support(windows.get(i).map_or(0, |w| w.pairs.len())) { return true; }
+    if outcome.conf < 0.4 { return false; }
+    let mut supported = false;
+    for (j, other) in outcomes.iter().enumerate() {
+        if j == i || other.fail.is_some() || other.conf < 0.4 { continue; }
+        let (a, b) = (ranges[i], ranges[j]);
+        if a.1 >= b.0 && b.1 >= a.0 { continue; }
+        let distance_ms = ((a.0 + a.1) as f64 - (b.0 + b.1) as f64).abs() / 2000.0;
+        if (outcome.offset_ms - other.offset_ms).abs() > super::sync_repair::dynamic_video_tolerance_ms(distance_ms) {
+            return false;
+        }
+        supported = true;
+    }
+    supported
+}
+
+pub(crate) fn pending_low_support(windows: &[WindowTracks], outcomes: &[SearchOutcome], ranges: &[(i64, i64)]) -> Option<usize> {
+    outcomes.iter().enumerate().position(|(i, outcome)| outcome.fail.is_none() && outcome.conf >= 0.4
+        && !measurement_confirmed(i, windows, outcomes, ranges))
+}
+
+pub(crate) fn confirmed_rows(windows: &[WindowTracks], outcomes: &[SearchOutcome], ranges: &[(i64, i64)], initial_offset: f64)
+    -> Vec<(f64, f64, f64, f64)> {
+    outcomes.iter().enumerate().map(|(i, outcome)| {
+        let confirmed = measurement_confirmed(i, windows, outcomes, ranges);
+        if outcome.fail.is_none() && !outcome.has_high_support(windows.get(i).map_or(0, |w| w.pairs.len())) {
+            log::info!(target: "sync", "[optical] seg {i}: low support verified={confirmed} measured={}/{}",
+                outcome.pairs_measured, windows.get(i).map_or(0, |w| w.pairs.len()));
+        }
+        let (offset, cost, confidence) = if confirmed {
+            (outcome.offset_ms, outcome.cost_px, outcome.conf)
+        } else { (initial_offset, 0.0, 0.0) };
+        let (from, to) = ranges[i];
+        ((from + to) as f64 / 2000.0, offset, cost, confidence)
+    }).collect()
 }
 
 /// One quaternion table per search interval, in interval order: interval `(a, b)` gets the gyro times of the row-time
@@ -369,7 +419,7 @@ fn solve_window(i: usize, w: &WindowTracks, input: &SolveInput, sg: &SgCache, po
                 fine_ns.fetch_add(t.elapsed().as_nanos() as u64, Relaxed);
                 r
             };
-            let outcome = run_search(&p, &coarse, &full, pool, cancel)?;
+            let outcome = run_search_with_low_support(&p, &coarse, &full, pool, cancel)?;
             // Gyro time = video time - offset; `covers` is about the gyro data, the same for every table
             let covered = || grid(&intervals, p.step_ms).iter().any(|&d| tables[table_for(&intervals, d)].covers(lo - d, hi - d));
             (relabel_unfitted(outcome, covered), subset.per_pair.iter().map(Vec::len).sum::<usize>())
@@ -377,13 +427,13 @@ fn solve_window(i: usize, w: &WindowTracks, input: &SolveInput, sg: &SgCache, po
         // No observation at all, so no time span to build a table over and nothing to cover (the cost's rule for an
         // empty span): with pairs but no observations the failure is few_measurements. Without pairs (a window that
         // received no frames) the search fails as window_too_short before evaluating anything.
-        None => (relabel_unfitted(run_search(&p, &|_| None, &|_| None, pool, cancel)?, || true), 0),
+        None => (relabel_unfitted(run_search_with_low_support(&p, &|_| None, &|_| None, pool, cancel)?, || true), 0),
     };
     let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
     let fine_ms = fine_ns.load(Relaxed) as f64 / 1e6;
 
     match outcome.fail {
-        Some(reason) => log::info!(target: "sync", "[optical] seg {}: failed reason={}", i, reason.as_str()),
+        Some(reason) => log::info!(target: "sync", "[optical] seg {}: failed reason={} measured={}/{}", i, reason.as_str(), outcome.pairs_measured, w.pairs.len()),
         None => {
             let pairs = w.pairs.len();
             let per_pair = |n: usize| n as f64 / pairs.max(1) as f64;
@@ -395,6 +445,8 @@ fn solve_window(i: usize, w: &WindowTracks, input: &SolveInput, sg: &SgCache, po
                 outcome.cost_px, outcome.far_candidates,
                 outcome.near_ms.map_or("-".to_string(), |s| format!("{:+.1}", s)),
                 pairs, per_pair(points), per_pair(coarse_points), (elapsed_ms - fine_ms).max(0.0), fine_ms);
+            log::info!(target: "sync", "[optical] seg {i}: support={} measured={}/{}",
+                if outcome.has_high_support(pairs) { "high" } else { "low" }, outcome.pairs_measured, pairs);
         }
     }
     if sync_diag::is_enabled() {
@@ -472,6 +524,34 @@ mod tests {
     fn cfg() -> OpticalConfig { OpticalConfig { g_full: 2.0, replenish: 0.85, coarse_step_ms: 10.0, coarse_points: 200, track_width: 960 } }
     fn empty() -> WindowTracks { WindowTracks { pairs: Vec::new(), focal_px: 1500.0 } }
     fn pool() -> rayon::ThreadPool { rayon::ThreadPoolBuilder::new().num_threads(2).build().unwrap() }
+
+    #[test] fn low_support_needs_disjoint_support_without_conflicts() {
+        let windows: Vec<_> = (0..3).map(|_| synth_window(&SynthSpec {
+            fps: 25.0, duration_ms: 2500.0, tracks: 40, ..Default::default()
+        }).0).collect();
+        let point = |offset_ms, pairs_measured, conf| SearchOutcome {
+            offset_ms, pairs_measured, conf, fail: None, ..failed(FailReason::FewMeasurements, -1500.0)
+        };
+        let low = point(-1495.0, 15, 1.0);
+        let high = point(-1499.0, 40, 1.0);
+        let ranges = [(14_000_000, 16_500_000), (4_000_000, 6_500_000), (20_000_000, 22_500_000)];
+        assert_eq!(pending_low_support(&windows[..1], std::slice::from_ref(&low), &ranges[..1]), Some(0));
+        assert_eq!(confirmed_rows(&windows[..1], std::slice::from_ref(&low), &ranges[..1], -1500.0)[0].3, 0.0);
+        let mut outcomes = vec![low, high, point(-1498.0, 40, 0.8)];
+        assert_eq!(pending_low_support(&windows, &outcomes, &ranges), None);
+        assert_eq!(confirmed_rows(&windows, &outcomes, &ranges, -1500.0)[0].1, -1495.0);
+        outcomes[1].pairs_measured = 15;
+        assert_eq!(pending_low_support(&windows[..2], &outcomes[..2], &ranges[..2]), None);
+        outcomes[1].pairs_measured = 40;
+        let overlap = [(14_000_000, 16_500_000), (15_000_000, 17_500_000)];
+        assert_eq!(pending_low_support(&windows[..2], &outcomes[..2], &overlap), Some(0));
+        outcomes[2].offset_ms = -1300.0;
+        assert_eq!(pending_low_support(&windows, &outcomes, &ranges), Some(0));
+        outcomes[0].conf = 0.3;
+        assert_eq!(pending_low_support(&windows, &outcomes, &ranges), None);
+        assert_eq!(confirmed_rows(&windows, &outcomes, &ranges, -1500.0)[0].3, 0.0);
+        assert_eq!(confirmed_rows(&windows, &outcomes, &ranges, -1500.0)[1].3, 1.0);
+    }
 
     #[test] fn frames_become_pairs_per_window() {
         let done = Arc::new(AtomicUsize::new(0));
