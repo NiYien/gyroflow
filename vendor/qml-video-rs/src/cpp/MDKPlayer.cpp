@@ -677,6 +677,17 @@ void MDKPlayer::windowBeforeRendering() {
     // QElapsedTimer t; t.start();
     if (m_shuttingDown.load()) return;
     if (!m_item || !m_window) return;
+#if (__ANDROID__+0)
+    // The scene graph can sample a new texture even while video processing is blocked.
+    // Initialise it before any decoder or stabilization readiness checks can skip this frame.
+    if (m_needsInitialClear && m_rtClear) {
+        auto context = static_cast<QSGDefaultRenderContext *>(QQuickItemPrivate::get(m_item)->sceneGraphRenderContext());
+        auto cb = context->currentFrameCommandBuffer();
+        cb->beginPass(m_rtClear.get(), QColor(Qt::black), { 1.0f, 0 });
+        cb->endPass();
+        m_needsInitialClear = false;
+    }
+#endif
     if (!m_videoLoaded.load()) return;
 
     // Capture player pointer locally to avoid TOCTOU race with destroyPlayer() on GUI thread.
@@ -712,16 +723,6 @@ void MDKPlayer::windowBeforeRendering() {
     if (doRenderPass) {
         QRhiResourceUpdateBatch *u = context->rhi()->nextResourceUpdateBatch();
         QRhiTextureRenderTarget *rt = m_rt.get();
-#if (__ANDROID__+0)
-        // m_rt preserves its color contents on Android, so the very first pass
-        // after the texture was (re)created goes through the clearing target to
-        // initialise the allocation. Both target the same texture, so which one
-        // opens the pass only decides whether the contents survive.
-        if (m_needsInitialClear && m_rtClear) {
-            rt = m_rtClear.get();
-            m_needsInitialClear = false;
-        }
-#endif
         cb->beginPass(rt, QColor(Qt::black), { 1.0f, 0 }, u, QRhiCommandBuffer::ExternalContent);
     }
 
