@@ -313,6 +313,14 @@ void MDKPlayer::setUrl(const QUrl &url, const QString &customDecoder) {
         // RAW decoders may replace codec dimensions with their scaled output.
         // Keep the source properties before decoding, separately for each player.
         captureSourceVideoInfo(sourceInfo, info);
+        if (!info.video.empty() && info.video[0].codec.codec
+            && std::string(info.video[0].codec.codec) == "prores_raw") {
+            // Keep the Bayer sensor dimensions: lowres is unsupported and the
+            // recommended crop belongs after debayering. Clear any queued scale.
+            player->setProperty("video.decoder.scale", "0");
+            player->setProperty("video.decoder", "scale=1:apply_cropping=0");
+            qDebug2("prepare") << "preview.decoder ProRes RAW full-resolution Bayer decode";
+        }
         if (!m_autoSoftwareDecoders.load()) return true;
         if (!info.video.empty() && !hardwareDecoderSupports(info.video[0].codec)) {
             player->setDecoders(mdk::MediaType::Video, {"FFmpeg"});
