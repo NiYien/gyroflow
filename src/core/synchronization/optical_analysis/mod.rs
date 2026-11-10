@@ -843,6 +843,56 @@ pub struct OpticalMotionAnalysis {
     started: std::time::Instant,
 }
 
+#[cfg(feature = "use-opencv")]
+fn parse_translation_tracker(raw: Option<&str>) -> Option<bool> {
+    match raw.map(str::trim) {
+        None | Some("legacy") => Some(false),
+        Some("frame_klt") => Some(true),
+        _ => None,
+    }
+}
+
+#[cfg(feature = "use-opencv")]
+fn translation_frame_tracker() -> bool {
+    static RESOLVED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        let raw = std::env::var("GYROFLOW_TRANSLATION_TRACKER").ok();
+        let parsed = parse_translation_tracker(raw.as_deref());
+        if parsed.is_none() {
+            log::warn!(target: "lifecycle", "GYROFLOW_TRANSLATION_TRACKER={} invalid, falling back to legacy", raw.as_deref().unwrap_or_default());
+        }
+        let enabled = parsed.unwrap_or(false);
+        log::info!(target: "lifecycle", "translation_tracker_config resolved={} source={}",
+            if enabled { "frame_klt" } else { "legacy" }, if raw.is_some() { "env" } else { "default" });
+        enabled
+    })
+}
+
+#[cfg(feature = "use-opencv")]
+fn parse_frame_klt_selection(raw: Option<&str>) -> Option<bool> {
+    match raw.map(str::trim) {
+        None | Some("upstream") => Some(false),
+        Some("local") => Some(true),
+        _ => None,
+    }
+}
+
+#[cfg(feature = "use-opencv")]
+fn local_frame_klt_selection() -> bool {
+    static RESOLVED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        let raw = std::env::var("GYROFLOW_FRAME_KLT_SELECTION").ok();
+        let parsed = parse_frame_klt_selection(raw.as_deref());
+        if parsed.is_none() {
+            log::warn!(target: "lifecycle", "GYROFLOW_FRAME_KLT_SELECTION={} invalid, falling back to upstream", raw.as_deref().unwrap_or_default());
+        }
+        let local = parsed.unwrap_or(false);
+        log::info!(target: "lifecycle", "frame_klt_selection_config resolved={} source={}",
+            if local { "local" } else { "upstream" }, if raw.is_some() { "env" } else { "default" });
+        local
+    })
+}
+
 impl OpticalMotionAnalysis {
     pub fn from_manager(stab: &StabilizationManager, cancel_flag: Arc<AtomicBool>) -> Result<Self, String> {
         #[cfg(feature = "use-opencv")]
@@ -887,6 +937,7 @@ impl OpticalMotionAnalysis {
                 scaled_fps / every_nth_frame as f64);
             let processing_device=stab.params.read().current_device;
             let translation = (vision.is_none() && ui.translation_enabled).then(||TranslationState::with_device(processing_device));
+            let frame_translation = translation.is_some() && translation_frame_tracker();
             let translation_replay = (translation.is_some() && ui.stab_enabled).then(VecDeque::new);
             // With motion data the correction is the residual rotation, measured from a subsample of the tracks
             let residual = (vision.is_none() && ui.correction_enabled).then(ResidualStore::new);
@@ -895,9 +946,10 @@ impl OpticalMotionAnalysis {
                 every_nth_frame, hp_min, hp_max,
                 track_size: (0, 0),
                 focal_px: 0.0,
-                tracker: if frame_vision { Self::new_tracker() } else { KltTracker::with_device(MAX_POINTS, 1.0, TRACK_WIDTH,
+                tracker: if frame_vision || frame_translation { Self::new_tracker() } else { KltTracker::with_device(MAX_POINTS, 1.0, TRACK_WIDTH,
                     super::optical_motion::tracker::KltDevice::for_processing_device(processing_device)) },
-                frame_tracker: frame_vision.then(|| frame_klt::Tracker::new(MAX_POINTS, processing_device)),
+                frame_tracker: (frame_vision || frame_translation).then(|| frame_klt::Tracker::new(MAX_POINTS, processing_device)
+                    .with_texture(frame_translation).with_local_selection(frame_vision && local_frame_klt_selection())),
                 frame_vision, chained: 0, track_lengths: HashMap::new(),
                 processing_device,
                 last: None,
@@ -2356,6 +2408,84 @@ mod tests {
     #[cfg(feature = "use-opencv")]
     fn frames_at_30fps(pixels: Vec<Vec<u8>>, (w, h): (u32, u32)) -> Vec<(i64, u32, u32, usize, Vec<u8>)> {
         pixels.into_iter().enumerate().map(|(k, p)| ((k as f64 * 1e6 / 30.0).round() as i64, w, h, w as usize, p)).collect()
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn translation_tracker_modes_keep_the_gyro_sampling_and_vision_path() {
+        assert_eq!(parse_translation_tracker(None), Some(false));
+        assert_eq!(parse_translation_tracker(Some("legacy")), Some(false));
+        assert_eq!(parse_translation_tracker(Some("frame_klt")), Some(true));
+        assert_eq!(parse_translation_tracker(Some("unknown")), None);
+        for fps in [50.0, 60000.0 / 1001.0] {
+            let stab = analysis_fixture(48, |_| crate::Quat64::identity());
+            stab.params.write().fps = fps;
+            stab.optical_ui.write().translation_enabled = true;
+            let analysis = OpticalMotionAnalysis::from_manager(&stab, Arc::new(AtomicBool::new(false))).unwrap();
+            assert_eq!(analysis.frame_tracker.is_some(), translation_frame_tracker());
+            assert!(analysis.vision.is_none() && !analysis.frame_vision);
+            assert_eq!(analysis.frame_step(), 2);
+            assert_eq!(analysis.scaled_fps / analysis.frame_step() as f64, fps / 2.0);
+            stab.optical_ui.write().translation_enabled = false;
+            let analysis = OpticalMotionAnalysis::from_manager(&stab, Arc::new(AtomicBool::new(false))).unwrap();
+            assert!(analysis.frame_tracker.is_none());
+        }
+        let stab = vision_fixture(48);
+        stab.optical_settings.write().per_frame = true;
+        let analysis = OpticalMotionAnalysis::from_manager(&stab, Arc::new(AtomicBool::new(false))).unwrap();
+        assert!(analysis.frame_tracker.is_some() && analysis.frame_vision && analysis.vision.is_some());
+        assert!(analysis.translation.is_none());
+        assert_eq!(analysis.frame_step(), 1);
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn translation_tracker_matches_serial_and_pipeline_with_a_gap() {
+        let stab = analysis_fixture(48, |_| crate::Quat64::identity());
+        stab.optical_ui.write().translation_enabled = true;
+        stab.params.write().current_device = -1;
+        stab.params.write().trim_ranges = vec![(0.0, 0.4), (0.55, 1.0)];
+        let frames = frames_at_30fps(moving_texture(48, (640, 360)), (640, 360));
+        let (serial, pipeline) = analyze_both_ways(&stab, &frames);
+        assert_eq!(serial.unwrap(), pipeline.unwrap());
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn frame_selection_is_scoped_to_per_frame_vision() {
+        assert_eq!(parse_frame_klt_selection(None), Some(false));
+        assert_eq!(parse_frame_klt_selection(Some("upstream")), Some(false));
+        assert_eq!(parse_frame_klt_selection(Some("local")), Some(true));
+        assert_eq!(parse_frame_klt_selection(Some("invalid")), None);
+        let stab = vision_fixture(48);
+        stab.optical_ui.write().translation_enabled = true;
+        stab.optical_settings.write().per_frame = true;
+        let analysis = OpticalMotionAnalysis::from_manager(&stab, Arc::new(AtomicBool::new(false))).unwrap();
+        assert!(analysis.frame_vision && analysis.vision.is_some() && analysis.translation.is_none());
+        assert_eq!(analysis.frame_tracker.as_ref().unwrap().uses_local_selection(), local_frame_klt_selection());
+        assert_eq!(analysis.frame_step(), 1);
+        stab.optical_settings.write().per_frame = false;
+        let analysis = OpticalMotionAnalysis::from_manager(&stab, Arc::new(AtomicBool::new(false))).unwrap();
+        assert!(analysis.frame_tracker.is_none() && !analysis.frame_vision);
+        let stab = analysis_fixture(48, |_| crate::Quat64::identity());
+        stab.optical_ui.write().translation_enabled = true;
+        let analysis = OpticalMotionAnalysis::from_manager(&stab, Arc::new(AtomicBool::new(false))).unwrap();
+        assert!(analysis.vision.is_none() && !analysis.frame_vision && analysis.translation.is_some());
+        assert_eq!(analysis.frame_tracker.is_some(), translation_frame_tracker());
+        assert!(analysis.frame_tracker.as_ref().is_none_or(|t| !t.uses_local_selection()));
+        assert_eq!(analysis.frame_step(), 1);
+    }
+
+    #[cfg(feature = "use-opencv")]
+    #[test]
+    fn frame_selection_matches_serial_and_pipeline_with_a_gap() {
+        let stab = vision_fixture(48);
+        stab.params.write().current_device = -1;
+        stab.optical_settings.write().per_frame = true;
+        stab.params.write().trim_ranges = vec![(0.0, 0.4), (0.55, 1.0)];
+        let frames = frames_at_30fps(moving_texture(48, (640, 360)), (640, 360));
+        let (serial, pipeline) = analyze_both_ways(&stab, &frames);
+        assert_eq!(serial.unwrap(), pipeline.unwrap());
     }
 
     #[cfg(feature = "use-opencv")]

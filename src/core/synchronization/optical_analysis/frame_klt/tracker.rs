@@ -7,6 +7,7 @@ use std::{ sync::mpsc, time::{ Duration, Instant } };
 #[cfg(feature = "use-opencv")]
 use opencv::{ core::{ self, Mat, Point2f, Size, TermCriteria, Vector, CV_8UC1 }, prelude::*, imgproc, video };
 use super::{Observation, gpu_klt::GpuKlt};
+use crate::synchronization::optical_motion::tracker::LocalCorners;
 
 /// Grid the new corners are spread over, see `Tracker::replenish`
 const GRID_ROWS: i32 = 6;
@@ -65,6 +66,14 @@ pub struct Tracker {
     ids: Vec<u32>,
     next_id: u32,
     max_points: usize,
+    capture_texture: bool,
+    texture: Vec<f32>,
+    local_selection: bool,
+    local_corners: Option<LocalCorners>,
+    local_prepare_s: f64,
+    local_select_s: f64,
+    local_prepared_frames: usize,
+    local_gpu_corner_frames: usize,
     /// KLT: the candidate corners of the frame before (see `local_maxima`, the strongest first), the corner strengths of
     /// every 8th pixel of it in both directions (its noise is a percentile of those) and its glare: what the next
     /// `replenish` picks from
@@ -96,21 +105,42 @@ impl Tracker {
         };
         Self {
             prev: None, size: (0, 0), points: Vec::new(), ids: Vec::new(), next_id: 0, max_points,
+            capture_texture: false, texture: Vec::new(),
+            local_selection: false, local_corners: None, local_prepare_s: 0.0, local_select_s: 0.0,
+            local_prepared_frames: 0, local_gpu_corner_frames: 0,
             candidates: Vec::new(), noise: Vec::new(), glare: Vec::new(), sorted: true,
             gpu_wanted: finding.is_some(), finding, adapter: Err("no GPU to use".into()), gpu: None, device: "the CPU".into(), setup: 0.0, busy: 0.0, frames: 0,
         }
     }
 
+    pub fn with_texture(mut self, enabled: bool) -> Self {
+        self.capture_texture = enabled;
+        self
+    }
+
+    pub fn with_local_selection(mut self, enabled: bool) -> Self {
+        self.local_selection = enabled;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn uses_local_selection(&self) -> bool { self.local_selection }
+
     /// Where the tracking ran and how long it took a frame, for the log
     pub fn describe(&self) -> String {
         let setup = if self.setup > 0.0 { format!(" (set up in {:.0} ms)", self.setup * 1000.0) } else { String::new() };
-        format!("tracked on {} in {:.1} ms a frame{setup}", self.device, self.busy * 1000.0 / self.frames.max(1) as f64)
+        let selection = if self.local_selection {
+            format!("; selection=local cpu_prepare_ms={:.1} cpu_select_ms={:.1} prepared_frames={} gpu_corner_frames={}",
+                self.local_prepare_s * 1000.0, self.local_select_s * 1000.0, self.local_prepared_frames, self.local_gpu_corner_frames)
+        } else { String::new() };
+        format!("tracked on {} in {:.1} ms a frame{setup}{selection}", self.device, self.busy * 1000.0 / self.frames.max(1) as f64)
     }
     /// Forget everything: the next frame starts new tracks (a gap in the decoded frames, a cut)
     pub fn reset(&mut self) {
         self.prev = None;
         self.points.clear();
         self.ids.clear();
+        self.local_corners = None;
     }
 
     /// Tracks the points of the previous frame into this one. Empty for the first frame
@@ -134,8 +164,16 @@ impl Tracker {
         // meanwhile, clocked down and took 1.5 times as long (a phone, Adreno 650)
         let levels = self.gpu.as_mut().map(|gpu| gpu.submit_levels(pixels));
         if prev.is_some() {
-            self.sort_candidates();
-            self.replenish();
+            if self.local_selection {
+                let started = Instant::now();
+                let mut points = self.points.iter().map(|p| Point2f::new(p[0], p[1])).collect();
+                self.local_corners.as_ref().unwrap().replenish(&mut points, &mut self.ids, &mut self.next_id, self.max_points).map_err(cv)?;
+                self.points = points.into_iter().map(|p| [p.x, p.y]).collect();
+                self.local_select_s += started.elapsed().as_secs_f64();
+            } else {
+                self.sort_candidates();
+                self.replenish();
+            }
         }
         let tracking = prev.is_some() && !self.points.is_empty();
         let moved = self.klt_frame(prev.as_deref(), pixels, stride, tracking, levels)?;
@@ -148,7 +186,10 @@ impl Tracker {
                 let inside = b[0] > 2.0 && b[1] > 2.0 && b[0] < (w - 3) as f32 && b[1] < (h - 3) as f32;
                 if inside {
                     let fixed = |p: [f32; 2]| p.map(|v| (v * 512.0).round() / 512.0);
-                    out.push(Observation { id: self.ids[i], a: fixed(a), b: fixed(b), texture: f32::NAN });
+                    let texture = if self.capture_texture {
+                        self.texture[(b[1].round() as i32 * w + b[0].round() as i32) as usize]
+                    } else { f32::NAN };
+                    out.push(Observation { id: self.ids[i], a: fixed(a), b: fixed(b), texture });
                     points.push(b);
                     ids.push(self.ids[i]);
                 }
@@ -217,6 +258,18 @@ impl Tracker {
                     std::mem::swap(&mut self.candidates, &mut gpu.candidates);
                     std::mem::swap(&mut self.noise, &mut gpu.noise);
                     self.sorted = false;
+                    if self.local_selection {
+                        let started = Instant::now();
+                        self.local_corners = Some(LocalCorners::new(&frame_mat(pixels, stride, w, h).map_err(cv)?).map_err(cv)?);
+                        self.local_prepare_s += started.elapsed().as_secs_f64();
+                        self.local_prepared_frames += 1;
+                        self.local_gpu_corner_frames += 1;
+                    }
+                    #[cfg(feature = "use-opencv")]
+                    if self.capture_texture {
+                        self.texture = corner_strengths(&frame_mat(pixels, stride, w, h).map_err(cv)?).map_err(cv)?
+                            .data_typed::<f32>().map_err(cv)?.to_vec();
+                    }
                     return Ok(tracking.then(|| checked(&self.points, &gpu.fwd, &gpu.bwd, FB_MAX)));
                 },
                 Err(e) if cfg!(feature = "use-opencv") => {
@@ -247,12 +300,20 @@ impl Tracker {
             Some(prev) if tracking => Some(Self::klt(&frame_mat(prev, w as usize, w, h)?, &cur, &self.points, FB_MAX)?),
             _ => None,
         };
+        if self.local_selection {
+            let started = Instant::now();
+            self.local_corners = Some(LocalCorners::new(&cur)?);
+            self.local_prepare_s += started.elapsed().as_secs_f64();
+            self.local_prepared_frames += 1;
+            return Ok(moved);
+        }
         let eig = corner_strengths(&cur)?;
         let eig = eig.data_typed::<f32>()?;
         self.candidates = local_maxima(eig, w, h);
         self.sorted = true;
         self.noise = noise_samples(eig, w, h);
         self.glare = glare(pixels, stride, w, h);
+        if self.capture_texture { self.texture = eig.to_vec(); }
         Ok(moved)
     }
 
@@ -492,5 +553,67 @@ pub(super) fn clear_disc(free: &mut [bool], w: i32, h: i32, cx: f64, cy: f64, r:
         let (x0, x1) = (((cx - half).floor() as i32 + 1).max(0), ((cx + half).ceil() as i32 - 1).min(w - 1));
         if x0 <= x1 { free[(y * w + x0) as usize..=(y * w + x1) as usize].fill(false); }
     }
+}
+
+#[cfg(all(test, feature = "use-opencv"))]
+mod tests {
+    use super::*;
+
+    fn texture() -> Vec<u8> {
+        let mut seed = 91u32;
+        (0..320 * 180).map(|_| {
+            seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+            (seed % 240) as u8
+        }).collect()
+    }
+
+    #[test]
+    fn translation_texture_is_the_current_corner_response_without_changing_tracks() {
+        let image = texture();
+        let mut plain = Tracker::new(1500, -1);
+        let mut measured = Tracker::new(1500, -1).with_texture(true);
+        assert!(plain.track(320, 180, 320, &image).unwrap().is_empty());
+        assert!(measured.track(320, 180, 320, &image).unwrap().is_empty());
+        let a = plain.track(320, 180, 320, &image).unwrap();
+        let b = measured.track(320, 180, 320, &image).unwrap();
+        assert!(a.len() > 100);
+        let eig = corner_strengths(&frame_mat(&image, 320, 320, 180).unwrap()).unwrap();
+        for (a, b) in a.iter().zip(&b) {
+            assert_eq!((a.id, a.a, a.b), (b.id, b.a, b.b));
+            assert!(a.texture.is_nan());
+            assert_eq!(b.texture, *eig.at_2d::<f32>(b.b[1].round() as i32, b.b[0].round() as i32).unwrap());
+        }
+        measured.reset();
+        assert!(measured.track(320, 180, 320, &image).unwrap().is_empty());
+        let after = measured.track(320, 180, 320, &image).unwrap();
+        assert!(after.iter().all(|o| o.id > b.iter().map(|o| o.id).max().unwrap()));
+        measured.adapter = Err("test initialization failure".into());
+        measured.set_up_gpu(320, 180, 320).unwrap();
+        assert!(!measured.gpu_wanted);
+        assert!(measured.track(320, 180, 320, &image).unwrap().is_empty());
+        let recovered = measured.track(320, 180, 320, &image).unwrap();
+        assert!(recovered.iter().all(|o| o.id > after.iter().map(|o| o.id).max().unwrap()));
+    }
+
+    #[test]
+    fn local_selection_keeps_ids_unique_across_reset_and_size_change() {
+        let image = texture();
+        let mut tracker = Tracker::new(1500, -1).with_local_selection(true);
+        assert!(tracker.track(320, 180, 320, &image).unwrap().is_empty());
+        let first = tracker.track(320, 180, 320, &image).unwrap();
+        assert!(first.len() > 100 && first.iter().all(|o| o.texture.is_nan()));
+        let second = tracker.track(320, 180, 320, &image).unwrap();
+        assert!(second.iter().any(|b| first.iter().any(|a| a.id == b.id)));
+        let maximum = first.iter().chain(&second).map(|o| o.id).max().unwrap();
+        tracker.reset();
+        assert!(tracker.track(320, 180, 320, &image).unwrap().is_empty());
+        let after = tracker.track(320, 180, 320, &image).unwrap();
+        assert!(after.iter().all(|o| o.id > maximum));
+        let maximum = after.iter().map(|o| o.id).max().unwrap();
+        assert!(tracker.track(160, 90, 160, &image[..160 * 90]).unwrap().is_empty());
+        let smaller = tracker.track(160, 90, 160, &image[..160 * 90]).unwrap();
+        assert!(!smaller.is_empty() && smaller.iter().all(|o| o.id > maximum));
+    }
+
 }
 

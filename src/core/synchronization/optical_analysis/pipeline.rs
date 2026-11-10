@@ -159,6 +159,7 @@ impl AnalysisPipeline {
         let decode_end = Arc::new(Mutex::new(None));
         let cancel = analysis.cancel.clone();
         let frame_tracker = analysis.frame_tracker.take();
+        let frame_tracker_label = if analysis.frame_vision { "Per-frame pure optical" } else { "Experimental translation tracker" };
         let mut senders = Vec::with_capacity(PREPARE_WORKERS);
         let mut workers = Vec::with_capacity(PREPARE_WORKERS);
         let (tracked_tx, tracked_rx) = sync_channel::<Tracked>(MEASURE_QUEUE);
@@ -187,7 +188,7 @@ impl AnalysisPipeline {
                     Shared::add(&shared.track_ns, started);
                     if tracked_tx.send(Tracked { index: job.index, ts_ms: job.ts_ms, size: job.size, obs }).is_err() { break; }
                 }
-                log::info!("Per-frame pure optical: {}", frame_tracker.describe());
+                log::info!("{frame_tracker_label}: {}", frame_tracker.describe());
             }).map_err(|e| format!("Cannot start the optical analysis: {e}"))?
         } else {
             let tracker = std::mem::replace(&mut analysis.tracker, OpticalMotionAnalysis::new_tracker());

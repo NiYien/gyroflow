@@ -395,54 +395,11 @@ impl KltTracker {
         if self.points.len() as f64 >= self.replenish_ratio * self.max_points as f64 { return Ok(()); }
         let (w, h) = self.size;
         let min_distance = (w.max(h) as f64 / 120.0).max(4.0);
-        let mut mask = Mat::new_rows_cols_with_default(h, w, CV_8UC1, Scalar::all(255.0))?;
-        for p in &self.points {
-            imgproc::circle(&mut mask, Point::new(p.x as i32, p.y as i32), min_distance as i32, Scalar::all(0.0), -1, imgproc::LINE_8, 0)?;
-        }
+        let mut mask = selection_mask(self.size, &self.points, min_distance)?;
         let img = prev.layers.get(0)?;
         let cache = prev.corners(self.size)?;
-        for &(centre, radius) in &cache.glare {
-            imgproc::circle(&mut mask, centre, radius, Scalar::all(0.0), -1, imgproc::LINE_8, 0)?;
-        }
-        let eig = &cache.eig;
-        let mut strongest = 0.0;
-        core::min_max_loc(eig, None, Some(&mut strongest), None, None, &mask)?;
-        if strongest <= 0.0 { return Ok(()); } // A flat frame: black, a fade
-        let threshold = QUALITY * strongest;
-        let Some(noise) = cache.noise else { return Ok(()) };
-        let floor = NOISE_MULTIPLE * noise;
-        let share = self.max_points / (GRID_ROWS * GRID_COLS) as usize;
-        // The cells add their corners one after the other, with consecutive ids; relabelled round-robin below
-        let (first_new, first_id) = (self.points.len(), self.next_id);
-        let mut per_cell = vec![0usize; (GRID_ROWS * GRID_COLS) as usize];
-        for r in 0..GRID_ROWS {
-            for c in 0..GRID_COLS {
-                let (x0, y0) = (w * c / GRID_COLS, h * r / GRID_ROWS);
-                let cell = Rect::new(x0, y0, w * (c + 1) / GRID_COLS - x0, h * (r + 1) / GRID_ROWS - y0);
-                let has = self.points.iter().filter(|p| cell.contains(Point::new(p.x as i32, p.y as i32))).count();
-                if has >= share { continue; }
-                let mut corners = Vector::<Point2f>::new();
-                {
-                    let (eig_cell, mask_cell, img_cell) = (Mat::roi(eig, cell)?, Mat::roi(&mask, cell)?, Mat::roi(&img, cell)?);
-                    let mut cell_strongest = 0.0;
-                    core::min_max_loc(&eig_cell, None, Some(&mut cell_strongest), None, None, &mask_cell)?;
-                    let cell_threshold = threshold.min(floor.max(QUALITY * cell_strongest));
-                    if cell_threshold <= 0.0 || cell_strongest < cell_threshold { continue; }
-                    imgproc::good_features_to_track(&img_cell, &mut corners, (share - has) as i32, cell_threshold / cell_strongest, min_distance, &mask_cell, 7, false, 0.04)?;
-                }
-                per_cell[(r * GRID_COLS + c) as usize] = corners.len();
-                for p in corners {
-                    let p = Point2f::new(p.x + x0 as f32, p.y + y0 as f32);
-                    imgproc::circle(&mut mask, Point::new(p.x as i32, p.y as i32), min_distance as i32, Scalar::all(0.0), -1, imgproc::LINE_8, 0)?;
-                    self.add(p);
-                }
-            }
-        }
-        // Same ids, round-robin over the cells: the coarse scan breaks ties between equally long tracks by id
-        self.ids[first_new..].copy_from_slice(&round_robin_ids(&per_cell, first_id));
-        if self.points.len() >= self.max_points { return Ok(()); }
-        for p in cache.select_global(&img, &mask, (self.max_points - self.points.len()) as i32, QUALITY, min_distance)? { self.add(p); }
-        Ok(())
+        replenish_from_corners(&img, cache, &mut mask, self.size, min_distance,
+            &mut self.points, &mut self.ids, &mut self.next_id, self.max_points)
     }
 
     /// The replenish as it was before `CornerCache`, kept to prove the cached one adds the same corners
@@ -529,10 +486,90 @@ impl KltTracker {
     }
 
     fn add(&mut self, p: Point2f) {
-        self.points.push(p);
-        self.ids.push(self.next_id);
-        self.next_id = self.next_id.wrapping_add(1);
+        add_selected(&mut self.points, &mut self.ids, &mut self.next_id, p);
     }
+}
+
+/// Owned frame pixels and the same CPU selection cache used by `KltTracker`.
+pub(crate) struct LocalCorners {
+    image: Mat,
+    cache: CornerCache,
+}
+
+impl LocalCorners {
+    pub(crate) fn new(image: &Mat) -> opencv::Result<Self> {
+        let image = image.try_clone()?;
+        let cache = CornerCache::new(&image, (image.cols(), image.rows()))?;
+        Ok(Self { image, cache })
+    }
+
+    pub(crate) fn replenish(&self, points: &mut Vec<Point2f>, ids: &mut Vec<u32>, next_id: &mut u32, max_points: usize) -> opencv::Result<()> {
+        if points.len() >= max_points { return Ok(()); }
+        let size = (self.image.cols(), self.image.rows());
+        let min_distance = (size.0.max(size.1) as f64 / 120.0).max(4.0);
+        let mut mask = selection_mask(size, points, min_distance)?;
+        replenish_from_corners(&self.image, &self.cache, &mut mask, size, min_distance, points, ids, next_id, max_points)
+    }
+}
+
+fn selection_mask((w, h): (i32, i32), points: &[Point2f], min_distance: f64) -> opencv::Result<Mat> {
+    let mut mask = Mat::new_rows_cols_with_default(h, w, CV_8UC1, Scalar::all(255.0))?;
+    for p in points {
+        imgproc::circle(&mut mask, Point::new(p.x as i32, p.y as i32), min_distance as i32, Scalar::all(0.0), -1, imgproc::LINE_8, 0)?;
+    }
+    Ok(mask)
+}
+
+fn add_selected(points: &mut Vec<Point2f>, ids: &mut Vec<u32>, next_id: &mut u32, p: Point2f) {
+    points.push(p);
+    ids.push(*next_id);
+    *next_id = next_id.wrapping_add(1);
+}
+
+fn replenish_from_corners(img: &Mat, cache: &CornerCache, mask: &mut Mat, (w, h): (i32, i32), min_distance: f64,
+    points: &mut Vec<Point2f>, ids: &mut Vec<u32>, next_id: &mut u32, max_points: usize) -> opencv::Result<()> {
+    for &(centre, radius) in &cache.glare {
+        imgproc::circle(mask, centre, radius, Scalar::all(0.0), -1, imgproc::LINE_8, 0)?;
+    }
+    let eig = &cache.eig;
+    let mut strongest = 0.0;
+    core::min_max_loc(eig, None, Some(&mut strongest), None, None, mask)?;
+    if strongest <= 0.0 { return Ok(()); } // A flat frame: black, a fade
+    let threshold = QUALITY * strongest;
+    let Some(noise) = cache.noise else { return Ok(()) };
+    let floor = NOISE_MULTIPLE * noise;
+    let share = max_points / (GRID_ROWS * GRID_COLS) as usize;
+    // The cells add their corners one after the other, with consecutive ids; relabelled round-robin below
+    let (first_new, first_id) = (points.len(), *next_id);
+    let mut per_cell = vec![0usize; (GRID_ROWS * GRID_COLS) as usize];
+    for r in 0..GRID_ROWS {
+        for c in 0..GRID_COLS {
+            let (x0, y0) = (w * c / GRID_COLS, h * r / GRID_ROWS);
+            let cell = Rect::new(x0, y0, w * (c + 1) / GRID_COLS - x0, h * (r + 1) / GRID_ROWS - y0);
+            let has = points.iter().filter(|p| cell.contains(Point::new(p.x as i32, p.y as i32))).count();
+            if has >= share { continue; }
+            let mut corners = Vector::<Point2f>::new();
+            {
+                let (eig_cell, mask_cell, img_cell) = (Mat::roi(eig, cell)?, Mat::roi(mask, cell)?, Mat::roi(img, cell)?);
+                let mut cell_strongest = 0.0;
+                core::min_max_loc(&eig_cell, None, Some(&mut cell_strongest), None, None, &mask_cell)?;
+                let cell_threshold = threshold.min(floor.max(QUALITY * cell_strongest));
+                if cell_threshold <= 0.0 || cell_strongest < cell_threshold { continue; }
+                imgproc::good_features_to_track(&img_cell, &mut corners, (share - has) as i32, cell_threshold / cell_strongest, min_distance, &mask_cell, 7, false, 0.04)?;
+            }
+            per_cell[(r * GRID_COLS + c) as usize] = corners.len();
+            for p in corners {
+                let p = Point2f::new(p.x + x0 as f32, p.y + y0 as f32);
+                imgproc::circle(mask, Point::new(p.x as i32, p.y as i32), min_distance as i32, Scalar::all(0.0), -1, imgproc::LINE_8, 0)?;
+                add_selected(points, ids, next_id, p);
+            }
+        }
+    }
+    // Same ids, round-robin over the cells: the coarse scan breaks ties between equally long tracks by id
+    ids[first_new..].copy_from_slice(&round_robin_ids(&per_cell, first_id));
+    if points.len() >= max_points { return Ok(()); }
+    for p in cache.select_global(img, mask, (max_points - points.len()) as i32, QUALITY, min_distance)? { add_selected(points, ids, next_id, p); }
+    Ok(())
 }
 
 impl FrameTracker for KltTracker {
@@ -833,6 +870,32 @@ mod tests {
                 tracked += a.len();
             }
             assert!(tracked > 10_000, "only {tracked} observations: the frames don't exercise the tracker");
+        }
+    }
+
+    #[test]
+    fn local_selector_matches_the_real_cached_and_reference_replenish() {
+        for (w, h) in [(960, 540), (853, 481), (320, 180)] {
+            let image = texture(w, h, 17);
+            let local = LocalCorners::new(&image).unwrap();
+            for occupied in [0, 17, 1300, 1500] {
+                let make = || {
+                    let mut tracker = KltTracker::new(1500, 1.0, w as u32);
+                    tracker.size = (w, h); tracker.next_id = 5000;
+                    tracker.points = (0..occupied).map(|i| Point2f::new(((i * 71 + 7) % w as usize) as f32 + 0.3, ((i * 53 + 5) % h as usize) as f32 + 0.7)).collect();
+                    tracker.ids = (0..occupied as u32).collect();
+                    tracker
+                };
+                let mut reference = make();
+                let mut cached = make();
+                let mut selected = make();
+                let mut pyramid = TrackingPyramid::new(&image).unwrap();
+                reference.replenish_reference(&pyramid.layers.get(0).unwrap()).unwrap();
+                cached.replenish(&mut pyramid).unwrap();
+                local.replenish(&mut selected.points, &mut selected.ids, &mut selected.next_id, 1500).unwrap();
+                assert_eq!((point_bits(&reference.points), &reference.ids, reference.next_id), (point_bits(&cached.points), &cached.ids, cached.next_id));
+                assert_eq!((point_bits(&reference.points), &reference.ids, reference.next_id), (point_bits(&selected.points), &selected.ids, selected.next_id), "{w}x{h} occupied={occupied}");
+            }
         }
     }
 
