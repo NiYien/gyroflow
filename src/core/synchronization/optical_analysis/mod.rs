@@ -18,6 +18,8 @@
 
 pub mod solver;
 pub mod odometry;
+#[cfg(feature = "use-opencv")]
+mod frame_klt;
 mod base;
 pub use base::{OpticalBaseMode, BlendConfig};
 #[cfg(test)] pub(crate) mod synthetic;
@@ -60,6 +62,8 @@ const BANDS: usize = 6;
 /// Frame pairs measured at once
 const CHUNK: usize = 240;
 const MIN_BAND_POINTS: usize = 25;
+/// Prefer tracks long enough to contribute to the per-frame high-pass measurement.
+const MIN_TRACK_PAIRS: usize = 15;
 /// Floor of the uncertainty of one band's rotation, in pixels of the tracked frame
 const SIGMA_FLOOR_PX: f64 = 0.01;
 
@@ -213,7 +217,11 @@ pub fn solver_params(settings: &OpticalCorrectionSettings, scaled_fps: f64) -> S
 
 /// Fits the correction to the measurements
 pub fn solve(m: &OpticalMeasurements, settings: &OpticalCorrectionSettings) -> Result<OpticalCorrection, String> {
-    solve_with(m, settings, &solver_params(settings, m.scaled_fps))
+    let mut params = solver_params(settings, m.scaled_fps);
+    if settings.per_frame && !m.video_base.is_empty() {
+        params.spacing_us = 1e6 / m.scaled_fps.max(1.0);
+    }
+    solve_with(m, settings, &params)
 }
 
 pub fn solve_with(m: &OpticalMeasurements, settings: &OpticalCorrectionSettings, params: &SolverParams) -> Result<OpticalCorrection, String> {
@@ -793,6 +801,12 @@ pub struct OpticalMotionAnalysis {
     focal_px: f64,
     #[cfg(feature = "use-opencv")]
     tracker: KltTracker,
+    #[cfg(feature = "use-opencv")]
+    frame_tracker: Option<frame_klt::Tracker>,
+    // The upstream odometry excludes short tracks after looking ahead 15 pairs.
+    frame_vision: bool,
+    chained: usize,
+    track_lengths: HashMap<u32, usize>,
     last: Option<Frame>,
     pairs: VecDeque<Pair>,
     /// Uncorrected bearings are fixed during reconstruction analysis; retain only the rolling window.
@@ -865,7 +879,8 @@ impl OpticalMotionAnalysis {
                 (p.fps_scale, p.get_scaled_fps(), p.frame_readout_direction.is_horizontal(), ranges_ms, total_frames)
             };
             // Sensor reconstruction needs its original per-frame observations.
-            let every_nth_frame = if vision.is_none() && ui.stab_enabled { 1 } else { super::optical_sampling::frame_step(scaled_fps) };
+            let frame_vision = vision.is_some() && stab.optical_settings.read().per_frame;
+            let every_nth_frame = if frame_vision || (vision.is_none() && ui.stab_enabled) { 1 } else { super::optical_sampling::frame_step(scaled_fps) };
             let (hp_min, hp_max) = super::optical_sampling::high_pass_lengths(every_nth_frame);
             let total_frames = total_frames.div_ceil(every_nth_frame);
             log::info!("Optical analysis sampling: source_fps={scaled_fps:.6} every_nth={every_nth_frame} analysis_fps={:.6}",
@@ -880,8 +895,10 @@ impl OpticalMotionAnalysis {
                 every_nth_frame, hp_min, hp_max,
                 track_size: (0, 0),
                 focal_px: 0.0,
-                tracker: KltTracker::with_device(MAX_POINTS, 1.0, TRACK_WIDTH,
-                    super::optical_motion::tracker::KltDevice::for_processing_device(processing_device)),
+                tracker: if frame_vision { Self::new_tracker() } else { KltTracker::with_device(MAX_POINTS, 1.0, TRACK_WIDTH,
+                    super::optical_motion::tracker::KltDevice::for_processing_device(processing_device)) },
+                frame_tracker: frame_vision.then(|| frame_klt::Tracker::new(MAX_POINTS, processing_device)),
+                frame_vision, chained: 0, track_lengths: HashMap::new(),
                 processing_device,
                 last: None,
                 pairs: VecDeque::new(),
@@ -901,7 +918,7 @@ impl OpticalMotionAnalysis {
                 translation,
                 translation_replay,
                 residual,
-                base: base::VisionBase::new(OpticalBaseMode::resolved(), BlendConfig::resolved()),
+                base: base::VisionBase::new(if frame_vision { OpticalBaseMode::Odometry } else { OpticalBaseMode::resolved() }, BlendConfig::resolved()),
                 sg_cache: HashMap::new(),
                 cancel: CancelCheck { flag: cancel_flag, generation: (stab.optical_generation.clone(), generation), latched: Arc::new(AtomicBool::new(false)) },
                 started: std::time::Instant::now(),
@@ -940,6 +957,13 @@ impl OpticalMotionAnalysis {
         if self.is_cancelled() { return Ok(()); }
         let Some(FrameSlot { index, ts_ms, continuous }) = self.sequencer.accept(timestamp_us) else { return Ok(()) };
 
+        #[cfg(feature = "use-opencv")]
+        if let Some(tracker) = &mut self.frame_tracker {
+            if !continuous { tracker.reset(); }
+            let obs = tracker.track(width, height, stride, pixels)?;
+            self.push_tracked_frame(index, ts_ms, (width, height), obs);
+            return Ok(());
+        }
         #[cfg(feature = "use-opencv")]
         let obs = {
             if !continuous { self.tracker.reset(); }
@@ -982,9 +1006,12 @@ impl OpticalMotionAnalysis {
         if continuous && !obs.is_empty() {
             if let Some(a) = self.last {
                 if let Some(store) = &mut self.residual { store.push(self.next_seq, a, frame, &obs, size); }
+                if self.frame_vision {
+                    for o in &obs { *self.track_lengths.entry(o.id).or_default() += 1; }
+                }
                 self.pairs.push_back(Pair { seq: self.next_seq, a, b: frame, obs });
                 self.next_seq += 1;
-                if self.vision.is_some() { self.chain_vision(); }
+                if self.vision.is_some() && (!self.frame_vision || self.chained + MIN_TRACK_PAIRS <= self.next_seq) { self.chain_vision(); }
             }
         }
         self.last = Some(frame);
@@ -1078,15 +1105,27 @@ impl OpticalMotionAnalysis {
     /// factor of the weight. `GYROFLOW_OPTICAL_BASE=odometry` restores the upstream output.
     #[cfg_attr(not(feature = "use-opencv"), allow(dead_code))]
     fn chain_vision(&mut self) {
-        let Some(pair) = self.pairs.back() else { return };
+        let i = self.chained - self.pairs.front().unwrap().seq;
+        self.chained += 1;
+        let pair = &self.pairs[i];
+        let mut observations = pair.obs.as_slice();
+        let long;
+        if self.frame_vision {
+            long = pair.obs.iter().copied().filter(|o| self.track_lengths[&o.id] >= MIN_TRACK_PAIRS).collect::<Vec<_>>();
+            if long.len() >= MIN_BAND_POINTS * 2 { observations = &long; }
+            if let Some(next) = self.pairs.get(i + 1) {
+                let keep: std::collections::HashSet<_> = next.obs.iter().map(|o| o.id).collect();
+                for o in &pair.obs { if !keep.contains(&o.id) { self.track_lengths.remove(&o.id); } }
+            }
+        }
         let (a, b) = (pair.a.mid_ms, pair.b.mid_ms);
-        let pts_a: Vec<(f32, f32)> = pair.obs.iter().map(|o| (o.a[0], o.a[1])).collect();
-        let pts_b: Vec<(f32, f32)> = pair.obs.iter().map(|o| (o.b[0], o.b[1])).collect();
+        let pts_a: Vec<(f32, f32)> = observations.iter().map(|o| (o.a[0], o.a[1])).collect();
+        let pts_b: Vec<(f32, f32)> = observations.iter().map(|o| (o.b[0], o.b[1])).collect();
         let (ba, bb) = (self.bearings(&pts_a, &pair.a), self.bearings(&pts_b, &pair.b));
         let mut va = Vec::with_capacity(pair.obs.len());
         let mut vb = Vec::with_capacity(pair.obs.len());
         let mut ids = Vec::with_capacity(pair.obs.len());
-        for ((o, x), y) in pair.obs.iter().zip(ba).zip(bb) {
+        for ((o, x), y) in observations.iter().zip(ba).zip(bb) {
             if let (Some(x), Some(y)) = (x, y) { va.push(x); vb.push(y); ids.push(o.id); }
         }
         let m = if va.len() >= MIN_BAND_POINTS {
@@ -1116,11 +1155,19 @@ impl OpticalMotionAnalysis {
     /// Measures the frame pairs whose tracks are complete enough for the high-pass
     fn process(&mut self, last_call: bool) {
         self.collect_stab_pairs();
-        let end = if last_call { self.next_seq } else { self.next_seq.saturating_sub(self.hp_max) };
+        let ready = if self.frame_vision {
+            if last_call { while self.chained < self.next_seq { self.chain_vision(); } }
+            self.chained
+        } else { self.next_seq };
+        let end = if last_call { ready } else { ready.saturating_sub(self.hp_max) };
         if end <= self.measured_upto || (!last_call && end < self.measured_upto + CHUNK) { return; }
         if self.is_cancelled() { return; }
 
-        let mut derived = self.derive((!last_call).then_some(end.saturating_sub(self.hp_max)));
+        let mut derived = if self.frame_vision {
+            let points: Vec<_> = self.pairs.par_iter().filter(|p| p.seq < ready)
+                .map(|p| Self::derive_pair(&self.params, p, &self.vision, self.track_size, self.horizontal_readout)).collect();
+            points.into_iter().flatten().collect()
+        } else { self.derive((!last_call).then_some(end.saturating_sub(self.hp_max))) };
         if self.translation_replay.is_none() { self.measure_translation(&mut derived); }
         let rhp = self.high_pass(&derived);
 
@@ -1981,7 +2028,7 @@ mod tests {
     #[cfg(feature = "use-opencv")]
     #[test]
     fn parallax_is_taken_out_before_the_rotation_fit() {
-        let settings = OpticalCorrectionSettings { strength: 0.5 };
+        let settings = OpticalCorrectionSettings { strength: 0.5, ..Default::default() };
         let without = solve(&parallax_scene(false), &settings).unwrap().rms_deg;
         let with = solve(&parallax_scene(true), &settings).unwrap().rms_deg;
         eprintln!("parallax rotation rms_deg: without={without} with={with} ratio={}", with / without);
@@ -2090,6 +2137,7 @@ mod tests {
     fn sampled_pure_optical_base_interpolates_rotations() {
         let stab = analysis_fixture(90, |_| crate::Quat64::identity());
         { let mut p = stab.params.write(); p.fps = 240.0; p.frame_count = 720; }
+        stab.set_optical_correction_per_frame(false);
         assert!(stab.set_ignore_file_motion(true));
         let mut analysis = OpticalMotionAnalysis::from_manager(&stab, Arc::new(AtomicBool::new(false))).unwrap();
         assert_eq!(analysis.frame_step(), 10);
@@ -2163,6 +2211,8 @@ mod tests {
             }).collect()
         });
         assert_eq!(measurements.video_base.len(), 60);
+        let correction = solve(&measurements, &OpticalCorrectionSettings::default()).unwrap();
+        assert_eq!(correction.spacing_us, 1e6 / measurements.scaled_fps);
         let quats: Vec<_> = measurements.video_base.iter().map(|(_, q)| {
             UnitQuaternion::new_normalize(nalgebra::Quaternion::new(q[0] as f64,q[1] as f64,q[2] as f64,q[3] as f64))
         }).collect();
@@ -2208,8 +2258,8 @@ mod tests {
 
     #[test]
     fn ridge_falls_with_strength() {
-        let lo = solver_params(&OpticalCorrectionSettings { strength: 0.2 }, 30.0);
-        let hi = solver_params(&OpticalCorrectionSettings { strength: 0.8 }, 30.0);
+        let lo = solver_params(&OpticalCorrectionSettings { strength: 0.2, ..Default::default() }, 30.0);
+        let hi = solver_params(&OpticalCorrectionSettings { strength: 0.8, ..Default::default() }, 30.0);
         assert!(hi.ridge < lo.ridge);
         assert!((lo.spacing_us - 1e6 / 30.0 / 6.0).abs() < 1e-6);
     }

@@ -2868,6 +2868,10 @@ Do you want to submit your profile?</source>
 <context>
     <name>MotionData</name>
     <message>
+        <source>Stabilization reconstruction</source>
+        <translation>防手震重建</translation>
+    </message>
+    <message>
         <source>Optical stabilization</source>
         <translation>光學防抖</translation>
     </message>
@@ -3566,6 +3570,10 @@ Reopen CapCut before using the effect.</source>
 </context>
 <context>
     <name>Popup</name>
+    <message>
+        <source>Optimal path</source>
+        <translation>最佳路徑</translation>
+    </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1042"/>
         <source>Export</source>
@@ -5141,6 +5149,14 @@ Please provide frame rate: </source>
 </context>
 <context>
     <name>Stabilization</name>
+    <message>
+        <source>Keep within zoom limit</source>
+        <translation>保持在縮放限制額度內</translation>
+    </message>
+    <message>
+        <source>Use the zoom limit as fixed zoom</source>
+        <translation>使用縮放上限作為固定倍率</translation>
+    </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1746"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="10"/>

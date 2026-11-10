@@ -40,6 +40,7 @@ TestCase {
         property int nextId: 10
         property int main_job_id: -1
         property bool noMatches: false
+        property bool pureOptical: false
         property var lensMismatches: []
         property bool auto_rotate: false
         property var queue: ({ rowCount: function() { return 2; } })
@@ -50,6 +51,7 @@ TestCase {
         function sort_jobs_by_filename() {}
         function revive_stuck_jobs(intent) {}
         function batch_motion_ready() { return true; }
+        function batch_uses_only_pure_optical() { return pureOptical; }
         function match_all_no_gyro() { return noMatches; }
         function get_deep_match_lens_mismatches_json() { return JSON.stringify(lensMismatches); }
     }
@@ -92,6 +94,8 @@ TestCase {
         loader.duplicateFiles = [];
         backend.nextId = 10;
         backend.noMatches = false;
+        backend.pureOptical = false;
+        motionData = null;
         backend.lensMismatches = [];
         let code = 'import QtQuick; import "../../src/ui/components"; QtObject { id: root;'
             + 'property bool matchDirty: false; property bool hasGyroFiles: true; property bool shown: true;'
@@ -132,6 +136,22 @@ TestCase {
         compare(calls.join(","), "match");
         root.onMatch_apply_finished();
         compare(calls.join(","), "match,export");
+        compare(notices.length, 0);
+    }
+    function test_visual_reconstruction_skips_external_matching() {
+        backend.pureOptical = true;
+        root.onAdded(enqueue("file:///next.MP4"));
+        flows.runPluginStabilizeFlow();
+        flows.runStabilizedBatchExport();
+        compare(calls.join(","), "sync,export", "both batch actions dispatch directly to the optical worker");
+        compare(notices.length, 0);
+    }
+    function test_single_visual_clip_needs_no_gyro_prompt() {
+        root.shown = false;
+        motionData = {pureOpticalEnabled: true, analyzeOpticalModes: function() { calls.push("analyze"); }};
+        flows.runPluginStabilizeFlow();
+        compare(calls.join(","), "analyze");
+        compare(flows.runStabilizedBatchExport(), false, "continue with single-video export");
         compare(notices.length, 0);
     }
     function test_settled_sync_still_rematches_new_video() {

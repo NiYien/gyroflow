@@ -442,10 +442,6 @@ impl Default for SyncData {
     }
 }
 
-pub(crate) fn stab_default_from_metadata(md: &gyro_source::FileMetadata) -> bool {
-    md.additional_data.get("stabilization_blocks_processing").and_then(|v| v.as_bool()).unwrap_or(false)
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OpticalUi {
     pub correction_enabled: bool,
@@ -859,14 +855,14 @@ fn populate_lens_metadata_fields(
         if lens.focal_length.is_none() {
             lens.focal_length = first_lp.focal_length.map(|v| v as f64);
         }
-        if lens.fisheye_params.camera_matrix.is_empty() {
-            if let Some(pfl) = first_lp.pixel_focal_length {
-                lens.fisheye_params.camera_matrix = vec![
-                    [pfl.0 as f64, 0.0, size.0 as f64 / 2.0],
-                    [0.0, pfl.1 as f64, size.1 as f64 / 2.0],
-                    [0.0, 0.0, 1.0],
-                ];
-            }
+    }
+    if lens.fisheye_params.camera_matrix.is_empty() {
+        if let Some(pfl) = md.lens_params.values().find_map(|params| params.pixel_focal_length) {
+            lens.fisheye_params.camera_matrix = vec![
+                [pfl.0 as f64, 0.0, size.0 as f64 / 2.0],
+                [0.0, pfl.1 as f64, size.1 as f64 / 2.0],
+                [0.0, 0.0, 1.0],
+            ];
         }
     }
 
@@ -907,6 +903,11 @@ fn build_synthetic_lens_profile(
 ) -> LensProfile {
     let mut lens = LensProfile::default();
     populate_lens_metadata_fields(&mut lens, md, size);
+    if lens.fisheye_params.camera_matrix.is_empty() {
+        if let Some(profile) = niyien_lens_presets::build_lens_profile(md, size, None, Some(&lens), None) {
+            return profile;
+        }
+    }
     lens
 }
 
@@ -1196,94 +1197,9 @@ impl StabilizationManager {
             md.frame_readout_time = None;
         }
 
-        let size = {
-            let p = self.params.read();
-            p.size
-        };
-        // Canon clips defer ALL auto lens generation to the batch senseflow apply:
-        // the opencv_standard profile is held in canon_auto_lens_profile (not
-        // lens_profile), and the generic synthetic build is suppressed here too, so
-        // a single-video / pre-batch load stays fully bare (lens profile entirely
-        // empty). Keyed on the Canon body alone (NOT keep_video_gyro): some Canon
-        // clips fail to parse gyro samples (raw_imu=0) yet must still defer.
-        // lens_profile is None pre-batch and Some (injected) in the batch path, and
-        // the matched md there is SenseFlow, so this never fires during batch apply.
-        let canon_defer_lens = md.lens_profile.is_none()
-            && md
-                .detected_source
-                .as_deref()
-                .map_or(false, |s| s.starts_with("Canon"));
-
-        let can_build_synthetic =
-            !md.lens_params.is_empty() || md.unit_pixel_focal_length.is_some();
-        let mut should_build_synthetic = false;
-
-        if let Some(ref lens) = md.lens_profile {
-            let mut l = self.lens.write();
-            if let Some(lens_str) = lens.as_str() {
-                let mut db = self.lens_profile_db.read();
-                if !db.loaded {
-                    drop(db);
-                    {
-                        let mut db = self.lens_profile_db.write();
-                        db.load_all();
-                    }
-                    db = self.lens_profile_db.read();
-                }
-                if let Some(found) = db.find(lens_str) {
-                    *l = found.clone();
-                } else {
-                    should_build_synthetic = can_build_synthetic;
-                }
-            } else if lens.is_object() {
-                l.load_from_json_value(lens);
-                l.path_to_file = filesystem::url_to_path(url);
-                let db = self.lens_profile_db.read();
-                l.resolve_interpolations(&db);
-            }
-        } else if can_build_synthetic && !canon_defer_lens {
-            should_build_synthetic = true;
-        }
-
-        if should_build_synthetic {
-            let synthetic = build_synthetic_lens_profile(md, size);
-            *self.lens.write() = synthetic;
-        } else if canon_defer_lens {
-            // Clear any residual lens from a previous load so the panel stays bare.
-            *self.lens.write() = LensProfile::default();
-        }
-
-        // Lens-group profile build. Pass the group config only when it should fill
-        // missing focal length or apply manual-edit anamorphic; otherwise build from
-        // telemetry auto focal only.
-        if apply_lens_group {
-            if let Some(lens_index) = niyien_lens_presets::extract_lens_index(&md.additional_data) {
-                let manual_edit = self.lens_group_manual_edit.load(SeqCst);
-                let group_cfg = self.lens_group_config.read().get(lens_index).cloned();
-                // Main preview has no job context: the queue's per-job focal
-                // override never applies here (known asymmetry, see the
-                // focal-length-user-override design doc). Manual edit ON is the
-                // main preview's forcing signal instead (design D10): the group
-                // manual focal then overrides the telemetry auto focal.
-                let cfg_for_build = group_cfg.as_ref().and_then(|cfg| {
-                    niyien_lens_presets::effective_lens_group_config_for_build(
-                        manual_edit,
-                        manual_edit,
-                        cfg,
-                        md,
-                    )
-                });
-                let baseline = self.lens.read().clone();
-                if let Some(profile) = niyien_lens_presets::build_lens_profile(
-                    md,
-                    size,
-                    cfg_for_build.as_ref(),
-                    Some(&baseline),
-                    None,
-                ) {
-                    *self.lens.write() = profile;
-                }
-            }
+        let baseline = self.lens.read().clone();
+        if let Some(profile) = self.video_lens_profile(md, url, apply_lens_group, Some(&baseline)) {
+            *self.lens.write() = profile;
         }
 
         let record_fps_applied = md
@@ -1340,6 +1256,92 @@ impl StabilizationManager {
             params.frame_readout_direction = frame_readout_direction;
             params.frame_readout_time = 0.0;
         }
+    }
+
+    fn video_lens_profile(&self, md: &gyro_source::FileMetadata, url: &str, apply_lens_group: bool, baseline: Option<&LensProfile>) -> Option<LensProfile> {
+        let size = {
+            let p = self.params.read();
+            p.size
+        };
+        // Canon clips defer ALL auto lens generation to the batch senseflow apply:
+        // the opencv_standard profile is held in canon_auto_lens_profile (not
+        // lens_profile), and the generic synthetic build is suppressed here too, so
+        // a single-video / pre-batch load stays fully bare (lens profile entirely
+        // empty). Keyed on the Canon body alone (NOT keep_video_gyro): some Canon
+        // clips fail to parse gyro samples (raw_imu=0) yet must still defer.
+        // lens_profile is None pre-batch and Some (injected) in the batch path, and
+        // the matched md there is SenseFlow, so this never fires during batch apply.
+        let canon_defer_lens = md.lens_profile.is_none()
+            && md
+                .detected_source
+                .as_deref()
+                .map_or(false, |s| s.starts_with("Canon"));
+
+        let can_build_synthetic =
+            !md.lens_params.is_empty() || md.unit_pixel_focal_length.is_some();
+        let mut profile = None;
+
+        if let Some(ref lens) = md.lens_profile {
+            if let Some(lens_str) = lens.as_str() {
+                let mut db = self.lens_profile_db.read();
+                if !db.loaded {
+                    drop(db);
+                    {
+                        let mut db = self.lens_profile_db.write();
+                        db.load_all();
+                    }
+                    db = self.lens_profile_db.read();
+                }
+                profile = db.find(lens_str).cloned();
+            } else if lens.is_object() {
+                let mut native = LensProfile::default();
+                if native.load_from_json_value(lens).is_some() {
+                    native.path_to_file = filesystem::url_to_path(url);
+                    native.resolve_interpolations(&self.lens_profile_db.read());
+                    profile = Some(native);
+                }
+            }
+        }
+
+        if canon_defer_lens {
+            profile = Some(LensProfile::default());
+        } else if profile.is_none() && can_build_synthetic {
+            profile = Some(build_synthetic_lens_profile(md, size));
+        }
+
+        // Lens-group profile build. Pass the group config only when it should fill
+        // missing focal length or apply manual-edit anamorphic; otherwise build from
+        // telemetry auto focal only.
+        if apply_lens_group {
+            if let Some(lens_index) = niyien_lens_presets::extract_lens_index(&md.additional_data) {
+                let manual_edit = self.lens_group_manual_edit.load(SeqCst);
+                let group_cfg = self.lens_group_config.read().get(lens_index).cloned();
+                // Main preview has no job context: the queue's per-job focal
+                // override never applies here (known asymmetry, see the
+                // focal-length-user-override design doc). Manual edit ON is the
+                // main preview's forcing signal instead (design D10): the group
+                // manual focal then overrides the telemetry auto focal.
+                let cfg_for_build = group_cfg.as_ref().and_then(|cfg| {
+                    niyien_lens_presets::effective_lens_group_config_for_build(
+                        manual_edit,
+                        manual_edit,
+                        cfg,
+                        md,
+                    )
+                });
+                if let Some(group) = niyien_lens_presets::build_lens_profile(
+                    md,
+                    size,
+                    cfg_for_build.as_ref(),
+                    profile.as_ref().or(baseline),
+                    None,
+                ) {
+                    return Some(group);
+                }
+            }
+        }
+
+        profile
     }
 
     pub fn autoload_lens_from_camera_id(&self) -> Result<bool, crate::GyroflowCoreError> {
@@ -1596,10 +1598,6 @@ impl StabilizationManager {
                     fm.is_komodo,
                 )
             };
-            if is_main_video {
-                let enabled = { let gyro = self.gyro.read(); let md = gyro.file_metadata.read(); stab_default_from_metadata(&md) };
-                self.set_stab_reconstruction_enabled(enabled);
-            }
             log::info!(
                 "[load_gyro_data] end url='{}' elapsed_ms={:.1} canceled=false raw_imu={} quats={} lens_params={} lens_positions={} creation_date_utc={:?} accurate_ts={} detected={:?} is_komodo={}",
                 url,
@@ -1939,7 +1937,7 @@ impl StabilizationManager {
     }
     pub fn recompute_adaptive_zoom(&self) {
         let mut params = stabilization::ComputeParams::from_manager(self);
-        params.calculate_camera_fovs();
+        params.calculate_smoothing_geometry(self.smoothing.read().current_id() == smoothing::OPTIMAL_ID);
         let generation = self.optical_generation.load(SeqCst);
         if !Self::refresh_translation_for_zoom(&mut params, &self.optical_ui,
             &|| self.optical_generation.load(SeqCst) != generation) { return; }
@@ -2067,6 +2065,10 @@ impl StabilizationManager {
             } // end §4 pre-skip guard
         }
 
+        if params.apply_fixed_zoom() {
+            self.params.write().set_fovs(params.fovs.clone(), lens_fov_adjustment, params.lens.horizontal_stretch_normalized());
+        }
+
         // Smoothing diagnostics dump (gated by GYROFLOW_SMOOTH_DIAG=1).
         // Snapshot per-frame q_raw / q_smooth / fov pairs and forward to the
         // diag module after dropping all read locks so heavy quaternion math
@@ -2157,7 +2159,7 @@ impl StabilizationManager {
 
     pub fn recompute_smoothness(&self) {
         let mut params = stabilization::ComputeParams::from_manager(self);
-        params.calculate_camera_fovs();
+        params.calculate_smoothing_geometry(self.smoothing.read().current_id() == smoothing::OPTIMAL_ID);
 
         let smoothing = self.smoothing.read();
         let horizon_lock = smoothing.horizon_lock.clone();
@@ -2195,7 +2197,7 @@ impl StabilizationManager {
         // shared with the threaded path so neither redoes the other's work.
         let gyro_checksum = self.gyro.read().get_checksum();
         let mut compute_params = ComputeParams::from_manager(self);
-        compute_params.calculate_camera_fovs();
+        compute_params.calculate_smoothing_geometry(self.smoothing.read().current_id() == smoothing::OPTIMAL_ID);
         Self::apply_focal_length_smoothing(&mut compute_params, &self.params);
         let run_smoothing = self.smoothing_invalidated.load(SeqCst)
             || self.smoothing.read().get_state_checksum(gyro_checksum, &compute_params)
@@ -2265,7 +2267,7 @@ impl StabilizationManager {
         //self.recompute_smoothness();
         //self.recompute_adaptive_zoom();
         let mut params = stabilization::ComputeParams::from_manager(self);
-        params.calculate_camera_fovs();
+        params.calculate_smoothing_geometry(self.smoothing.read().current_id() == smoothing::OPTIMAL_ID);
 
         let smoothing = self.smoothing.clone();
         let stabilization_params = self.params.clone();
@@ -2461,6 +2463,9 @@ impl StabilizationManager {
                     if !commit(&*smoothing_checksum, smoothing_state) { return cb((compute_id, true)); }
                 }
 
+                if params.apply_fixed_zoom() {
+                    stabilization_params.write().set_fovs(params.fovs.clone(), params.lens.optimal_fov.unwrap_or(1.0), params.lens.horizontal_stretch_normalized());
+                }
                 if !commit(&*zooming_checksum, zooming::get_checksum(&params, smoothing_state)) { return cb((compute_id, true)); }
             }
             ::log::info!(
@@ -2852,6 +2857,11 @@ impl StabilizationManager {
         self.lens.write().set_input_vertical_stretch_mirrored(v);
         self.invalidate_smoothing();
     }
+    pub fn set_fixed_zoom(&self, fixed: bool) {
+        self.params.write().fixed_zoom = fixed;
+        self.invalidate_smoothing();
+        self.invalidate_zooming();
+    }
     pub fn set_max_zoom(&self, v: f64, iters: usize) {
         let mut params = self.params.write();
         params.max_zoom = if v > 50.0 { Some(v) } else { None };
@@ -3214,6 +3224,14 @@ impl StabilizationManager {
         let gyro = self.gyro.read();
         (gyro.optical_correction.is_some() && m.quats_checksum == gyro.optical_uncorrected_checksum && m.context_checksum == gyro.optical_context).then_some(m)
     }
+    pub fn set_optical_correction_per_frame(&self, value: bool) {
+        let mut settings = self.optical_settings.write();
+        if settings.per_frame == value { return; }
+        settings.per_frame = value;
+        self.optical_generation.fetch_add(1, SeqCst);
+        drop(settings);
+        *self.optical_measurements.write() = None;
+    }
     /// Sets the strength; true when the correction should be refitted to it, see `refit_optical_correction`
     pub fn set_optical_correction_strength(&self, strength: f64) -> bool {
         let settings = { let mut s = self.optical_settings.write(); s.strength = strength.clamp(0.0, 1.0); *s };
@@ -3290,6 +3308,7 @@ impl StabilizationManager {
                 None => (serde_json::json!({ "available": false, "ignore_file_motion": ignore_file_motion, "has_motion": has_motion }), None),
             }
         };
+        info["per_frame"] = self.optical_settings.read().per_frame.into();
         if let Some(settings) = fitted_with {
             // Fitted with another strength than the one set, and the measurements to refit aren't here any more (a
             // project loaded from disk keeps only the correction): only another analysis applies the new one
@@ -4157,7 +4176,7 @@ impl StabilizationManager {
             );
         }
 
-        let optical_strength = self.optical_settings.read().strength;
+        let optical_settings = *self.optical_settings.read();
         let optical_ui = *self.optical_ui.read();
         let mut obj = serde_json::json!({
             "title": "Gyroflow data file",
@@ -4237,8 +4256,7 @@ impl StabilizationManager {
                 "sample_index":       gyro.file_load_options.sample_index,
                 "detected_source":    gyro.file_metadata.read().detected_source,
                 "optical_correction_enabled": (gyro.optical_correction.is_some() || gyro.optical_residual.is_some()).then_some(optical_ui.correction_enabled),
-                "optical_correction_strength": optical_strength,
-                "stab_reconstruction_enabled": optical_ui.stab_enabled,
+                "optical_correction_strength": optical_settings.strength,
                 "translation_stabilization_enabled": optical_ui.translation_enabled,
                 "translation_reference": optical_ui.translation_settings.reference,
                 "translation_smoothness": optical_ui.translation_settings.smoothness_s,
@@ -4253,6 +4271,12 @@ impl StabilizationManager {
             // "trim_ranges": params.trim_ranges,
             "trim_ranges_ms": trim_ranges_ms,
         });
+        if params.fixed_zoom || params.adaptive_zoom_window < -0.9 {
+            obj["stabilization"]["fixed_zoom"] = params.fixed_zoom.into();
+        }
+        if !optical_settings.per_frame || gyro.ignores_file_motion() || gyro.optical_correction.is_some() {
+            obj["gyro_source"]["optical_correction_per_frame"] = optical_settings.per_frame.into();
+        }
 
         util::merge_json(
             &mut obj,
@@ -4306,9 +4330,6 @@ impl StabilizationManager {
             // The analysis took a pass over every frame, so it's kept with the project whatever its type
             if let Some(c) = gyro.optical_correction.as_ref().and_then(util::compress_to_base91_cbor) {
                 obj.insert("optical_correction".into(), serde_json::Value::String(c));
-            }
-            if let Some(s) = gyro.optical_stab.as_ref().and_then(util::compress_to_base91_cbor) {
-                obj.insert("optical_stab_reconstruction".into(), serde_json::Value::String(s));
             }
             if let Some(t) = gyro.optical_translation.as_ref().and_then(util::compress_to_base91_cbor) {
                 obj.insert("optical_translation".into(), serde_json::Value::String(t));
@@ -4495,6 +4516,10 @@ impl StabilizationManager {
     ) -> std::result::Result<serde_json::Value, GyroflowCoreError> {
         let allow_external_io = external_io_policy == ExternalIoPolicy::Allow;
         let mut obj: serde_json::Value = serde_json::from_slice(&data)?;
+        let source = &obj["gyro_source"];
+        if source["stab_reconstruction_enabled"].as_bool() == Some(true) || source["optical_stab_reconstruction"].is_string() {
+            return Err(GyroflowCoreError::UnsupportedFormat("legacy in-camera stabilization reconstruction".into()));
+        }
         let mut load_options = gyro_source::FileLoadOptions::default();
         if let serde_json::Value::Object(ref mut obj) = obj {
             let mut output_size = None;
@@ -4504,6 +4529,16 @@ impl StabilizationManager {
             // which is applied later, so capturing early would snapshot the
             // pre-import value.
             let mut has_calibration_data = false;
+            let imported_lens = obj.get("calibration_data").and_then(|value| {
+                let mut lens = LensProfile::default();
+                lens.load_from_json_value(value)?;
+                Some(lens)
+            });
+            let has_authored_lens_geometry = imported_lens.as_ref().is_some_and(LensProfile::has_projection_geometry);
+            let saved_readout_time = obj.get("stabilization")
+                .and_then(|value| value.get("frame_readout_time"))
+                .and_then(|value| value.as_f64());
+            let mut restored_video_lens = false;
             load_options.project_version = obj.get("version").and_then(|x| x.as_u64()).unwrap_or(2);
             let mut org_video_url = obj
                 .get("videofile")
@@ -4642,6 +4677,13 @@ impl StabilizationManager {
                             .and_then(|x| x.as_str())
                             .unwrap_or_default(),
                     );
+                let embedded_video_metadata = !*is_preset
+                    && (is_main_video || org_gyro_url.is_empty())
+                    && built_in_gyro.is_ok();
+                let install_geometry_without_motion = embedded_video_metadata && {
+                    let gyro = self.gyro.read();
+                    !gyro.has_motion() && !gyro.ignores_file_motion()
+                };
 
                 let gyro_file_exists = allow_external_io && filesystem::exists(&gyro_url);
                 ::log::info!(
@@ -4660,12 +4702,36 @@ impl StabilizationManager {
                     blocking
                 );
 
-                // Load IMU data only if it's from another file or we are sure that built_in_gyro contains motion data
+                if embedded_video_metadata && !has_authored_lens_geometry {
+                    let md = built_in_gyro.as_ref().unwrap();
+                    if md.has_motion() || !self.lens.read().has_projection_geometry() {
+                        // A failed lookup or a pixels-per-mm scale alone cannot replace an active calibration.
+                        if let Some(profile) = self.video_lens_profile(md, &video_url, !is_plugin, None)
+                            .filter(LensProfile::has_projection_geometry) {
+                            *self.lens.write() = profile;
+                        }
+                    }
+                    restored_video_lens = self.lens.read().has_projection_geometry();
+                    let gopro_corrected_readout = md.detected_source.as_deref()
+                        .map_or(false, |source| source.starts_with("GoPro "));
+                    if saved_readout_time.is_none() && !gopro_corrected_readout {
+                        let lens = self.lens.read();
+                        if let Some(readout) = lens.frame_readout_time.or(md.frame_readout_time).filter(|v| v.is_finite()) {
+                            let mut params = self.params.write();
+                            params.frame_readout_time = readout.abs();
+                            params.frame_readout_direction = lens.frame_readout_direction
+                                .unwrap_or(if readout < 0.0 { ReadoutDirection::BottomToTop } else { md.frame_readout_direction });
+                        }
+                    }
+                }
+
+                // Embedded camera geometry is also needed by projects without motion samples.
                 if (!org_gyro_url.is_empty() && org_gyro_url != org_video_url)
                     || built_in_gyro
                         .as_ref()
                         .map(|x| x.has_motion())
                         .unwrap_or_default()
+                    || (install_geometry_without_motion && !(blocking && gyro_file_exists))
                 {
                     let mut raw_imu = Vec::new();
                     let mut quaternions = TimeQuat::default();
@@ -4763,18 +4829,17 @@ impl StabilizationManager {
                         let md = crate::gyro_source::FileMetadata {
                             imu_orientation: obj
                                 .get("imu_orientation")
-                                .and_then(|x| x.as_str().map(|x| x.to_string())),
-                            detected_source: Some(
-                                obj.get("detected_source")
-                                    .and_then(|x| x.as_str())
-                                    .unwrap_or("Gyroflow file")
-                                    .to_string(),
-                            ),
+                                .and_then(|x| x.as_str().map(|x| x.to_string()))
+                                .or_else(|| built_in_gyro.as_ref().ok().and_then(|md| md.imu_orientation.clone())),
+                            detected_source: obj.get("detected_source")
+                                .and_then(|x| x.as_str().map(str::to_owned))
+                                .or_else(|| built_in_gyro.as_ref().ok().and_then(|md| md.detected_source.clone()))
+                                .or_else(|| Some("Gyroflow file".into())),
                             quaternions,
                             gravity_vectors,
                             image_orientations,
                             raw_imu,
-                            ..Default::default()
+                            ..built_in_gyro.as_ref().ok().cloned().unwrap_or_default()
                         };
 
                         let mut gyro = self.gyro.write();
@@ -4889,13 +4954,15 @@ impl StabilizationManager {
                 if let Some(v) = obj.get("optical_correction_strength").and_then(|x| x.as_f64()) {
                     self.optical_settings.write().strength = v;
                 }
-                let metadata_stab_default = stab_default_from_metadata(&gyro.file_metadata.read());
+                if let Some(v) = obj.get("optical_correction_per_frame").and_then(|x| x.as_bool()) {
+                    self.optical_settings.write().per_frame = v;
+                } else if !*is_preset {
+                    self.optical_settings.write().per_frame = obj.get("optical_correction").and_then(|v| v.as_str()).is_none();
+                }
                 {
                     let mut ui = self.optical_ui.write();
                     if let Some(v) = obj.get("optical_correction_enabled").and_then(|x| x.as_bool()) { ui.correction_enabled = v; }
                     if let Some(v) = obj.get("translation_stabilization_enabled").and_then(|x| x.as_bool()) { ui.translation_enabled = v; }
-                    if let Some(v) = obj.get("stab_reconstruction_enabled").and_then(|x| x.as_bool()) { ui.stab_enabled = v; }
-                    else if !*is_preset { ui.stab_enabled = metadata_stab_default; }
                     if let Some(v) = obj.get("translation_reference").and_then(|x| x.as_f64()) { ui.translation_settings.reference = v.clamp(0.0, 2.0); }
                     if let Some(v) = obj.get("translation_smoothness").and_then(|x| x.as_f64()) { ui.translation_settings.smoothness_s = v.clamp(0.1, 10.0); }
                     if let Some(v) = obj.get("translation_along_axis").and_then(|x| x.as_bool()) { ui.translation_settings.along_axis = v; }
@@ -4907,12 +4974,6 @@ impl StabilizationManager {
                 }
                 if !*is_preset {
                     gyro.optical_stab = None;
-                    if let Some(value) = obj.get("optical_stab_reconstruction") {
-                        match util::decompress_from_base91_cbor::<gyro_source::OpticalStabReconstruction>(value.as_str().unwrap_or_default()) {
-                            Ok(s) => gyro.optical_stab = Some(s),
-                            Err(error) => ::log::warn!("Failed to load in-camera stabilization reconstruction: {:?}", error),
-                        }
-                    }
                     gyro.optical_residual = None;
                     if let Some(value) = obj.get("optical_residual_rotation") {
                         match util::decompress_from_base91_cbor::<gyro_source::OpticalResidualRotation>(value.as_str().unwrap_or_default()) {
@@ -4991,54 +5052,51 @@ impl StabilizationManager {
                 obj.remove("smoothed_focal_lengths");
                 obj.remove("optical_correction");
                 obj.remove("optical_translation");
-                obj.remove("optical_stab_reconstruction");
                 obj.remove("optical_residual_rotation");
             }
-            if let Some(lens) = obj.get("calibration_data") {
-                let mut l = self.lens.write();
-                l.load_from_json_value(&lens);
-                let db = self.lens_profile_db.read();
-                l.resolve_interpolations(&db);
-                drop(l);
+            if let Some(mut lens) = imported_lens {
+                if restored_video_lens && !has_authored_lens_geometry {
+                    // Queue sync, output and shutter settings can be saved on a lens with no matrix.
+                    let mut restored = self.lens.write();
+                    if let Some(sync) = lens.sync_settings.take() { restored.sync_settings = Some(sync); }
+                    if let Some(size) = lens.output_dimension.take() { restored.output_dimension = Some(size); }
+                    restored.global_shutter |= lens.global_shutter;
+                    if let Some(readout) = lens.frame_readout_time.filter(|v| v.is_finite()) {
+                        restored.frame_readout_time = Some(readout);
+                    }
+                    if lens.frame_readout_direction.is_some() {
+                        restored.frame_readout_direction = lens.frame_readout_direction;
+                    } else if lens.frame_readout_time.is_some_and(|v| v < 0.0) {
+                        restored.frame_readout_direction = Some(ReadoutDirection::BottomToTop);
+                    }
+                }
+                if !*is_preset {
+                    let mut params = self.params.write();
+                    if saved_readout_time.is_none() {
+                        if let Some(readout) = lens.frame_readout_time.filter(|v| v.is_finite()) {
+                            params.frame_readout_time = readout.abs();
+                            if readout < 0.0 { params.frame_readout_direction = ReadoutDirection::BottomToTop; }
+                        }
+                    }
+                    if let Some(direction) = lens.frame_readout_direction {
+                        params.frame_readout_direction = direction;
+                    }
+                }
+                if has_authored_lens_geometry || !restored_video_lens {
+                    let db = self.lens_profile_db.read();
+                    lens.resolve_interpolations(&db);
+                    *self.lens.write() = lens;
+                }
                 has_calibration_data = true;
             }
             if let Some(serde_json::Value::Object(obj)) = obj.get_mut("stabilization") {
-                if crate::settings::project_import_gate() {
-                    // Strip rather than branch at every use site: each field below
-                    // is read through `obj.get(...)`, so removing it here makes the
-                    // existing "absent means leave alone" paths do the work, with
-                    // no chance of missing one. The stripped object is what gets
-                    // handed back to the UI too, so the QML side inherits the same
-                    // decision instead of needing its own copy of this list.
+                let project_import_gate = crate::settings::project_import_gate();
+                let saved_method = obj.get("method").and_then(|x| x.as_str()).map(str::to_owned);
+                if project_import_gate {
+                    // Real projects retain supported saved methods; default presets keep the current method.
+                    let keep_method = !*is_preset && matches!(saved_method.as_deref(), Some("Default" | "Optimal path"));
                     for (field, _) in crate::settings::GATED_PROJECT_STABILIZATION_FIELDS {
-                        obj.remove(*field);
-                    }
-                    // With `method` gone the current algorithm stays put, so a
-                    // project written under a different algorithm carries parameter
-                    // names this one does not accept. Drop those instead of letting
-                    // each become an `Invalid parameter name` error — a card full of
-                    // such projects would otherwise flood the incident log again.
-                    let accepted: Vec<String> = self
-                        .smoothing
-                        .read()
-                        .current()
-                        .get_parameters_json()
-                        .as_array()
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|p| {
-                                    p.get("name").and_then(|n| n.as_str()).map(str::to_owned)
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    if let Some(serde_json::Value::Array(list)) = obj.get_mut("smoothing_params") {
-                        list.retain(|p| {
-                            p.get("name")
-                                .and_then(|n| n.as_str())
-                                .map(|n| accepted.iter().any(|a| a == n))
-                                .unwrap_or(false)
-                        });
+                        if *field != "method" || !keep_method { obj.remove(*field); }
                     }
                 }
                 let mut params = self.params.write();
@@ -5078,6 +5136,9 @@ impl StabilizationManager {
                 if let Some(v) = obj.get("max_zoom").and_then(|x| x.as_f64()) {
                     params.max_zoom = Some(v);
                 }
+                if let Some(v) = obj.get("fixed_zoom").and_then(|x| x.as_bool()) {
+                    params.fixed_zoom = v;
+                } else if !*is_preset { params.fixed_zoom = false; }
                 if let Some(v) = obj.get("max_zoom_iterations").and_then(|x| x.as_i64()) {
                     params.max_zoom_iterations = v as _;
                 }
@@ -5146,18 +5207,32 @@ impl StabilizationManager {
                         .enumerate()
                         .find(|(_, m)| method == m.as_str())
                         .map(|(idx, _)| idx)
-                        .unwrap_or(1);
+                        .unwrap_or(smoothing::OPTIMAL_ID);
 
                     self.smoothing.write().set_current(method_idx);
                 }
 
                 let mut smoothing = self.smoothing.write();
+                let smoothing_alg = smoothing.current_mut();
+                if project_import_gate {
+                    // Identical parameter names can have different meanings across algorithms.
+                    if *is_preset && saved_method.as_deref() == Some("Default") && smoothing_alg.get_name() == "Optimal path" {
+                        obj.remove("smoothing_params");
+                    } else {
+                        let accepted: Vec<String> = smoothing_alg.get_parameters_json()
+                            .as_array()
+                            .map(|arr| arr.iter().filter_map(|p| p.get("name").and_then(|n| n.as_str()).map(str::to_owned)).collect())
+                            .unwrap_or_default();
+                        if let Some(serde_json::Value::Array(list)) = obj.get_mut("smoothing_params") {
+                            list.retain(|p| p.get("name").and_then(|n| n.as_str()).is_some_and(|n| accepted.iter().any(|a| a == n)));
+                        }
+                    }
+                }
                 let empty_vec = Vec::new();
                 let smoothing_params = obj
                     .get("smoothing_params")
                     .and_then(|x| x.as_array())
                     .unwrap_or(&empty_vec);
-                let smoothing_alg = smoothing.current_mut();
                 for param in smoothing_params {
                     (|| -> Option<()> {
                         let name = param.get("name").and_then(|x| x.as_str())?;
@@ -5430,6 +5505,11 @@ impl StabilizationManager {
                 }
                 self.init_size();
                 self.recompute_blocking();
+            }
+
+            if restored_video_lens && self.lens.read().fisheye_params.camera_matrix.len() == 3 {
+                // The controller uses this section to announce the effective lens to the UI.
+                obj.insert("calibration_data".into(), self.lens.read().get_json_value()?);
             }
 
             // Establish the project lens once every section has been applied, so the
@@ -6075,6 +6155,7 @@ mod tests {
         use std::hash::{Hash, Hasher};
         let manager = optical_project_manager();
         // Keep this golden project's original explicit setting; test the new default separately.
+        manager.set_smoothing_method(1);
         manager.set_translation_along_axis(false);
         manager.gyro.write().set_offset(2_000_000, 12.0);
         let mut project = optical_export(&manager);
@@ -6093,7 +6174,7 @@ mod tests {
         let enabled = fields.remove("optical_correction_enabled");
         let strength = fields.remove("optical_correction_strength");
         let ignored = fields.remove("ignore_file_motion");
-        assert_eq!(fields.remove("stab_reconstruction_enabled"), Some(serde_json::json!(false)));
+        assert!(!fields.contains_key("stab_reconstruction_enabled"));
         assert_eq!(fields.remove("translation_stabilization_enabled"), Some(serde_json::json!(false)));
         assert_eq!(fields.remove("translation_reference"), Some(serde_json::json!(1.0)));
         assert_eq!(fields.remove("translation_smoothness"), Some(serde_json::json!(1.0)));
@@ -6487,34 +6568,27 @@ mod tests {
     }
 
     #[test]
-    fn optical_stab_project_and_preset_keep_every_request() {
-        let m = optical_project_manager(); install_translation(&m); install_stab(&m);
-        let mut p = optical_export(&m); p["gyro_source"]["optical_correction_enabled"] = true.into();
-        p["gyro_source"]["translation_stabilization_enabled"] = true.into();
-        let restored = optical_import(&p); restored.recompute_blocking();
-        let ui = *restored.optical_ui.read(); assert!(ui.stab_enabled && ui.translation_enabled && ui.correction_enabled);
-        assert!(restored.gyro.read().optical_stab.as_ref().unwrap().is_active());
-        let preset_data = serde_json::json!({"videofile": "", "gyro_source": {"stab_reconstruction_enabled": true, "optical_correction_enabled": true, "translation_stabilization_enabled": true}});
-        let mut preset = false;
-        m.import_gyroflow_data(preset_data.to_string().as_bytes(), true, None, |_| (), Arc::new(AtomicBool::new(false)), &mut preset, true).unwrap();
-        assert!(preset); let ui = *m.optical_ui.read(); assert!(ui.stab_enabled && ui.translation_enabled && ui.correction_enabled);
-        assert!(m.gyro.read().optical_translation.as_ref().unwrap().enabled);
-        p["gyro_source"]["optical_stab_reconstruction"] = "invalid".into(); p["videofile"] = "file:///fixture.mp4".into();
-        assert!(optical_import(&p).gyro.read().optical_stab.is_none());
+    fn legacy_reconstruction_is_rejected_before_loading_project_or_preset() {
+        let manager = optical_project_manager();
+        let original = manager.gyro.read().quaternions.clone();
+        for source in [serde_json::json!({"stab_reconstruction_enabled": true}), serde_json::json!({"optical_stab_reconstruction": "old"})] {
+            for video in ["", "file:///fixture.mp4"] {
+                let project = serde_json::json!({"gyro_source": source, "videofile": video});
+                let result = manager.import_gyroflow_data(project.to_string().as_bytes(), true, None, |_| (), Arc::new(AtomicBool::new(false)), &mut false, false);
+                assert!(matches!(result, Err(GyroflowCoreError::UnsupportedFormat(_))));
+                assert_eq!(manager.gyro.read().quaternions, original);
+            }
+        }
     }
 
     #[test]
-    fn stab_result_round_trips_through_the_project() {
+    fn export_omits_retired_reconstruction_curves() {
         let manager = optical_project_manager(); install_stab(&manager); manager.recompute_blocking();
         for typ in [GyroflowProjectType::Simple, GyroflowProjectType::WithGyroData, GyroflowProjectType::WithProcessedData] {
             let p: serde_json::Value = serde_json::from_str(&manager.export_gyroflow_data(typ, "{}", None).unwrap()).unwrap();
-            assert_eq!(p["gyro_source"]["stab_reconstruction_enabled"], true);
-            assert!(p["gyro_source"]["optical_stab_reconstruction"].is_string());
+            assert!(p["gyro_source"].get("optical_stab_reconstruction").is_none());
+            assert!(p["gyro_source"].get("stab_reconstruction_enabled").is_none());
         }
-        let restored = optical_import(&optical_export(&manager)); restored.recompute_blocking();
-        assert!(restored.gyro.read().optical_stab.as_ref().unwrap().is_active());
-        assert_eq!(*restored.optical_ui.read(), *manager.optical_ui.read());
-        assert_eq!(restored.stab_reconstruction_info()["measured_frames"], 299);
         let cloned = manager.get_cloned(); manager.clear_optical_correction(); cloned.recompute_blocking();
         assert!(cloned.gyro.read().optical_stab.as_ref().unwrap().is_active());
         assert!(manager.gyro.read().optical_stab.is_none());
@@ -6550,7 +6624,8 @@ mod tests {
         }
         m.recompute_gyro(); m.recompute_blocking();
         assert!(m.gyro.read().optical_translation.as_ref().unwrap().is_active());
-        for restored in [optical_import(&optical_export(&m)), m.get_cloned()] {
+        {
+            let restored = m.get_cloned();
             restored.recompute_blocking();
             let gyro = restored.gyro.read();
             assert!(gyro.optical_translation.as_ref().unwrap().is_active());
@@ -6581,10 +6656,14 @@ mod tests {
         assert!(m.gyro.read().optical_stab.as_ref().unwrap().is_active());
     }
     #[test]
-    fn stab_checkbox_starts_from_the_gate() {
-        let mut md = gyro_source::FileMetadata::default(); assert!(!stab_default_from_metadata(&md));
-        md.additional_data = serde_json::json!({"stabilization_blocks_processing": true}); assert!(stab_default_from_metadata(&md));
-        md.additional_data["stabilization_blocks_processing"] = false.into(); assert!(!stab_default_from_metadata(&md));
+    fn ordinary_gyro_uses_optimal_path_without_ignoring_motion() {
+        let manager = optical_project_manager();
+        manager.recompute_blocking();
+        assert!(!manager.gyro.read().smoothed_quaternions.is_empty());
+        let p = optical_export(&manager);
+        assert_eq!(p["stabilization"]["method"], "Optimal path");
+        assert_eq!(p["gyro_source"]["ignore_file_motion"], false);
+        assert!(p["gyro_source"].get("optical_correction").is_none());
     }
 
     #[test]
@@ -8364,6 +8443,296 @@ mod tests {
         assert_eq!(lens.fisheye_params.camera_matrix[1], [0.0, 3500.0, 540.0]);
     }
 
+    fn import_embedded_video_lens(md: &gyro_source::FileMetadata, calibration: Option<serde_json::Value>, filepath: &str) -> StabilizationManager {
+        let manager = StabilizationManager::default();
+        manager.lens_group_manual_edit.store(false, SeqCst);
+        *manager.lens_group_config.write() = niyien_lens_presets::default_lens_group_configs();
+        let mut project = serde_json::json!({
+            "version": 4,
+            "videofile": "file:///unavailable/video.mov",
+            "video_info": { "width": 1920, "height": 1080, "fps": 29.97, "num_frames": 30, "duration_ms": 1001.0, "rotation": 270.0 },
+            "gyro_source": { "filepath": filepath, "file_metadata": util::compress_to_base91_cbor(md).unwrap() }
+        });
+        if let Some(calibration) = calibration { project["calibration_data"] = calibration; }
+        let imported = manager.import_gyroflow_data_with_policy(
+            project.to_string().as_bytes(), false, None, |_| (), Arc::new(AtomicBool::new(false)),
+            &mut false, false, ExternalIoPolicy::Deny,
+        ).unwrap();
+        if manager.lens.read().fisheye_params.camera_matrix.len() == 3 {
+            assert_eq!(imported["calibration_data"]["fisheye_params"]["camera_matrix"], manager.lens.read().get_json_value().unwrap()["fisheye_params"]["camera_matrix"]);
+            assert_eq!(imported["calibration_data"]["distortion_model"], manager.lens.read().get_json_value().unwrap()["distortion_model"]);
+        }
+        manager
+    }
+
+    #[test]
+    fn embedded_video_lens_without_motion_builds_physical_geometry() {
+        let md = gyro_source::FileMetadata {
+            detected_source: Some("Nikon ZR".into()),
+            camera_identifier: Some(CameraIdentifier { focal_length: Some(50.0), ..Default::default() }),
+            unit_pixel_focal_length: Some(112.5),
+            frame_readout_time: Some(9.3),
+            frame_rate: Some(60.0), record_frame_rate: Some(120.0),
+            additional_data: serde_json::json!({ "lens_index": 0 }),
+            ..Default::default()
+        };
+        for calibration in [None, Some(serde_json::json!({})), Some(serde_json::to_value(LensProfile::default()).unwrap())] {
+            let manager = import_embedded_video_lens(&md, calibration, "");
+            let measurement = synchronization::optical_analysis::measurement_params(&manager);
+            let render = stabilization::ComputeParams::from_manager(&manager);
+            for params in [&measurement, &render] {
+                let matrix = stabilization::FrameTransform::get_lens_data_at_timestamp(params, 0.0, false).0;
+                assert_eq!(matrix[(0, 0)], 5625.0);
+                assert_eq!(matrix[(1, 1)], 5625.0);
+                assert_eq!(params.frame_readout_time, 9.3);
+            }
+            let params = manager.params.read();
+            assert_eq!(params.fps, 29.97);
+            assert_eq!(params.fps_scale, None);
+            assert_eq!(params.video_rotation, 270.0);
+            assert!(!manager.gyro.read().file_metadata.read().has_motion());
+        }
+    }
+
+    #[test]
+    fn embedded_video_lens_preserves_native_geometry_with_inactive_group() {
+        let mut native = LensProfile::default();
+        native.calib_dimension = lens_profile::Dimensions { w: 1920, h: 1080 };
+        native.orig_dimension = native.calib_dimension.clone();
+        native.fisheye_params.camera_matrix = vec![[3500.0, 0.0, 951.0], [0.0, 3550.0, 533.0], [0.0, 0.0, 1.0]];
+        native.fisheye_params.distortion_coeffs = vec![0.01; 24];
+        native.distortion_model = Some("sony".into());
+        let mut md = gyro_source::FileMetadata {
+            detected_source: Some("Sony test camera".into()),
+            lens_profile: Some(native.get_json_value().unwrap()),
+            camera_identifier: Some(CameraIdentifier { focal_length: Some(50.0), ..Default::default() }),
+            unit_pixel_focal_length: Some(100.0),
+            frame_readout_time: Some(13.313),
+            additional_data: serde_json::json!({ "lens_index": 0 }),
+            ..Default::default()
+        };
+        for with_motion in [false, true] {
+            if with_motion { md.quaternions = BTreeMap::from([(0, Quat64::identity()), (1000000, Quat64::identity())]); }
+            let manager = import_embedded_video_lens(&md, None, "file:///unavailable/video.mov");
+            assert_eq!(manager.lens.read().fisheye_params.camera_matrix, native.fisheye_params.camera_matrix);
+            assert_eq!(manager.lens.read().distortion_model, native.distortion_model);
+            let params = synchronization::optical_analysis::measurement_params(&manager);
+            let (matrix, coeffs, ..) = stabilization::FrameTransform::get_lens_data_at_timestamp(&params, 0.0, false);
+            assert_eq!(matrix[(0, 0)], 3500.0);
+            assert_eq!(matrix[(1, 1)], 3550.0);
+            assert_eq!(coeffs, [0.01; 24]);
+            assert_eq!(params.frame_readout_time, 13.313);
+        }
+        let manager = StabilizationManager::default();
+        manager.params.write().size = (1920, 1080);
+        manager.lens_group_manual_edit.store(false, SeqCst);
+        *manager.lens_group_config.write() = niyien_lens_presets::default_lens_group_configs();
+        manager.apply_main_video_telemetry(&mut md, "video.mov", false);
+        assert_eq!(manager.lens.read().fisheye_params.camera_matrix, native.fisheye_params.camera_matrix);
+    }
+
+    #[test]
+    fn embedded_video_lens_keeps_authored_calibration_and_external_motion_priority() {
+        let md = gyro_source::FileMetadata {
+            unit_pixel_focal_length: Some(100.0),
+            camera_identifier: Some(CameraIdentifier { focal_length: Some(50.0), ..Default::default() }),
+            ..Default::default()
+        };
+        for calibration in [
+            serde_json::json!({ "fisheye_params": { "camera_matrix": [[2000.0,0.0,960.0],[0.0,2100.0,540.0],[0.0,0.0,1.0]] }, "lens_group_override": true }),
+            serde_json::json!({ "distortion_model": "poly5", "fisheye_params": { "distortion_coeffs": [0.1,0.0,0.0,0.0] } }),
+            serde_json::json!({ "digital_lens": "gopro_superview" }),
+            serde_json::json!({ "lens_group_override": true }),
+        ] {
+            let manager = import_embedded_video_lens(&md, Some(calibration.clone()), "");
+            let mut expected = LensProfile::default();
+            expected.load_from_json_value(&calibration);
+            expected.resolve_interpolations(&manager.lens_profile_db.read());
+            assert_eq!(manager.lens.read().get_json_value().unwrap(), expected.get_json_value().unwrap());
+        }
+        let external = import_embedded_video_lens(&md, None, "file:///unavailable/external.gcsv");
+        assert!(external.lens.read().fisheye_params.camera_matrix.is_empty());
+        let mut canon = md.clone();
+        canon.detected_source = Some("Canon test camera".into());
+        let manager = import_embedded_video_lens(&canon, None, "");
+        assert!(manager.lens.read().fisheye_params.camera_matrix.is_empty());
+        let mut unknown = md;
+        unknown.unit_pixel_focal_length = None;
+        let manager = import_embedded_video_lens(&unknown, None, "");
+        assert!(manager.lens.read().fisheye_params.camera_matrix.is_empty());
+    }
+
+    #[test]
+    fn embedded_video_lens_does_not_replace_loaded_motion_with_geometry_only_metadata() {
+        let manager = StabilizationManager::default();
+        manager.params.write().duration_ms = 1000.0;
+        manager.gyro.write().init_from_params(&manager.params.read());
+        let original = gyro_source::FileMetadata {
+            detected_source: Some("Sony original".into()),
+            quaternions: BTreeMap::from([(0, Quat64::identity()), (1000000, Quat64::identity())]),
+            ..Default::default()
+        };
+        manager.gyro.write().load_from_telemetry(original.clone());
+        manager.lens.write().fisheye_params.camera_matrix = vec![[3000.0,0.0,960.0],[0.0,3100.0,540.0],[0.0,0.0,1.0]];
+        let metadata = gyro_source::FileMetadata {
+            unit_pixel_focal_length: Some(100.0),
+            camera_identifier: Some(CameraIdentifier { focal_length: Some(50.0), ..Default::default() }),
+            ..Default::default()
+        };
+        let project = serde_json::json!({
+            "version": 4, "videofile": "file:///unavailable/video.mov",
+            "gyro_source": { "filepath": "", "file_metadata": util::compress_to_base91_cbor(&metadata).unwrap() }
+        });
+        manager.import_gyroflow_data_with_policy(project.to_string().as_bytes(), false, None, |_| (), Arc::new(AtomicBool::new(false)), &mut false, false, ExternalIoPolicy::Deny).unwrap();
+        assert_eq!(manager.gyro.read().file_metadata.read().quaternions, original.quaternions);
+        assert_eq!(manager.gyro.read().file_metadata.read().detected_source, original.detected_source);
+        assert_eq!(manager.lens.read().fisheye_params.camera_matrix[0][0], 3000.0);
+        assert_eq!(manager.lens.read().fisheye_params.camera_matrix[1][1], 3100.0);
+    }
+
+    #[test]
+    fn lens_import_audit_keeps_job_settings_when_filling_a_matrix() {
+        let md = gyro_source::FileMetadata {
+            unit_pixel_focal_length: Some(100.0),
+            camera_identifier: Some(CameraIdentifier { focal_length: Some(35.0), ..Default::default() }),
+            ..Default::default()
+        };
+        let sync = serde_json::json!({"do_autosync": true, "initial_offset": 1.75, "search_size": 4.0});
+        let calibration = serde_json::json!({"sync_settings": sync, "global_shutter": true,
+            "output_dimension": {"w":1280,"h":720}, "frame_readout_time": 0.0});
+        let manager = import_embedded_video_lens(&md, Some(calibration), "");
+        let effective = manager.lens.read().get_json_value().unwrap();
+        assert_eq!(effective["fisheye_params"]["camera_matrix"][0][0], 3500.0);
+        assert_eq!(effective["sync_settings"], sync);
+        assert_eq!(effective["global_shutter"], true);
+        assert_eq!(effective["output_dimension"], serde_json::json!({"w":1280,"h":720}));
+    }
+
+    #[test]
+    fn lens_import_audit_geometry_only_project_can_resume_ignored_gyro() {
+        let manager = optical_project_manager();
+        manager.gyro.write().set_offset(1_000_000, 12.0);
+        let expected = manager.gyro.read().file_metadata.read().quaternions.clone();
+        assert!(!expected.is_empty());
+        manager.set_ignore_file_motion(true);
+        let md = gyro_source::FileMetadata { unit_pixel_focal_length: Some(100.0), ..Default::default() };
+        let project = serde_json::json!({"version":4, "videofile":"file:///optical-project-fixture.mp4",
+            "gyro_source":{"filepath":"", "ignore_file_motion":false, "file_metadata":util::compress_to_base91_cbor(&md).unwrap()}});
+        manager.import_gyroflow_data_with_policy(project.to_string().as_bytes(), false, None, |_| (), Arc::new(AtomicBool::new(false)), &mut false, false, ExternalIoPolicy::Deny).unwrap();
+        let gyro = manager.gyro.read();
+        assert_eq!(gyro.file_metadata.read().quaternions.len(), expected.len());
+        assert_eq!(gyro.file_metadata.read().quaternions, expected);
+        assert_eq!(gyro.get_offsets().get(&1_000_000), Some(&12.0));
+    }
+
+    #[test]
+    fn lens_import_audit_unusable_metadata_preserves_loaded_calibration() {
+        let manager = optical_project_manager();
+        let calibration = serde_json::json!({"fisheye_params":{"camera_matrix":[[2200,0,960],[0,2210,540],[0,0,1]]}});
+        manager.lens.write().load_from_json_value(&calibration).unwrap();
+        let md = gyro_source::FileMetadata {
+            quaternions: manager.gyro.read().file_metadata.read().quaternions.clone(),
+            unit_pixel_focal_length: Some(100.0), ..Default::default()
+        };
+        let project = serde_json::json!({"version":4, "videofile":"file:///optical-project-fixture.mp4",
+            "gyro_source":{"filepath":"", "file_metadata":util::compress_to_base91_cbor(&md).unwrap()}});
+        manager.import_gyroflow_data_with_policy(project.to_string().as_bytes(), false, None, |_| (), Arc::new(AtomicBool::new(false)), &mut false, false, ExternalIoPolicy::Deny).unwrap();
+        assert_eq!(manager.lens.read().fisheye_params.camera_matrix,
+                   vec![[2200.,0.,960.],[0.,2210.,540.],[0.,0.,1.]]);
+    }
+
+    #[test]
+    fn lens_import_audit_plugin_uses_project_geometry_independent_of_desktop_groups() {
+        let md = gyro_source::FileMetadata {
+            unit_pixel_focal_length: Some(100.0),
+            camera_identifier: Some(CameraIdentifier { focal_length: Some(35.0), ..Default::default() }),
+            additional_data: serde_json::json!({"lens_index":0}),
+            ..Default::default()
+        };
+        let project = serde_json::json!({
+            "version":4, "videofile":"file:///clip.mov",
+            "video_info":{"width":1920,"height":1080,"duration_ms":1000,"fps":30,"num_frames":30},
+            "gyro_source":{"filepath":"","file_metadata":util::compress_to_base91_cbor(&md).unwrap()},
+            "calibration_data":{"frame_readout_time":-8.0}
+        });
+        for (plugin, expected_fx) in [(false, 5000.0), (true, 3500.0)] {
+            let manager = StabilizationManager::default();
+            manager.lens_group_config.write()[0].focal_length_mm = Some(50.0);
+            manager.lens_group_manual_edit.store(true, SeqCst);
+            manager.import_gyroflow_data_with_policy(project.to_string().as_bytes(), false, None, |_| (), Arc::new(AtomicBool::new(false)), &mut false, plugin, ExternalIoPolicy::Deny).unwrap();
+            assert_eq!(manager.lens.read().fisheye_params.camera_matrix[0][0], expected_fx);
+            let params = manager.params.read();
+            assert_eq!(params.frame_readout_time, 8.0);
+            assert_eq!(params.frame_readout_direction, ReadoutDirection::BottomToTop);
+            assert_eq!(manager.lens.read().frame_readout_direction, Some(ReadoutDirection::BottomToTop));
+        }
+    }
+
+    #[test]
+    fn embedded_video_lens_legacy_motion_keeps_camera_metadata_and_saved_readout() {
+        let metadata = gyro_source::FileMetadata {
+            detected_source: Some("Sony original".into()),
+            unit_pixel_focal_length: Some(100.0), frame_readout_time: Some(13.313),
+            lens_params: BTreeMap::from([(0, gyro_source::LensParams {
+                focal_length: Some(50.0), pixel_focal_length: Some((3500.0,3550.0)), ..Default::default()
+            })]),
+            ..Default::default()
+        };
+        for (lens_readout, stabilization, expected_readout) in [
+            (Some(8.0), serde_json::json!({}), 8.0),
+            (Some(0.0), serde_json::json!({}), 0.0),
+            (None, serde_json::json!({}), 13.313),
+            (Some(8.0), serde_json::json!({ "frame_readout_time": 4.0 }), 4.0),
+        ] {
+            let manager = StabilizationManager::default();
+            let project = serde_json::json!({
+                "version": 4, "videofile": "file:///unavailable/video.mov",
+                "video_info": { "width": 1920, "height": 1080, "fps": 30.0, "duration_ms": 1000.0 },
+                "stabilization": stabilization,
+                "calibration_data": { "frame_readout_time": lens_readout, "frame_readout_direction": "BottomToTop" },
+                "gyro_source": { "filepath": "file:///unavailable/video.mov",
+                    "file_metadata": util::compress_to_base91_cbor(&metadata).unwrap(),
+                    "raw_imu": [{ "timestamp_ms": 0.0, "gyro": [0.0,0.0,0.0] }, { "timestamp_ms": 1000.0, "gyro": [0.0,0.0,0.0] }]
+                }
+            });
+            manager.import_gyroflow_data_with_policy(project.to_string().as_bytes(), false, None, |_| (), Arc::new(AtomicBool::new(false)), &mut false, false, ExternalIoPolicy::Deny).unwrap();
+            assert_eq!(manager.gyro.read().file_metadata.read().lens_params.len(), 1);
+            assert_eq!(manager.gyro.read().file_metadata.read().detected_source, metadata.detected_source);
+            assert_eq!(manager.params.read().frame_readout_time, expected_readout);
+            assert_eq!(manager.lens.read().frame_readout_time, Some(lens_readout.unwrap_or(13.313)));
+            assert_eq!(manager.lens.read().frame_readout_direction, Some(ReadoutDirection::BottomToTop));
+            assert_eq!(manager.params.read().frame_readout_direction, ReadoutDirection::BottomToTop);
+            let params = synchronization::optical_analysis::measurement_params(&manager);
+            let matrix = stabilization::FrameTransform::get_lens_data_at_timestamp(&params, 0.0, false).0;
+            assert_eq!(matrix[(0,0)], 3500.0);
+            assert_eq!(matrix[(1,1)], 3550.0);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires real project fixtures through GYROFLOW_LENS_GEOMETRY_PROJECTS"]
+    fn embedded_video_lens_real_projects() {
+        for path in std::env::var("GYROFLOW_LENS_GEOMETRY_PROJECTS").unwrap().split(';') {
+            let data = std::fs::read(path).unwrap();
+            let manager = StabilizationManager::default();
+            manager.lens_group_manual_edit.store(false, SeqCst);
+            *manager.lens_group_config.write() = niyien_lens_presets::default_lens_group_configs();
+            manager.import_gyroflow_data_with_policy(&data, false, None, |_| (), Arc::new(AtomicBool::new(false)), &mut false, false, ExternalIoPolicy::Deny).unwrap();
+            let measurement = synchronization::optical_analysis::measurement_params(&manager);
+            let render = stabilization::ComputeParams::from_manager(&manager);
+            let mut samples = Vec::new();
+            for ts in [0.0, measurement.scaled_duration_ms / 2.0, measurement.scaled_duration_ms - 20.0] {
+                let measured = stabilization::FrameTransform::get_lens_data_at_timestamp(&measurement, ts, false);
+                let rendered = stabilization::FrameTransform::get_lens_data_at_timestamp(&render, ts, false);
+                assert_eq!(measured, rendered);
+                assert!(measured.0[(0, 0)] > 0.0 && measured.0[(1, 1)] > 0.0);
+                samples.push(serde_json::json!({ "timestamp_ms": ts, "fx": measured.0[(0,0)], "fy": measured.0[(1,1)] }));
+            }
+            assert!(!manager.lens.read().fisheye_params.camera_matrix.is_empty());
+            println!("LENS_GEOMETRY_SMOKE {}", serde_json::json!({ "project": path, "lens": manager.lens.read().get_json_value().unwrap(), "readout_ms": render.frame_readout_time, "samples": samples, "lens_params": manager.gyro.read().file_metadata.read().lens_params.len() }));
+        }
+    }
+
     #[test]
     fn apply_main_video_telemetry_without_lens_group_does_not_mutate_shared_config() {
         let source = include_str!("lib.rs");
@@ -8902,7 +9271,7 @@ mod tests {
         settings::set_project_import_gate(true);
         let gated = StabilizationManager::default();
         import(&gated);
-        assert_eq!(gated.smoothing.read().current().get_name(), "Default");
+        assert_eq!(gated.smoothing.read().current().get_name(), "Optimal path");
         // Fields that are not backed by a persisted setting still load.
         assert_eq!(gated.params.read().fov, 1.25);
 
@@ -8953,6 +9322,61 @@ mod tests {
         drop(smoothing);
 
         settings::set_project_import_gate(false);
+    }
+
+    fn import_desktop_smoothing_fixture(method: &str, preset: bool, initial: Option<(usize, f64)>) -> (String, f64, bool) {
+        let tmp = tempfile::tempdir().unwrap();
+        settings::with_test_settings_file(tmp.path().join("settings.json"), || {
+            let target = StabilizationManager::default();
+            if let Some((index, smoothness)) = initial {
+                target.set_smoothing_method(index);
+                target.set_smoothing_param("smoothness", smoothness);
+            }
+            let mut project = serde_json::json!({
+                "title": "Gyroflow data file",
+                "version": 4,
+                "stabilization": {
+                    "method": method,
+                    "smoothing_params": [{ "name": "smoothness", "value": 0.15 }]
+                }
+            });
+            if !preset { project["videofile"] = serde_json::json!("file:///C:/gyroflow-import-fixture.mp4"); }
+            settings::set_project_import_gate(true);
+            let mut is_preset = false;
+            let result = target.import_gyroflow_data(
+                project.to_string().as_bytes(), false, None, |_| (),
+                Arc::new(AtomicBool::new(false)), &mut is_preset, false,
+            );
+            settings::set_project_import_gate(false);
+            result.unwrap();
+            let smoothing = target.smoothing.read();
+            (smoothing.current().get_name(), smoothing.current().get_parameter("smoothness"), is_preset)
+        })
+    }
+
+    #[test]
+    #[serial]
+    fn project_import_gate_preserves_saved_default_smoothing() {
+        assert_eq!(import_desktop_smoothing_fixture("Default", false, None), ("Default".into(), 0.15, false));
+    }
+
+    #[test]
+    #[serial]
+    fn project_import_gate_keeps_optimal_parameters_for_default_preset() {
+        assert_eq!(import_desktop_smoothing_fixture("Default", true, None), ("Optimal path".into(), 0.5, true));
+        assert_eq!(import_desktop_smoothing_fixture("Default", true, Some((smoothing::OPTIMAL_ID, 0.7))), ("Optimal path".into(), 0.7, true));
+    }
+
+    #[test]
+    #[serial]
+    fn project_import_gate_applies_default_preset_to_default_method() {
+        assert_eq!(import_desktop_smoothing_fixture("Default", true, Some((1, 0.5))), ("Default".into(), 0.15, true));
+    }
+
+    #[test]
+    #[serial]
+    fn project_import_gate_restores_saved_optimal_smoothing() {
+        assert_eq!(import_desktop_smoothing_fixture("Optimal path", false, Some((1, 0.5))), ("Optimal path".into(), 0.15, false));
     }
 
     /// A `.gyroflow` whose calibration data describes `lens_model` with the given

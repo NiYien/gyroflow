@@ -2886,6 +2886,10 @@ Do you want to submit your profile?</source>
 <context>
     <name>MotionData</name>
     <message>
+        <source>Stabilization reconstruction</source>
+        <translation>Rekonstruksi stabilisasi</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="11"/>
         <source>Motion data</source>
         <translation>Data motion</translation>
@@ -3605,6 +3609,10 @@ Buka kembali CapCut sebelum menggunakan efek.</translation>
 </context>
 <context>
     <name>Popup</name>
+    <message>
+        <source>Optimal path</source>
+        <translation>Jalur optimal</translation>
+    </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1042"/>
         <source>Export</source>
@@ -5181,6 +5189,14 @@ Silakan masukan frame rate: </translation>
 </context>
 <context>
     <name>Stabilization</name>
+    <message>
+        <source>Keep within zoom limit</source>
+        <translation>Tetap dalam batas zoom</translation>
+    </message>
+    <message>
+        <source>Use the zoom limit as fixed zoom</source>
+        <translation>Gunakan batas zoom sebagai zoom tetap</translation>
+    </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1746"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="10"/>

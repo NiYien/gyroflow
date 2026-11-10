@@ -2885,6 +2885,10 @@ Profilinizi yüklemek istiyor musunuz?</translation>
 <context>
     <name>MotionData</name>
     <message>
+        <source>Stabilization reconstruction</source>
+        <translation>Sabitlemeyi yeniden oluşturma</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="11"/>
         <source>Motion data</source>
         <translation>Hareket verisi</translation>
@@ -3603,6 +3607,10 @@ Efekti kullanmadan önce CapCut uygulamasını yeniden açın.</translation>
 </context>
 <context>
     <name>Popup</name>
+    <message>
+        <source>Optimal path</source>
+        <translation>Optimum yol</translation>
+    </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1042"/>
         <source>Export</source>
@@ -5178,6 +5186,14 @@ Lütfen frame rate'i belirtin: </translation>
 </context>
 <context>
     <name>Stabilization</name>
+    <message>
+        <source>Keep within zoom limit</source>
+        <translation>Yakınlaştırma sınırı içinde tut</translation>
+    </message>
+    <message>
+        <source>Use the zoom limit as fixed zoom</source>
+        <translation>Yakınlaştırma sınırını sabit yakınlaştırma olarak kullan</translation>
+    </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1746"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="10"/>

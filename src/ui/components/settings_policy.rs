@@ -68,6 +68,7 @@ const ALLOW_EXACT: &[&str] = &[
     "processingDevicePhysicalId",
     // The experimental panel exposes translation controls in Simple mode.
     "translationStabilization",
+    "smoothing-4-smoothness",
     // Window geometry and panel splitters: user-dragged, no bearing on output.
     "windowX",
     "windowY",
@@ -91,9 +92,7 @@ const ALLOW_PREFIX: &[&str] = &[
     // path: that comes from the source folder and `preservedOutputPath`, both
     // handled elsewhere.
     "folder-",
-    // The Simple-mode smoothness slider does not persist itself; it rides on the
-    // Full-mode panel's per-algorithm key. Only algorithm 1 (DefaultAlgo) is
-    // allowed through — `smoothing-3-*` is Fixed camera, the black-preview bug.
+    // Keep the previous Default algorithm's preferences when its projects are opened.
     "smoothing-1-",
 ];
 
@@ -371,7 +370,8 @@ mod tests {
     }
 
     #[test]
-    fn only_default_algorithm_smoothing_params_persist() {
+    fn exposed_smoothing_parameters_persist() {
+        assert!(is_persisted("smoothing-4-smoothness"));
         assert!(is_persisted("smoothing-1-smoothness"));
         assert!(is_persisted("smoothing-1-per_axis"));
         // Fixed camera is algorithm 3 — the incident that motivated the gate.

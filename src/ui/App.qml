@@ -210,8 +210,6 @@ Rectangle {
         if (window.exportSettings && window.exportSettings.mobileSaveToGallery) return true;
         return iosQueueOutputPolicy.deferAddTimeOutputCheck(urls);
     }
-    // Index 1 in smoothingAlgorithms corresponds to DefaultAlgo (see src/core/smoothing/mod.rs).
-    readonly property int defaultSmoothingIndex: 1;
     function applySimpleModeDefaults(): void {
         // Force the sync overlays off when returning from Full mode. Cold start no
         // longer relies on this: StabilizationParams::default() has both off, and the
@@ -221,9 +219,6 @@ Rectangle {
         // hidden there, so they would have no way to turn it back off).
         controller.show_detected_features = false;
         controller.show_optical_flow = false;
-        // Force smoothing method back to "Default" so Simple mode never inherits a
-        // method the user picked while temporarily in Full mode.
-        controller.set_smoothing_method(window.defaultSmoothingIndex);
     }
     // Hidden helper used by pushToEnd() to force re-ordering by transient detach.
     // Setting parent to the same value is a no-op (children stay in place); detaching
@@ -1213,7 +1208,7 @@ Rectangle {
                             const syncedByMd = md && vi && md.filename == vi.filename
                                 && (md.hasAccurateTimestamps || (md.hasQuaternions && md.integrationMethod === 0));
                             const hasSync = controller.offsets_model.rowCount() > 0 || syncedByMd;
-                            if (hasSync) {
+                            if ((md && md.pureOpticalEnabled) || hasSync) {
                                 simpleExportStabilizedBtn.doSingleRender();
                             } else if (window.sync && !controller.sync_in_progress) {
                                 // Short-circuit runAutosync's early-return paths (no lens_loaded pops
@@ -1328,7 +1323,7 @@ Rectangle {
                                 return;
                             }
                             const usesQuats = ((motionData.item.hasQuaternions && motionData.item.integrationMethod === 0) || motionData.item.hasAccurateTimestamps) && motionData.item.filename == vidInfo.item.filename;
-                            if (!usesQuats && controller.offsets_model.rowCount() == 0 && !allowSync) {
+                            if (!motionData.item.pureOpticalEnabled && !usesQuats && controller.offsets_model.rowCount() == 0 && !allowSync) {
                                 messageBox(Modal.Warning, qsTr("There are no sync points present, your result will be incorrect. Are you sure you want to render this file?"), [
                                     { text: qsTr("Yes"), clicked: () => { allowSync = true; renderBtn.render(); }},
                                     { text: qsTr("No"), accent: true },
@@ -1864,8 +1859,8 @@ Rectangle {
                 Column {
                     id: fullModeCol;
                     width: parent.width;
-                    ItemLoader { id: sync; opacity: batchState.active ? 0.4 : 1.0; sourceComponent: Component { Menu.Synchronization { } } }
-                    Hr { id: syncHr; }
+                    ItemLoader { id: sync; visible: status === Loader.Ready && !(window.motionData && window.motionData.pureOpticalEnabled); opacity: batchState.active ? 0.4 : 1.0; sourceComponent: Component { Menu.Synchronization { } } }
+                    Hr { id: syncHr; visible: sync.visible; }
                     ItemLoader { id: stab; sourceComponent: Component { Menu.Stabilization { } } }
                     Hr { id: stabHr; }
                     ItemLoader { id: exportSettings; opacity: batchState.active ? 0.4 : 1.0; sourceComponent: Component { Menu.Export { showBtn: !window.isMobileLayout; } } }
@@ -1876,7 +1871,7 @@ Rectangle {
 
                     // Sync and export/advanced overlays to block interaction in batch mode
                     MouseArea {
-                        visible: batchState.active;
+                        visible: sync.visible && batchState.active;
                         z: 100;
                         x: 0; y: sync.y;
                         width: parent.width;
@@ -2544,6 +2539,10 @@ Rectangle {
     function runPluginStabilizeFlow(): void {
         const queueMode = videoArea.queue && (window.useMobileWorkspace || videoArea.queue.shown) && render_queue.queue.rowCount() > 0;
         if (!queueMode) {
+            if (window.motionData && window.motionData.pureOpticalEnabled) {
+                window.motionData.analyzeOpticalModes();
+                return;
+            }
             // Single video, no queue to write back to. No usable gyro data:
             // prompt to load gyro instead of a silent no-op.
             if (!controller.gyro_loaded) {
@@ -2572,7 +2571,7 @@ Rectangle {
                 return;
             }
             // Queue jobs with embedded gyro (no separate files): direct batch sync.
-            if (!hasGyroFiles) {
+            if (!hasGyroFiles || render_queue.batch_uses_only_pure_optical()) {
                 if (!render_queue.batch_motion_ready()) { window.explainDispatchBlocked("sync"); return; }
                 window.runSimpleBatchSync();
                 return;
@@ -2603,7 +2602,7 @@ Rectangle {
         if (!queueMode) {
             // No usable gyro data on the single video: prompt to load gyro
             // instead of a silent no-op.
-            if (!controller.gyro_loaded) {
+            if (!(window.motionData && window.motionData.pureOpticalEnabled) && !controller.gyro_loaded) {
                 window.messageBox(Modal.Info, qsTr("Please load gyro data first."), [ { text: qsTr("Ok") } ]);
                 return true;
             }
@@ -2631,7 +2630,7 @@ Rectangle {
             // Match-first (D4): with separate gyro files that have changed / never
             // matched, run Auto match first; export dispatches on match success
             // (zero-match reuses matchWarning and does not start rendering).
-            if (hasGyroFiles && videoArea.queue.matchDirty) {
+            if (hasGyroFiles && videoArea.queue.matchDirty && !render_queue.batch_uses_only_pure_optical()) {
                 videoArea.queue.beginMatchThenSync("export");
                 return;
             }
@@ -3337,17 +3336,6 @@ Rectangle {
         render_queue.parallel_renders = isSimpleMode ? 3 : +settings.value("parallelRenders_v2", 3);
         // [simple-overwrite] Initialize overwrite mode per current mode — Simple forces silent overwrite
         render_queue.overwrite_mode = isSimpleMode ? 1 : +settings.value("defaultOverwriteAction", 0);
-        // NOTE: do NOT call applySimpleModeDefaults() at startup — the reason is the smoothing
-        // reset it performs: invoking set_smoothing_method here races with queue-edit reload and
-        // blanks the gyro chart on the main canvas. The controller default (smoothing index 1 =
-        // DefaultAlgo) is already Simple-friendly, so nothing is lost.
-        // The sync overlays are handled entirely by defaults now: StabilizationParams::default()
-        // has both off and Synchronization.qml's checkboxes no longer write `true` on construction.
-        // (An earlier version of this note claimed the overlays "are only drawn while sync runs" —
-        // they are not. draw_overlays() keeps painting whatever pose_estimator.sync_results holds,
-        // long after the sync finished, which is how they leaked into Simple mode.)
-        // applySimpleModeDefaults() therefore only matters when the user actively flips
-        // Full → Simple, which is handled in onIsSimpleModeChanged above.
 
         QT_TRANSLATE_NOOP("App", "An error occured: %1");
         QT_TRANSLATE_NOOP("App", "Gyroflow file exported to %1.");
@@ -3430,7 +3418,7 @@ Rectangle {
             }
             const simpleMode = typeof isSimpleMode !== "undefined" && isSimpleMode;
             const names = items.map(item => item === "translation" ? qsTranslate("MotionData", "Translation stabilization")
-                : item === "reconstruction" ? qsTranslate("MotionData", "Reconstruct in-camera stabilization")
+                : item === "reconstruction" ? qsTranslate("MotionData", "Stabilization reconstruction")
                 : qsTranslate("MotionData", simpleMode ? "Optical stabilization" : "Optical correction"));
             return qsTr("%1 could not be applied (%2). Processed without it.").arg(names.join(qsTr(", "))).arg(reason);
         }

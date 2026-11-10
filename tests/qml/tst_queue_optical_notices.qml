@@ -42,7 +42,7 @@ TestCase {
 
     function test_reconstruction_fallback_for_a_clip_that_was_never_blocked() {
         compare(formatter.getReadableError("optical_fallback:reconstruction:NotConverged"),
-                fallback(qsTranslate("MotionData", "Reconstruct in-camera stabilization"), qsTranslate("App", "Analysis failed. See the log for details.")));
+                fallback(qsTranslate("MotionData", "Stabilization reconstruction"), qsTranslate("App", "Analysis failed. See the log for details.")));
     }
 
     function test_skip_explains_the_failed_reconstruction() {

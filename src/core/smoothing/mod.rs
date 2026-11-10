@@ -6,6 +6,7 @@ pub mod fixed;
 pub mod focal_length;
 pub mod horizon;
 pub mod none;
+pub mod optimal;
 pub mod plain;
 
 use super::gyro_source::{Quat64, TimeQuat};
@@ -27,12 +28,18 @@ pub trait SmoothingAlgorithm: DynClone {
     fn get_parameter(&self, name: &str) -> f64;
 
     fn get_checksum(&self) -> u64;
+    fn get_compute_checksum(&self, _params: &ComputeParams) -> u64 { 0 }
 
     fn smooth(&self, quats: &TimeQuat, duration: f64, _compute_params: &ComputeParams) -> TimeQuat;
+    fn smooth_with_original(&self, quats: &TimeQuat, _original: &TimeQuat, duration: f64, params: &ComputeParams) -> TimeQuat {
+        self.smooth(quats, duration, params)
+    }
 }
 clone_trait_object!(SmoothingAlgorithm);
 
 struct Algs(Vec<Box<dyn SmoothingAlgorithm>>);
+// Append to preserve the existing method indices saved by the UI and plugins.
+pub const OPTIMAL_ID: usize = 4;
 impl Default for Algs {
     fn default() -> Self {
         Self(vec![
@@ -40,6 +47,7 @@ impl Default for Algs {
             Box::new(self::default_algo::DefaultAlgo::default()),
             Box::new(self::plain::Plain::default()),
             Box::new(self::fixed::Fixed::default()),
+            Box::new(self::optimal::Optimal::default()),
         ])
     }
 }
@@ -99,7 +107,7 @@ impl Default for Smoothing {
         Self {
             algs: Algs::default(),
 
-            current_id: 1,
+            current_id: OPTIMAL_ID,
 
             horizon_lock: horizon::HorizonLock::default(),
         }
@@ -151,6 +159,8 @@ impl Smoothing {
         hasher.write_u64(gyro_checksum);
         hasher.write_usize(self.current_id);
         hasher.write_u64(self.algs.0[self.current_id].get_checksum());
+        let context = self.current().get_compute_checksum(compute_params);
+        if context != 0 { hasher.write_u64(context); }
         hasher.write_u64(self.horizon_lock.get_checksum());
         hasher.write_usize(compute_params.camera_diagonal_fovs.len());
         for fov in &compute_params.camera_diagonal_fovs {

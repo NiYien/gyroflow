@@ -1647,9 +1647,18 @@ fn builtin_gyro_skips_autosync(md: &FileMetadata) -> bool {
 /// A job whose `stab` has been released reports `false` (not "no gyro"): the
 /// admission pass has always treated a missing manager as "not my call".
 fn job_lacks_sync_motion(job: &Job) -> bool {
+    if job_uses_pure_optical(job) { return false; }
     job.stab.as_ref().is_some_and(|stab| {
         let gyro = stab.gyro.read();
         !gyro.file_metadata.read().keep_video_gyro && !gyro.has_motion()
+    })
+}
+
+fn job_uses_pure_optical(job: &Job) -> bool {
+    if job.optical.as_ref().is_some_and(|s| s.correction && s.ignore_file_motion) { return true; }
+    job.stab.as_ref().is_some_and(|stab| match &job.optical {
+        Some(settings) => settings.pure_optical(stab),
+        None => QueueOpticalSettings::from_pure_project(stab).is_some(),
     })
 }
 
@@ -2268,6 +2277,7 @@ pub struct RenderQueue {
     get_gyro_file_info_json: qt_method!(fn(&self, index: usize) -> QString),
     has_gyro_files: qt_method!(fn(&self) -> bool),
     batch_motion_ready: qt_method!(fn(&self) -> bool),
+    batch_uses_only_pure_optical: qt_method!(fn(&self) -> bool),
     has_crm_proxy_jobs: qt_method!(fn(&self) -> bool),
     // queue-stuck-state-recovery: the two Simple-mode buttons call these at the
     // very top of their decision trees. `intent` is "sync" or "export".
@@ -3447,7 +3457,7 @@ impl RenderQueue {
                 // Trusted RED Komodo / Sony gyro and Canon gyro with active
                 // intrinsic timing skip sync. Canon without an active series stays
                 // in the pool for fallback auto-sync.
-                let skips = builtin_gyro_skips_autosync(&stab.gyro.read().file_metadata.read());
+                let skips = job_uses_pure_optical(job) || builtin_gyro_skips_autosync(&stab.gyro.read().file_metadata.read());
                 (!skips).then_some(job_id)
             })
             .collect::<Vec<_>>();
@@ -5281,17 +5291,6 @@ impl RenderQueue {
         true
     }
 
-    fn active_stab_reconstruction(stab: &StabilizationManager) -> bool {
-        stab.refresh_optical_correction();
-        stab.gyro.read().optical_stab.as_ref().is_some_and(|s| s.is_active())
-    }
-
-    #[cfg(test)]
-    fn stabilization_blocks_processing(stab: &StabilizationManager) -> bool {
-        if Self::active_stab_reconstruction(stab) { return false; }
-        Self::original_stabilization_requirement(stab)
-    }
-
     fn original_stabilization_requirement(stab: &StabilizationManager) -> bool {
         let gyro = stab.gyro.read();
         let md = gyro.file_metadata.read();
@@ -5302,30 +5301,15 @@ impl RenderQueue {
     }
 
     fn job_is_stabilization_blocked(&self, job_id: u32) -> bool {
-        // queue-optical-analysis: with queue settings, they decide. The render
-        // worker applies them before anything else, so an unticked reconstruction
-        // would switch off one the manager brought along, and a ticked one gets
-        // analyzed there (run_queue_optical skips the job if it doesn't apply).
-        if let Some(settings) = self.jobs.get(&job_id).and_then(|job| job.optical.as_ref()) {
-            return !settings.reconstruction && self.job_original_stabilization_requirement(job_id);
-        }
-        let stab = self.jobs.get(&job_id).and_then(|job| job.stab.as_ref());
-        if let Some(stab) = stab {
-            return !Self::active_stab_reconstruction(stab) && self.job_original_stabilization_requirement(job_id);
-        }
-        // A released result must be restored before its current applicability can be judged.
-        self.queue.borrow().iter().any(|item| {
-            item.job_id == job_id && item.skip_reason.to_string() == "image_stabilization"
-        })
+        if self.jobs.get(&job_id).is_some_and(job_uses_pure_optical) { return false; }
+        self.job_original_stabilization_requirement(job_id)
     }
 
     fn incoming_stabilization_blocked(&self, job_id: u32, stab: &StabilizationManager) -> bool {
         // An incoming job takes the queue's settings (add_internal), see job_is_stabilization_blocked
-        if let Some(settings) = &self.optical_settings {
-            return !settings.reconstruction
-                && (Self::original_stabilization_requirement(stab) || self.job_original_stabilization_requirement(job_id));
-        }
-        if Self::active_stab_reconstruction(stab) { return false; }
+        let pure = self.optical_settings.as_ref().map_or_else(
+            || QueueOpticalSettings::from_pure_project(stab).is_some(), |settings| settings.pure_optical(stab));
+        if pure { return false; }
         Self::original_stabilization_requirement(stab) || self.job_original_stabilization_requirement(job_id)
     }
 
@@ -8407,7 +8391,10 @@ impl RenderQueue {
             // on the UI thread for the worker's analysis step.
             let simple_mode = self.simple_mode;
             let queue_optical_settings = job.optical.clone()
+                .or_else(|| QueueOpticalSettings::from_pure_project(&stab))
                 .map(|settings| normalize_queue_optical_settings(settings, simple_mode));
+            let pure_optical = !job_is_deep_match && !defer_batch_sync_confirmation &&
+                queue_optical_settings.as_ref().is_some_and(|s| s.pure_optical(&stab));
             let requires_compensation = queue_optical_settings.is_some()
                 && self.job_original_stabilization_requirement(job_id);
             let optical_phase = util::qt_queued_callback_mut(
@@ -8466,6 +8453,10 @@ impl RenderQueue {
                 if simple_mode {
                     stab.set_translation_auto(true);
                 }
+                if !job_is_deep_match && queue_optical_settings.as_ref().is_some_and(|s| !s.ignore_file_motion)
+                    && stab.gyro.read().ignores_file_motion() {
+                    stab.set_ignore_file_motion(false);
+                }
                 if !cancel_flag.load(SeqCst) && gyro_outdated.swap(false, SeqCst) {
                     stab.recompute_gyro();
                 }
@@ -8503,7 +8494,10 @@ impl RenderQueue {
                     }
                 }
                 let sync_start = std::time::Instant::now();
-                let sync_stats = if optical_pass {
+                let sync_stats = if pure_optical {
+                    ::log::info!(target: "queue.optical", "[queue-optical] job={job_id} pure optical, skipping gyro sync");
+                    QueueAutosyncStats::default()
+                } else if optical_pass {
                     // The offsets the batch confirmed stay as they are
                     QueueAutosyncStats::default()
                 } else {
@@ -8568,6 +8562,14 @@ impl RenderQueue {
                         return;
                     }
                     optical_phase((false, 1.0));
+                    if pure_optical {
+                        if let QueueOpticalOutcome::Fallback { items, reason, .. } = &outcome {
+                            if items.contains(&queue_optical::CORRECTION) {
+                                err(("%1".into(), reason.clone()));
+                                return;
+                            }
+                        }
+                    }
                     let notice = outcome.notice();
                     if !notice.is_empty() {
                         additional_data = queue_optical::with_notice(&additional_data, &notice);
@@ -9054,6 +9056,7 @@ impl RenderQueue {
     }
 
     fn estimated_sync_frames_for_job(job: &Job) -> usize {
+        if job_uses_pure_optical(job) { return 0; }
         job.stab
             .as_ref()
             .map(|stab| Self::estimated_sync_frames_for_stab(stab))
@@ -11278,8 +11281,6 @@ impl RenderQueue {
                 return;
             }
         };
-        let reconstruction_ticked =
-            settings.reconstruction && !self.optical_settings.as_ref().is_some_and(|old| old.reconstruction);
         self.optical_settings = Some(settings.clone());
         let rows: Vec<(u32, JobStatus, String)> = self
             .queue
@@ -11289,7 +11290,9 @@ impl RenderQueue {
             .collect();
         let (mut written, mut revived, mut blocked) = (0, 0, 0);
         for (job_id, status, skip_reason) in rows {
-            let revive = reconstruction_ticked && status == JobStatus::Skipped && skip_reason == "image_stabilization";
+            let optical_without_sync = settings.correction && settings.ignore_file_motion ||
+                self.jobs.get(&job_id).and_then(|j| j.stab.as_ref()).is_some_and(|stab| settings.pure_optical(stab));
+            let revive = status == JobStatus::Skipped && optical_without_sync && matches!(skip_reason.as_str(), "image_stabilization" | "no_gyro");
             if status != JobStatus::Queued && !revive {
                 continue;
             }
@@ -11299,7 +11302,7 @@ impl RenderQueue {
             if revive {
                 self.reset_job(job_id);
                 revived += 1;
-            } else if !settings.reconstruction && self.skip_stabilization_blocked_job(job_id) {
+            } else if self.skip_stabilization_blocked_job(job_id) {
                 blocked += 1;
             }
         }
@@ -11325,7 +11328,8 @@ impl RenderQueue {
         // The gate agrees with the skip until the job goes back to the queue
         // (reset_job) or the reconstruction is ticked again.
         if let Some(settings) = self.jobs.get_mut(&job_id).and_then(|job| job.optical.as_mut()) {
-            settings.reconstruction = false;
+            settings.correction = false;
+            settings.ignore_file_motion = false;
         }
         // stabilize-flow-optical-analysis: a skip ends an analysis pass as well
         if let Some(job) = self.jobs.get_mut(&job_id) {
@@ -12800,6 +12804,10 @@ impl RenderQueue {
         !self.gyro_files.is_empty()
     }
 
+    fn batch_uses_only_pure_optical(&self) -> bool {
+        !self.jobs.is_empty() && self.jobs.values().all(job_uses_pure_optical)
+    }
+
     fn batch_motion_ready(&self) -> bool {
         let Ok(queue) = self.queue.try_borrow() else {
             return false;
@@ -12815,6 +12823,7 @@ impl RenderQueue {
             if item.status == JobStatus::Finished {
                 if job.last_finished_export_project == Some(2) {
                     has_renderable_job = true;
+                    if job_uses_pure_optical(job) { continue; }
                     if !job
                         .project_data
                         .as_ref()
@@ -12830,6 +12839,7 @@ impl RenderQueue {
                 continue;
             }
             has_renderable_job = true;
+            if job_uses_pure_optical(job) { continue; }
             let Some(stab) = job.stab.as_ref() else {
                 return false;
             };
@@ -12908,6 +12918,7 @@ impl RenderQueue {
             let mut skipped_ids = Vec::new();
             let mut stabilization_blocked_ids = Vec::new();
             for item in q.iter() {
+                if self.jobs.get(&item.job_id).is_some_and(job_uses_pure_optical) { continue; }
                 if item.status == JobStatus::Skipped {
                     if item.skip_reason.to_string() == "image_stabilization" {
                         stabilization_blocked_ids.push(item.job_id);
@@ -27199,49 +27210,36 @@ mod tests {
         }
         stab
     }
-    fn install_queue_reconstruction(stab: &StabilizationManager) {
-        let mut s = core::gyro_source::OpticalStabReconstruction::default();
-        s.enabled = true; s.start_us = -100_000.0; s.spacing_us = 100_000.0;
-        s.coeffs = vec![[0.001, -0.0003, 0.0001]; (stab.params.read().duration_ms / 100.0).ceil() as usize + 4]; s.cutoff_hz = 0.3;
-        s.quats_checksum = core::gyro_source::optical_correction::checksum(&stab.gyro.read().quaternions);
-        s.context_checksum = core::synchronization::optical_analysis::context_checksum(&core::synchronization::optical_analysis::measurement_params(stab));
-        stab.gyro.write().optical_stab = Some(s); stab.set_stab_reconstruction_enabled(true);
+    fn select_visual_reconstruction(stab: &StabilizationManager) {
+        stab.set_optical_correction_enabled(true);
+        stab.set_optical_correction_per_frame(true);
+        stab.set_ignore_file_motion(true);
     }
-    #[test]
-    fn reconstructed_jobs_pass_the_stabilization_gate() {
-        let stab = reconstructed_queue_manager(); assert!(RenderQueue::stabilization_blocks_processing(&stab));
-        install_queue_reconstruction(&stab); assert!(!RenderQueue::stabilization_blocks_processing(&stab));
-        stab.set_offset(500_000, 12.0); assert!(RenderQueue::stabilization_blocks_processing(&stab));
-        stab.remove_offset(500_000); assert!(!RenderQueue::stabilization_blocks_processing(&stab));
-        stab.set_ignore_file_motion(true); assert!(RenderQueue::stabilization_blocks_processing(&stab));
-        stab.set_ignore_file_motion(false); assert!(!RenderQueue::stabilization_blocks_processing(&stab));
-        let original = stab.gyro.read().file_metadata.read().quaternions.clone();
-        stab.gyro.write().file_metadata.write().quaternions.clear(); assert!(RenderQueue::stabilization_blocks_processing(&stab));
-        stab.gyro.write().file_metadata.write().quaternions = original; stab.recompute_gyro(); assert!(!RenderQueue::stabilization_blocks_processing(&stab));
-        stab.clear_optical_correction(); assert!(RenderQueue::stabilization_blocks_processing(&stab));
-    }
+
     #[test]
     fn reconstructed_jobs_edit_writeback_unlocks_only_current_reconstruction() {
         let dir = tempfile::tempdir().unwrap(); let path = dir.path().join("reconstructed.gyroflow");
         let mut q = recovery_queue(&[(1, JobStatus::Skipped, "image_stabilization", "", false)]);
         q.stabilizer = reconstructed_queue_manager();
-        let previous = reconstructed_queue_manager(); install_queue_reconstruction(&previous);
+        let previous = reconstructed_queue_manager(); select_visual_reconstruction(&previous);
         q.jobs.get_mut(&1).unwrap().stab = Some(previous);
         let incoming_without_reconstruction = edited_preview_stab();
         assert!(q.incoming_stabilization_blocked(1, &incoming_without_reconstruction));
         q.stabilizer.input_file.write().project_file_url = Some(filesystem::path_to_url(&path.to_string_lossy()));
-        install_queue_reconstruction(&q.stabilizer); q.editing_job_id = 1;
+        select_visual_reconstruction(&q.stabilizer); q.editing_job_id = 1;
         q.add(serde_json::json!({"output": RenderOptions::default()}).to_string(), QString::default());
         assert_eq!(row_status(&q, 1), (JobStatus::Queued, String::new())); assert!(!q.job_is_stabilization_blocked(1));
         let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        assert!(saved["gyro_source"]["optical_stab_reconstruction"].is_string());
+        assert_eq!(saved["gyro_source"]["ignore_file_motion"], true);
+        assert_eq!(saved["gyro_source"]["optical_correction_per_frame"], true);
+        assert!(saved["gyro_source"].get("optical_stab_reconstruction").is_none());
         q.stabilizer.set_offset(500_000, 12.0); q.editing_job_id = 1;
         q.add(serde_json::json!({"output": RenderOptions::default()}).to_string(), QString::default());
-        assert_eq!(row_status(&q, 1), (JobStatus::Skipped, "image_stabilization".into()));
+        assert_eq!(row_status(&q, 1), (JobStatus::Queued, String::new()), "visual reconstruction does not depend on a sync point");
         q.stabilizer.remove_offset(500_000); q.editing_job_id = 1;
         q.add(serde_json::json!({"output": RenderOptions::default()}).to_string(), QString::default());
         assert_eq!(row_status(&q, 1), (JobStatus::Queued, String::new()));
-        q.stabilizer.clear_optical_correction(); q.editing_job_id = 1;
+        q.stabilizer.set_ignore_file_motion(false); q.editing_job_id = 1;
         q.add(serde_json::json!({"output": RenderOptions::default()}).to_string(), QString::default());
         assert_eq!(row_status(&q, 1), (JobStatus::Skipped, "image_stabilization".into()));
     }
@@ -27264,7 +27262,7 @@ mod tests {
             gyro.integrate();
             assert!(!gyro.quaternions.is_empty());
         }
-        install_queue_reconstruction(&q.stabilizer);
+        select_visual_reconstruction(&q.stabilizer);
         let shared_metadata = q.stabilizer.gyro.read().file_metadata.clone();
         q.stabilizer.input_file.write().project_file_url = Some(filesystem::path_to_url(&path.to_string_lossy()));
         q.editing_job_id = 1;
@@ -27273,32 +27271,14 @@ mod tests {
         assert!(!q.job_is_stabilization_blocked(1));
         assert!(shared_metadata.read().additional_data.get("stabilization_blocks_processing").is_none());
         let installed = q.jobs[&1].stab.as_ref().unwrap().clone();
-        installed.set_offset(500_000, 12.0);
-        assert!(q.job_is_stabilization_blocked(1), "stale reconstruction must restore the historical blocker");
-        installed.remove_offset(500_000);
-        assert!(!q.job_is_stabilization_blocked(1));
-        installed.set_stab_reconstruction_enabled(false);
-        assert!(q.job_is_stabilization_blocked(1));
-        installed.set_stab_reconstruction_enabled(true);
-        assert!(!q.job_is_stabilization_blocked(1));
-        assert!(q.incoming_stabilization_blocked(1, &edited_preview_stab()), "the old active manager cannot approve an incoming result");
-        installed.set_ignore_file_motion(true);
-        assert!(q.job_is_stabilization_blocked(1));
+        assert!(q.incoming_stabilization_blocked(1, &edited_preview_stab()), "the old manager cannot approve an incoming job");
         installed.set_ignore_file_motion(false);
-        assert!(!q.job_is_stabilization_blocked(1));
-        let original_motion = installed.gyro.read().file_metadata.read().quaternions.clone();
-        installed.gyro.read().file_metadata.write().quaternions.clear();
-        assert!(q.job_is_stabilization_blocked(1));
-        installed.gyro.read().file_metadata.write().quaternions = original_motion;
-        installed.recompute_gyro();
-        assert!(!q.job_is_stabilization_blocked(1));
-        installed.clear_optical_correction();
         assert!(q.job_is_stabilization_blocked(1));
         q.jobs.get_mut(&1).unwrap().stab = None;
         assert!(q.incoming_stabilization_blocked(1, &edited_preview_stab()), "the released manager's snapshot still records the requirement");
         q.reset_job(1);
         assert!(!q.job_is_stabilization_blocked(1));
-        q.jobs[&1].stab.as_ref().unwrap().clear_optical_correction();
+        q.jobs[&1].stab.as_ref().unwrap().set_ignore_file_motion(false);
         assert!(q.job_is_stabilization_blocked(1), "the recreated queue task retains the requirement");
         q.jobs.get_mut(&1).unwrap().stab = None;
         q.jobs.get_mut(&1).unwrap().project_data = Some(serde_json::json!({
@@ -27313,7 +27293,7 @@ mod tests {
         let mut restored = recovery_queue(&[]);
         restored.add_internal(2, reopened.clone(), RenderOptions::default(), "{}".into(), QString::default(), None);
         assert!(!restored.job_is_stabilization_blocked(2));
-        reopened.clear_optical_correction();
+        reopened.set_ignore_file_motion(false);
         assert!(restored.job_is_stabilization_blocked(2), "saved metadata must keep the original requirement after reopening");
     }
 
@@ -27329,7 +27309,7 @@ mod tests {
             gyro.load_from_telemetry(metadata);
             gyro.integrate();
         }
-        install_queue_reconstruction(&incoming);
+        select_visual_reconstruction(&incoming);
         q.add_internal(1, incoming, RenderOptions::default(), "{}".into(), QString::default(), None);
         assert_eq!(row_status(&q, 1), (JobStatus::Queued, String::new()));
         let live = q.jobs[&1].stab.as_ref().unwrap().clone();
@@ -27366,7 +27346,7 @@ mod tests {
             restored.render_job(2);
             assert_eq!(restored.jobs[&2].render_epoch.load(SeqCst), 0);
             let fresh = restored.jobs[&2].stab.as_ref().unwrap().clone();
-            install_queue_reconstruction(&fresh);
+            select_visual_reconstruction(&fresh);
             restored.reset_job(2);
             assert_eq!(row_status(&restored, 2), (JobStatus::Queued, String::new()));
             assert!(!restored.job_is_stabilization_blocked(2));
@@ -27580,6 +27560,22 @@ mod tests {
         );
         let queue = recovery_queue(&[]);
         assert_eq!(queue.dispatch_blocker_reason("sync".into()).to_string(), "");
+    }
+
+    #[test]
+    fn pure_optical_job_skips_sync_without_offsets_or_external_motion() {
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let job = queue.jobs.get_mut(&1).unwrap();
+        job.optical = Some(QueueOpticalSettings { correction: true, ..Default::default() });
+        assert!(job_uses_pure_optical(job));
+        assert!(!job_lacks_sync_motion(job));
+        assert_eq!(RenderQueue::estimated_sync_frames_for_job(job), 0);
+        add_motion_to_job(&mut queue, 1, true);
+        let job = queue.jobs.get_mut(&1).unwrap();
+        assert!(!job_uses_pure_optical(job));
+        job.optical.as_mut().unwrap().ignore_file_motion = true;
+        assert!(job_uses_pure_optical(job));
+        assert_eq!(RenderQueue::estimated_sync_frames_for_job(job), 0);
     }
 
     #[test]
@@ -27989,7 +27985,8 @@ mod tests {
         for export_project in [0, 2, 4] {
             let mut queue = queue_with_optical_progress_job(export_project);
             queue.jobs.get_mut(&1).unwrap().optical = Some(QueueOpticalSettings {
-                reconstruction: true,
+                correction: true,
+                ignore_file_motion: true,
                 ..Default::default()
             });
             add_eta_job(&mut queue, 2, 1);
@@ -34095,7 +34092,7 @@ mod tests {
         q.add_internal(1, reconstructed_queue_manager(), RenderOptions::default(), "{}".into(), QString::default(), None);
         assert_eq!(row_status(&q, 1), (JobStatus::Queued, String::new()));
         assert!(!q.job_is_stabilization_blocked(1));
-        assert_eq!(q.prepare_batch_match_job_ids(), vec![1]);
+        assert!(q.prepare_batch_match_job_ids().is_empty(), "pure optical skips gyro matching");
         q.reset_job(1);
         assert_eq!(row_status(&q, 1), (JobStatus::Queued, String::new()));
         // render_job's entry lets it through (the pending reset parks it instead of starting a worker)
@@ -34115,7 +34112,7 @@ mod tests {
     fn queue_settings_decide_whether_a_preview_reconstruction_is_kept() {
         // The render worker applies the settings first: unticked, it would switch the job's reconstruction off
         let stab = reconstructed_queue_manager();
-        install_queue_reconstruction(&stab);
+        select_visual_reconstruction(&stab);
         let mut q = recovery_queue(&[]);
         q.add_internal(1, stab, RenderOptions::default(), "{}".into(), QString::default(), None);
         assert_eq!(row_status(&q, 1), (JobStatus::Queued, String::new()), "never touched panel: the old rule");
@@ -34170,7 +34167,7 @@ mod tests {
         q.finish_queue_optical(1, QueueOpticalOutcome::Skip { reason: "NotConverged".into() });
         assert_eq!(row_status(&q, 1), (JobStatus::Skipped, "image_stabilization".into()));
         assert_eq!(notice(&q, 1), "optical_skipped:reconstruction:NotConverged");
-        assert!(!q.jobs[&1].optical.as_ref().unwrap().reconstruction, "the gate agrees with the skip");
+        assert!(!job_uses_pure_optical(&q.jobs[&1]), "the gate agrees with the skip");
         assert!(q.job_is_stabilization_blocked(1));
         q.prepare_batch_match_job_ids();
         assert_eq!(row_status(&q, 1), (JobStatus::Skipped, "image_stabilization".into()), "batch flows leave it skipped");
@@ -34237,7 +34234,7 @@ mod tests {
         let send = &send[..send.find("\n    }\n").unwrap()];
         assert!(send.contains("render_queue.set_jobs_optical_settings(JSON.stringify("));
         for key in ["correction:", "strength:", "ignore_file_motion:", "translation:", "translation_reference:",
-            "translation_smoothness:", "translation_along_axis:", "translation_auto:", "reconstruction:"] {
+            "translation_smoothness:", "translation_along_axis:", "translation_auto:", "per_frame:"] {
             assert!(send.contains(key), "the push carries {key}");
         }
         // Every commit point of a user edit pushes
@@ -34253,7 +34250,7 @@ mod tests {
             "id: translationAutoTimer;"] {
             assert!(pushes_before_next_id(id), "{id} pushes when it commits");
         }
-        assert!(pushes_before_next_id("id: ignoreFileMotion;"), "ignoring the motion data pushes");
+        assert!(qml.contains("root.changeOpticalMode(\"pure\", checked)"), "selecting pure optical pushes the resolved settings");
     }
 
     // ---- stabilize-flow-optical-analysis ----

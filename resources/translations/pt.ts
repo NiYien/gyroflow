@@ -2889,6 +2889,10 @@ Deseja enviar o seu perfil?</translation>
 <context>
     <name>MotionData</name>
     <message>
+        <source>Stabilization reconstruction</source>
+        <translation>Reconstrução da estabilização</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="11"/>
         <source>Motion data</source>
         <translation>Dados de movimento</translation>
@@ -3608,6 +3612,10 @@ Volta a abrir o CapCut antes de usar o efeito.</translation>
 </context>
 <context>
     <name>Popup</name>
+    <message>
+        <source>Optimal path</source>
+        <translation>Trajetória ótima</translation>
+    </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1042"/>
         <source>Export</source>
@@ -5185,6 +5193,14 @@ Forneça a taxa de quadros:</translation>
 </context>
 <context>
     <name>Stabilization</name>
+    <message>
+        <source>Keep within zoom limit</source>
+        <translation>Manter dentro do limite de zoom</translation>
+    </message>
+    <message>
+        <source>Use the zoom limit as fixed zoom</source>
+        <translation>Usar o limite de zoom como zoom fixo</translation>
+    </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1746"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="10"/>

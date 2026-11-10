@@ -728,6 +728,15 @@ pub fn build_lens_profile(
     fallback_lens: Option<&LensProfile>,
     job_focal_override: Option<f64>,
 ) -> Option<LensProfile> {
+    if config.is_none() && sanitize_manual_focal_length_mm(job_focal_override).is_none() {
+        if let Some(profile) = fallback_lens.filter(|profile| {
+            !profile.lens_group_override && profile.fisheye_params.camera_matrix.len() == 3
+        }) {
+            // An inactive group must not replace camera-provided asymmetric intrinsics
+            // or an authored profile with a scalar focal-length reconstruction.
+            return Some(profile.clone());
+        }
+    }
     let auto_focus_length_mm = extract_video_focus_length_mm(metadata);
     let Some((focal_length_mm, _)) =
         select_focal_length(job_focal_override, auto_focus_length_mm, config)

@@ -23,6 +23,7 @@ pub const NO_RESULT: &str = "The analysis gave no usable result";
 pub struct QueueOpticalSettings {
     pub correction: bool,
     pub strength: f64,
+    pub per_frame: bool,
     pub ignore_file_motion: bool,
     pub translation: bool,
     pub translation_reference: f64,
@@ -31,7 +32,6 @@ pub struct QueueOpticalSettings {
     pub translation_along_axis: bool,
     /// Reference layer and smoothness chosen from the analysis; the two values above are kept but unused
     pub translation_auto: bool,
-    pub reconstruction: bool,
 }
 
 impl Default for QueueOpticalSettings {
@@ -39,25 +39,57 @@ impl Default for QueueOpticalSettings {
         Self {
             correction: false,
             strength: 0.5,
+            per_frame: true,
             ignore_file_motion: false,
             translation: false,
             translation_reference: 1.0,
             translation_smoothness: 1.0,
             translation_along_axis: true,
             translation_auto: gyroflow_core::OpticalUi::default().translation_settings.auto,
-            reconstruction: false,
         }
     }
 }
 
 impl QueueOpticalSettings {
+    pub fn from_pure_project(stab: &StabilizationManager) -> Option<Self> {
+        let gyro = stab.gyro.read();
+        let ignored = gyro.ignores_file_motion();
+        let from_video = gyro.optical_correction.as_ref().is_some_and(|c| c.enabled && !c.video_base.is_empty());
+        if !(ignored || from_video && !gyro.has_motion()) { return None; }
+        drop(gyro);
+        if !stab.optical_ui.read().correction_enabled { return None; }
+        let settings = *stab.optical_settings.read();
+        Some(Self { correction: true, ignore_file_motion: ignored, per_frame: settings.per_frame,
+            strength: settings.strength, ..Default::default() })
+    }
+
+    pub fn pure_optical(&self, stab: &StabilizationManager) -> bool {
+        if !self.correction { return false; }
+        let gyro = stab.gyro.read();
+        self.ignore_file_motion || (!gyro.has_motion() && !gyro.ignores_file_motion())
+    }
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(json)
+        #[derive(serde::Deserialize)]
+        struct PanelSettings {
+            #[serde(default)]
+            reconstruction: bool,
+            #[serde(flatten)]
+            optical: QueueOpticalSettings,
+        }
+        let panel: PanelSettings = serde_json::from_str(json)?;
+        let mut settings = panel.optical;
+        if panel.reconstruction {
+            settings.correction = true;
+            settings.ignore_file_motion = true;
+            settings.per_frame = true;
+            settings.translation = false;
+        }
+        Ok(settings)
     }
 
     /// Whether any of the three items is ticked
     pub fn any_ticked(&self) -> bool {
-        self.correction || self.translation || self.reconstruction
+        self.correction || self.translation
     }
 }
 
@@ -118,7 +150,7 @@ pub fn run_queue_optical(
         let gyro = stab.gyro.read();
         gyro.has_motion() && !gyro.ignores_file_motion()
     };
-    let requested: Vec<&'static str> = [(ui.correction_enabled, CORRECTION), (ui.translation_enabled, TRANSLATION), (ui.stab_enabled, RECONSTRUCTION)]
+    let requested: Vec<&'static str> = [(ui.correction_enabled, CORRECTION), (ui.translation_enabled, TRANSLATION)]
         .into_iter()
         .filter_map(|(ticked, item)| ticked.then_some(item))
         .collect();
@@ -153,8 +185,8 @@ pub fn run_queue_optical(
     failed.sort_by_key(|(item, _)| order(item));
 
     // Basic stabilization would compensate the in-camera stabilization a second time
-    if requires_compensation && !applies(stab, RECONSTRUCTION) {
-        let reason = failed.iter().find(|(item, _)| *item == RECONSTRUCTION).map(|(_, reason)| reason.clone())
+    if requires_compensation && !(settings.pure_optical(stab) && applies(stab, CORRECTION)) {
+        let reason = failed.iter().find(|(item, _)| *item == CORRECTION).map(|(_, reason)| reason.clone())
             .unwrap_or_else(|| RECONSTRUCTION_OFF.to_string());
         ::log::warn!(target: "queue.optical", "[queue-optical] job={job_id} skipped: the clip needs its in-camera stabilization reconstructed ({reason})");
         return QueueOpticalOutcome::Skip { reason };
@@ -173,8 +205,7 @@ pub fn run_queue_optical(
                 stab.set_optical_correction_enabled(false);
                 stab.set_ignore_file_motion(false);
             }
-            TRANSLATION => stab.set_translation_stabilization_enabled(false),
-            _ => stab.set_stab_reconstruction_enabled(false),
+            _ => stab.set_translation_stabilization_enabled(false),
         }
     }
     stab.recompute_blocking();
@@ -196,6 +227,8 @@ fn apply_settings(job_id: u32, stab: &StabilizationManager, s: &QueueOpticalSett
         let (ui, strength) = (*stab.optical_ui.read(), stab.optical_settings.read().strength);
         (ui, strength, stab.gyro.read().ignores_file_motion())
     };
+    let mode_changed = stab.optical_settings.read().per_frame != s.per_frame;
+    stab.set_optical_correction_per_frame(s.per_frame);
     let before = state(stab);
     let (ui, strength, ignoring) = before;
     let resolved = resolve(s);
@@ -227,17 +260,13 @@ fn apply_settings(job_id: u32, stab: &StabilizationManager, s: &QueueOpticalSett
     if stab.optical_ui.read().translation_enabled != s.translation {
         stab.set_translation_stabilization_enabled(s.translation);
     }
-    if stab.optical_ui.read().stab_enabled != s.reconstruction {
-        stab.set_stab_reconstruction_enabled(s.reconstruction);
-    }
-    before != state(stab)
+    mode_changed || before != state(stab)
 }
 
 /// Reconstruction needs file motion; the correction and the translation can accompany it.
 struct Resolved {
     correction: bool,
     translation: bool,
-    reconstruction: bool,
     ignore_file_motion: bool,
 }
 
@@ -245,14 +274,13 @@ fn resolve(s: &QueueOpticalSettings) -> Resolved {
     Resolved {
         correction: s.correction,
         translation: s.translation,
-        reconstruction: s.reconstruction,
-        ignore_file_motion: s.correction && s.ignore_file_motion && !s.reconstruction,
+        ignore_file_motion: s.correction && s.ignore_file_motion,
     }
 }
 
 impl Resolved {
     fn items(&self) -> Vec<&'static str> {
-        [(self.correction, CORRECTION), (self.translation, TRANSLATION), (self.reconstruction, RECONSTRUCTION)]
+        [(self.correction, CORRECTION), (self.translation, TRANSLATION)]
             .into_iter()
             .filter_map(|(on, item)| on.then_some(item))
             .collect()
@@ -274,9 +302,11 @@ pub fn needs_analysis(stab: &StabilizationManager, settings: &QueueOpticalSettin
     }
     // Fresh: the cached context lags behind sync points set without a recompute. Takes the gyro lock itself
     let context = context_checksum(&measurement_params(stab));
-    let strength = settings.strength.clamp(0.0, 1.0);
+    let fit = gyroflow_core::gyro_source::OpticalCorrectionSettings {
+        strength: settings.strength.clamp(0.0, 1.0), per_frame: settings.per_frame,
+    };
     let gyro = stab.gyro.read();
-    items.iter().any(|item| !result_applies(&gyro, context, item, strength, resolved.reconstruction))
+    items.iter().any(|item| !result_applies(&gyro, context, item, fit))
 }
 
 /// stabilize-flow-optical-analysis: whether `run_queue_optical` would change the manager's settings
@@ -286,9 +316,10 @@ pub fn settings_differ(stab: &StabilizationManager, s: &QueueOpticalSettings) ->
     let (ui, strength) = (*stab.optical_ui.read(), stab.optical_settings.read().strength);
     let ignoring = stab.gyro.read().ignores_file_motion();
     let t = ui.translation_settings;
-    (ui.correction_enabled, ui.translation_enabled, ui.stab_enabled) != (r.correction, r.translation, r.reconstruction)
+    (ui.correction_enabled, ui.translation_enabled) != (r.correction, r.translation)
         || ignoring != r.ignore_file_motion
         || strength != s.strength.clamp(0.0, 1.0)
+        || stab.optical_settings.read().per_frame != s.per_frame
         || t.reference != s.translation_reference.clamp(0.0, 2.0)
         || t.smoothness_s != s.translation_smoothness.clamp(0.1, 10.0)
         || t.along_axis != s.translation_along_axis
@@ -306,32 +337,34 @@ pub fn stabilize_pass_needed(stab: &StabilizationManager, settings: &QueueOptica
 /// correction of a file with motion data is the residual rotation, which also has to sit on the reconstruction and the
 /// translation the job has; a band-fitted correction (a file without motion data, or one saved before the residual
 /// rotation) has to be fitted with `strength`. Shared by `applies` and `needs_analysis`
-fn result_applies(gyro: &GyroSource, context: u64, item: &str, strength: f64, reconstruction: bool) -> bool {
+fn result_applies(gyro: &GyroSource, context: u64, item: &str, fit: gyroflow_core::gyro_source::OpticalCorrectionSettings) -> bool {
     let file_motion = gyro.has_motion() && !gyro.ignores_file_motion();
     let uncorrected = gyro.optical_uncorrected_checksum;
     match item {
-        CORRECTION => gyro.optical_residual_measured_for(context, reconstruction)
-            || gyro.optical_correction.as_ref().is_some_and(|c| c.measured_on(uncorrected, context) && c.settings.strength == strength),
+        CORRECTION => (file_motion && gyro.optical_residual_measured_for(context, false))
+            || gyro.optical_correction.as_ref().is_some_and(|c| c.measured_on(uncorrected, context)
+                && (file_motion || !c.video_base.is_empty())
+                && c.settings.strength == fit.strength && (c.video_base.is_empty() || c.settings.per_frame == fit.per_frame)),
         TRANSLATION => file_motion && gyro.optical_translation.as_ref().is_some_and(|t| {
             t.has_valid_geometry() && !t.samples.is_empty() && t.quats_checksum == uncorrected && t.context_checksum == context
-                && t.reconstruction_checksum == gyro.translation_reconstruction_checksum(context, reconstruction)
+                && t.reconstruction_checksum == 0
         }),
-        _ => file_motion && gyro.optical_stab.as_ref().is_some_and(|s| s.measured_on(uncorrected, context) && s.has_table()),
+        _ => false,
     }
 }
 
 /// Whether the result for a ticked item is there and applies, as the render would use it
 fn applies(stab: &StabilizationManager, item: &str) -> bool {
     stab.refresh_optical_correction();
-    let strength = stab.optical_settings.read().strength;
+    let fit = *stab.optical_settings.read();
     let gyro = stab.gyro.read();
     let enabled = match item {
         CORRECTION => gyro.optical_correction.as_ref().is_some_and(|c| c.enabled) || gyro.optical_residual.as_ref().is_some_and(|r| r.enabled),
         TRANSLATION => gyro.optical_translation.as_ref().is_some_and(|t| t.enabled),
-        _ => gyro.optical_stab.as_ref().is_some_and(|s| s.enabled),
+        _ => false,
     };
     // After the refresh the cached context is the current one
-    enabled && result_applies(&gyro, gyro.optical_context, item, strength, gyro.optical_stab.as_ref().is_some_and(|s| s.enabled))
+    enabled && result_applies(&gyro, gyro.optical_context, item, fit)
 }
 
 #[cfg(test)]
@@ -377,7 +410,7 @@ mod tests {
     }
 
     fn install_correction(stab: &StabilizationManager) {
-        let correction = OpticalCorrection {
+        let mut correction = OpticalCorrection {
             enabled: stab.optical_ui.read().correction_enabled,
             settings: *stab.optical_settings.read(),
             start_us: 0.0,
@@ -387,8 +420,14 @@ mod tests {
             context_checksum: context_checksum(&measurement_params(stab)),
             frames: 300,
             measured_frames: 299,
+            video_base: if stab.gyro.read().has_motion() { Vec::new() } else {
+                vec![(0, [1.0, 0.0, 0.0, 0.0]), (10_000_000, [1.0, 0.0, 0.0, 0.0])]
+            },
             ..Default::default()
         };
+        if !correction.video_base.is_empty() {
+            correction.quats_checksum = checksum(&correction.base_quats());
+        }
         stab.set_optical_correction(Some(correction));
     }
 
@@ -445,25 +484,24 @@ mod tests {
     }
 
     #[test]
-    fn a_residual_rotation_is_reused_only_with_its_reconstruction() {
-        let stab = manager(true);
-        let s = settings(serde_json::json!({ "correction": true, "reconstruction": true }));
-        let outcome = run_queue_optical(1, &stab, &s, true, |stab| {
-            install_reconstruction(stab);
+    fn visual_reconstruction_does_not_reuse_a_gyro_residual() {
+        let stab = manager(false);
+        let s = settings(serde_json::json!({ "correction": true }));
+        let outcome = run_queue_optical(1, &stab, &s, false, |stab| {
             install_residual(stab);
             Ok(())
         });
         assert_eq!(outcome, QueueOpticalOutcome::Applied { analyzed: true });
-        let ui = *stab.optical_ui.read();
-        assert!(ui.correction_enabled && ui.stab_enabled, "the correction and the reconstruction apply together");
-        assert!(reconstruction_active(&stab));
         assert!(stab.gyro.read().optical_residual.as_ref().unwrap().applies);
         assert!(!needs_analysis(&stab, &s));
-        assert_eq!(run_queue_optical(1, &stab, &s, true, |_| panic!("an applying result must not be analyzed again")),
+        assert_eq!(run_queue_optical(1, &stab, &s, false, |_| panic!("an applying result must not be analyzed again")),
             QueueOpticalOutcome::Applied { analyzed: false });
-        // Measured with another reconstruction than the one there now
-        stab.gyro.write().optical_stab.as_mut().unwrap().coeffs[0][0] += 0.001;
-        assert!(needs_analysis(&stab, &s));
+        let visual = settings(serde_json::json!({"reconstruction": true}));
+        assert!(needs_analysis(&stab, &visual));
+        assert_eq!(run_queue_optical(1, &stab, &visual, true, |stab| {
+            install_correction(stab);
+            Ok(())
+        }), QueueOpticalOutcome::Applied { analyzed: true });
     }
 
     fn translation_active(stab: &StabilizationManager) -> bool {
@@ -651,8 +689,8 @@ mod tests {
         let stab = manager(false);
         let s = settings(serde_json::json!({ "reconstruction": true }));
         let outcome = run_queue_optical(1, &stab, &s, false, |_| Err("NotConverged".into()));
-        assert_eq!(outcome, QueueOpticalOutcome::Fallback { analyzed: true, items: vec![RECONSTRUCTION], reason: "NotConverged".into() });
-        assert_eq!(outcome.notice(), "optical_fallback:reconstruction:NotConverged");
+        assert_eq!(outcome, QueueOpticalOutcome::Fallback { analyzed: true, items: vec![CORRECTION], reason: "NotConverged".into() });
+        assert_eq!(outcome.notice(), "optical_fallback:correction:NotConverged");
         assert!(!stab.optical_ui.read().stab_enabled, "processed as it was before the reconstruction");
     }
 
@@ -660,34 +698,25 @@ mod tests {
     fn a_working_reconstruction_lets_a_clip_that_needs_it_render() {
         let stab = manager(true);
         let outcome = run_queue_optical(1, &stab, &settings(serde_json::json!({ "reconstruction": true })), true, |stab| {
-            install_reconstruction(stab);
+            assert!(stab.gyro.read().ignores_file_motion());
+            assert!(!stab.optical_ui.read().stab_enabled);
+            install_correction(stab);
             Ok(())
         });
         assert_eq!(outcome, QueueOpticalOutcome::Applied { analyzed: true });
-        assert!(reconstruction_active(&stab));
+        assert!(correction_active(&stab));
     }
 
     #[test]
-    fn combined_results_are_reused_only_with_their_measured_reconstruction() {
+    fn reconstruction_reuses_only_the_per_frame_video_result() {
         let stab = manager(true);
-        let s = settings(serde_json::json!({"translation":true,"reconstruction":true}));
-        let outcome = run_queue_optical(1, &stab, &s, true, |stab| {
-            install_reconstruction(stab); install_translation(stab);
-            { let mut g = stab.gyro.write();
-                let dependency = g.optical_stab.as_ref().unwrap().measurement_checksum();
-                g.optical_translation.as_mut().unwrap().reconstruction_checksum = dependency;
-                g.optical_translation.as_mut().unwrap().geometry_version = gyroflow_core::gyro_source::optical_translation::CONDITIONED_GEOMETRY_VERSION; }
-            stab.recompute_gyro();
-            Ok(())
-        });
-        assert_eq!(outcome, QueueOpticalOutcome::Applied { analyzed: true });
-        assert!(translation_active(&stab) && reconstruction_active(&stab));
-        assert!(!needs_analysis(&stab,&s));
-        assert_eq!(run_queue_optical(1,&stab,&s,true, |_| panic!("unchanged combination must be reused")),
-            QueueOpticalOutcome::Applied { analyzed: false });
-        stab.gyro.write().optical_stab.as_mut().unwrap().coeffs[0][0] += 0.001;
-        assert!(needs_analysis(&stab,&s));
-        assert!(needs_analysis(&stab,&QueueOpticalSettings {reconstruction:false,..s}));
+        let s = settings(serde_json::json!({"translation":true,"reconstruction":true,"per_frame":false}));
+        assert!(s.correction && s.ignore_file_motion && s.per_frame && !s.translation);
+        apply_settings(1, &stab, &s);
+        install_correction(&stab);
+        assert!(!needs_analysis(&stab, &s));
+        stab.gyro.write().optical_correction.as_mut().unwrap().settings.per_frame = false;
+        assert!(needs_analysis(&stab, &s), "an older visual fit needs new per-frame measurements");
     }
 
     #[test]

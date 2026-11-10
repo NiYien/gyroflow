@@ -609,6 +609,9 @@ pub struct GyroSource {
     pub file_load_options: FileLoadOptions,
 
     pub duration_ms: f64,
+    /// The video clock stays fixed when loading a longer or shorter external motion log.
+    #[serde(skip)]
+    video_duration_ms: f64,
 
     raw_imu: Vec<TimeIMU>,
 
@@ -743,7 +746,8 @@ impl GyroSource {
     }
 
     pub fn init_from_params(&mut self, stabilization_params: &StabilizationParams) {
-        self.duration_ms = stabilization_params.get_scaled_duration_ms();
+        self.video_duration_ms = stabilization_params.get_scaled_duration_ms();
+        self.duration_ms = self.video_duration_ms;
     }
 
     /// Trim all IMU data and quaternions to the given time range [start_us, end_us].
@@ -2276,7 +2280,10 @@ impl GyroSource {
                 log::warn!("The optical correction was measured on other motion data (another integration method or filter), sync, lens or frame timing, not applying it");
             }
             if from_video {
-                optical_correction::hold_over_clip(&mut self.quaternions, self.duration_ms);
+                let end_ms = if c.settings.per_frame && self.video_duration_ms > 0.0 {
+                    self.video_duration_ms
+                } else { self.duration_ms };
+                optical_correction::hold_over_clip(&mut self.quaternions, end_ms);
             }
         }
         // After the reconstruction table, which is built on the uncorrected quaternions
@@ -2344,11 +2351,13 @@ impl GyroSource {
         compute_params: &crate::ComputeParams,
     ) -> (TimeQuat, (f64, f64, f64)) {
         let file_metadata = self.file_metadata.read();
-        let source_quaternions = self.video_query_range_quaternions_with_metadata(
-            &self.quaternions,
-            &file_metadata,
-            compute_params,
-        );
+        let optical_view = self.optical_correction_applied && !file_metadata.has_motion() &&
+            self.optical_correction.as_ref().is_some_and(|c| c.settings.per_frame && !c.video_base.is_empty());
+        // The per-frame optical trajectory already covers the video clock (including row times)
+        // and was estimated using the recorded sensor shifts. Smooth this measured trajectory.
+        let source_quaternions = if optical_view { self.quaternions.clone() } else {
+            self.video_query_range_quaternions_with_metadata(&self.quaternions, &file_metadata, compute_params)
+        };
         let source_gravity_vectors = self.video_query_range_vectors_with_metadata(
             &file_metadata.gravity_vectors,
             &file_metadata,
@@ -2356,8 +2365,9 @@ impl GyroSource {
         );
         let source_duration_ms = compute_params.scaled_duration_ms;
         drop(file_metadata);
-        let mut smoothed_quaternions =
-            camera_view::smoothing_quaternions(self, &source_quaternions, compute_params);
+        let mut smoothed_quaternions = if optical_view { source_quaternions.clone() } else {
+            camera_view::smoothing_quaternions(self, &source_quaternions, compute_params)
+        };
 
         for (ts, q) in smoothed_quaternions.iter_mut() {
             use crate::KeyframeType;
@@ -2397,11 +2407,11 @@ impl GyroSource {
                 compute_params,
             );
             smoothed_quaternions =
-                alg.smooth(&smoothed_quaternions, source_duration_ms, compute_params);
+                alg.smooth_with_original(&smoothed_quaternions, &source_quaternions, source_duration_ms, compute_params);
         } else {
             // Smooth, then lock horizon
             smoothed_quaternions =
-                alg.smooth(&smoothed_quaternions, source_duration_ms, compute_params);
+                alg.smooth_with_original(&smoothed_quaternions, &source_quaternions, source_duration_ms, compute_params);
             horizon_lock.lock(
                 &mut smoothed_quaternions,
                 &source_quaternions,
@@ -3208,6 +3218,22 @@ mod tests {
         gyro.optical_context = 7;
         gyro.set_optical_correction(Some(correction));
         gyro
+    }
+
+    #[test]
+    fn per_frame_optical_ends_at_video_duration_with_a_longer_ignored_log() {
+        let mut gyro = GyroSource::new();
+        let params = StabilizationParams { duration_ms: 1000.0, fps: 30.0, frame_count: 30, ..Default::default() };
+        gyro.init_from_params(&params);
+        let samples = (0..3000).map(|i| motion_sample(i as f64, [0.0; 3], None, None)).collect();
+        gyro.load_from_telemetry(metadata_with_motion(false, samples));
+        assert!(gyro.duration_ms > 2900.0);
+        gyro.set_ignore_file_motion(true);
+        gyro.optical_context = 7;
+        gyro.set_optical_correction(video_only_optical_fixture().optical_correction);
+        gyro.integrate();
+        assert!(gyro.optical_correction_applied);
+        assert_eq!(gyro.quaternions.last_key_value().unwrap().0, &1_000_000);
     }
 
     #[test]

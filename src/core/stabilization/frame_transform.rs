@@ -439,6 +439,22 @@ impl FrameTransform {
         (camera_matrix, distortion_coeffs, radial_distortion_limit, input_horizontal_stretch, input_vertical_stretch, focal_length, per_frame)
     }
 
+    pub(crate) fn image_rotation_matrix(quat: &crate::gyro_source::Quat64, image_rotation: &Matrix3<f64>, inverted: bool) -> Matrix3<f64> {
+        let mut r = image_rotation * *quat.to_rotation_matrix().matrix();
+        if inverted {
+            r[(0, 2)] *= -1.0;
+            r[(1, 2)] *= -1.0;
+            r[(2, 0)] *= -1.0;
+            r[(2, 1)] *= -1.0;
+        } else {
+            r[(0, 1)] *= -1.0;
+            r[(0, 2)] *= -1.0;
+            r[(1, 0)] *= -1.0;
+            r[(2, 0)] *= -1.0;
+        }
+        r
+    }
+
     pub fn at_timestamp(params: &ComputeParams, timestamp_ms: f64, frame: usize) -> Self {
         // ----------- Keyframes -----------
         let video_rotation = params
@@ -599,18 +615,7 @@ impl FrameTransform {
                 let source = gyro.org_quat_at_timestamp(quat_time);
                 let quat = smoothed_quat1 * quat1 * source;
 
-                let mut r = image_rotation * *quat.to_rotation_matrix().matrix();
-                if params.framebuffer_inverted {
-                    r[(0, 2)] *= -1.0;
-                    r[(1, 2)] *= -1.0;
-                    r[(2, 0)] *= -1.0;
-                    r[(2, 1)] *= -1.0;
-                } else {
-                    r[(0, 1)] *= -1.0;
-                    r[(0, 2)] *= -1.0;
-                    r[(1, 0)] *= -1.0;
-                    r[(2, 0)] *= -1.0;
-                }
+                let mut r = Self::image_rotation_matrix(&quat, &image_rotation, params.framebuffer_inverted);
 
                 let (mut sx, mut sy, mut ra, mut ox, mut oy) =
                     if let Some(is) = file_metadata.camera_stab_at(frame) {

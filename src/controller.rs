@@ -217,6 +217,7 @@ pub struct Controller {
     clear_optical_correction: qt_method!(fn(&mut self)),
     set_ignore_file_motion: qt_method!(fn(&mut self, ignore: bool)),
     set_optical_correction_strength: qt_method!(fn(&mut self, strength: f64)),
+    set_optical_correction_per_frame: qt_method!(fn(&self, v: bool)),
     optical_correction_info: qt_method!(fn(&self) -> QString),
     optical_correction_changed: qt_signal!(),
     set_translation_stabilization_enabled: qt_method!(fn(&mut self, enabled: bool)),
@@ -225,8 +226,6 @@ pub struct Controller {
     set_translation_along_axis: qt_method!(fn(&mut self, along_axis: bool)),
     set_translation_auto: qt_method!(fn(&mut self, auto: bool)),
     translation_stabilization_info: qt_method!(fn(&self) -> QString),
-    set_stab_reconstruction_enabled: qt_method!(fn(&mut self, enabled: bool)),
-    stab_reconstruction_info: qt_method!(fn(&self) -> QString),
 
     override_video_fps: qt_method!(fn(&self, fps: f64, recompute: bool)),
     get_org_duration_ms: qt_method!(fn(&self) -> f64),
@@ -270,6 +269,7 @@ pub struct Controller {
     light_refraction_coefficient: qt_property!(f64; WRITE set_light_refraction_coefficient),
     set_video_speed: qt_method!(fn(&self, v: f64, s: bool, z: bool, zl: bool)),
     set_max_zoom: qt_method!(fn(&self, v: f64, iters: usize)),
+    set_fixed_zoom: qt_method!(fn(&self, v: bool)),
 
     input_horizontal_stretch: qt_property!(f64; WRITE set_input_horizontal_stretch),
     input_vertical_stretch: qt_property!(f64; WRITE set_input_vertical_stretch),
@@ -916,6 +916,7 @@ impl Controller {
                     preset_output_size: None,
                 };
                 if this.stabilizer.lens_calibrator.read().is_none() {
+                    this.stabilizer.smoothing.write().set_current(core::smoothing::OPTIMAL_ID);
                     if let Ok(current_state) = this.stabilizer.export_gyroflow_data(
                         core::GyroflowProjectType::Simple,
                         "{}",
@@ -3755,6 +3756,7 @@ impl Controller {
     wrap_simple_method!(set_frame_readout_direction, v: i32; recompute);
     wrap_simple_method!(set_adaptive_zoom,      v: f64; recompute; zooming_data_changed);
     wrap_simple_method!(set_max_zoom,           v: f64, i: usize; recompute; zooming_data_changed);
+    wrap_simple_method!(set_fixed_zoom,         v: bool; recompute; zooming_data_changed);
     wrap_simple_method!(set_zooming_center_x,   v: f64; recompute; zooming_data_changed);
     wrap_simple_method!(set_zooming_center_y,   v: f64; recompute; zooming_data_changed);
     wrap_simple_method!(set_additional_rotation_x,v: f64; recompute; zooming_data_changed);
@@ -3808,6 +3810,10 @@ impl Controller {
     }
     /// Refits the correction to the measurements of the last analysis, when they're still around: a fraction of a
     /// second, off the UI thread
+    fn set_optical_correction_per_frame(&self, v: bool) {
+        self.stabilizer.set_optical_correction_per_frame(v);
+        self.optical_correction_changed();
+    }
     fn set_optical_correction_strength(&mut self, strength: f64) {
         if !self.stabilizer.set_optical_correction_strength(strength) {
             return self.optical_correction_changed();
@@ -3849,16 +3855,6 @@ impl Controller {
         info["along_axis"] = settings.along_axis.into();
         info["auto"] = settings.auto.into();
         QString::from(info.to_string())
-    }
-    fn set_stab_reconstruction_enabled(&mut self, enabled: bool) {
-        self.stabilizer.set_stab_reconstruction_enabled(enabled);
-        self.stabilizer.invalidate_zooming();
-        self.request_recompute();
-        self.chart_data_changed();
-        self.optical_correction_changed();
-    }
-    fn stab_reconstruction_info(&self) -> QString {
-        QString::from(self.stabilizer.stab_reconstruction_info().to_string())
     }
     wrap_simple_method!(set_device, v: i32);
 

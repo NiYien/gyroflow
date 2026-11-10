@@ -59,7 +59,6 @@ TestCase {
         property real translationSmoothness: 1.0;
         property bool translationAlongAxis: true;
         property bool translationAuto: true;
-        property bool reconstructionRequested: false;
         property bool translationAvailable: false;
         property int analyzeCalls: 0;
         property int clearCalls: 0;
@@ -69,18 +68,24 @@ TestCase {
                 "smoothness_s": translationSmoothness, "along_axis": translationAlongAxis,
                 "auto": translationAuto, "has_motion": true, "available": translationAvailable });
         }
-        function stab_reconstruction_info() { return JSON.stringify({ "requested": reconstructionRequested, "has_motion": true }); }
-        function set_stab_reconstruction_enabled(enabled) {
-            reconstructionRequested = enabled;
-            optical_correction_changed();
-        }
         function set_translation_stabilization_enabled(enabled) { translationRequested = enabled; optical_correction_changed(); }
         function set_translation_reference(value) { translationReference = value; optical_correction_changed(); }
         function set_translation_smoothness(value) { translationSmoothness = value; optical_correction_changed(); }
         function set_translation_along_axis(value) { translationAlongAxis = value; optical_correction_changed(); }
         function set_translation_auto(value) { translationAuto = value; optical_correction_changed(); }
-        function set_optical_correction_enabled(enabled) { }
-        function set_ignore_file_motion(enabled) { }
+        function set_optical_correction_enabled(enabled) {
+            opticalInfo.requested = enabled;
+            if (opticalInfo.available) opticalInfo.enabled = enabled;
+        }
+        function set_optical_correction_per_frame(value) { opticalInfo.per_frame = value; optical_correction_changed(); }
+        property bool setAsideMotion: false;
+        function set_ignore_file_motion(enabled) {
+            if (enabled === opticalInfo.ignore_file_motion) return;
+            if (enabled) setAsideMotion = opticalInfo.has_motion;
+            opticalInfo.has_motion = !enabled && setAsideMotion;
+            opticalInfo.ignore_file_motion = enabled;
+            optical_correction_changed();
+        }
         function analyze_optically() { analyzeCalls++; }
         function clear_optical_correction() { clearCalls++; translationAvailable = false; optical_correction_changed(); }
         function set_integration_method(index) { }
@@ -182,7 +187,6 @@ TestCase {
         controllerStub.translationSmoothness = 1.0;
         controllerStub.translationAlongAxis = true;
         controllerStub.translationAuto = true;
-        controllerStub.reconstructionRequested = false;
         controllerStub.translationAvailable = false;
         controllerStub.analyzeCalls = 0;
         controllerStub.clearCalls = 0;
@@ -205,6 +209,66 @@ TestCase {
         wait(0);
     }
 
+    function test_pure_optical_resolves_panel_and_queue_data() {
+        return [{tag: "embedded-motion", hasMotion: true}, {tag: "video-only", hasMotion: false}];
+    }
+    function test_pure_optical_resolves_panel_and_queue(data) {
+        windowStub.isSimpleMode = false;
+        motion.opened = true;
+        controllerStub.opticalInfo = { available: false, requested: false, ignore_file_motion: false, has_motion: data.hasMotion, per_frame: false };
+        motion.restoreProjectOpticalControls(true);
+        const mode = controlMatching(motion, x => x.text === qsTranslate("MotionData", "Stabilization reconstruction"));
+        verify(mode && mode.visible && !mode.checked);
+        verify(!controlMatching(motion, x => x.text === "Ignore motion data from the file"));
+        mode.checked = true;
+        wait(0);
+        compare(lastPush().correction, true);
+        compare(lastPush().per_frame, true);
+        compare(lastPush().ignore_file_motion, true);
+        compare(lastPush().translation, false);
+        verify(!lastPush().hasOwnProperty("reconstruction"));
+        verify(!motion.translationControls.visible);
+        verify(!controllerStub.opticalInfo.has_motion);
+        motion.analyzeOpticalModes();
+        compare(controllerStub.analyzeCalls, 1);
+        verify(controllerStub.opticalInfo.per_frame && controllerStub.opticalInfo.ignore_file_motion);
+        mode.checked = false;
+        wait(0);
+        compare(lastPush().correction, false);
+        compare(lastPush().ignore_file_motion, false);
+        compare(controllerStub.opticalInfo.has_motion, data.hasMotion);
+    }
+
+    function test_optical_project_readback_preserves_the_saved_analysis_data() {
+        return [{tag: "per-frame", fromVideo: true, ignored: true, perFrame: true, pure: true},
+                {tag: "video-only", fromVideo: true, ignored: false, perFrame: true, pure: true},
+                {tag: "legacy-bands", fromVideo: true, ignored: true, perFrame: false, pure: false},
+                {tag: "gyro-residual", fromVideo: false, ignored: false, perFrame: true, pure: false}];
+    }
+    function test_opening_an_ordinary_gyro_project_after_visual_reconstruction() {
+        pureOpticalControl().checked = true;
+        wait(0);
+        controllerStub.opticalInfo = {available: false, ignore_file_motion: false, has_motion: true};
+        motion.loadGyroflow({videofile: "gyro.mp4", gyro_source: {optical_correction_enabled: null, ignore_file_motion: false}});
+        wait(0);
+        verify(!pureOpticalControl().checked);
+        motion.sendQueueOpticalSettings();
+        verify(!lastPush().correction && !lastPush().ignore_file_motion);
+    }
+    function test_optical_project_readback_preserves_the_saved_analysis(data) {
+        windowStub.isSimpleMode = false;
+        controllerStub.translationRequested = false;
+        controllerStub.opticalInfo = {available: true, enabled: true, requested: true, from_video: data.fromVideo,
+            ignore_file_motion: data.ignored, has_motion: !data.fromVideo, per_frame: data.perFrame};
+        motion.loadGyroflow({videofile: "clip.mp4", gyro_source: {optical_correction_enabled: true}});
+        wait(0);
+        const mode = controlMatching(motion, x => x.text === qsTranslate("MotionData", "Stabilization reconstruction"));
+        compare(mode.checked, data.pure);
+        compare(controllerStub.opticalInfo.ignore_file_motion, data.ignored);
+        compare(controllerStub.opticalInfo.per_frame, data.perFrame);
+        compare(renderQueueStub.pushed.length, 0);
+    }
+
     function controlMatching(item, predicate) {
         if (predicate(item)) return item;
         const children = item.children || [];
@@ -214,13 +278,16 @@ TestCase {
         }
         return null;
     }
+    function pureOpticalControl() {
+        return controlMatching(motion, x => x.text === qsTranslate("MotionData", "Stabilization reconstruction"));
+    }
 
     function test_mobile_batch_choices_reach_queue_without_a_preview() {
         windowStub.useMobileWorkspace = true;
         windowStub.videoArea.vid.loaded = false;
         motion.restoreOpticalControls(false);
         const translation = controlMatching(motion.experimentalControls, x => x.text === "Translation stabilization");
-        const reconstruction = controlMatching(motion.experimentalControls, x => x.text === "Reconstruct in-camera stabilization");
+        const reconstruction = pureOpticalControl();
         const analyze = controlMatching(controlMatching(motion.experimentalControls, x => x.objectName === "experimentalAnalysisActions"), x => x.iconName === "spinner");
         verify(translation && reconstruction && analyze);
         verify(translation.enabled && reconstruction.enabled);
@@ -228,13 +295,13 @@ TestCase {
         translation.checked = false;
         reconstruction.checked = true;
         wait(0);
-        compare(lastPush().translation, true);
-        compare(lastPush().reconstruction, true);
-        translation.checked = true;
+        compare(lastPush().translation, false);
+        compare(lastPush().ignore_file_motion, true);
         reconstruction.checked = false;
+        translation.checked = true;
         wait(0);
         compare(lastPush().translation, true);
-        compare(lastPush().reconstruction, false);
+        compare(lastPush().ignore_file_motion, false);
         windowStub.videoArea.vid.loaded = true;
         verify(!analyze.enabled, "An old loaded video must not enable analysis from the list");
         windowStub.mobileUI.hasExperimentalPreview = true;
@@ -381,8 +448,8 @@ TestCase {
         wait(0);
         compare(lastPush().translation, true);
         compare(lastPush().translation_auto, true);
-        motion.changeOpticalMode("stab", true);
-        verify(translation.checked && !translation.cb.interactive, "reconstruction still requires the same moved toggle");
+        pureOpticalControl().checked = true;
+        verify(!translation.checked && !translation.visible, "pure optical hides the moved translation control");
         motion.moveTranslationControls(null);
         compare(translation.parent, originalParent);
         compare(motion.translationControls, translation);
@@ -494,63 +561,23 @@ TestCase {
         compare(pushed.translation, true);
     }
 
-    function test_reconstruction_requires_translation_until_it_is_unticked() {
-        motion.restoreOpticalControls(false);
-        motion.changeOpticalMode("translation", false);
-        const translation = controlMatching(motion.experimentalControls, x => x.cb !== undefined && x.text === "Translation stabilization");
-        const automatic = controlMatching(motion.experimentalControls, x => x.text === "Automatic parameters");
-        verify(translation && automatic);
-        motion.changeOpticalMode("stab", true);
-        wait(0);
-        verify(translation.checked);
-        verify(!translation.cb.interactive);
-        verify(automatic.interactive);
-        compare(lastPush().translation, true);
-        compare(lastPush().reconstruction, true);
-        motion.changeOpticalMode("translation", false);
-        verify(translation.checked);
-        verify(controllerStub.translationRequested);
-        wait(0);
-        compare(lastPush().translation, true);
-        compare(lastPush().reconstruction, true);
-        motion.changeOpticalMode("stab", false);
-        wait(0);
-        compare(lastPush().translation, true);
-        compare(lastPush().reconstruction, false);
-        verify(translation.cb.interactive);
-        motion.changeOpticalMode("translation", false);
-        wait(0);
-        compare(lastPush().translation, false);
-        verify(!controllerStub.translationRequested);
+    function test_reconstruction_replaces_the_old_control_in_both_modes_data() {
+        return [{tag: "simple", simple: true}, {tag: "full", simple: false}];
     }
-
-    function test_correction_and_reconstruction_can_be_selected_together_data() {
-        return [
-            { tag: "reconstruction-first", first: "stab" },
-            { tag: "correction-first", first: "optical" }
-        ];
-    }
-
-    function test_correction_and_reconstruction_can_be_selected_together(data) {
-        // The residual rotation is measured after the reconstruction: ticking one leaves the other ticked
+    function test_reconstruction_replaces_the_old_control_in_both_modes(data) {
+        windowStub.isSimpleMode = data.simple;
+        motion.opened = true;
         motion.restoreOpticalControls(false);
-        const box = function(texts) {
-            return controlMatching(motion, function(item) { return item.cb !== undefined && texts.indexOf(item.text) >= 0; });
-        };
-        const optical = box(["Optical correction", "Optical stabilization"]);
-        const stab = box(["Reconstruct in-camera stabilization"]);
-        verify(optical !== null && stab !== null);
-        const order = data.first === "stab" ? [stab, optical] : [optical, stab];
-        order[0].checked = true;
+        const pure = pureOpticalControl();
+        verify(pure && pure.visible);
+        verify(!controlMatching(motion, x => x.text === "Reconstruct in-camera stabilization"));
+        pure.checked = true;
         wait(0);
-        order[1].checked = true;
-        wait(0);
-        verify(optical.checked, "the correction stays ticked");
-        verify(stab.checked, "the reconstruction stays ticked");
-        verify(optical.cb.enabled, "the correction can still be changed");
-        motion.sendQueueOpticalSettings();
-        compare(lastPush().correction, true);
-        compare(lastPush().reconstruction, true);
+        verify(!motion.translationControls.visible);
+        verify(lastPush().ignore_file_motion && lastPush().per_frame);
+        verify(!lastPush().translation);
+        pure.checked = false;
+        verify(motion.translationControls.visible && motion.translationControls.cb.interactive);
     }
 
     function test_the_strength_shows_only_for_a_correction_fitted_with_one() {
@@ -591,24 +618,24 @@ TestCase {
     }
 
     function test_processing_after_reload_uses_the_visible_choices(data) {
-        motion.changeOpticalMode("stab", true);
+        pureOpticalControl().checked = true;
         tryVerify(function() { return renderQueueStub.pushed.length > 0; });
-        compare(lastPush().reconstruction, true);
+        compare(lastPush().ignore_file_motion, true);
         const edits = renderQueueStub.pushed.length;
 
         // Reloading a clip turns off the preview's reconstruction; browsing alone must not broadcast it.
-        controllerStub.reconstructionRequested = false;
+        controllerStub.opticalInfo = {available: false, requested: false, ignore_file_motion: false, has_motion: true};
         controllerStub.translationRequested = data.translation;
-        motion.restoreOpticalControls(false);
+        motion.restoreProjectOpticalControls(true);
         wait(0);
         compare(renderQueueStub.pushed.length, edits);
-        compare(lastPush().reconstruction, true);
+        compare(lastPush().ignore_file_motion, true);
 
         dispatchFromApp(data.action);
         verify(renderQueueStub.processingSettings !== null);
         compare(renderQueueStub.processingSettings.correction, false);
         compare(renderQueueStub.processingSettings.translation, data.translation);
-        compare(renderQueueStub.processingSettings.reconstruction, false);
+        compare(renderQueueStub.processingSettings.ignore_file_motion, false);
     }
 
     function test_processing_without_panel_edits_does_not_override_jobs() {
@@ -625,23 +652,23 @@ TestCase {
     }
 
     function test_processing_in_other_modes_keeps_its_existing_scope(data) {
-        motion.changeOpticalMode("stab", true);
+        pureOpticalControl().checked = true;
         tryVerify(function() { return renderQueueStub.pushed.length > 0; });
         const edits = renderQueueStub.pushed.length;
-        controllerStub.reconstructionRequested = false;
-        motion.restoreOpticalControls(false);
+        controllerStub.opticalInfo = {available: false, requested: false, ignore_file_motion: false, has_motion: true};
+        motion.restoreProjectOpticalControls(true);
         windowStub.isSimpleMode = data.simple;
         windowStub.useMobileWorkspace = data.mobile;
         motion.syncQueueOpticalSettingsForProcessing();
         compare(renderQueueStub.pushed.length, edits);
-        compare(lastPush().reconstruction, true);
+        compare(lastPush().ignore_file_motion, true);
     }
 
     function test_unticking_before_the_deferred_push_reaches_processing() {
-        motion.changeOpticalMode("stab", true);
+        pureOpticalControl().checked = true;
         tryVerify(function() { return renderQueueStub.pushed.length > 0; });
-        motion.changeOpticalMode("stab", false);
+        pureOpticalControl().checked = false;
         dispatchFromApp("runSimpleBatchSync");
-        compare(renderQueueStub.processingSettings.reconstruction, false);
+        compare(renderQueueStub.processingSettings.ignore_file_motion, false);
     }
 }

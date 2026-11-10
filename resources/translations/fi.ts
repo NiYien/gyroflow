@@ -2888,6 +2888,10 @@ Haluatko lähettää profiilisi tähän?</translation>
 <context>
     <name>MotionData</name>
     <message>
+        <source>Stabilization reconstruction</source>
+        <translation>Vakautuksen rekonstruointi</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="11"/>
         <source>Motion data</source>
         <translation>Liikkeen tiedot</translation>
@@ -3607,6 +3611,10 @@ Avaa CapCut uudelleen ennen tehosteen käyttöä.</translation>
 </context>
 <context>
     <name>Popup</name>
+    <message>
+        <source>Optimal path</source>
+        <translation>Optimaalinen reitti</translation>
+    </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1042"/>
         <source>Export</source>
@@ -5184,6 +5192,14 @@ Anna kuvanopeus:</translation>
 </context>
 <context>
     <name>Stabilization</name>
+    <message>
+        <source>Keep within zoom limit</source>
+        <translation>Pysy zoomausrajan sisällä</translation>
+    </message>
+    <message>
+        <source>Use the zoom limit as fixed zoom</source>
+        <translation>Käytä zoomausrajaa kiinteänä zoomauksena</translation>
+    </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1746"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="10"/>

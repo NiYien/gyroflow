@@ -215,6 +215,51 @@ impl Stabilization {
         }
     }
 
+    pub(crate) fn output_lens_position(mut out_pos: Vector2<f32>, params: &KernelParams,
+        distortion_model: &DistortionModel, digital_lens: Option<&DistortionModel>,
+        out_c: &Vector2<f32>, out_f: &Vector2<f32>) -> Vector2<f32> {
+        if params.lens_correction_amount < 1.0 {
+            let mut new_out_pos = out_pos;
+
+            if (params.flags & 2) == 2 {
+                // Has digial lens
+                if let Some(digital) = digital_lens {
+                    if let Some(pt) =
+                        digital.undistort_point((new_out_pos.x, new_out_pos.y), params)
+                    {
+                        new_out_pos.x = pt.0;
+                        new_out_pos.y = pt.1;
+                    }
+                }
+            }
+
+            new_out_pos = (new_out_pos - out_c).component_div(out_f);
+            if let Some(pt) =
+                distortion_model.undistort_point((new_out_pos.x, new_out_pos.y), params)
+            {
+                new_out_pos.x = pt.0;
+                new_out_pos.y = pt.1;
+            }
+            if params.light_refraction_coefficient != 1.0
+                && params.light_refraction_coefficient > 0.0
+            {
+                let r = new_out_pos.norm();
+                if r != 0.0 {
+                    let sin_theta_d =
+                        (r / (1.0 + r * r).sqrt()) / params.light_refraction_coefficient;
+                    let r_d = sin_theta_d / (1.0 - sin_theta_d * sin_theta_d).sqrt();
+                    let factor = r_d / r;
+                    new_out_pos *= factor;
+                }
+            }
+            new_out_pos = (new_out_pos.component_mul(out_f)) + out_c;
+
+            out_pos = new_out_pos * (1.0 - params.lens_correction_amount)
+                + (out_pos * params.lens_correction_amount);
+        }
+        out_pos
+    }
+
     pub fn rotate_and_distort(
         pos: (f32, f32),
         idx: usize,
@@ -746,45 +791,7 @@ impl Stabilization {
 
             ///////////////////////////////////////////////////////////////////
             // Add lens distortion back
-            if params.lens_correction_amount < 1.0 {
-                let mut new_out_pos = out_pos;
-
-                if (params.flags & 2) == 2 {
-                    // Has digial lens
-                    if let Some(digital) = digital_lens {
-                        if let Some(pt) =
-                            digital.undistort_point((new_out_pos.x, new_out_pos.y), params)
-                        {
-                            new_out_pos.x = pt.0;
-                            new_out_pos.y = pt.1;
-                        }
-                    }
-                }
-
-                new_out_pos = (new_out_pos - out_c).component_div(out_f);
-                if let Some(pt) =
-                    distortion_model.undistort_point((new_out_pos.x, new_out_pos.y), params)
-                {
-                    new_out_pos.x = pt.0;
-                    new_out_pos.y = pt.1;
-                }
-                if params.light_refraction_coefficient != 1.0
-                    && params.light_refraction_coefficient > 0.0
-                {
-                    let r = new_out_pos.norm();
-                    if r != 0.0 {
-                        let sin_theta_d =
-                            (r / (1.0 + r * r).sqrt()) / params.light_refraction_coefficient;
-                        let r_d = sin_theta_d / (1.0 - sin_theta_d * sin_theta_d).sqrt();
-                        let factor = r_d / r;
-                        new_out_pos *= factor;
-                    }
-                }
-                new_out_pos = (new_out_pos.component_mul(out_f)) + out_c;
-
-                out_pos = new_out_pos * (1.0 - params.lens_correction_amount)
-                    + (out_pos * params.lens_correction_amount);
-            }
+            out_pos = Stabilization::output_lens_position(out_pos, params, distortion_model, digital_lens, out_c, out_f);
             ///////////////////////////////////////////////////////////////////
 
             ///////////////////////////////////////////////////////////////////

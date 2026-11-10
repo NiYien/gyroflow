@@ -118,6 +118,18 @@ pub struct LensProfile {
 }
 
 impl LensProfile {
+    pub(crate) fn has_projection_geometry(&self) -> bool {
+        self.fisheye_params.camera_matrix.len() == 3
+            || !self.fisheye_params.distortion_coeffs.is_empty()
+            || self.distortion_model.is_some()
+            || self.digital_lens.is_some()
+            || self.interpolations.is_some()
+            || self.crop.is_some()
+            || self.lens_group_override
+            || self.horizontal_stretch_normalized() != 1.0
+            || self.vertical_stretch_normalized() != 1.0
+    }
+
     pub fn init(&mut self) {
         self.clear_legacy_camera_output_dimension();
         if !self.fisheye_params.distortion_coeffs.is_empty() {

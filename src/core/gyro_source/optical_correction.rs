@@ -25,9 +25,11 @@ pub struct OpticalCorrectionSettings {
     /// errors of a vibrating gyro; high lets the image override the motion data down to slow motion and by degrees - a
     /// gyro whose gain collapses during a roll, glitches - at the cost of following the image's own mistakes too
     pub strength: f64,
+    #[serde(default)]
+    pub per_frame: bool,
 }
 impl Default for OpticalCorrectionSettings {
-    fn default() -> Self { Self { strength: 0.5 } }
+    fn default() -> Self { Self { strength: 0.5, per_frame: true } }
 }
 
 #[derive(Default, Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -97,6 +99,7 @@ impl OpticalCorrection {
     pub fn hash_into(&self, hasher: &mut impl std::hash::Hasher) {
         hasher.write_u8(self.enabled as u8);
         hasher.write_u64(self.settings.strength.to_bits());
+        if self.settings.per_frame && !self.video_base.is_empty() { hasher.write_u8(1); }
         hasher.write_u64(self.quats_checksum);
         hasher.write_u64(self.context_checksum);
         hasher.write_u64(self.start_us.to_bits());
@@ -304,7 +307,7 @@ mod tests {
     #[test]
     fn correction_round_trips_through_cbor() {
         let c = OpticalCorrection {
-            enabled: true, settings: OpticalCorrectionSettings { strength: 0.7 },
+            enabled: true, settings: OpticalCorrectionSettings { strength: 0.7, ..Default::default() },
             start_us: 123.0, spacing_us: 2800.0, coeffs: vec![[0.01, -0.02, 0.005]; 7],
             quats_checksum: 42, context_checksum: 7,
             video_base: vec![(123, [1.0, 0.0, 0.0, 0.0]), (33_456, [0.99, 0.1, -0.02, 0.03])],

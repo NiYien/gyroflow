@@ -37,6 +37,24 @@ pub trait FieldOfViewAlgorithm {
     fn get_debug_points(&self) -> BTreeMap<i64, Vec<(f64, f64)>>;
 }
 
+/// Zoom limits in the same source/output units as the render's FOV curve.
+pub fn zoom_limit_fovs(p: &ComputeParams) -> Vec<Option<f64>> {
+    let scaling = p.width as f64 * p.lens.horizontal_stretch_normalized().max(1.0) / p.output_width.max(1) as f64;
+    let limits: Vec<_> = (0..p.frame_count).map(|f| {
+        let t = crate::timestamp_at_frame(f as i32, p.scaled_fps);
+        let mut limit = p.keyframes.value_at_video_timestamp(&crate::KeyframeType::MaxZoom, t).or(p.max_zoom)?;
+        if limit <= 50.0 { return None; }
+        if !(p.fixed_zoom && p.adaptive_zoom_window < -0.9) && p.video_speed_affects_zooming_limit {
+            let speed = p.keyframes.value_at_video_timestamp(&crate::KeyframeType::VideoSpeed,t).unwrap_or(p.video_speed).abs();
+            limit *= (1.0 + (speed - 1.0) / 4.0).min(1.8);
+        }
+        Some(100.0 / (limit * scaling))
+    }).collect();
+    if p.adaptive_zoom_window < -0.9 {
+        vec![limits.iter().copied().flatten().reduce(f64::max); p.frame_count]
+    } else { limits }
+}
+
 pub fn calculate_fovs(
     compute_params: &ComputeParams,
     timestamps: &[(usize, f64)],
@@ -118,6 +136,7 @@ pub fn calculate_fovs(
 /// frame around the smoothed quaternions, so it has to follow them as well
 pub fn get_checksum(compute_params: &ComputeParams, smoothing_checksum: u64) -> u64 {
     let mut hasher = DefaultHasher::new();
+    if compute_params.fixed_zoom { hasher.write_u8(1); }
     hasher.write_u64(smoothing_checksum);
 
     // Lens: the profile's projection, which also covers `distortion_model`, `digital_lens` and `digital_lens_params`

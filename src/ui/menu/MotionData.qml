@@ -34,6 +34,7 @@ MenuItem {
     property url lastSelectedFile: "";
     property alias extensions: fileDialog.extensions;
     property alias experimentalControls: experimentalControls;
+    readonly property bool pureOpticalEnabled: pureOptical.checked;
     property alias translationControls: translationcb;
     readonly property bool opticalEditsPending: opticalStrengthTimer.running || translationReferenceTimer.running
         || translationSmoothnessTimer.running || translationAlongAxisTimer.running || translationAutoTimer.running
@@ -66,7 +67,7 @@ MenuItem {
             text: qsTr("Clear");
             leftPadding: 6 * dpiScale;
             rightPadding: 6 * dpiScale;
-            visible: !!opticalcb.info.available || !!translationcb.info.available || !!stabcb.info.available;
+            visible: !!opticalcb.info.available || !!translationcb.info.available;
             enabled: !controller.sync_in_progress;
             onClicked: controller.clear_optical_correction();
         }
@@ -214,18 +215,11 @@ MenuItem {
                 root.ensureSimpleTranslationAuto();
                 translationcb.info = JSON.parse(controller.translation_stabilization_info());
             }
-            stabcb.info = JSON.parse(controller.stab_reconstruction_info());
-            if (stabcb.info.requested && !translationcb.info.requested) {
-                controller.set_translation_stabilization_enabled(true);
-                translationcb.info = JSON.parse(controller.translation_stabilization_info());
-            }
             translationcb.checked = !!translationcb.info.requested;
-            stabcb.checked = !!stabcb.info.requested;
             // Without a result, keep the visible optical choice until Analyze explicitly submits it.
             opticalcb.checked = restoreOpticalRequest ? !!opticalcb.info.requested :
                 (!root.hasExplicitOpticalRequest && !!opticalcb.info.ignore_file_motion) ||
                 (opticalcb.info.available ? !!opticalcb.info.enabled : opticalcb.checked);
-            ignoreFileMotion.checked = !!opticalcb.info.ignore_file_motion;
             // Statistics refreshes must not replace edits still waiting for their debounce timers.
             if (restoreParameters || !translationReferenceTimer.running)
                 translationReference.value = 200 - translationcb.info.reference * 100;
@@ -244,6 +238,15 @@ MenuItem {
         }
     }
     function restoreOpticalControls(restoreOpticalRequest: bool): void { root.refreshOpticalInfo(true, restoreOpticalRequest); }
+    function restoreProjectOpticalControls(restoreOpticalRequest: bool): void {
+        root.restoreOpticalControls(restoreOpticalRequest);
+        root.updatingOpticalControls = true;
+        if (!restoreOpticalRequest && !opticalcb.info.available)
+            opticalcb.checked = !!opticalcb.info.ignore_file_motion;
+        pureOptical.checked = opticalcb.checked && !translationcb.checked &&
+            opticalcb.info.per_frame !== false && !!(opticalcb.info.ignore_file_motion || opticalcb.info.from_video);
+        root.updatingOpticalControls = false;
+    }
     // queue-optical-analysis: the render queue follows the panel. Only a user edit pushes; a programmatic refresh
     // (loading a video or a project) leaves the queue's settings alone.
     property bool queueOpticalSettingsEdited: false;
@@ -260,30 +263,30 @@ MenuItem {
     }
     function sendQueueOpticalSettings(): void {
         render_queue.set_jobs_optical_settings(JSON.stringify({
-            correction: opticalcb.checked,
+            correction: pureOptical.checked || opticalcb.checked,
             strength: opticalStrength.value / 100,
-            ignore_file_motion: ignoreFileMotion.checked,
-            translation: translationcb.checked,
+            per_frame: pureOptical.checked || opticalcb.info.per_frame !== false,
+            ignore_file_motion: pureOptical.checked || !!opticalcb.info.ignore_file_motion,
+            translation: !pureOptical.checked && translationcb.checked,
             translation_reference: (200 - translationReference.value) / 100,
             translation_smoothness: Math.pow(10, translationSmoothness.value),
             translation_along_axis: translationAlongAxis.checked,
-            translation_auto: window.isSimpleMode || translationAuto.checked,
-            reconstruction: stabcb.checked
+            translation_auto: window.isSimpleMode || translationAuto.checked
         }));
     }
     function changeOpticalMode(mode: string, enabled: bool): void {
         if (!root.initialized || root.updatingOpticalControls) return;
-        if (mode === "translation" && !enabled && stabcb.checked) {
-            root.refreshOpticalInfo(false, false);
-            return;
-        }
         if (mode === "translation") root.saveTranslationPreference("enabled", enabled);
         root.updatingOpticalControls = true;
         try {
-            if (mode === "stab") {
-                // The reconstruction is measured against the file's motion data: it can't be set aside meanwhile
-                if (enabled) controller.set_ignore_file_motion(false);
-                controller.set_stab_reconstruction_enabled(enabled);
+            if (mode === "pure") {
+                opticalcb.checked = enabled;
+                if (enabled) {
+                    controller.set_translation_stabilization_enabled(false);
+                    controller.set_optical_correction_per_frame(true);
+                }
+                controller.set_ignore_file_motion(enabled);
+                controller.set_optical_correction_enabled(enabled);
             } else if (mode === "translation") {
                 root.ensureSimpleTranslationAuto();
                 controller.set_translation_stabilization_enabled(enabled);
@@ -299,16 +302,17 @@ MenuItem {
     }
     function analyzeOpticalModes(): void {
         root.ensureSimpleTranslationAuto();
-        const optical = opticalcb.checked;
-        const translation = translationcb.checked;
-        const reconstruction = stabcb.checked;
+        const optical = pureOptical.checked || opticalcb.checked;
+        const translation = !pureOptical.checked && translationcb.checked;
         root.updatingOpticalControls = true;
         try {
             // Submit the visible choices even when a checkbox has never changed from its initial false value.
             controller.set_optical_correction_enabled(optical);
-            if (!optical) controller.set_ignore_file_motion(false);
+            if (pureOptical.checked) {
+                controller.set_ignore_file_motion(true);
+                controller.set_optical_correction_per_frame(true);
+            } else if (!optical) controller.set_ignore_file_motion(false);
             controller.set_translation_stabilization_enabled(translation);
-            controller.set_stab_reconstruction_enabled(reconstruction);
         } finally {
             root.updatingOpticalControls = false;
         }
@@ -359,7 +363,6 @@ MenuItem {
                     root.fullModeTranslationAuto = gyro.translation_auto;
                     translationAuto.checked = window.isSimpleMode || gyro.translation_auto;
                 }
-                if (typeof gyro.stab_reconstruction_enabled === "boolean") stabcb.checked = gyro.stab_reconstruction_enabled;
             } finally {
                 root.updatingOpticalControls = false;
             }
@@ -378,7 +381,11 @@ MenuItem {
                 info.updateEntry("File name", fn_);
             }
         }
-        Qt.callLater(root.restoreOpticalControls, typeof gyro.optical_correction_enabled === "boolean");
+        if (!obj.__niyien_ui_reset && (typeof gyro.ignore_file_motion === "boolean" || typeof gyro.optical_correction_enabled === "boolean" || obj.videofile)) {
+            Qt.callLater(root.restoreProjectOpticalControls, typeof gyro.optical_correction_enabled === "boolean");
+        } else {
+            Qt.callLater(root.restoreOpticalControls, false);
+        }
         const stab = obj.stabilization || { };
         if (stab && Object.keys(stab).length > 0) {
             focb.checked = +stab.frame_offset > 0;
@@ -426,6 +433,7 @@ MenuItem {
 
             controller.set_imu_lpf(lpfcb.checked? lpf.value : 0);
             controller.set_imu_median_filter(mfcb.checked? mf.value : 0);
+            if (pureOptical.checked) controller.set_ignore_file_motion(true);
             Qt.callLater(root.restoreOpticalControls, false);
             controller.set_imu_rotation(rot.checked? p.value : 0, rot.checked? r.value : 0, rot.checked? y.value : 0);
             controller.set_acc_rotation(arot.checked? ap.value : 0, arot.checked? ar.value : 0, arot.checked? ay.value : 0);
@@ -616,34 +624,19 @@ MenuItem {
         id: experimentalControls;
         width: parent.width;
         spacing: 5 * dpiScale;
+    CheckBox {
+        id: pureOptical;
+        text: qsTr("Stabilization reconstruction");
+        tooltip: qsTr("Estimate camera motion from the video instead of using the file's motion data.");
+        onCheckedChanged: root.changeOpticalMode("pure", checked);
+    }
     CheckBoxWithContent {
         id: opticalcb;
-        visible: !window.isSimpleMode;
+        visible: !window.isSimpleMode && !pureOptical.checked && (!!info.has_motion || checked);
         text: window.isSimpleMode ? qsTr("Optical stabilization") : qsTr("Optical correction");
         cb.tooltip: qsTr("Use video analysis to correct motion data, or estimate motion when none is available.");
         property var info: ({ available: false });
         onCheckedChanged: root.changeOpticalMode("optical", checked);
-
-        BasicText {
-            width: parent.width;
-            wrapMode: Text.WordWrap;
-            horizontalAlignment: Text.AlignHCenter;
-            visible: text.length > 0;
-            text: opticalcb.info.ignore_file_motion && !opticalcb.info.from_video? qsTr("Click Analyze to measure the motion from the video.") :
-                  !opticalcb.info.available? "" :
-                  opticalcb.info.stale? qsTr("The motion data, the sync, the lens or the rolling shutter changed since the analysis. Analyze again to apply the correction.") :
-                  opticalcb.info.outdated && opticalcb.info.has_motion? qsTr("Analyze again to apply the new strength.") :
-                  opticalcb.info.from_video? "" :
-                  qsTr("Measured in %1 of %2 frames, correction %3°").arg(opticalcb.info.measured_frames).arg(opticalcb.info.frames).arg((+opticalcb.info.rms_deg).toFixed(3));
-        }
-        CheckBox {
-            id: ignoreFileMotion;
-            // The reconstruction is measured against the file's motion data: it can't be set aside meanwhile
-            visible: !stabcb.checked;
-            text: qsTr("Ignore motion data from the file");
-            tooltip: qsTr("Estimate camera motion from the video instead of using the file's motion data.");
-            onCheckedChanged: if (root.initialized && !root.updatingOpticalControls) { controller.set_ignore_file_motion(checked); root.pushQueueOpticalSettings(); }
-        }
 
         Label {
             text: qsTr("Strength");
@@ -680,12 +673,12 @@ MenuItem {
     Item {
         id: translationControlsHost;
         width: parent.width;
-        height: translationcb.parent === translationControlsHost ? translationcb.height : 0;
+        height: translationcb.visible && translationcb.parent === translationControlsHost ? translationcb.height : 0;
     CheckBoxWithContent {
         id: translationcb;
+        visible: !pureOptical.checked;
         objectName: "translationStabilization";
         text: qsTr("Translation stabilization");
-        cb.unavailable: stabcb.checked;
         cb.tooltip: qsTr("Reduce sideways and vertical shake using video analysis. Requires motion data.");
         cb.rightPadding: translationAuto.visible ? translationAuto.width + 10 * dpiScale : 0;
         cb.implicitHeight: Math.max(root.mobileStyle ? 44 * dpiScale : 30 * dpiScale, cb.contentItem.implicitHeight + 12 * dpiScale);
@@ -821,28 +814,22 @@ MenuItem {
         interval: 150;
         onTriggered: if (!controller.video_loading_in_progress && !controller.loading_gyro_in_progress) { controller.set_translation_auto(translationAuto.checked); root.pushQueueOpticalSettings(); }
     }
-    CheckBoxWithContent {
-        id: stabcb;
-        text: qsTr("Reconstruct in-camera stabilization");
-        cb.tooltip: qsTr("Reconstruct missing IBIS/OIS compensation from video and motion data. Also enables translation stabilization.");
-        property var info: ({ available: false });
-        onCheckedChanged: root.changeOpticalMode("stab", checked);
-        BasicText {
-            width: parent.width;
-            wrapMode: Text.WordWrap;
-            horizontalAlignment: Text.AlignHCenter;
-            visible: text.length > 0;
-            text: !stabcb.info.has_motion || stabcb.info.ignore_file_motion ? "" :
-                  !stabcb.info.available && stabcb.info.requested && stabcb.info.analyzed_without ? qsTr("Analyze again to reconstruct the in-camera stabilization") :
-                  !stabcb.info.available && stabcb.info.requested ? qsTr("Click Analyze to reconstruct the in-camera stabilization") :
-                  stabcb.info.stale ? qsTr("Settings changed, analyze again") :
-                  !stabcb.info.available ? "" :
-                  qsTr("Measured in %1 of %2 frames, compensation up to %3°, cut-off %4 Hz").arg(stabcb.info.measured_frames).arg(stabcb.info.frames).arg((+stabcb.info.max_deg).toFixed(2)).arg((+stabcb.info.cutoff_hz).toFixed(2));
-        }
+    BasicText {
+        width: parent.width;
+        wrapMode: Text.WordWrap;
+        horizontalAlignment: Text.AlignHCenter;
+        visible: !window.isSimpleMode && (pureOptical.checked || opticalcb.checked) && text.length > 0;
+        text: opticalcb.info.ignore_file_motion && !opticalcb.info.from_video? qsTr("Click Analyze to measure the motion from the video.") :
+              !opticalcb.info.available? "" :
+              opticalcb.info.stale? qsTr("The motion data, the sync, the lens or the rolling shutter changed since the analysis. Analyze again to apply the correction.") :
+              opticalcb.info.outdated && opticalcb.info.from_video? qsTr("Settings changed, analyze again") :
+              opticalcb.info.outdated && opticalcb.info.has_motion? qsTr("Analyze again to apply the new strength.") :
+              opticalcb.info.from_video? "" :
+              qsTr("Measured in %1 of %2 frames, correction %3°").arg(opticalcb.info.measured_frames).arg(opticalcb.info.frames).arg((+opticalcb.info.rms_deg).toFixed(3));
     }
     OpticalAnalysisActions {
         objectName: "experimentalAnalysisActions";
-        visible: opticalcb.checked || translationcb.checked || stabcb.checked;
+        visible: pureOptical.checked || opticalcb.checked || translationcb.checked;
     }
     }
     }

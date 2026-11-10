@@ -798,9 +798,8 @@ fn setup_defaults(stab: &Arc<StabilizationManager>, queue: &mut RenderQueue) -> 
         _ => {}
     }
     stab.set_lens_correction_amount(settings::get_f64("correctionAmount", 1.0));
-    let smoothing_method = settings::get_u64("smoothingMethod", 1) as usize;
+    let smoothing_method = stab.smoothing.read().current_id();
     let smoothing_method_prefix = format!("smoothing-{}-", smoothing_method);
-    stab.set_smoothing_method(smoothing_method);
     for (k, v) in gyroflow_core::settings::get_all() {
         if k.starts_with(&smoothing_method_prefix) {
             if let Some(v) = v.as_f64() {

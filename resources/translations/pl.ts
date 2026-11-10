@@ -2889,6 +2889,10 @@ Czy chcesz przesłać swój profil?</translation>
 <context>
     <name>MotionData</name>
     <message>
+        <source>Stabilization reconstruction</source>
+        <translation>Rekonstrukcja stabilizacji</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="11"/>
         <source>Motion data</source>
         <translation>Dane o ruchu</translation>
@@ -3608,6 +3612,10 @@ Otwórz ponownie CapCut przed użyciem efektu.</translation>
 </context>
 <context>
     <name>Popup</name>
+    <message>
+        <source>Optimal path</source>
+        <translation>Optymalna ścieżka</translation>
+    </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1042"/>
         <source>Export</source>
@@ -5185,6 +5193,14 @@ Podaj ilość klatek na sekundę: </translation>
 </context>
 <context>
     <name>Stabilization</name>
+    <message>
+        <source>Keep within zoom limit</source>
+        <translation>Nie przekraczaj limitu zoomu</translation>
+    </message>
+    <message>
+        <source>Use the zoom limit as fixed zoom</source>
+        <translation>Użyj limitu powiększenia jako stałego powiększenia</translation>
+    </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1746"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="10"/>

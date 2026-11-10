@@ -158,28 +158,52 @@ impl AnalysisPipeline {
         let shared = Arc::new(Shared::default());
         let decode_end = Arc::new(Mutex::new(None));
         let cancel = analysis.cancel.clone();
-        let track_width = TRACK_WIDTH;
-        // Move the configured tracker, including its pending GPU setup, into the tracking stage exactly once.
-        let tracker = std::mem::replace(&mut analysis.tracker, OpticalMotionAnalysis::new_tracker());
-        let prepare_on_gpu = tracker.gpu_preparation();
-
+        let frame_tracker = analysis.frame_tracker.take();
         let mut senders = Vec::with_capacity(PREPARE_WORKERS);
-        let mut prepared_rx = Vec::with_capacity(PREPARE_WORKERS);
         let mut workers = Vec::with_capacity(PREPARE_WORKERS);
-        for i in 0..PREPARE_WORKERS {
-            let (tx, rx) = sync_channel::<Job>(PREPARE_QUEUE);
-            let (out_tx, out_rx) = sync_channel::<Prepared>(PREPARE_QUEUE);
-            let (shared, cancel) = (shared.clone(), cancel.clone());
-            let prepare_on_gpu = prepare_on_gpu.clone();
-            let worker = std::thread::Builder::new().name(format!("optical-prepare-{i}"))
-                .spawn(move || prepare_stage(rx, out_tx, track_width, prepare_on_gpu, &shared, &cancel))
-                .map_err(|e| format!("Cannot start the optical analysis: {e}"))?;
-            senders.push(tx);
-            prepared_rx.push(out_rx);
-            workers.push(worker);
-        }
         let (tracked_tx, tracked_rx) = sync_channel::<Tracked>(MEASURE_QUEUE);
-        let tracker = {
+        let tracker = if let Some(mut frame_tracker) = frame_tracker {
+            let (tx, rx) = sync_channel::<Job>(PREPARE_QUEUE);
+            senders.push(tx);
+            let (shared, cancel) = (shared.clone(), cancel.clone());
+            std::thread::Builder::new().name("optical-frame-track".into()).spawn(move || {
+                loop {
+                    if shared.stop.load(Relaxed) || cancel.is_cancelled() { break; }
+                    let job = match rx.recv_timeout(Duration::from_millis(50)) {
+                        Ok(job) => job,
+                        Err(RecvTimeoutError::Timeout) => continue,
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    };
+                    if !job.continuous { frame_tracker.reset(); }
+                    let (w, h) = job.size;
+                    let started = Instant::now();
+                    let obs = match job.image {
+                        Some(image) => match frame_tracker.track(w, h, w as usize, image.as_raw()) {
+                            Ok(obs) => obs,
+                            Err(e) => { shared.fail(e); break; }
+                        },
+                        None => Vec::new(),
+                    };
+                    Shared::add(&shared.track_ns, started);
+                    if tracked_tx.send(Tracked { index: job.index, ts_ms: job.ts_ms, size: job.size, obs }).is_err() { break; }
+                }
+                log::info!("Per-frame pure optical: {}", frame_tracker.describe());
+            }).map_err(|e| format!("Cannot start the optical analysis: {e}"))?
+        } else {
+            let tracker = std::mem::replace(&mut analysis.tracker, OpticalMotionAnalysis::new_tracker());
+            let mut prepared_rx = Vec::with_capacity(PREPARE_WORKERS);
+            for i in 0..PREPARE_WORKERS {
+                let (tx, rx) = sync_channel::<Job>(PREPARE_QUEUE);
+                let (out_tx, out_rx) = sync_channel::<Prepared>(PREPARE_QUEUE);
+                let (shared, cancel) = (shared.clone(), cancel.clone());
+                let prepare_on_gpu = tracker.gpu_preparation();
+                let worker = std::thread::Builder::new().name(format!("optical-prepare-{i}"))
+                    .spawn(move || prepare_stage(rx, out_tx, TRACK_WIDTH, prepare_on_gpu, &shared, &cancel))
+                    .map_err(|e| format!("Cannot start the optical analysis: {e}"))?;
+                senders.push(tx);
+                prepared_rx.push(out_rx);
+                workers.push(worker);
+            }
             let (shared, cancel) = (shared.clone(), cancel.clone());
             std::thread::Builder::new().name("optical-track".into())
                 .spawn(move || track_stage(prepared_rx, tracked_tx, tracker, &shared, &cancel))

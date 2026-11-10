@@ -30,7 +30,6 @@ MenuItem {
 
     Item {
         id: sett;
-        property alias smoothingMethod: smoothingMethod.currentIndex;
         property alias croppingMode: croppingMode.currentIndex;
         property alias adaptiveZoom: adaptiveZoom.value;
         property alias correctionAmount: correctionAmount.value;
@@ -67,8 +66,8 @@ MenuItem {
                         const el = root.getParamElement(x.name);
                         if (el) {
                             console.log("Setting param", x.name, x.value);
-                            if (el.value) el.value = x.value;
-                            if (el.checked) el.checked = +x.value > 0;
+                            if (typeof el.value !== "undefined") el.value = x.value;
+                            if (typeof el.checked !== "undefined") el.checked = +x.value > 0;
                         }
                     }
                 });
@@ -114,6 +113,7 @@ MenuItem {
             if (stab.hasOwnProperty("max_zoom") && +stab.max_zoom > 50) maxZoomSlider.value = +stab.max_zoom;
             if (stab.hasOwnProperty("max_zoom_terations") && +stab.max_zoom_terations > 0) maxZoomIterations.value = +stab.max_zoom_terations;
             if (stab.hasOwnProperty("adaptive_zoom_method")) zoomingMethod.currentIndex = +stab.adaptive_zoom_method;
+            if (stab.hasOwnProperty("fixed_zoom") || obj.videofile) fixedZoom.checked = !!stab.fixed_zoom;
             if (stab.hasOwnProperty("use_gravity_vectors")) {
                 useGravityVectors.checked = !!stab.use_gravity_vectors;
             }
@@ -280,6 +280,8 @@ MenuItem {
         QT_TRANSLATE_NOOP("Popup", "Default"),
         QT_TRANSLATE_NOOP("Popup", "Plain 3D");
         QT_TRANSLATE_NOOP("Popup", "Fixed camera");
+        QT_TRANSLATE_NOOP("Popup", "Optimal path");
+        QT_TRANSLATE_NOOP("Stabilization", "Keep within zoom limit");
 
         QT_TRANSLATE_NOOP("Stabilization", "Pitch smoothness");
         QT_TRANSLATE_NOOP("Stabilization", "Yaw smoothness");
@@ -301,10 +303,8 @@ MenuItem {
     ComboBox {
         id: smoothingMethod;
         model: smoothingAlgorithms;
-        font.pixelSize: 12 * dpiScale;
-        width: parent.width;
-        currentIndex: 1;
-        enabled: !root._batchActive;
+        visible: false;
+        currentIndex: smoothingAlgorithms.indexOf("Optimal path");
         Component.onCompleted: currentIndexChanged();
         onCurrentIndexChanged: {
             // Clear current params
@@ -647,7 +647,7 @@ MenuItem {
     }
     Label {
         text: qsTr("Zoom limit");
-        visible: smoothingMethod.currentIndex == 1 || smoothingMethod.currentIndex == 2;
+        visible: smoothingMethod.currentIndex == 1 || smoothingMethod.currentIndex == 2 || smoothingMethod.currentIndex == 4;
         position: Label.LeftPosition;
         tooltip: qsTr("Zoom limit is calculated approximately.\nIf you need more accuracy, increase the number of iterations in \"Advanced\" below.");
         enabled: !root._batchActive; opacity: root._batchActive ? 0.4 : 1.0;
@@ -664,6 +664,13 @@ MenuItem {
             keyframe: "MaxZoom";
             onValueChanged: controller.set_max_zoom(maxZoomSlider.value, maxZoomIterations.value);
         }
+    }
+    CheckBox {
+        id: fixedZoom;
+        text: qsTr("Use the zoom limit as fixed zoom");
+        visible: croppingMode.currentIndex == 2;
+        enabled: !root._batchActive;
+        onCheckedChanged: controller.set_fixed_zoom(checked);
     }
     Label {
         text: qsTr("Zooming speed");

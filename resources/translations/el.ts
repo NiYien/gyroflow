@@ -2889,6 +2889,10 @@ Do you want to submit your profile?</source>
 <context>
     <name>MotionData</name>
     <message>
+        <source>Stabilization reconstruction</source>
+        <translation>Ανακατασκευή σταθεροποίησης</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/MotionData.qml" line="11"/>
         <source>Motion data</source>
         <translation>Δεδομένα κίνησης</translation>
@@ -3608,6 +3612,10 @@ Reopen CapCut before using the effect.</source>
 </context>
 <context>
     <name>Popup</name>
+    <message>
+        <source>Optimal path</source>
+        <translation>Βέλτιστη διαδρομή</translation>
+    </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1042"/>
         <source>Export</source>
@@ -5186,6 +5194,14 @@ Please provide frame rate: </source>
 </context>
 <context>
     <name>Stabilization</name>
+    <message>
+        <source>Keep within zoom limit</source>
+        <translation>Διατήρηση εντός του ορίου μεγέθυνσης</translation>
+    </message>
+    <message>
+        <source>Use the zoom limit as fixed zoom</source>
+        <translation>Χρήση του ορίου ζουμ ως σταθερό ζουμ</translation>
+    </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1746"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="10"/>

@@ -38,6 +38,9 @@ pub struct ComputeParams {
     pub camera_diagonal_fovs: Vec<f64>,
     // Set alongside the camera FOVs so smoothing tracks the geometry it reads.
     pub smoothing_uses_camera_view: bool,
+    pub smoothing_crop_lenses: Option<Arc<crate::smoothing::optimal::crop::CropLenses>>,
+    /// Frame centre in motion time and signed readout across the active image, in milliseconds.
+    pub smoothing_frame_times: Option<Arc<Vec<(f64, f64)>>>,
 
     pub frame_count: usize,
     pub fov_scale: f64,
@@ -66,6 +69,7 @@ pub struct ComputeParams {
     pub adaptive_zoom_window: f64,
     pub adaptive_zoom_center_offset: (f64, f64),
     pub adaptive_zoom_method: i32,
+    pub fixed_zoom: bool,
     pub additional_rotation: (f64, f64, f64),
     pub additional_translation: (f64, f64, f64),
     pub framebuffer_inverted: bool,
@@ -95,6 +99,12 @@ pub struct ComputeParams {
     pub optical_stab_checksum: u64,
 }
 impl ComputeParams {
+    pub(crate) fn apply_fixed_zoom(&mut self) -> bool {
+        if !self.fixed_zoom || self.adaptive_zoom_window >= -0.9 { return false; }
+        let Some(limit) = crate::zooming::zoom_limit_fovs(self).first().copied().flatten() else { return false };
+        for fov in &mut self.fovs { *fov = fov.min(limit); }
+        true
+    }
     /// Time (µs) the lens metadata of the picture at `timestamp_ms` is looked up at: the frame time shifted by
     /// `lens_metadata_delay_frames`, the delay the lens reports its state with (see `synchronization::lens_delay`). The
     /// one place the shift is spelled out; every per-frame lens lookup, the projection's and the focal length curves',
@@ -135,6 +145,8 @@ impl ComputeParams {
             lens,
             camera_diagonal_fovs: Vec::new(),
             smoothing_uses_camera_view: false,
+            smoothing_crop_lenses: None,
+            smoothing_frame_times: None,
 
             smoothing_fov_limit_per_frame: Vec::new(),
             max_zoom: params.max_zoom.clone(),
@@ -168,6 +180,7 @@ impl ComputeParams {
             additional_rotation: params.additional_rotation,
             additional_translation: params.additional_translation,
             adaptive_zoom_method: params.adaptive_zoom_method,
+            fixed_zoom: params.fixed_zoom,
             video_speed: params.video_speed,
             video_speed_affects_smoothing: params.video_speed_affects_smoothing,
             video_speed_affects_zooming: params.video_speed_affects_zooming,
@@ -235,6 +248,10 @@ impl ComputeParams {
     }
 
     pub fn calculate_camera_fovs(&mut self) {
+        self.calculate_smoothing_geometry(false);
+    }
+
+    pub fn calculate_smoothing_geometry(&mut self, optimal: bool) {
         let frame_count = {
             let gyro = self.gyro.read();
             self.optical_translation_checksum = if self.apply_optical_translation {
@@ -256,12 +273,14 @@ impl ComputeParams {
             }
         };
         self.camera_diagonal_fovs = Vec::with_capacity(frame_count);
+        let mut lenses = optimal.then(crate::smoothing::optimal::crop::CropLenses::default);
         for f in 0..frame_count as i32 {
             let timestamp = crate::timestamp_at_frame(f, self.scaled_fps);
-            let (camera_matrix, _, _, input_horizontal_stretch, input_vertical_stretch, _, _) =
-                crate::stabilization::FrameTransform::get_lens_data_at_timestamp(
+            let lens = crate::stabilization::FrameTransform::get_lens_data_at_timestamp(
                     &self, timestamp, false,
                 );
+            if let Some(lenses) = &mut lenses { lenses.push(self, f as usize, &lens); }
+            let (camera_matrix, _, _, input_horizontal_stretch, input_vertical_stretch, _, _) = lens;
             let diag_length = if input_horizontal_stretch == 1.0 && input_vertical_stretch == 1.0 {
                 ((self.width.pow(2) + self.height.pow(2)) as f64).sqrt()
             } else {
@@ -275,6 +294,18 @@ impl ComputeParams {
             let d_fov = 2.0 * ((diag_length / (2.0 * camera_matrix[(1, 1)])).atan()) * 180.0
                 / std::f64::consts::PI;
             self.camera_diagonal_fovs.push(d_fov);
+        }
+        if let Some(mut lenses) = lenses {
+            lenses.finish();
+            self.smoothing_crop_lenses = Some(Arc::new(lenses));
+            let gyro = self.gyro.read();
+            let md = gyro.file_metadata.read();
+            self.smoothing_frame_times = Some(Arc::new((0..self.frame_count).map(|f| {
+                let frame_ms = crate::timestamp_at_frame(f as i32, self.scaled_fps);
+                let t = frame_ms + md.frame_time_offset(f);
+                (t - gyro.offset_at_video_timestamp(t),
+                 super::FrameTransform::get_frame_readout_time(self, false, frame_ms, &md))
+            }).collect()));
         }
     }
 }
