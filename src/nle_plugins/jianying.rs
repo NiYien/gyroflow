@@ -4,6 +4,8 @@ use super::*;
 
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "windows")]
+mod windows;
 
 #[cfg(not(target_os = "macos"))]
 pub(super) const ASSET_NAME: &str = "GyroflowNiyien-Jianying-windows.zip";
@@ -46,7 +48,9 @@ fn local_root() -> io::Result<PathBuf> {
 pub(super) fn host() -> io::Result<Host> {
     #[cfg(target_os = "macos")]
     { return macos::host(); }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    { return windows::host(); }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     find_host(&local_root()?.join("JianyingPro"))
 }
 
@@ -76,13 +80,18 @@ fn find_host(root: &Path) -> io::Result<Host> {
     })
 }
 
+fn plugin_cache(root: &Path) -> io::Result<PathBuf> {
+    #[cfg(target_os = "windows")]
+    { windows::plugin_cache(root) }
+    #[cfg(not(target_os = "windows"))]
+    { Ok(root.join("User Data/Cache/OFX")) }
+}
+
 fn installed_bundle() -> io::Result<PathBuf> {
     #[cfg(target_os = "macos")]
     { return Ok(macos::user_root()?.join("User Data/Cache/OFX").join(BUNDLE_NAME)); }
     #[cfg(not(target_os = "macos"))]
-    Ok(local_root()?
-        .join("JianyingPro/User Data/Cache/OFX")
-        .join(BUNDLE_NAME))
+    Ok(plugin_cache(&local_root()?.join("JianyingPro"))?.join(BUNDLE_NAME))
 }
 
 #[derive(Deserialize)]
@@ -289,7 +298,7 @@ pub(super) fn install_archive(content: Vec<u8>) -> io::Result<String> {
     #[cfg(target_os = "macos")]
     use macos::ensure_host_closed;
     ensure_host_closed()?;
-    let cache = host.root.join("User Data/Cache/OFX");
+    let cache = plugin_cache(&host.root)?;
     std::fs::create_dir_all(&cache)?;
     let stage = tempfile::Builder::new()
         .prefix(".gyroflow-jianying-")
@@ -301,7 +310,8 @@ pub(super) fn install_archive(content: Vec<u8>) -> io::Result<String> {
     let source = stage.path().join(BUNDLE_NAME);
     validate_trusted_bundle(&source)?;
     #[cfg(not(target_os = "macos"))]
-    let backup_root = local_root()?.join("Gyroflow/Plugin Backups/jianying");
+    // Keep directory moves on the cache volume and backups outside OFX discovery.
+    let backup_root = cache.parent().unwrap().join("Gyroflow Plugin Backups/jianying");
     #[cfg(target_os = "macos")]
     let backup_root = macos::backup_root()?;
     std::fs::create_dir_all(&backup_root)?;
@@ -355,6 +365,30 @@ mod tests {
             std::fs::write(app.join("JianyingPro.exe"), []).unwrap();
         }
         assert_eq!(find_host(root.path()).unwrap().version, "11.10.0.1");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn upgrade_uses_configured_cache_and_keeps_default_cache_untouched() {
+        let root = tempfile::tempdir().unwrap();
+        let user = root.path().join("user");
+        let custom_cache = root.path().join("custom cache");
+        let config = user.join("User Data/Config");
+        std::fs::create_dir_all(&config).unwrap();
+        let encoded_cache = custom_cache.to_str().unwrap().replace('\\', "\\\\");
+        std::fs::write(config.join("globalSetting"), format!("[General]\ncurrentCachePath={encoded_cache}\n")).unwrap();
+        let default = package(&user.join("User Data/Cache/OFX"), "1.0.0");
+        let cache = plugin_cache(&user).unwrap();
+        let destination = package(&cache, "2.0.0");
+        let source = package(&root.path().join("stage"), "3.0.0");
+        let backup = cache.parent().unwrap().join("Gyroflow Plugin Backups/jianying/previous").join(BUNDLE_NAME);
+        std::fs::create_dir_all(backup.parent().unwrap()).unwrap();
+        assert_eq!(cache, custom_cache.join("OFX"));
+        assert_eq!(replace_bundle_with(&source, &destination, &backup, validate_trusted_bundle).unwrap(), "3.0.0");
+        assert_eq!(validate_trusted_bundle(&destination).unwrap(), "3.0.0");
+        assert_eq!(validate_trusted_bundle(&backup).unwrap(), "2.0.0");
+        assert_eq!(validate_trusted_bundle(&default).unwrap(), "1.0.0");
+        assert_eq!(std::fs::read_dir(&cache).unwrap().count(), 1);
     }
 
     #[test]
