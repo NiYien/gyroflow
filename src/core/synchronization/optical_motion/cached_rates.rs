@@ -120,7 +120,7 @@ pub(crate) fn confirm(
             *g.quaternions.last_key_value()?.0 as f64 / 1000.0,
         )
     };
-    let plan = dm::optical_retry_search(params.scaled_duration_ms, gyro_span)?;
+    let plan = dm::full_coverage_search(params.scaled_duration_ms, gyro_span)?;
     let lo = plan.center_ms - plan.radius_ms;
     let hi = plan.center_ms + plan.radius_ms;
     if lo < bounds.0 || hi > bounds.1 {
@@ -166,8 +166,8 @@ pub(crate) fn confirm_short(
         .iter()
         .map(|&(a, b)| (a + b) as f64 / 2000.0)
         .collect();
-    let Some(plan) = dm::OpticalRetrySearch::within_budget(centers, lo, hi) else {
-        log::info!(target:"sync","[deep-match] short angular skip: offset range [{lo:.1},{hi:.1}]ms outside retry budget");
+    let Some(plan) = dm::OpticalRetrySearch::covering(centers, lo, hi) else {
+        log::info!(target:"sync","[deep-match] short angular skip: no common covered offset range [{lo:.1},{hi:.1}]ms");
         return None;
     };
     confirm_windows(
@@ -273,7 +273,7 @@ fn confirm_windows(
         params.scaled_duration_ms,
         short_half_ms.unwrap_or_else(dm::per_window_ms),
     );
-    log::info!(target: "sync", "[deep-match] cached angular rates: windows={measured} offset={offset:?} elapsed_ms={:.0}",
+    log::info!(target: "sync", "[deep-match] cached angular rates: range=[{lo:.1},{hi:.1}]ms windows={measured} offset={offset:?} elapsed_ms={:.0}",
         start.elapsed().as_secs_f64() * 1000.0);
     offset
 }

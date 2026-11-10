@@ -2110,9 +2110,9 @@ pub struct OpticalRetrySearch {
 }
 
 impl OpticalRetrySearch {
-    pub(super) fn within_budget(windows_ms: Vec<f64>, lo: f64, hi: f64) -> Option<Self> {
+    pub(super) fn covering(windows_ms: Vec<f64>, lo: f64, hi: f64) -> Option<Self> {
         let radius_ms = (hi - lo) / 2.0;
-        (10.0..=fwd_confirm_radius_ms()).contains(&radius_ms)
+        (radius_ms.is_finite() && radius_ms >= 10.0)
             .then_some(Self { windows_ms, center_ms: (lo + hi) / 2.0, radius_ms })
     }
 }
@@ -2120,13 +2120,19 @@ impl OpticalRetrySearch {
 /// Search all offsets that can cover every verification window, within the
 /// existing forward confirmation budget. Do not narrow a larger domain to fit.
 pub fn optical_retry_search(video_ms: f64, gyro_span: (f64, f64)) -> Option<OpticalRetrySearch> {
+    full_coverage_search(video_ms, gyro_span).filter(|plan| plan.radius_ms <= fwd_confirm_radius_ms())
+}
+
+/// Cached angular rates can reuse the parallel search over the complete covered
+/// domain without paying for another decode, tracking or full optical fit.
+pub(super) fn full_coverage_search(video_ms: f64, gyro_span: (f64, f64)) -> Option<OpticalRetrySearch> {
     let window = per_window_ms();
     let (n, _) = plan_windows(video_ms, candidates_count(), scan_short(), scan_long(), long_min_ms(), window);
     let windows_ms = window_positions_ms(video_ms, n);
     if windows_ms.len() < 2 || windows_ms[1] - windows_ms[0] < window { return None; }
     let lo = windows_ms.last()? + window / 2.0 - gyro_span.1;
     let hi = windows_ms.first()? - window / 2.0 - gyro_span.0;
-    OpticalRetrySearch::within_budget(windows_ms, lo, hi)
+    OpticalRetrySearch::covering(windows_ms, lo, hi)
 }
 
 /// Only full-confidence optical valleys can establish the match. Other usable
@@ -2164,6 +2170,25 @@ mod tests {
         assert!(optical_retry_search(28320.0, (0.0, 7200000.0)).is_none());
         assert!(optical_retry_search(28320.0, (0.0, 1000.0)).is_none());
         assert!(optical_retry_search(3000.0, (0.0, 30000.0)).is_none());
+    }
+
+    #[test]
+    fn cached_angular_search_keeps_full_coverage_beyond_optical_retry_budget() {
+        let narrow = full_coverage_search(28320.0, (1000.0, 35525.0)).unwrap();
+        let optical = optical_retry_search(28320.0, (1000.0, 35525.0)).unwrap();
+        assert_eq!(narrow.windows_ms, optical.windows_ms);
+        assert_eq!(narrow.center_ms, optical.center_ms);
+        assert_eq!(narrow.radius_ms, optical.radius_ms);
+        let wide = full_coverage_search(28320.0, (0.0, 164571.0)).unwrap();
+        assert_eq!(wide.center_ms - wide.radius_ms, 23906.0 - 164571.0);
+        assert_eq!(wide.center_ms + wide.radius_ms, 4414.0);
+        assert!(wide.radius_ms > fwd_confirm_radius_ms());
+        assert!(optical_retry_search(28320.0, (0.0, 164571.0)).is_none());
+        assert!(full_coverage_search(28320.0, (0.0, 1000.0)).is_none());
+        assert!(full_coverage_search(3000.0, (0.0, 164571.0)).is_none());
+        let short = OpticalRetrySearch::covering(vec![750.0, 2250.0], -161311.0, 0.0).unwrap();
+        assert_eq!(short.radius_ms, 80655.5);
+        assert!(OpticalRetrySearch::covering(vec![750.0, 2250.0], 20.0, 0.0).is_none());
     }
 
     #[test]
