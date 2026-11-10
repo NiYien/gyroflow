@@ -115,10 +115,19 @@ fn main() {
                 let marker = Path::new(&sdk).join(".gyroflow-hevc-tile-patch.json");
                 assert!(marker.is_file(), "The Windows FFmpeg SDK is missing its HEVC tile verification");
                 println!("cargo:rerun-if-changed={}", marker.display());
+                // Windows searches the application directory before PATH. Keep
+                // the export libraries paired with the preview library there.
+                for library in ["avcodec-63.dll", "avformat-63.dll", "avutil-61.dll",
+                    "avdevice-63.dll", "avfilter-12.dll", "swresample-7.dll", "swscale-10.dll"] {
+                    let source = Path::new(&sdk).join("bin").join(library);
+                    println!("cargo:rerun-if-changed={}", source.display());
+                    std::fs::copy(source, format!("{}/../../../{library}", env::var("OUT_DIR").unwrap())).unwrap();
+                }
                 format!("{sdk}/bin/ffmpeg-9.dll")
             } else {
                 format!("{path}/bin/{arch_win}/ffmpeg-9.dll")
             };
+            println!("cargo:rerun-if-changed={ffmpeg}");
             std::fs::copy(ffmpeg, format!("{}/../../../ffmpeg-9.dll", env::var("OUT_DIR").unwrap())).unwrap();
             std::fs::copy(format!("{}/bin/{arch_win}/mdk-braw.dll", path), format!("{}/../../../mdk-braw.dll", env::var("OUT_DIR").unwrap())).unwrap();
             // Use the same seek/audio fixes as macOS instead of the bundled upstream plugin.
