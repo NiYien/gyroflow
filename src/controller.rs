@@ -3277,11 +3277,16 @@ impl Controller {
             return decoder;
         }
         let mut custom_decoder = String::new();
-        if self.image_sequence_start > 0 {
+        if self.image_sequence_start > 0 || self.image_sequence_fps > 0.0 {
             custom_decoder = format!(
                 "FFmpeg:avformat_options=start_number={}",
                 self.image_sequence_start
             );
+            // Configure image2 itself: a queued setUrl can replace the player
+            // after QML sets its frame rate. This also covers zero-based sequences.
+            if self.image_sequence_fps > 0.0 {
+                custom_decoder.push_str(&format!("&framerate={}", self.image_sequence_fps));
+            }
         }
         // The environment override already supplies the complete decoder list to the player.
         if std::env::var("MDK_DECODERS").is_ok_and(|value| !value.trim().is_empty()) {

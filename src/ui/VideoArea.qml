@@ -1321,9 +1321,12 @@ Item {
                                 return;
                             }
                             Qt.callLater(() => {
-                                if ((controller.supports_native_crm() && root.fileExtension(root.loadedFileUrl) === "crm") || controller.is_native_xocn(root.loadedFileUrl)) {
-                                    // Native RAW already has a complete first frame; a warm-up seek
-                                    // can overwrite a user's seek immediately after loading.
+                                const extension = root.fileExtension(root.loadedFileUrl);
+                                if (controller.image_sequence_fps > 0 || extension === "dng"
+                                    || (controller.supports_native_crm() && extension === "crm")
+                                    || controller.is_native_xocn(root.loadedFileUrl)) {
+                                    // Sequences and native RAW prepare their own first frame. A warm-up
+                                    // seek can cancel frame-threaded preparation or overwrite a user seek.
                                     vid.forceRedraw();
                                 } else {
                                     vid.currentFrame++;

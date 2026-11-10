@@ -1,4 +1,5 @@
 #include "MDKPlayer.h"
+#include <cmath>
 #include <map>
 #include <string>
 #include <thread>
@@ -246,6 +247,11 @@ void MDKPlayer::setToneCurve(const uint16_t *data, size_t len) {
 static bool hardwareDecoderSupports(const mdk::VideoCodecParameters &codec) {
     const std::string name = codec.codec ? codec.codec : "";
     const std::string format = codec.format_name ? codec.format_name : "";
+    // These software codecs support frame threading but not slice threading.
+    // Keep them out of the hardware decoder's single-threaded software fallback.
+    if (name == "apng" || name == "cfhd" || name == "dpx" || name == "ffvhuff"
+        || name == "huffyuv" || name == "mpeg4" || name == "png" || name == "rv30"
+        || name == "rv40" || name == "tiff" || name == "webp") return false;
     if (format.empty()) return true;
     if (name == "h264") return format == "yuv420p" || format == "yuvj420p";
     if (name == "hevc") return format == "yuv420p" || format == "yuvj420p" || format == "yuv420p10le";
@@ -320,6 +326,14 @@ void MDKPlayer::setUrl(const QUrl &url, const QString &customDecoder) {
             player->setProperty("video.decoder.scale", "0");
             player->setProperty("video.decoder", "scale=1:apply_cropping=0");
             qDebug2("prepare") << "preview.decoder ProRes RAW full-resolution Bayer decode";
+        }
+        if (!info.video.empty() && info.video[0].codec.codec
+            && std::string(info.video[0].codec.codec) == "tiff") {
+            // TIFF/DNG has no lowres decoder. Late scaling can otherwise shrink
+            // the frame buffer while the decoder still writes full sensor rows.
+            player->setProperty("video.decoder.scale", "0");
+            player->setProperty("video.decoder", "scale=1");
+            qDebug2("prepare") << "preview.decoder TIFF/DNG full-resolution decode";
         }
         if (!m_autoSoftwareDecoders.load()) return true;
         if (!info.video.empty() && !hardwareDecoderSupports(info.video[0].codec)) {
@@ -439,8 +453,9 @@ void MDKPlayer::setupPlayer() {
             // QML cannot initialize this clip with the previous clip's values.
             if (sourceInfo->ready.load(std::memory_order_acquire)) {
                 auto frames = sourceInfo->frames;
+                // MDK durations are integer milliseconds, including at fractional frame rates.
                 if (!frames && sourceInfo->duration > 0 && sourceInfo->fps > 0)
-                    frames = sourceInfo->duration / 1000.0 * sourceInfo->fps;
+                    frames = std::llround(sourceInfo->duration / 1000.0 * sourceInfo->fps);
                 m_fps = sourceInfo->fps;
                 m_duration = sourceInfo->duration;
                 double fps = m_fps;
@@ -629,7 +644,7 @@ void MDKPlayer::setupPlayer() {
                     v.codec.height = sourceInfo->height;
                 }
                 if (!v.frames && v.duration > 0 && v.codec.frame_rate > 0) {
-                    v.frames = (double(v.duration) / 1000.0) * v.codec.frame_rate;
+                    v.frames = std::llround((double(v.duration) / 1000.0) * v.codec.frame_rate);
                 }
                 m_fps = v.codec.frame_rate;
                 if (m_sourceAspectRatio) applySourceAspectRatio();
