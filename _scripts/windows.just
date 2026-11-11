@@ -1,7 +1,7 @@
 import 'common.just'
 
-WindowsFFmpegUrl := if Arch == "aarch64" { "https://github.com/NiYien/avbuild/releases/download/gyroflow-ffmpeg-9.0.2-windows-arm64-v1/ffmpeg-9.0-windows-arm64-hevc-tiles-v1.7z" } else if FFmpeg == LocalWindowsFFmpeg { "file:///" + replace(ExtDir, "\\", "/") + "/" + FFmpeg + ".7z" } else { "https://github.com/NiYien/avbuild/releases/download/gyroflow-ffmpeg-9.0.2-windows-hevc-tiles-v1/ffmpeg-9.0-windows-x64-hevc-tiles-v1.7z" }
-WindowsFFmpegSha256 := if Arch == "aarch64" { "64d4752a0527f4a7d3fc8da0c5e51184078d820d72ce0b6c8af795a56eccf063" } else if FFmpeg == LocalWindowsFFmpeg { "b3329527fd9da9f1bc56992f97002778286829b68d148e811af1432cb62b6423" } else { "01fc86614010b7cb68da89d4cbccf681adbc6078ae9f4345dfb53b1d537aa1d2" }
+WindowsFFmpegUrl := if Arch == "aarch64" { "https://github.com/NiYien/avbuild/releases/download/gyroflow-ffmpeg-9.0.2-windows-arm64-v1/ffmpeg-9.0-windows-arm64-hevc-tiles-v1.7z" } else { "https://github.com/NiYien/avbuild/releases/download/gyroflow-ffmpeg-9.0.2-windows-hevc-tiles-praw-dng-v3/ffmpeg-9.0-windows-x64-hevc-tiles-praw-dng-v3.7z" }
+WindowsFFmpegSha256 := if Arch == "aarch64" { "64d4752a0527f4a7d3fc8da0c5e51184078d820d72ce0b6c8af795a56eccf063" } else { "49bdaae7fd27117522e960017f7e89f68441ece5f9a9643d60c8034abb65dbe9" }
 
 NameSuffix := if Arch == "aarch64" { "windows-arm64" } else { "windows64" }
 

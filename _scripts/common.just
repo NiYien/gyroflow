@@ -22,9 +22,7 @@ export QMAKE := env_var_or_default("QMAKE", if path_exists(QtPath / "qmake.bat")
 # ――――――――――――――――――――――――――――――――――――――――― Qt ――――――――――――――――――――――――――――――――――――――――――
 
 # ――――――――――――――――――――――――――――――――――――――― FFmpeg ――――――――――――――――――――――――――――――――――――――――
-# An installed local SDK opts this checkout in before its package is published.
-LocalWindowsFFmpeg := "ffmpeg-9.0-windows-x64-hevc-tiles-praw-v2"
-FFmpeg := if os() + Arch == "windowsx86_64"  { if path_exists(ExtDir / LocalWindowsFFmpeg) == "true" { LocalWindowsFFmpeg } else { "ffmpeg-9.0-windows-x64-hevc-tiles-v1" }
+FFmpeg := if os() + Arch == "windowsx86_64"  { "ffmpeg-9.0-windows-x64-hevc-tiles-praw-dng-v3"
    } else if os() == "windows"               { "ffmpeg-9.0-windows-arm64-hevc-tiles-v1"
    } else if os() + Arch == "macosaarch64"   { "ffmpeg-arm64"
    } else if os() + Arch == "macosx86_64"    { "ffmpeg-x86_64"
