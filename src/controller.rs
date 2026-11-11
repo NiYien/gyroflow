@@ -149,10 +149,11 @@ pub struct Controller {
     telemetry_loaded: qt_signal!(is_main_video: bool, filename: QString, camera: QString, additional_data: QJsonObject),
     lens_profile_loaded: qt_signal!(lens_json: QString, filepath: QString, checksum: QString),
 
-    set_smoothing_method: qt_method!(fn(&self, index: usize) -> QJsonArray),
+    set_smoothing_method: qt_method!(fn(&self, index: usize, reset_zoom: bool) -> QJsonArray),
     get_smoothing_max_angles: qt_method!(fn(&self) -> QJsonArray),
     get_smoothing_status: qt_method!(fn(&self) -> QJsonArray),
     set_smoothing_param: qt_method!(fn(&self, name: QString, val: f64)),
+    smoothing_param_changed: qt_signal!(name: QString, value: f64),
     set_horizon_lock: qt_method!(
         fn(
             &self,
@@ -269,6 +270,8 @@ pub struct Controller {
     light_refraction_coefficient: qt_property!(f64; WRITE set_light_refraction_coefficient),
     set_video_speed: qt_method!(fn(&self, v: f64, s: bool, z: bool, zl: bool)),
     set_max_zoom: qt_method!(fn(&self, v: f64, iters: usize)),
+    get_max_zoom: qt_method!(fn(&self) -> f64),
+    set_max_zoom_iterations: qt_method!(fn(&self, iters: usize)),
     set_fixed_zoom: qt_method!(fn(&self, v: bool)),
 
     input_horizontal_stretch: qt_property!(f64; WRITE set_input_horizontal_stretch),
@@ -357,6 +360,7 @@ pub struct Controller {
     import_gyroflow_file: qt_method!(fn(&mut self, url: QUrl)),
     import_gyroflow_data: qt_method!(fn(&mut self, data: QString)),
     gyroflow_file_loaded: qt_signal!(obj: QJsonObject),
+    gyroflow_file_load_failed: qt_signal!(),
     export_gyroflow_file:
         qt_method!(fn(&self, url: QUrl, typ: QString, additional_data: QJsonObject)),
     export_gyroflow_data:
@@ -2441,14 +2445,9 @@ impl Controller {
         let settings_path = gyroflow_core::settings::data_dir()
             .join("lens_profiles")
             .join("default.gyroflow");
-        if settings_path.exists() {
-            self.import_gyroflow_file(QUrl::from(QString::from(filesystem::path_to_url(
-                &settings_path.to_string_lossy(),
-            ))));
-        } else if local_path.exists() {
-            self.import_gyroflow_file(QUrl::from(QString::from(filesystem::path_to_url(
-                &local_path.to_string_lossy(),
-            ))));
+        let path = if settings_path.exists() { settings_path } else { local_path };
+        if let Ok(data) = std::fs::read_to_string(path) {
+            self.import_gyroflow_data(QString::from(gyroflow_core::settings::prepare_default_preset(&data)));
         }
     }
     fn get_preset_contents(&mut self, url_or_id: QString) -> QString {
@@ -3163,17 +3162,23 @@ impl Controller {
         }
     }
 
-    fn set_smoothing_method(&mut self, index: usize) -> QJsonArray {
+    fn set_smoothing_method(&mut self, index: usize, reset_zoom: bool) -> QJsonArray {
         let params = util::serde_json_to_qt_array(&self.stabilizer.set_smoothing_method(index));
+        if reset_zoom { self.stabilizer.reset_smoothing_max_zoom(); }
         self.request_recompute();
         self.chart_data_changed();
         params
     }
     fn set_smoothing_param(&mut self, name: QString, val: f64) {
         self.stabilizer.set_smoothing_param(&name.to_string(), val);
+        self.smoothing_param_changed(name, val);
         self.chart_data_changed();
         self.request_recompute();
     }
+    fn get_max_zoom(&self) -> f64 {
+        self.stabilizer.params.read().max_zoom.unwrap_or(0.0)
+    }
+    wrap_simple_method!(set_max_zoom_iterations, iters: usize; recompute);
     wrap_simple_method!(set_horizon_lock, lock_percent: f64, roll: f64, lock_pitch: bool, pitch: f64, automatic_lock: bool, turn_threshold: f64, turn_smoothing_ms: f64, turn_multiplier: f64, tilt_accel_limit: f64; recompute; chart_data_changed);
     wrap_simple_method!(set_use_gravity_vectors, v: bool; recompute; chart_data_changed);
     wrap_simple_method!(set_horizon_lock_integration_method, v: i32; recompute; chart_data_changed);
@@ -3525,9 +3530,13 @@ impl Controller {
                 this.loading_gyro_progress(1.0);
                 this.loading_gyro_in_progress_changed();
 
-                let obj = this.import_gyroflow_internal(obj);
-                this.gyroflow_file_loaded(obj);
-                this.project_file_url_changed();
+                if let Some(obj) = this.import_gyroflow_internal(obj) {
+                    this.gyroflow_file_loaded(obj);
+                    this.project_file_url_changed();
+                } else {
+                    this.set_prevent_recompute(false);
+                    this.gyroflow_file_load_failed();
+                }
             },
         );
         // After the circuit breaker force-releases a stale guard mid-retry,
@@ -3597,8 +3606,12 @@ impl Controller {
                 this.loading_gyro_progress(1.0);
                 this.loading_gyro_in_progress_changed();
 
-                let obj = this.import_gyroflow_internal(obj);
-                this.gyroflow_file_loaded(obj);
+                if let Some(obj) = this.import_gyroflow_internal(obj) {
+                    this.gyroflow_file_loaded(obj);
+                } else {
+                    this.set_prevent_recompute(false);
+                    this.gyroflow_file_load_failed();
+                }
             },
         );
         // Same pair as import_gyroflow_file — see comments there.
@@ -3659,7 +3672,7 @@ impl Controller {
     fn import_gyroflow_internal(
         &mut self,
         result: Result<serde_json::Value, gyroflow_core::GyroflowCoreError>,
-    ) -> QJsonObject {
+    ) -> Option<QJsonObject> {
         match result {
             Ok(thin_obj) => {
                 if thin_obj
@@ -3702,7 +3715,7 @@ impl Controller {
                 self.request_recompute();
                 self.chart_data_changed();
                 self.keyframes_changed();
-                util::serde_json_to_qt_object(&thin_obj)
+                Some(util::serde_json_to_qt_object(&thin_obj))
             }
             Err(gyroflow_core::GyroflowCoreError::LifecycleBusy(remaining)) => {
                 // With the retry loop enabled, LifecycleBusy means the whole
@@ -3722,7 +3735,7 @@ impl Controller {
                     QString::from(remaining.to_string()),
                     QString::default(),
                 );
-                QJsonObject::default()
+                None
             }
             Err(e) => {
                 self.error(
@@ -3730,7 +3743,7 @@ impl Controller {
                     QString::from(e.to_string()),
                     QString::default(),
                 );
-                QJsonObject::default()
+                None
             }
         }
     }

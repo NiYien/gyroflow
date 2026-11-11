@@ -791,22 +791,7 @@ fn setup_defaults(stab: &Arc<StabilizationManager>, queue: &mut RenderQueue) -> 
 
     // Default settings - project file will override this
 
-    match settings::get_u64("croppingMode", 1) {
-        0 => stab.set_adaptive_zoom(0.0), // No zooming
-        1 => stab.set_adaptive_zoom(settings::get_f64("adaptiveZoom", 4.0)),
-        2 => stab.set_adaptive_zoom(-1.0), // Static zoom
-        _ => {}
-    }
     stab.set_lens_correction_amount(settings::get_f64("correctionAmount", 1.0));
-    let smoothing_method = stab.smoothing.read().current_id();
-    let smoothing_method_prefix = format!("smoothing-{}-", smoothing_method);
-    for (k, v) in gyroflow_core::settings::get_all() {
-        if k.starts_with(&smoothing_method_prefix) {
-            if let Some(v) = v.as_f64() {
-                stab.set_smoothing_param(k.strip_prefix(&smoothing_method_prefix).unwrap(), v);
-            }
-        }
-    }
 
     // TODO: set more params from `settings`
 

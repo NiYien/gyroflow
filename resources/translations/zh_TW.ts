@@ -6457,6 +6457,10 @@ Are you sure you want to continue?</source>
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Old stabilization reconstruction and dependent results were skipped. Other project settings were restored.</source>
+        <translation>已略過舊版防抖重建及依賴它的分析結果，其餘專案設定已恢復。</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/VideoArea.qml" line="1533"/>
         <source>Save and open the previous queue item</source>
         <translation>儲存並開啟上一個佇列項目</translation>

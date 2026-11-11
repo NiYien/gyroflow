@@ -2858,7 +2858,11 @@ impl StabilizationManager {
         self.invalidate_smoothing();
     }
     pub fn set_fixed_zoom(&self, fixed: bool) {
-        self.params.write().fixed_zoom = fixed;
+        {
+            let mut params = self.params.write();
+            params.fixed_zoom = fixed;
+            if fixed { params.max_zoom_linked = false; }
+        }
         self.invalidate_smoothing();
         self.invalidate_zooming();
     }
@@ -2866,6 +2870,11 @@ impl StabilizationManager {
         let mut params = self.params.write();
         params.max_zoom = if v > 50.0 { Some(v) } else { None };
         params.max_zoom_iterations = iters.max(1);
+        params.max_zoom_linked = false;
+        self.invalidate_smoothing();
+    }
+    pub fn set_max_zoom_iterations(&self, iters: usize) {
+        self.params.write().max_zoom_iterations = iters.max(1);
         self.invalidate_smoothing();
     }
 
@@ -3900,17 +3909,41 @@ impl StabilizationManager {
     pub fn set_smoothing_method(&self, index: usize) -> serde_json::Value {
         let mut smooth = self.smoothing.write();
         smooth.set_current(index);
-
+        let parameters = smooth.current().get_parameters_json();
+        let linked_smoothness = (smooth.current_id() == smoothing::OPTIMAL_ID)
+            .then(|| smooth.current().get_parameter("smoothness"));
+        drop(smooth);
+        if let Some(value) = linked_smoothness {
+            self.params.write().update_linked_max_zoom(value);
+        }
         self.invalidate_smoothing();
-
-        smooth.current().get_parameters_json()
+        parameters
     }
     pub fn set_smoothing_param(&self, name: &str, val: f64) {
-        self.smoothing
-            .write()
-            .current_mut()
-            .as_mut()
-            .set_parameter(name, val);
+        let mut smooth = self.smoothing.write();
+        smooth.current_mut().set_parameter(name, val);
+        let linked_smoothness = (name == "smoothness" && smooth.current_id() == smoothing::OPTIMAL_ID)
+            .then(|| smooth.current().get_parameter("smoothness"));
+        drop(smooth);
+        if let Some(value) = linked_smoothness {
+            self.params.write().update_linked_max_zoom(value);
+        }
+        self.invalidate_smoothing();
+    }
+    pub fn reset_smoothing_max_zoom(&self) {
+        let smooth = self.smoothing.read();
+        let optimal = smooth.current_id() == smoothing::OPTIMAL_ID;
+        let limit = match smooth.current_id() {
+            1 => 180.0,
+            smoothing::OPTIMAL_ID => StabilizationParams::optimal_max_zoom(smooth.current().get_parameter("smoothness")),
+            _ => return,
+        };
+        drop(smooth);
+        let keyframed = self.is_keyframed(&KeyframeType::MaxZoom);
+        let mut params = self.params.write();
+        params.max_zoom = Some(limit);
+        params.max_zoom_linked = optimal && !params.fixed_zoom && !keyframed;
+        drop(params);
         self.invalidate_smoothing();
     }
     pub fn set_horizon_lock(
@@ -4517,8 +4550,14 @@ impl StabilizationManager {
         let allow_external_io = external_io_policy == ExternalIoPolicy::Allow;
         let mut obj: serde_json::Value = serde_json::from_slice(&data)?;
         let source = &obj["gyro_source"];
-        if source["stab_reconstruction_enabled"].as_bool() == Some(true) || source["optical_stab_reconstruction"].is_string() {
-            return Err(GyroflowCoreError::UnsupportedFormat("legacy in-camera stabilization reconstruction".into()));
+        let legacy_reconstruction = source["stab_reconstruction_enabled"].as_bool() == Some(true)
+            || source["optical_stab_reconstruction"].is_string();
+        if let Some(source) = obj.get_mut("gyro_source").and_then(serde_json::Value::as_object_mut) {
+            source.remove("stab_reconstruction_enabled");
+            source.remove("optical_stab_reconstruction");
+        }
+        if legacy_reconstruction {
+            ::log::warn!(target: "video.load", "Legacy stabilization reconstruction was skipped; importing the remaining project settings");
         }
         let mut load_options = gyro_source::FileLoadOptions::default();
         if let serde_json::Value::Object(ref mut obj) = obj {
@@ -4961,6 +5000,7 @@ impl StabilizationManager {
                 }
                 {
                     let mut ui = self.optical_ui.write();
+                    if legacy_reconstruction { ui.stab_enabled = false; }
                     if let Some(v) = obj.get("optical_correction_enabled").and_then(|x| x.as_bool()) { ui.correction_enabled = v; }
                     if let Some(v) = obj.get("translation_stabilization_enabled").and_then(|x| x.as_bool()) { ui.translation_enabled = v; }
                     if let Some(v) = obj.get("translation_reference").and_then(|x| x.as_f64()) { ui.translation_settings.reference = v.clamp(0.0, 2.0); }
@@ -4972,8 +5012,8 @@ impl StabilizationManager {
                         ui.translation_settings.auto = false;
                     }
                 }
+                if !*is_preset || legacy_reconstruction { gyro.optical_stab = None; }
                 if !*is_preset {
-                    gyro.optical_stab = None;
                     gyro.optical_residual = None;
                     if let Some(value) = obj.get("optical_residual_rotation") {
                         match util::decompress_from_base91_cbor::<gyro_source::OpticalResidualRotation>(value.as_str().unwrap_or_default()) {
@@ -5006,10 +5046,20 @@ impl StabilizationManager {
                 if let Some(value) = obj.get("optical_correction") {
                     match util::decompress_from_base91_cbor::<gyro_source::OpticalCorrection>(value.as_str().unwrap_or_default()) {
                         Ok(mut correction) => {
-                            if let Some(v) = obj.get("optical_correction_enabled").and_then(|x| x.as_bool()) {
-                                correction.enabled = v;
+                            // Legacy gyro corrections have no reconstruction dependency fingerprint.
+                            // A stored video_base alone does not make a gyro correction a visual input.
+                            let visual_trajectory = !correction.video_base.is_empty()
+                                && ignore_file_motion.unwrap_or_else(|| !gyro.has_motion());
+                            if legacy_reconstruction && !visual_trajectory {
+                                gyro.set_optical_correction(None);
+                                self.optical_ui.write().correction_enabled = false;
+                                obj.insert("optical_correction_enabled".into(), serde_json::Value::Bool(false));
+                            } else {
+                                if let Some(v) = obj.get("optical_correction_enabled").and_then(|x| x.as_bool()) {
+                                    correction.enabled = v;
+                                }
+                                gyro.set_optical_correction(Some(correction));
                             }
-                            gyro.set_optical_correction(Some(correction));
                         }
                         Err(error) => ::log::warn!("Failed to load optical correction: {:?}", error),
                     }
@@ -5096,7 +5146,10 @@ impl StabilizationManager {
                     // Real projects retain supported saved methods; default presets keep the current method.
                     let keep_method = !*is_preset && matches!(saved_method.as_deref(), Some("Default" | "Optimal path"));
                     for (field, _) in crate::settings::GATED_PROJECT_STABILIZATION_FIELDS {
-                        if *field != "method" || !keep_method { obj.remove(*field); }
+                        let explicit_crop = (*is_preset || keep_method || saved_method.is_none()) && matches!(*field,
+                            "max_zoom" | "max_zoom_iterations" | "adaptive_zoom_window" | "adaptive_zoom_method"
+                        );
+                        if !explicit_crop && (*field != "method" || !keep_method) { obj.remove(*field); }
                     }
                 }
                 let mut params = self.params.write();
@@ -5133,11 +5186,18 @@ impl StabilizationManager {
                         };
                     }
                 }
-                if let Some(v) = obj.get("max_zoom").and_then(|x| x.as_f64()) {
-                    params.max_zoom = Some(v);
+                if let Some(v) = obj.get("max_zoom") {
+                    if v.is_null() {
+                        params.max_zoom = None;
+                        params.max_zoom_linked = false;
+                    } else if let Some(v) = v.as_f64() {
+                        params.max_zoom = Some(v);
+                        params.max_zoom_linked = false;
+                    }
                 }
                 if let Some(v) = obj.get("fixed_zoom").and_then(|x| x.as_bool()) {
                     params.fixed_zoom = v;
+                    if v { params.max_zoom_linked = false; }
                 } else if !*is_preset { params.fixed_zoom = false; }
                 if let Some(v) = obj.get("max_zoom_iterations").and_then(|x| x.as_i64()) {
                     params.max_zoom_iterations = v as _;
@@ -5240,6 +5300,9 @@ impl StabilizationManager {
                         smoothing_alg.set_parameter(name, value);
                         Some(())
                     })();
+                }
+                if smoothing_alg.get_name() == "Optimal path" {
+                    params.update_linked_max_zoom(smoothing_alg.get_parameter("smoothness"));
                 }
                 if let Some(horizon_amount) =
                     obj.get("horizon_lock_amount").and_then(|x| x.as_f64())
@@ -5390,7 +5453,14 @@ impl StabilizationManager {
             obj.remove("offsets");
 
             if let Some(keyframes) = obj.get("keyframes") {
-                self.keyframes.write().deserialize(keyframes);
+                let explicit_max_zoom = {
+                    let mut manager = self.keyframes.write();
+                    manager.deserialize(keyframes);
+                    manager.is_keyframed(&KeyframeType::MaxZoom)
+                };
+                if explicit_max_zoom {
+                    self.params.write().max_zoom_linked = false;
+                }
             }
 
             if let Some(start) = obj.get("trim_start").and_then(|x| x.as_f64()) {
@@ -5536,6 +5606,10 @@ impl StabilizationManager {
                     )
                 });
             }
+        }
+        if legacy_reconstruction {
+            // Returned to the importer only; exports are built from the restored manager.
+            obj["legacy_reconstruction_skipped"] = serde_json::Value::Bool(true);
         }
         Ok(obj)
     }
@@ -5721,20 +5795,16 @@ impl StabilizationManager {
             let settings_path = settings::data_dir()
                 .join("lens_profiles")
                 .join("default.gyroflow");
-            if settings_path.exists() {
-                let _ = self.import_gyroflow_file(
-                    &settings_path.to_str().unwrap(),
+            let default_preset = if settings_path.exists() { settings_path } else { local_path };
+            if let Ok(data) = filesystem::read_to_string(default_preset.to_str().unwrap()) {
+                let data = settings::prepare_default_preset(&data);
+                let _ = self.import_gyroflow_data(
+                    data.as_bytes(),
                     true,
+                    Some(default_preset.to_str().unwrap()),
                     |_| (),
                     Arc::new(AtomicBool::new(false)),
-                    is_plugin,
-                );
-            } else if local_path.exists() {
-                let _ = self.import_gyroflow_file(
-                    &local_path.to_str().unwrap(),
-                    true,
-                    |_| (),
-                    Arc::new(AtomicBool::new(false)),
+                    &mut true,
                     is_plugin,
                 );
             }
@@ -5788,6 +5858,10 @@ impl StabilizationManager {
     }
     fn keyframes_updated(&self, typ: &KeyframeType) {
         match typ {
+            KeyframeType::MaxZoom => {
+                self.params.write().max_zoom_linked = false;
+                self.invalidate_smoothing();
+            }
             KeyframeType::VideoRotation
             | KeyframeType::ZoomingSpeed
             | KeyframeType::AdditionalTranslationX
@@ -6568,16 +6642,155 @@ mod tests {
     }
 
     #[test]
-    fn legacy_reconstruction_is_rejected_before_loading_project_or_preset() {
-        let manager = optical_project_manager();
-        let original = manager.gyro.read().quaternions.clone();
+    #[serial]
+    fn legacy_reconstruction_import_restores_project_settings() {
+        settings::set_project_import_gate(true);
+        let mut project = optical_export(&optical_project_manager());
+        project["calibration_data"] = serde_json::json!({
+            "name": "", "camera_brand": "Nikon", "camera_model": "ZR", "lens_model": "VIVITAR_50_1.7",
+            "calib_dimension": {"w":4040,"h":2276}, "orig_dimension": {"w":4040,"h":2276},
+            "fisheye_params": {"camera_matrix":[[5626.740707918525,0.0,2020.0],[0.0,5626.740707918525,1138.0],[0.0,0.0,1.0]],"distortion_coeffs":[]},
+            "frame_readout_time":9.3, "focal_length":50.0
+        });
+        project["stabilization"]["method"] = "Default".into();
+        let saved = serde_json::json!([
+            {"name":"smoothness","value":0.15}, {"name":"smoothness_pitch","value":0.5},
+            {"name":"smoothness_yaw","value":5.0}, {"name":"smoothness_roll","value":0.5},
+            {"name":"per_axis","value":0.0}, {"name":"trim_range_only","value":0.0},
+            {"name":"max_smoothness","value":1.0}, {"name":"alpha_0_1s","value":0.15}
+        ]);
+        project["stabilization"]["smoothing_params"] = saved.clone();
+        project["stabilization"]["max_zoom"] = 180.0.into();
+        project["stabilization"]["max_zoom_iterations"] = 12.into();
+        project["offsets"] = serde_json::json!({"2000000":-1497.5389815469714,"8000000":-1501.3123369761072});
         for source in [serde_json::json!({"stab_reconstruction_enabled": true}), serde_json::json!({"optical_stab_reconstruction": "old"})] {
-            for video in ["", "file:///fixture.mp4"] {
-                let project = serde_json::json!({"gyro_source": source, "videofile": video});
-                let result = manager.import_gyroflow_data(project.to_string().as_bytes(), true, None, |_| (), Arc::new(AtomicBool::new(false)), &mut false, false);
-                assert!(matches!(result, Err(GyroflowCoreError::UnsupportedFormat(_))));
-                assert_eq!(manager.gyro.read().quaternions, original);
+            let mut input = project.clone();
+            input["gyro_source"].as_object_mut().unwrap().extend(source.as_object().unwrap().clone());
+            let bytes = input.to_string();
+            let manager = StabilizationManager::default();
+            let returned = manager.import_gyroflow_data(bytes.as_bytes(), true, None, |_| (), Arc::new(AtomicBool::new(false)), &mut false, false).unwrap();
+            assert_eq!(returned["legacy_reconstruction_skipped"], true);
+            assert!(returned["gyro_source"].get("optical_stab_reconstruction").is_none());
+            assert!(returned["gyro_source"].get("stab_reconstruction_enabled").is_none());
+            assert_eq!(manager.lens.read().fisheye_params.camera_matrix[0][0], 5626.740707918525);
+            assert_eq!(manager.gyro.read().get_offsets(), &BTreeMap::from([(2_000_000,-1497.5389815469714),(8_000_000,-1501.3123369761072)]));
+            assert_eq!(manager.params.read().max_zoom, Some(180.0));
+            assert_eq!(manager.params.read().max_zoom_iterations, 12);
+            let smoothing = manager.smoothing.read();
+            assert_eq!(smoothing.current().get_name(), "Default");
+            for value in saved.as_array().unwrap() {
+                assert_eq!(smoothing.current().get_parameter(value["name"].as_str().unwrap()), value["value"].as_f64().unwrap());
             }
+            drop(smoothing);
+            assert!(!manager.optical_ui.read().stab_enabled);
+            assert!(manager.gyro.read().optical_stab.is_none());
+            assert!(optical_export(&manager).get("legacy_reconstruction_skipped").is_none());
+            assert_eq!(input.to_string(), bytes);
+        }
+        settings::set_project_import_gate(false);
+    }
+
+    #[test]
+    #[serial]
+    fn legacy_reconstruction_preset_does_not_enable_the_retired_mode_or_migrate_smoothness() {
+        settings::set_project_import_gate(true);
+        let manager = optical_project_manager();
+        install_stab(&manager);
+        let original = manager.gyro.read().quaternions.clone();
+        let project = serde_json::json!({"videofile":"", "gyro_source":{"stab_reconstruction_enabled":true},
+            "stabilization":{"method":"Default","smoothing_params":[{"name":"smoothness","value":0.15},{"name":"alpha_0_1s","value":0.15}]}});
+        let mut preset = false;
+        manager.import_gyroflow_data(project.to_string().as_bytes(), false, None, |_| (), Arc::new(AtomicBool::new(false)), &mut preset, false).unwrap();
+        assert!(preset);
+        assert_eq!(manager.smoothing.read().current().get_name(), "Optimal path");
+        assert_eq!(manager.smoothing.read().current().get_parameter("smoothness"), 0.5);
+        assert!(!manager.optical_ui.read().stab_enabled);
+        assert!(manager.gyro.read().optical_stab.is_none());
+        assert_eq!(manager.gyro.read().quaternions, original);
+        settings::set_project_import_gate(false);
+    }
+
+    #[test]
+    #[serial]
+    fn legacy_reconstruction_keeps_independent_translation_but_not_conditioned_results() {
+        let source = optical_project_manager();
+        source.set_optical_correction_enabled(false);
+        source.set_translation_stabilization_enabled(true);
+        install_translation(&source);
+        let mut project = optical_export(&source);
+        project["gyro_source"]["stab_reconstruction_enabled"] = true.into();
+        project["gyro_source"]["optical_stab_reconstruction"] = "old".into();
+        project["gyro_source"]["optical_correction_enabled"] = true.into();
+        let mut correction = optical_fixture_correction(&source);
+        // Old gyro analyses can also contain a video_base; the saved input route stays authoritative.
+        correction.video_base = vec![(0,[1.0,0.0,0.0,0.0]),(10_000_000,[1.0,0.0,0.0,0.0])];
+        project["gyro_source"]["optical_correction"] = util::compress_to_base91_cbor(&correction).unwrap().into();
+        let original = source.gyro.read().optical_translation.clone().unwrap();
+        for dependency in [0, 123] {
+            let mut translation = original.clone();
+            translation.reconstruction_checksum = dependency;
+            if dependency != 0 { translation.geometry_version = gyro_source::optical_translation::CONDITIONED_GEOMETRY_VERSION; }
+            project["gyro_source"]["optical_translation"] = util::compress_to_base91_cbor(&translation).unwrap().into();
+            let restored = optical_import(&project);
+            assert!(restored.optical_ui.read().translation_enabled);
+            assert!(!restored.optical_ui.read().correction_enabled);
+            let gyro = restored.gyro.read();
+            assert!(gyro.optical_stab.is_none());
+            assert!(gyro.optical_correction.is_none());
+            let imported = gyro.optical_translation.as_ref().unwrap();
+            assert_eq!(imported.reconstruction_checksum, dependency);
+            assert_eq!(imported.is_active(), dependency == 0);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn legacy_reconstruction_does_not_discard_an_independent_visual_trajectory() {
+        let source = optical_project_manager();
+        let mut correction = optical_fixture_correction(&source);
+        correction.video_base = vec![(0,[1.0,0.0,0.0,0.0]),(10_000_000,[1.0,0.0,0.0,0.0])];
+        source.set_optical_correction(Some(correction.clone()));
+        source.set_ignore_file_motion(true);
+        let mut project = optical_export(&source);
+        project["gyro_source"]["stab_reconstruction_enabled"] = true.into();
+        let restored = optical_import(&project);
+        let gyro = restored.gyro.read();
+        assert!(gyro.ignores_file_motion());
+        let imported = gyro.optical_correction.as_ref().unwrap();
+        assert!(imported.enabled);
+        assert_eq!(imported.video_base, correction.video_base);
+    }
+
+    #[test]
+    #[ignore]
+    #[serial]
+    fn legacy_reconstruction_real_project_import() {
+        let path = std::env::var("GYROFLOW_LEGACY_PROJECT_FIXTURE").expect("set the read-only project fixture");
+        let bytes = std::fs::read(&path).unwrap();
+        let original: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let manager = StabilizationManager::default();
+        settings::set_project_import_gate(true);
+        let returned = manager.import_gyroflow_data_with_policy(&bytes, true, None, |_| (),
+            Arc::new(AtomicBool::new(false)), &mut false, false, ExternalIoPolicy::Deny).unwrap();
+        settings::set_project_import_gate(false);
+        assert_eq!(returned["legacy_reconstruction_skipped"], true);
+        assert_eq!(manager.lens.read().fisheye_params.camera_matrix[0][0], 5626.740707918525);
+        assert_eq!(manager.lens.read().focal_length, Some(50.0));
+        let smoothing = manager.smoothing.read();
+        assert_eq!(smoothing.current().get_name(), original["stabilization"]["method"].as_str().unwrap());
+        for value in original["stabilization"]["smoothing_params"].as_array().unwrap() {
+            assert_eq!(smoothing.current().get_parameter(value["name"].as_str().unwrap()), value["value"].as_f64().unwrap());
+        }
+        drop(smoothing);
+        assert_eq!(manager.params.read().max_zoom, Some(180.0));
+        assert_eq!(manager.params.read().max_zoom_iterations, 12);
+        assert_eq!(manager.gyro.read().get_offsets().len(), 2);
+        assert!(!manager.optical_ui.read().stab_enabled);
+        assert!(manager.gyro.read().optical_stab.is_none());
+        assert!(manager.gyro.read().optical_correction.is_none());
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+        if let Ok(path) = std::env::var("GYROFLOW_LEGACY_IMPORT_REPORT") {
+            std::fs::write(path, serde_json::to_vec_pretty(&returned).unwrap()).unwrap();
         }
     }
 
@@ -9322,6 +9535,198 @@ mod tests {
         drop(smoothing);
 
         settings::set_project_import_gate(false);
+    }
+
+    #[test]
+    fn session_smoothing_defaults_follow_the_approved_budget_nodes() {
+        let target = StabilizationManager::default();
+        assert_eq!(target.smoothing.read().current().get_name(), "Optimal path");
+        assert_eq!(target.smoothing.read().current().get_parameter("smoothness"), 0.5);
+        assert_eq!(target.params.read().max_zoom, Some(120.0));
+        assert!(target.params.read().max_zoom_linked);
+        target.set_max_zoom_iterations(8);
+        for (smoothness, expected) in [(0.0, 120.0), (0.5, 120.0), (0.625, 135.0), (0.75, 150.0), (1.0, 150.0), (0.25, 120.0)] {
+            target.set_smoothing_param("smoothness", smoothness);
+            assert_eq!(target.params.read().max_zoom, Some(expected));
+        }
+        assert_eq!(target.params.read().max_zoom_iterations, 8);
+        target.set_smoothing_method(1);
+        target.set_smoothing_param("smoothness", 0.9);
+        assert_eq!(target.params.read().max_zoom, Some(120.0));
+        target.set_smoothing_method(smoothing::OPTIMAL_ID);
+        assert_eq!(target.smoothing.read().current().get_parameter("smoothness"), 0.25);
+        assert_eq!(target.params.read().max_zoom, Some(120.0));
+    }
+
+    #[test]
+    fn session_smoothing_manual_zoom_fixed_zoom_and_keyframes_take_priority() {
+        let target = StabilizationManager::default();
+        target.set_max_zoom(143.0, 7);
+        target.set_smoothing_param("smoothness", 1.0);
+        assert_eq!(target.params.read().max_zoom, Some(143.0));
+        assert!(!target.params.read().max_zoom_linked);
+        let cloned = target.get_cloned();
+        cloned.set_smoothing_param("smoothness", 0.625);
+        assert_eq!(cloned.params.read().max_zoom, Some(143.0));
+        cloned.clear();
+        cloned.set_smoothing_param("smoothness", 0.75);
+        assert_eq!(cloned.params.read().max_zoom, Some(143.0));
+        assert!(!serde_json::to_value(&*cloned.params.read()).unwrap().as_object().unwrap().contains_key("max_zoom_linked"));
+
+        let fixed = StabilizationManager::default();
+        fixed.set_fixed_zoom(true);
+        fixed.set_smoothing_param("smoothness", 1.0);
+        assert_eq!(fixed.params.read().max_zoom, Some(120.0));
+        assert!(!fixed.params.read().max_zoom_linked);
+
+        let keyframed = StabilizationManager::default();
+        keyframed.set_keyframe(&KeyframeType::MaxZoom, 0, 163.0);
+        keyframed.set_smoothing_param("smoothness", 1.0);
+        assert_eq!(keyframed.params.read().max_zoom, Some(120.0));
+        assert_eq!(keyframed.keyframe_value_at_video_timestamp(&KeyframeType::MaxZoom, 0.0), Some(163.0));
+        assert!(!keyframed.params.read().max_zoom_linked);
+
+        let linked_clone = StabilizationManager::default().get_cloned();
+        linked_clone.clear();
+        linked_clone.set_smoothing_param("smoothness", 0.625);
+        assert_eq!(linked_clone.params.read().max_zoom, Some(135.0));
+    }
+
+    #[test]
+    fn session_smoothing_explicit_choices_reset_only_the_budget() {
+        let target = StabilizationManager::default();
+        target.set_max_zoom(143.0, 12);
+        target.set_smoothing_param("smoothness", 0.625);
+        target.set_smoothing_method(1);
+        assert_eq!(target.params.read().max_zoom, Some(143.0));
+        target.reset_smoothing_max_zoom();
+        assert_eq!(target.params.read().max_zoom, Some(180.0));
+        assert!(!target.params.read().max_zoom_linked);
+        target.set_smoothing_param("smoothness", 0.153456);
+        target.set_smoothing_param("alpha_0_1s", 0.15);
+        target.set_smoothing_method(smoothing::OPTIMAL_ID);
+        target.reset_smoothing_max_zoom();
+        assert_eq!(target.smoothing.read().current().get_parameter("smoothness"), 0.625);
+        assert_eq!(target.params.read().max_zoom, Some(135.0));
+        assert!(target.params.read().max_zoom_linked);
+        target.set_smoothing_param("smoothness", 0.75);
+        assert_eq!(target.params.read().max_zoom, Some(150.0));
+        target.set_smoothing_method(1);
+        target.reset_smoothing_max_zoom();
+        assert_eq!(target.params.read().max_zoom, Some(180.0));
+        assert_eq!(target.params.read().max_zoom_iterations, 12);
+        assert_eq!(target.smoothing.read().current().get_parameter("smoothness"), 0.153456);
+        assert_eq!(target.smoothing.read().current().get_parameter("alpha_0_1s"), 0.15);
+    }
+
+    #[test]
+    fn session_smoothing_budget_reset_keeps_fixed_zoom_and_max_zoom_keyframes() {
+        let target = StabilizationManager::default();
+        target.set_fixed_zoom(true);
+        target.set_max_zoom(143.0, 7);
+        target.reset_smoothing_max_zoom();
+        assert_eq!(target.params.read().max_zoom, Some(120.0));
+        assert!(target.params.read().fixed_zoom);
+        assert!(!target.params.read().max_zoom_linked);
+        target.set_fixed_zoom(false);
+        target.set_keyframe(&KeyframeType::MaxZoom, 0, 163.0);
+        target.set_smoothing_param("smoothness", 0.625);
+        target.reset_smoothing_max_zoom();
+        assert_eq!(target.params.read().max_zoom, Some(135.0));
+        assert!(!target.params.read().max_zoom_linked);
+        assert_eq!(target.keyframe_value_at_video_timestamp(&KeyframeType::MaxZoom, 0.0), Some(163.0));
+    }
+
+    #[test]
+    #[serial]
+    fn session_smoothing_saved_projects_keep_explicit_methods_and_crop_values() {
+        let tmp = tempfile::tempdir().unwrap();
+        settings::with_test_settings_file(tmp.path().join("settings.json"), || {
+            for (method, smoothness) in [("Default", 0.15), ("Optimal path", 0.15), ("Optimal path", 0.7)] {
+                let target = StabilizationManager::default();
+                let project = serde_json::json!({
+                    "title": "Gyroflow data file", "version": 4, "videofile": "file:///session-defaults.mp4",
+                    "stabilization": {
+                        "method": method, "smoothing_params": [{ "name": "smoothness", "value": smoothness }],
+                        "max_zoom": 137.0, "max_zoom_iterations": 9,
+                        "adaptive_zoom_window": -1.0, "adaptive_zoom_method": 0, "fixed_zoom": false
+                    }
+                });
+                settings::set_project_import_gate(true);
+                import_project(&target, &project);
+                settings::set_project_import_gate(false);
+                assert_eq!(target.smoothing.read().current().get_name(), method);
+                assert_eq!(target.smoothing.read().current().get_parameter("smoothness"), smoothness);
+                target.set_smoothing_param("smoothness", 1.0);
+                let params = target.params.read();
+                assert_eq!(params.max_zoom, Some(137.0));
+                assert_eq!(params.max_zoom_iterations, 9);
+                assert_eq!(params.adaptive_zoom_window, -1.0);
+                assert_eq!(params.adaptive_zoom_method, 0);
+                assert!(!params.fixed_zoom);
+                assert!(!params.max_zoom_linked);
+            }
+            let target = StabilizationManager::default();
+            settings::set_project_import_gate(true);
+            import_project(&target, &serde_json::json!({
+                "title": "Gyroflow data file", "version": 4, "videofile": "file:///session-defaults.mp4",
+                "stabilization": { "max_zoom": null }
+            }));
+            settings::set_project_import_gate(false);
+            target.set_smoothing_param("smoothness", 1.0);
+            assert_eq!(target.params.read().max_zoom, None);
+            assert!(!target.params.read().max_zoom_linked);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn session_smoothing_auto_defaults_are_filtered_but_explicit_presets_apply() {
+        let tmp = tempfile::tempdir().unwrap();
+        settings::with_test_settings_file(tmp.path().join("settings.json"), || {
+            let preset = serde_json::json!({
+                "title": "Gyroflow data file", "version": 4,
+                "stabilization": {
+                    "method": "Optimal path", "smoothing_params": [{ "name": "smoothness", "value": 0.15 }],
+                    "max_zoom": 178.0, "max_zoom_iterations": 11, "adaptive_zoom_window": -1.0,
+                    "adaptive_zoom_method": 0, "fixed_zoom": true, "fov": 1.3, "frame_readout_time": 8.0
+                },
+                "keyframes": { "MaxZoom": { "0": { "value": 178.0, "easing": "NoEasing" } } },
+                "synchronization": { "search_size": 8 }, "calibration_data": { "lens_model": "session fixture" }
+            });
+            let filtered: serde_json::Value = serde_json::from_str(&settings::prepare_default_preset(&preset.to_string())).unwrap();
+            assert_eq!(filtered["synchronization"], preset["synchronization"]);
+            assert_eq!(filtered["calibration_data"], preset["calibration_data"]);
+            assert!(filtered.get("keyframes").is_none());
+            assert_eq!(settings::prepare_default_preset("invalid json"), "invalid json");
+
+            let target = StabilizationManager::default();
+            target.set_smoothing_param("smoothness", 0.625);
+            target.set_keyframe(&KeyframeType::SmoothingParamSmoothness, 0, 0.625);
+            settings::set_project_import_gate(true);
+            import_project(&target, &filtered);
+            settings::set_project_import_gate(false);
+            assert_eq!(target.smoothing.read().current().get_parameter("smoothness"), 0.625);
+            assert_eq!(target.params.read().max_zoom, Some(135.0));
+            assert_eq!(target.params.read().adaptive_zoom_window, 4.0);
+            assert_eq!(target.params.read().max_zoom_iterations, 5);
+            assert!(!target.params.read().fixed_zoom);
+            assert_eq!(target.params.read().fov, 1.0);
+            assert_eq!(target.params.read().frame_readout_time, 8.0);
+            assert!(target.is_keyframed(&KeyframeType::SmoothingParamSmoothness));
+
+            settings::set_project_import_gate(true);
+            import_project(&target, &preset);
+            settings::set_project_import_gate(false);
+            assert_eq!(target.smoothing.read().current().get_parameter("smoothness"), 0.15);
+            assert_eq!(target.params.read().max_zoom, Some(178.0));
+            assert_eq!(target.params.read().max_zoom_iterations, 11);
+            assert_eq!(target.params.read().adaptive_zoom_window, -1.0);
+            assert!(target.params.read().fixed_zoom);
+            target.set_smoothing_param("smoothness", 1.0);
+            assert_eq!(target.params.read().max_zoom, Some(178.0));
+            assert!(!target.params.read().max_zoom_linked);
+        });
     }
 
     fn import_desktop_smoothing_fixture(method: &str, preset: bool, initial: Option<(usize, f64)>) -> (String, f64, bool) {

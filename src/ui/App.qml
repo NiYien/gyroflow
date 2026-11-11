@@ -697,7 +697,7 @@ Rectangle {
             // current batchState values so the panel mirror never pushes
             // substituted defaults into the comboboxes (and from there into the
             // main preview when batchState.active is false).
-            if (p.smoothness !== undefined) batchState.smoothness = (p.smoothness || 0.5) * 100;
+            if (p.smoothness !== undefined) batchState.smoothness = p.smoothness * 100;
             if (p.horizon_lock_amount !== undefined) {
                 batchState.horizonLock = (p.horizon_lock_amount || 0) > 0;
                 batchState.horizonLockAmount = p.horizon_lock_amount || 0;
@@ -768,8 +768,7 @@ Rectangle {
     function syncBatchToStabPanel() {
         // Full mode: Stabilization.qml
         if (window.stab) {
-            const smoothEl = window.stab.getParamElement("smoothness");
-            if (smoothEl) smoothEl.value = batchState.smoothness / 100.0;  // controller uses 0-1 range
+            window.stab.displaySmoothingParam("smoothness", batchState.smoothness / 100.0);
             if (batchState.horizonLock) window.stab.horizonSlider.value = batchState.horizonLockAmount;
             window.stab.horizonCb.checked = batchState.horizonLock;
             window.stab.croppingMode.currentIndex = batchState.zoomMode;
@@ -778,7 +777,7 @@ Rectangle {
         }
         // Simple mode: SimpleStabilization.qml
         if (simpleStab) {
-            simpleStab.smoothnessSlider.value = batchState.smoothness;
+            simpleStab.smoothnessSlider.setValueFromBackend(batchState.smoothness / 100.0);
             if (batchState.horizonLock) simpleStab.horizonSlider.value = batchState.horizonLockAmount;
             simpleStab.horizonCb.checked = batchState.horizonLock;
             simpleStab._syncingBatchAutoRotate = true;
@@ -809,7 +808,7 @@ Rectangle {
     // Simple mode: smoothnessSlider
     Connections {
         target: (!window.useMobileWorkspace && simpleStab && batchState.active) ? simpleStab.smoothnessSlider : null;
-        function onValueChanged() { batchState.smoothness = target.value; }
+        function onValueChanged() { batchState.smoothness = target.value * 100.0; }
     }
     // Simple mode: horizonCb
     Connections {

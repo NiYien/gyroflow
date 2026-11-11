@@ -51,6 +51,7 @@ TestCase {
         signal keyframes_changed();
         signal keyframe_value_updated(string key, real value);
         signal gyroflow_file_loaded(var data);
+        signal smoothing_param_changed(string name, real value);
         property bool has_gravity_vectors: false;
         property bool has_per_frame_focal_length: false;
         property bool focal_length_smoothing_enabled: false;
@@ -84,6 +85,8 @@ TestCase {
         function set_use_gravity_vectors(value) { }
         function set_horizon_lock_integration_method(value) { }
         function set_max_zoom(value, iterations) { }
+        function get_max_zoom() { return 120; }
+        function set_max_zoom_iterations(iterations) { }
         function set_focal_length_smoothing_enabled(value) { }
         function set_focal_length_max_zoom_rate(value) { }
         function is_keyframed(key) { return false; }

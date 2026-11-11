@@ -9362,8 +9362,10 @@ impl RenderQueue {
                                     .video_speed_affects_zooming_limit,
                                 of_method: params.of_method,
                                 adaptive_zoom_method: params.adaptive_zoom_method,
+                                fixed_zoom: params.fixed_zoom,
                                 max_zoom: params.max_zoom,
                                 max_zoom_iterations: params.max_zoom_iterations,
+                                max_zoom_linked: params.max_zoom_linked,
                                 ..Default::default()
                             },
                         )),
@@ -10158,7 +10160,7 @@ impl RenderQueue {
                                         filesystem::get_filename(&url),
                                         t_preset.elapsed().as_secs_f64() * 1000.0
                                     );
-                                    apply_preset((data, job_id));
+                                    apply_preset((gyroflow_core::settings::prepare_default_preset(&data), job_id));
                                 } else if let Ok(data) = std::fs::read_to_string(default_preset) {
                                     ::log::info!(
                                         "[queue_add:default_preset] apply bundled preset job_id={} file='{}' read_elapsed_ms={:.1}",
@@ -10166,7 +10168,7 @@ impl RenderQueue {
                                         filesystem::get_filename(&url),
                                         t_preset.elapsed().as_secs_f64() * 1000.0
                                     );
-                                    apply_preset((data, job_id));
+                                    apply_preset((gyroflow_core::settings::prepare_default_preset(&data), job_id));
                                 } else {
                                     ::log::info!(
                                         "[queue_add:default_preset] none job_id={} file='{}' elapsed_ms={:.1}",
@@ -32884,7 +32886,7 @@ mod tests {
         let full_qml = include_str!("../ui/menu/Stabilization.qml");
 
         for needle in [
-            "window.batchState.smoothness = value;",
+            "window.batchState.smoothness = value * 100.0;",
             "window.batchState.zoomMode = currentIndex;",
             "window.batchState.lensCorrection = checked ? 1.0 : 0.0;",
             "window.batchState.framerate = value;",
@@ -32906,6 +32908,9 @@ mod tests {
                 "Stabilization.qml must directly update batch state: {needle}"
             );
         }
+        let app_qml = include_str!("../ui/App.qml");
+        assert!(app_qml.contains("simpleStab.smoothnessSlider.setValueFromBackend(batchState.smoothness / 100.0);"));
+        assert!(app_qml.contains("batchState.smoothness = target.value * 100.0;"));
     }
 
     #[test]

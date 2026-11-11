@@ -23,10 +23,25 @@ Row {
     property real scaler: 1;
 
     property bool preventChange: false;
+    // Child field construction must not replace the caller's initial value.
+    property bool _initialized: false;
 
     property real value: defaultValue;
 
     property alias contextMenu: menuLoader.sourceComponent;
+
+    Component.onCompleted: {
+        root._initialized = true;
+        root.setValueFromBackend(root.value);
+    }
+
+    function setValueFromBackend(newValue: real): void {
+        const wasPreventing = root.preventChange;
+        root.preventChange = true;
+        root.value = newValue;
+        field.value = newValue * root.scaler;
+        root.preventChange = wasPreventing;
+    }
 
     onValueChanged: {
         if (!root.preventChange) {
@@ -115,7 +130,7 @@ Row {
             slider.value = value;
             Qt.callLater(() => { if (slider) slider.preventChange = false; });
 
-            if (!root.preventChange) {
+            if (root._initialized && !root.preventChange) {
                 root.preventChange = true;
                 root.value = value / root.scaler;
                 root.preventChange = false;

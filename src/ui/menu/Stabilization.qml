@@ -12,7 +12,7 @@ MenuItem {
     innerItem.enabled: window.videoArea.vid.loaded || root._batchActive;
     objectName: "stabilization";
 
-    signal smoothnessChanged(real value);  // emitted when the Default smoothness slider changes
+    signal smoothnessChanged(real value);  // Normalized value; batch controls display percent.
     property alias horizonCb: horizonCb;
     property alias horizonRollSlider: horizonRollSlider;
     property alias fovSlider: fov;
@@ -27,48 +27,32 @@ MenuItem {
     property alias batchFramerateField: batchFramerateField;
 
     readonly property bool _batchActive: window.batchState && window.batchState.active
+    property bool _importing: false;
+    property bool _controlsReady: false;
+    property int smoothingMethodId: 4;
 
-    Item {
-        id: sett;
-        property alias croppingMode: croppingMode.currentIndex;
-        property alias adaptiveZoom: adaptiveZoom.value;
-        property alias correctionAmount: correctionAmount.value;
-        property alias useGravityVectors: useGravityVectors.checked;
-        property alias hlIntegrationMethod: integrationMethod.currentIndex;
-        property alias videoSpeedAffectsSmoothing: videoSpeedAffectsSmoothing.checked;
-        property alias videoSpeedAffectsZooming: videoSpeedAffectsZooming.checked;
-        property alias videoSpeedAffectsZoomingLimit: videoSpeedAffectsZoomingLimit.checked;
-        property alias zoomingMethod: zoomingMethod.currentIndex;
-        property alias maxZoom: maxZoomSlider.value;
-        property alias maxZoomIterations: maxZoomIterations.value;
-        property alias focalLengthSmoothingEnabled: flEnable.cb.checked;
-        property alias focalLengthMaxZoomRate: flMaxZoomRate.value;
-
-        Component.onCompleted: {
-            // A global preference is a default for new projects, not a saved project mode.
-            if (+settings.value("croppingMode", 1) === 0) settings.setValue("croppingMode", 1);
-            settings.init(sett);
-        }
-        function propChanged() { settings.propChanged(sett); }
+    function selectSmoothingMethod(methodId: int): void {
+        root.smoothingMethodId = methodId;
+        smoothingMethod.refreshOptions(true);
+        settings.setValue("smoothingMethodChoice", smoothingAlgorithms[methodId]);
     }
 
     function loadGyroflow(obj: var): void {
         const stab = obj.stabilization || { };
+        root._importing = true;
+        try {
         if (stab && Object.keys(stab).length > 0) {
             if (stab.hasOwnProperty("fov")) fov.value = +stab.fov;
             const methodIndex = smoothingAlgorithms.indexOf(stab.method);
-            if (methodIndex > -1) {
-                smoothingMethod.currentIndex = methodIndex;
+            if (methodIndex > -1 && methodIndex !== root.smoothingMethodId) {
+                root.smoothingMethodId = methodIndex;
+                smoothingMethod.refreshOptions(false);
             }
             if (stab.smoothing_params) {
                 Qt.callLater(function() {
                     for (const x of stab.smoothing_params) {
-                        const el = root.getParamElement(x.name);
-                        if (el) {
-                            console.log("Setting param", x.name, x.value);
-                            if (typeof el.value !== "undefined") el.value = x.value;
-                            if (typeof el.checked !== "undefined") el.checked = +x.value > 0;
-                        }
+                        console.log("Setting param", x.name, x.value);
+                        root.displaySmoothingParam(x.name, x.value);
                     }
                 });
             }
@@ -110,8 +94,8 @@ MenuItem {
                 additionalTranslationY.value = stab.additional_translation[1];
                 additionalTranslationZ.value = stab.additional_translation[2];
             }
-            if (stab.hasOwnProperty("max_zoom") && +stab.max_zoom > 50) maxZoomSlider.value = +stab.max_zoom;
-            if (stab.hasOwnProperty("max_zoom_terations") && +stab.max_zoom_terations > 0) maxZoomIterations.value = +stab.max_zoom_terations;
+            if (stab.hasOwnProperty("max_zoom") && +stab.max_zoom > 50) maxZoomSlider.setValueFromBackend(+stab.max_zoom);
+            if (stab.hasOwnProperty("max_zoom_iterations") && +stab.max_zoom_iterations > 0) maxZoomIterations.value = +stab.max_zoom_iterations;
             if (stab.hasOwnProperty("adaptive_zoom_method")) zoomingMethod.currentIndex = +stab.adaptive_zoom_method;
             if (stab.hasOwnProperty("fixed_zoom") || obj.videofile) fixedZoom.checked = !!stab.fixed_zoom;
             if (stab.hasOwnProperty("use_gravity_vectors")) {
@@ -163,6 +147,7 @@ MenuItem {
             if (stab.hasOwnProperty("video_speed_affects_zooming"))       videoSpeedAffectsZooming.checked      = !!stab.video_speed_affects_zooming;
             if (stab.hasOwnProperty("video_speed_affects_zooming_limit")) videoSpeedAffectsZoomingLimit.checked = !!stab.video_speed_affects_zooming_limit;
         }
+        } finally { root._importing = false; }
     }
 
     function setFrameReadoutTime(v: real, direction: var): void {
@@ -172,16 +157,32 @@ MenuItem {
     }
 
     function setSmoothingParam(name: string, value: real): void {
+        if (root._importing) return;
         if (window.batchState && window.batchState.active) {
             if (name === "smoothness") window.batchState.smoothness = value * 100.0;
             return;
         }
         if (name === "smoothness") root.smoothnessChanged(value);
-        settings.setValue("smoothing-" + smoothingMethod.currentIndex + "-" + name, value);
         controller.set_smoothing_param(name, value);
     }
-    function getSmoothingParam(name: string, defaultValue: real): real {
-        return settings.value("smoothing-" + smoothingMethod.currentIndex + "-" + name, defaultValue);
+    function refreshZoomLimit(): void {
+        const value = controller.get_max_zoom();
+        if (value > 50 && !maxZoomSlider.keyframesEnabled) {
+            const wasImporting = root._importing;
+            root._importing = true;
+            maxZoomSlider.setValueFromBackend(value);
+            root._importing = wasImporting;
+        }
+    }
+    function displaySmoothingParam(name: string, value: real): void {
+        const element = root.getParamElement(name);
+        if (!element) return;
+        const wasImporting = root._importing;
+        root._importing = true;
+        if (typeof element.setValueFromBackend === "function") element.setValueFromBackend(value);
+        else if (typeof element.value !== "undefined") element.value = value;
+        if (typeof element.checked !== "undefined") element.checked = value > 0;
+        root._importing = wasImporting;
     }
     function traverseChildren(node: QtObject, name: string): QtObject {
         for (let i = node.children.length; i > 0; --i) {
@@ -220,6 +221,7 @@ MenuItem {
         target: controller;
         function onCompute_progress(id: real, progress: real): void {
             if (progress >= 1) {
+                root.refreshZoomLimit();
                 const min_fov = controller.get_min_fov();
                 const max_angles = controller.get_smoothing_max_angles();
                 maxValues.maxPitch = max_angles[0];
@@ -260,6 +262,10 @@ MenuItem {
                 }
             }
         }
+        function onSmoothing_param_changed(name: string, value: real): void {
+            root.displaySmoothingParam(name, value);
+            root.refreshZoomLimit();
+        }
         function onTelemetry_loaded(is_main_video: bool, filename: string, camera: string, additional_data: var): void {
             if (is_main_video) {
                 if (Math.abs(+additional_data.frame_readout_time) > 0) {
@@ -298,21 +304,33 @@ MenuItem {
         QT_TRANSLATE_NOOP("Stabilization", "Yaw angle");
         QT_TRANSLATE_NOOP("Stabilization", "Pitch angle");
         QT_TRANSLATE_NOOP("Stabilization", "Roll angle");
+        const preferredMethod = settings.value("smoothingMethodChoice", "Optimal path");
+        root.smoothingMethodId = !window.useMobileWorkspace && preferredMethod === "Default" ? 1 : 4;
+        smoothingMethod.refreshOptions(true);
+        root._controlsReady = true;
+        root.refreshZoomLimit();
     }
 
     ComboBox {
         id: smoothingMethod;
-        model: smoothingAlgorithms;
-        visible: false;
-        currentIndex: smoothingAlgorithms.indexOf("Optimal path");
-        Component.onCompleted: currentIndexChanged();
-        onCurrentIndexChanged: {
+        objectName: "smoothingMethod";
+        width: parent.width;
+        model: [QT_TRANSLATE_NOOP("Popup", "Default"), QT_TRANSLATE_NOOP("Popup", "Optimal path")];
+        visible: !window.useMobileWorkspace;
+        enabled: !root._batchActive;
+        currentIndex: [1, 4].indexOf(root.smoothingMethodId);
+        displayText: currentIndex < 0 ? (smoothingAlgorithms[root.smoothingMethodId] || "—") : currentText;
+        onActivated: (index) => root.selectSmoothingMethod([1, 4][index]);
+        function refreshOptions(resetZoom: bool): void {
+            const wasImporting = root._importing;
+            root._importing = true;
+            try {
             // Clear current params
             for (let i = smoothingOptions.children.length; i > 0; --i) {
                 smoothingOptions.children[i - 1].destroy();
             }
 
-            const opt_json = controller.set_smoothing_method(currentIndex);
+            const opt_json = controller.set_smoothing_method(root.smoothingMethodId, resetZoom);
             if (opt_json.length > 0) {
                 let qml = "import QtQuick; import '../components/'; Column { width: parent.width; ";
                 let adv_qml = "AdvancedSection { diff: 0; ";
@@ -320,7 +338,7 @@ MenuItem {
                     // TODO: figure out a better way than constructing a string
                     let str = "";
                     const add = x.custom_qml || "";
-                    const isPercent = smoothingMethod.currentIndex == 1 && (x.keyframe == "SmoothingParamSmoothness" || x.keyframe == "SmoothingParamPitch" || x.keyframe == "SmoothingParamYaw" || x.keyframe == "SmoothingParamRoll");
+                    const isPercent = (root.smoothingMethodId == 1 || root.smoothingMethodId == 4) && (x.keyframe == "SmoothingParamSmoothness" || x.keyframe == "SmoothingParamPitch" || x.keyframe == "SmoothingParamYaw" || x.keyframe == "SmoothingParamRoll");
                     if (isPercent) {
                         x.from      *= 100.0;
                         x.to        *= 100.0;
@@ -344,7 +362,7 @@ MenuItem {
                                     from: ${x.from};
                                     to: ${x.to};
                                     scaler: ${x.scaler || 1.0};
-                                    value: root.getSmoothingParam("${x.name}", ${x.value});
+                                    value: ${x.value};
                                     defaultValue: ${x.default};
                                     objectName: "param-${x.name}";
                                     unit: qsTranslate("Stabilization", "${x.unit}");
@@ -358,7 +376,7 @@ MenuItem {
                         case 'CheckBox':
                             str = `CheckBox {
                                 text: qsTranslate("Stabilization", "${x.description}")
-                                checked: +root.getSmoothingParam("${x.name}", ${x.default}) > 0;
+                                checked: +${x.value} > 0;
                                 onCheckedChanged: root.setSmoothingParam("${x.name}", checked? 1 : 0);
                                 objectName: "param-${x.name}";
                                 Component.onCompleted: checkedChanged();
@@ -374,9 +392,12 @@ MenuItem {
                 qml += "}";
 
                 Qt.createQmlObject(qml, smoothingOptions);
+                for (const x of opt_json) root.displaySmoothingParam(x.name, x.value);
 
                 Qt.callLater(updateHorizonLock);
             }
+            } finally { root._importing = wasImporting; }
+            root.refreshZoomLimit();
         }
     }
 
@@ -630,6 +651,7 @@ MenuItem {
         width: parent.width;
         Component.onCompleted: currentIndexChanged();
         onCurrentIndexChanged: {
+            if (root._importing) return;
             if (window.batchState && window.batchState.active) {
                 window.batchState.zoomMode = currentIndex;
                 return;
@@ -647,14 +669,14 @@ MenuItem {
     }
     Label {
         text: qsTr("Zoom limit");
-        visible: smoothingMethod.currentIndex == 1 || smoothingMethod.currentIndex == 2 || smoothingMethod.currentIndex == 4;
+        visible: root.smoothingMethodId == 1 || root.smoothingMethodId == 2 || root.smoothingMethodId == 4;
         position: Label.LeftPosition;
         tooltip: qsTr("Zoom limit is calculated approximately.\nIf you need more accuracy, increase the number of iterations in \"Advanced\" below.");
         enabled: !root._batchActive; opacity: root._batchActive ? 0.4 : 1.0;
         SliderWithField {
             id: maxZoomSlider;
-            value: 130;
-            defaultValue: 130;
+            value: 120;
+            defaultValue: 120;
             from: 110;
             to: 300;
             unit: "%";
@@ -662,7 +684,7 @@ MenuItem {
             slider.stepSize: 1;
             width: parent.width;
             keyframe: "MaxZoom";
-            onValueChanged: controller.set_max_zoom(maxZoomSlider.value, maxZoomIterations.value);
+            onValueChanged: if (root._controlsReady && !root._importing) controller.set_max_zoom(value, maxZoomIterations.value);
         }
     }
     CheckBox {
@@ -670,7 +692,7 @@ MenuItem {
         text: qsTr("Use the zoom limit as fixed zoom");
         visible: croppingMode.currentIndex == 2;
         enabled: !root._batchActive;
-        onCheckedChanged: controller.set_fixed_zoom(checked);
+        onCheckedChanged: if (root._controlsReady && !root._importing) controller.set_fixed_zoom(checked);
     }
     Label {
         text: qsTr("Zooming speed");
@@ -686,7 +708,7 @@ MenuItem {
             unit: qsTr("s");
             width: parent.width;
             keyframe: "ZoomingSpeed";
-            onValueChanged: controller.adaptive_zoom = value;
+            onValueChanged: if (!root._importing) controller.adaptive_zoom = value;
             onKeyframesEnabledChanged: Qt.callLater(zoomingMethod.adjustMethod);
         }
     }
@@ -1010,7 +1032,7 @@ MenuItem {
             }
         }
         Label {
-            visible: smoothingMethod.currentIndex == 1 || smoothingMethod.currentIndex == 2;
+            visible: root.smoothingMethodId == 1 || root.smoothingMethodId == 2;
             text: qsTr("Zoom limit iterations");
             tooltip: qsTr("More iterations = more accurate limit, but also slower to calculate.");
             position: Label.LeftPosition;
@@ -1024,7 +1046,7 @@ MenuItem {
                 width: parent.width;
                 slider.snapMode: Slider.SnapAlways;
                 slider.stepSize: 1;
-                onValueChanged: controller.set_max_zoom(maxZoomSlider.value, maxZoomIterations.value);
+                onValueChanged: if (root._controlsReady && !root._importing) controller.set_max_zoom_iterations(value);
             }
         }
     }

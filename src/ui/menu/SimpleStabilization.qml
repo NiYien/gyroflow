@@ -68,6 +68,8 @@ Column {
     property bool _importing: false;
 
     readonly property bool _batchActive: window.batchState && window.batchState.active
+    readonly property var smoothingPanel: window.stab || null;
+    onSmoothingPanelChanged: Qt.callLater(root.refreshSmoothingMethod);
 
     function autoRotateBatchJobIds(): var {
         if (!window.videoArea || !window.videoArea.queue) return [];
@@ -184,7 +186,7 @@ Column {
         try {
             if (stab.smoothing_params) {
                 for (const x of stab.smoothing_params) {
-                    if (x.name === "smoothness") smoothnessSlider.value = +x.value * 100.0;
+                    if (x.name === "smoothness") smoothnessSlider.setValueFromBackend(+x.value);
                 }
             }
 
@@ -221,6 +223,28 @@ Column {
         }
     }
 
+    function refreshSmoothingMethod(): void {
+        if (!root.smoothingPanel || root._batchActive || window.useMobileWorkspace) return;
+        const param = root.smoothingPanel.getParamElement("smoothness");
+        if (!param) return;
+        const wasImporting = root._importing;
+        root._importing = true;
+        smoothnessSlider.setValueFromBackend(param.value);
+        root._importing = wasImporting;
+    }
+    Component.onCompleted: Qt.callLater(root.refreshSmoothingMethod);
+
+    ComboBox {
+        objectName: "smoothingMethod";
+        width: parent.width;
+        model: [QT_TRANSLATE_NOOP("Popup", "Default"), QT_TRANSLATE_NOOP("Popup", "Optimal path")];
+        visible: !window.useMobileWorkspace;
+        enabled: !!root.smoothingPanel && !root._batchActive;
+        currentIndex: root.smoothingPanel ? [1, 4].indexOf(root.smoothingPanel.smoothingMethodId) : -1;
+        displayText: currentIndex < 0 && root.smoothingPanel ? (smoothingAlgorithms[root.smoothingPanel.smoothingMethodId] || "—") : currentText;
+        onActivated: (index) => root.smoothingPanel.selectSmoothingMethod([1, 4][index]);
+    }
+
     // ── Smoothness ──
     Label {
         position: Label.LeftPosition;
@@ -231,19 +255,19 @@ Column {
             width: parent.width;
             from: 0.1;
             to: 100.0;
-            value: 50.0;
+            value: 0.5;
             defaultValue: 50.0;
             unit: qsTr("%");
             precision: 1;
-            scaler: 1.0;
+            scaler: 100.0;
             keyframe: "SmoothingParamSmoothness";
             onValueChanged: {
                 if (root._importing) return;
                 if (window.batchState && window.batchState.active) {
-                    window.batchState.smoothness = value;
+                    window.batchState.smoothness = value * 100.0;
                     return;
                 }
-                controller.set_smoothing_param("smoothness", value / 100.0);
+                controller.set_smoothing_param("smoothness", value);
             }
         }
     }
@@ -461,7 +485,17 @@ Column {
 
     // ── Sync with Full mode ──
     Connections {
+        target: root.smoothingPanel;
+        function onSmoothingMethodIdChanged(): void { Qt.callLater(root.refreshSmoothingMethod); }
+    }
+    Connections {
         target: controller;
+        function onSmoothing_param_changed(name: string, value: real): void {
+            if (name !== "smoothness" || window.useMobileWorkspace || root._batchActive) return;
+            root._importing = true;
+            smoothnessSlider.setValueFromBackend(value);
+            root._importing = false;
+        }
         function onGyroflow_file_loaded(obj: var): void {
             root.loadGyroflow(obj);
         }

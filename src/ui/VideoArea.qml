@@ -250,8 +250,16 @@ Item {
     }
     Connections {
         target: controller;
+        function onGyroflow_file_load_failed(): void {
+            root.pendingExternalGyroFallbackUrl = "";
+            root.pendingExternalGyroFallbackProjectVersion = 0;
+            root.queueEditLoading = false;
+        }
         function onGyroflow_file_loaded(obj: var): void {
             if (obj) {
+                if (obj.legacy_reconstruction_skipped) {
+                    messageBox(Modal.Info, qsTr("Old stabilization reconstruction and dependent results were skipped. Other project settings were restored."), [ { text: qsTr("Ok") } ]);
+                }
                 let duration_ms = videoArea.vid.duration;
                 const info = obj.video_info || { };
                 if (info && Object.keys(info).length > 0) {
@@ -465,8 +473,8 @@ Item {
                 // entry check sees the flag and skips, and the deferred
                 // import below no longer races a seconds-long recompute
                 // into a LifecycleBusy refusal. Reset paths:
-                // onGyroflow_file_loaded clears it unconditionally (both
-                // success and error emits), and loadGyroflowData's
+                // Successful loads and the controller's failure callback clear it;
+                // loadGyroflowData's
                 // preset-error early return clears it explicitly.
                 controller.set_prevent_recompute(true);
                 Qt.callLater(loadGyroflowData, root.pendingGyroflowData, root.pendingQueueJobId);

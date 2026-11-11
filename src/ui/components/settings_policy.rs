@@ -68,7 +68,8 @@ const ALLOW_EXACT: &[&str] = &[
     "processingDevicePhysicalId",
     // The experimental panel exposes translation controls in Simple mode.
     "translationStabilization",
-    "smoothing-4-smoothness",
+    // Both desktop stabilization panels expose the Default / Optimal choice.
+    "smoothingMethodChoice",
     // Window geometry and panel splitters: user-dragged, no bearing on output.
     "windowX",
     "windowY",
@@ -92,8 +93,6 @@ const ALLOW_PREFIX: &[&str] = &[
     // path: that comes from the source folder and `preservedOutputPath`, both
     // handled elsewhere.
     "folder-",
-    // Keep the previous Default algorithm's preferences when its projects are opened.
-    "smoothing-1-",
 ];
 
 /// Keys deliberately kept off disk. Runtime behaviour does not consult this list
@@ -344,6 +343,7 @@ mod tests {
             "processingDeviceIndex",
             "processingDevicePhysicalId",
             "translationStabilization",
+            "smoothingMethodChoice",
             "niyien_tutorial_seen_v1",
             "bottomPanelSize",
             "bottomPanelSize-full",
@@ -370,10 +370,10 @@ mod tests {
     }
 
     #[test]
-    fn exposed_smoothing_parameters_persist() {
-        assert!(is_persisted("smoothing-4-smoothness"));
-        assert!(is_persisted("smoothing-1-smoothness"));
-        assert!(is_persisted("smoothing-1-per_axis"));
+    fn smoothing_parameters_are_session_scoped() {
+        assert!(!is_persisted("smoothing-4-smoothness"));
+        assert!(!is_persisted("smoothing-1-smoothness"));
+        assert!(!is_persisted("smoothing-1-per_axis"));
         // Fixed camera is algorithm 3 — the incident that motivated the gate.
         assert!(!is_persisted("smoothing-3-roll"));
         assert!(!is_persisted("smoothing-3-pitch"));

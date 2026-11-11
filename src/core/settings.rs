@@ -34,8 +34,7 @@ pub const GATED_PROJECT_STABILIZATION_FIELDS: &[(&str, &str)] = &[
     ("adaptive_zoom_window", "adaptiveZoom"),
     ("adaptive_zoom_method", "zoomingMethod"),
     ("max_zoom", "maxZoom"),
-    // Upstream's key really is spelled this way in the project format.
-    ("max_zoom_terations", "maxZoomIterations"),
+    ("max_zoom_iterations", "maxZoomIterations"),
     ("lens_correction_amount", "correctionAmount"),
     ("use_gravity_vectors", "useGravityVectors"),
     ("horizon_lock_integration_method", "hlIntegrationMethod"),
@@ -62,6 +61,26 @@ pub fn project_import_gate() -> bool {
 
 pub fn set_project_import_gate(enabled: bool) {
     PROJECT_IMPORT_GATE.store(enabled, SeqCst);
+}
+
+/// Keep automatic default presets from replacing this session's smoothing and crop settings.
+pub fn prepare_default_preset(data: &str) -> String {
+    let Ok(mut preset) = serde_json::from_str::<serde_json::Value>(data) else {
+        return data.to_owned();
+    };
+    if let Some(stabilization) = preset.get_mut("stabilization").and_then(|v| v.as_object_mut()) {
+        stabilization.retain(|key, _| !matches!(key.as_str(),
+            "method" | "smoothing_params" | "fov" | "max_zoom" | "max_zoom_iterations"
+            | "max_zoom_terations" | "adaptive_zoom_window" | "adaptive_zoom_method"
+            | "adaptive_zoom_center_offset" | "fixed_zoom" | "video_speed_affects_smoothing"
+            | "video_speed_affects_zooming" | "video_speed_affects_zooming_limit"
+        ));
+    }
+    if let Some(object) = preset.as_object_mut() {
+        // Import replaces the entire keyframe map, including any session curves absent from the preset.
+        object.remove("keyframes");
+    }
+    serde_json::to_string(&preset).unwrap_or_else(|_| data.to_owned())
 }
 
 pub fn data_dir() -> PathBuf {
