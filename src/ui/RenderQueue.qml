@@ -184,6 +184,8 @@ Item {
 
     // --- Batch gyro match state ---
     property var gyroFilesInfo: []
+    // Keep the full pool for stored indices; failed imports stay out of the UI.
+    readonly property var visibleGyroFilesInfo: gyroFilesInfo.filter(info => !info.error)
     readonly property var darkGyroColors:  ["#76baed", "#70e574", "#f6a00b", "#e87de8", "#ed7676", "#5ce0d8"]
     readonly property var lightGyroColors: ["#2f78b6", "#2d8c4d", "#ad6a00", "#9b55b7", "#c55d5d", "#1f8f9f"]
     readonly property var gyroColors: lightTheme ? lightGyroColors : darkGyroColors
@@ -201,7 +203,7 @@ Item {
     readonly property color queueOutlineColor: lightTheme ? "#1f111111" : "#70ffffff"
     readonly property real matchedGyroOpacity: lightTheme ? 0.28 : 0.30
     readonly property real unmatchedGyroOpacity: lightTheme ? 0.18 : 0.15
-    property bool hasGyroFiles: render_queue.has_gyro_files()
+    property bool hasGyroFiles: visibleGyroFilesInfo.length > 0
     property int pairingGyroIndex: -1
     property string pairingGyroFilename: ""
     property string matchWarning: ""
@@ -792,7 +794,6 @@ Item {
                 infos.push(JSON.parse(render_queue.get_gyro_file_info_json(i)));
             }
             root.gyroFilesInfo = infos;
-            root.hasGyroFiles = render_queue.has_gyro_files();
             // [T14] Reset matchExecuted when gyro files are cleared.
             if (!root.hasGyroFiles) root.matchExecuted = false;
             // Any gyro file add/remove/replace invalidates the prior match.
@@ -1435,17 +1436,15 @@ Item {
         anchors.top: progressRow.bottom;
         anchors.topMargin: visible ? 5 * dpiScale : 0;
         width: parent.width - 20 * dpiScale;
-        visible: root.gyroFilesInfo.length > 0;
+        visible: root.visibleGyroFilesInfo.length > 0;
         height: visible ? gyroSummary.height + gyroFileList.height : 0;
         property bool expanded: false;
         readonly property var counts: {
             let pending = 0;
-            let failed = 0;
-            for (const info of root.gyroFilesInfo) {
-                if (info.error) failed++;
-                else if (!info.parsed) pending++;
+            for (const info of root.visibleGyroFilesInfo) {
+                if (!info.parsed) pending++;
             }
-            return { pending: pending, failed: failed };
+            return { pending: pending };
         }
         onVisibleChanged: if (!visible) expanded = false;
 
@@ -1458,7 +1457,7 @@ Item {
             rightPadding: 10 * dpiScale;
             topPadding: 8 * dpiScale;
             bottomPadding: 8 * dpiScale;
-            text: qsTranslate("MobileWorkspace", "Gyroscope data") + " · " + root.gyroFilesInfo.length;
+            text: qsTranslate("MobileWorkspace", "Gyroscope data") + " · " + root.visibleGyroFilesInfo.length;
             contentItem: Column {
                 id: summaryColumn;
                 spacing: 4 * dpiScale;
@@ -1478,10 +1477,9 @@ Item {
                     text: {
                         let parts = [];
                         if (gyroFilesPanel.counts.pending) parts.push(qsTranslate("MobileWorkspace", "Reading…") + " (" + gyroFilesPanel.counts.pending + ")");
-                        if (gyroFilesPanel.counts.failed) parts.push(qsTr("Failed to load the gyro file.") + " (" + gyroFilesPanel.counts.failed + ")");
                         return parts.join(" · ");
                     }
-                    color: gyroFilesPanel.counts.failed ? root.errorStatusColor : styleTextColor;
+                    color: styleTextColor;
                     wrapMode: Text.Wrap;
                 }
             }
@@ -1502,7 +1500,7 @@ Item {
             visible: height > 0;
             clip: true;
             boundsBehavior: Flickable.StopAtBounds;
-            model: root.gyroFilesInfo;
+            model: root.visibleGyroFilesInfo;
             QQC.ScrollIndicator.vertical: QQC.ScrollIndicator { }
             delegate: Item {
                 required property var modelData;
@@ -1515,7 +1513,7 @@ Item {
                     width: 4 * dpiScale;
                     height: 16 * dpiScale;
                     radius: 2 * dpiScale;
-                    color: root.gyroColors[index % root.gyroColors.length];
+                    color: root.gyroColors[root.gyroFilesInfo.indexOf(root.visibleGyroFilesInfo[index]) % root.gyroColors.length];
                 }
                 BasicText {
                     x: 22 * dpiScale;
@@ -1534,10 +1532,9 @@ Item {
                     width: Math.min(implicitWidth, parent.width * 0.5);
                     leftPadding: 0;
                     textFormat: Text.PlainText;
-                    text: modelData.error ? qsTr("Failed to load the gyro file.")
-                        : !modelData.parsed ? qsTranslate("MobileWorkspace", "Reading…")
+                    text: !modelData.parsed ? qsTranslate("MobileWorkspace", "Reading…")
                         : modelData.duration_ms > 0 ? Util.timeToStr(modelData.duration_ms / 1000) : "—";
-                    color: modelData.error ? root.errorStatusColor : styleTextColor;
+                    color: styleTextColor;
                     elide: Text.ElideRight;
                 }
                 MouseArea {
@@ -1744,7 +1741,7 @@ Item {
             // where matchGyroIndex=-1 ⇒ the whole column renders blank.
             // [batch-match-gate-sync-dispatch]
             property bool isMatched: root.matchExecuted && !root.matchAllNoGyro
-            property int unmatchedGyroIndex: index < root.gyroFilesInfo.length ? index : -1
+            property int unmatchedGyroIndex: index < root.visibleGyroFilesInfo.length ? root.gyroFilesInfo.indexOf(root.visibleGyroFilesInfo[index]) : -1
             property int displayGyroIndex: isMatched ? matchGyroIndex : unmatchedGyroIndex
             property color statusAccentColor: isSkipped ? root.skippedStatusColor
                 : hasSyncStatus ? (syncColor === "green" ? root.finishedStatusColor : (syncDonePending ? root.pendingSyncStatusColor : root.manualStatusColor))
@@ -2197,6 +2194,7 @@ Item {
                         // Add items for each gyro file
                         for (let i = 0; i < root.gyroFilesInfo.length; i++) {
                             const info = root.gyroFilesInfo[i];
+                            if (info.error) continue;
                             const label = info.filename + (info.duration_ms ? " (" + (info.duration_ms / 1000).toFixed(1) + "s)" : "");
                             const action = gyroPairActionComponent.createObject(deepMatchSubMenu, {
                                 text: label,

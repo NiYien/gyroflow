@@ -25,7 +25,7 @@ Rectangle {
     readonly property int columns: landscape ? Math.max(1, Math.floor((width - 24 * unit) / (280 * unit))) : 1
     readonly property real headerHeight: (landscape ? 48 : 56) * unit
     readonly property real gyroBarHeight: gyroRecords.length ? gyroData.implicitHeight : 0
-    readonly property var gyroRecords: queueService && queueService.gyroFilesInfo ? queueService.gyroFilesInfo : []
+    readonly property var gyroRecords: queueService && queueService.gyroFilesInfo ? queueService.gyroFilesInfo.filter(info => !info.error) : []
     readonly property bool showLibraryActions: page === "library" && rows.length > 0 && !busy && !footerSelectionMode && (!summary || continueAfterSummary)
     readonly property bool wideFooter: showLibraryActions && !summary && landscape && width >= 640 * unit
     readonly property bool stackedActions: !landscape && width / unit < 320

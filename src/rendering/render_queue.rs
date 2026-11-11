@@ -2162,6 +2162,7 @@ pub struct RenderQueue {
     // Batch gyro matching
     gyro_files: Vec<GyroFileInfo>,
     next_gyro_file_id: u64,
+    // Stored gyro indices always refer to gyro_files, including failed entries.
     match_results: Option<core::gyro_match::BatchMatchResult>,
     pairing_mode_gyro_index: Option<usize>,
     // [queue-lifecycle T2] original_job_order 已废弃，不再保存/恢复原始顺序
@@ -12868,17 +12869,15 @@ impl RenderQueue {
         path: &str,
         result: (Option<i64>, Option<f64>, Option<String>, Option<String>),
     ) -> bool {
-        let Some(info) = self.gyro_files.get_mut(index) else {
-            return false;
-        };
-        if info.id != id || info.path != path {
+        // Removing another file can shift this entry while parsing is in flight.
+        let Some(info) = self.gyro_files.iter_mut().find(|info| info.id == id && info.path == path) else {
             ::log::debug!(
                 "[add_gyro_file] ignored stale parse result: index={}, path={}",
                 index,
                 path
             );
             return false;
-        }
+        };
 
         info.created_at_ms = result.0;
         info.duration_ms = result.1;
@@ -13045,15 +13044,21 @@ impl RenderQueue {
         }
 
         // Collect gyro metadata (only parsed files with valid data)
-        let gyros: Vec<_> = self
+        let (parsed_gyro_indices, gyros): (Vec<_>, Vec<_>) = self
             .gyro_files
             .iter()
-            .filter(|g| g.parsed && g.created_at_ms.is_some() && g.duration_ms.is_some())
-            .map(|g| core::gyro_match::GyroMatchInfo {
+            .enumerate()
+            .filter(|(_, g)| g.parsed && g.error.is_none() && g.created_at_ms.is_some() && g.duration_ms.is_some())
+            .map(|(i, g)| (i, core::gyro_match::GyroMatchInfo {
                 path: g.path.clone(),
                 duration_ms: g.duration_ms.unwrap(),
                 created_at_ms: g.created_at_ms.unwrap(),
-            })
+            }))
+            .unzip();
+        let pool_to_filtered: HashMap<usize, usize> = parsed_gyro_indices
+            .iter()
+            .enumerate()
+            .map(|(filtered_idx, &pool_idx)| (pool_idx, filtered_idx))
             .collect();
         ::log::info!(
             "[batch_match] collect metadata: {:.1}ms ({} videos, {} gyros parsed/{} total)",
@@ -13063,21 +13068,23 @@ impl RenderQueue {
             self.gyro_files.len()
         );
 
-        // 将 manual_pairs 中的 job_id 转换为当前队列中的 video_index
-        // 这样即使 remove/sort 改变了队列顺序，pair 关系仍然正确
+        // Resolve both queue identities into the filtered algorithm inputs.
         let mut resolved_pairs: Vec<core::gyro_match::ManualCalibrationPair> = Vec::new();
         for p in &self.manual_pairs {
+            let Some(&gyro_index) = pool_to_filtered.get(&p.gyro_index) else {
+                continue;
+            };
             if let Some(video_index) = job_ids.iter().position(|&id| id == p.job_id) {
                 resolved_pairs.push(core::gyro_match::ManualCalibrationPair {
                     job_id: p.job_id,
                     video_index,
-                    gyro_index: p.gyro_index,
+                    gyro_index,
                 });
                 ::log::info!(
                     "[batch_match] manual pair: job_id={} -> video_index={}, gyro_index={}",
                     p.job_id,
                     video_index,
-                    p.gyro_index
+                    gyro_index
                 );
             } else {
                 ::log::warn!(
@@ -13092,20 +13099,7 @@ impl RenderQueue {
             Some(resolved_pairs.as_slice())
         };
 
-        // render-queue-deep-gyro-match 7.2: pass accepted deep-match results as
-        // session anchors. `deep_match_results` stores gyro_files (pool)
-        // indices, while `gyros` above is the filtered (parsed && created_at &&
-        // duration) subset — map each pool index to the filtered index that
-        // gyro_match will see. Video created_at comes from the same `videos`
-        // entry built above (same source as VideoMatchInfo).
-        let pool_to_filtered: HashMap<usize, usize> = self
-            .gyro_files
-            .iter()
-            .enumerate()
-            .filter(|(_, g)| g.parsed && g.created_at_ms.is_some() && g.duration_ms.is_some())
-            .enumerate()
-            .map(|(filtered_idx, (pool_idx, _))| (pool_idx, filtered_idx))
-            .collect();
+        // Deep-match anchors use pool indices too; the algorithm uses the filtered subset.
         // HashMap iteration order is unstable; sort by job_id so anchor
         // application order (and any same-cluster override outcome) is
         // deterministic across runs.
@@ -13152,6 +13146,10 @@ impl RenderQueue {
 
         let t1 = std::time::Instant::now();
         let mut result = core::gyro_match::batch_match(&videos, &gyros, manual, &deep_anchors);
+        // Convert once before storing: UI, relay slicing and probes all use pool indices.
+        for r in &mut result.results {
+            r.gyro_index = r.gyro_index.map(|i| parsed_gyro_indices[i]);
+        }
         ::log::info!(
             "[batch_match] algorithm: {:.1}ms (offset={:?}, error={:?})",
             t1.elapsed().as_secs_f64() * 1000.0,
@@ -13730,15 +13728,6 @@ impl RenderQueue {
         let manual_camera_context = self.manual_camera_context();
         let manual_camera_generation = self.manual_camera_generation.clone();
         let expected_manual_camera_generation = manual_camera_generation.load(SeqCst);
-        // Build a mapping from parsed gyro index back to gyro_files index.
-        let parsed_gyro_indices: Vec<usize> = self
-            .gyro_files
-            .iter()
-            .enumerate()
-            .filter(|(_, g)| g.parsed && g.created_at_ms.is_some() && g.duration_ms.is_some())
-            .map(|(i, _)| i)
-            .collect();
-
         // Collect all info needed for background processing
         struct ApplyInfo {
             job_id: u32,
@@ -13777,7 +13766,7 @@ impl RenderQueue {
         let mut unique_gyro_paths: HashMap<usize, GyroParseInfo> = HashMap::new();
 
         for result in &results {
-            let gyro_batch_idx = match result.gyro_index {
+            let gyro_files_idx = match result.gyro_index {
                 Some(idx) => idx,
                 None => continue,
             };
@@ -13786,10 +13775,6 @@ impl RenderQueue {
             {
                 continue;
             }
-            let gyro_files_idx = match parsed_gyro_indices.get(gyro_batch_idx) {
-                Some(&idx) => idx,
-                None => continue,
-            };
             // Use pre-resolved job_id from batch_match (line 3159) instead of
             // re-looking up via video_index, because the queue order may have
             // changed between batch_match and apply_match_results (e.g. QML
@@ -15445,7 +15430,7 @@ impl RenderQueue {
             .gyro_files
             .iter()
             .enumerate()
-            .filter(|(_, g)| g.parsed)
+            .filter(|(_, g)| g.parsed && g.error.is_none())
             .map(|(i, g)| deep_match::GyroPoolEntry {
                 gyro_index: i,
                 created_at_ms: g.created_at_ms,
@@ -17669,20 +17654,9 @@ impl RenderQueue {
                         .find(|r| r.video_index == video_index)
                 });
             if let Some(r) = r_opt {
-                let parsed_gyro_indices: Vec<usize> = self
-                    .gyro_files
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, g)| {
-                        g.parsed && g.created_at_ms.is_some() && g.duration_ms.is_some()
-                    })
-                    .map(|(i, _)| i)
-                    .collect();
-
                 let matched_gyro = r
                     .gyro_index
-                    .and_then(|gi| parsed_gyro_indices.get(gi))
-                    .and_then(|&fi| self.gyro_files.get(fi));
+                    .and_then(|gi| self.gyro_files.get(gi));
 
                 let gyro_filename = matched_gyro.map(|g| g.filename.as_str()).unwrap_or("");
 
@@ -28525,6 +28499,110 @@ mod tests {
         assert_eq!(display["lens_group_display_mode"], "global");
         assert_eq!(display["lens_group_display_number"], 1);
         assert_eq!(display["lens_group_display_focal_length"], 50.0);
+    }
+
+    #[test]
+    fn gyro_pool_empty_file_returns_a_parse_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty_mix.bin");
+        std::fs::write(&path, []).unwrap();
+        let url = filesystem::path_to_url(path.to_str().unwrap());
+
+        assert!(parse_gyro_metadata(&url).is_err());
+    }
+
+    #[test]
+    fn gyro_pool_removed_failed_file_keeps_other_parse_results() {
+        let mut queue = RenderQueue::default();
+        queue.gyro_files = vec![
+            GyroFileInfo {
+                id: 1,
+                path: "file:///empty_mix.bin".into(),
+                parsed: true,
+                error: Some("Empty file".into()),
+                ..Default::default()
+            },
+            GyroFileInfo {
+                id: 2,
+                path: "file:///valid_mix.bin".into(),
+                ..Default::default()
+            },
+        ];
+        queue.remove_gyro_file(0);
+
+        assert!(queue.update_gyro_file_parse_result(
+            1, 2, "file:///valid_mix.bin",
+            (Some(1_000_000), Some(60_000.0), Some("SenseFlow".into()), None),
+        ));
+        assert!(queue.gyro_files[0].parsed);
+        assert_eq!(queue.gyro_files[0].duration_ms, Some(60_000.0));
+        assert!(queue.gyro_files[0].error.is_none());
+    }
+
+    #[test]
+    fn gyro_pool_batch_match_preserves_file_indices_with_failed_entries() {
+        for valid_index in 0..3 {
+            for manual in [false, true] {
+                let mut queue = queue_with_eta_job(JobStatus::Finished);
+                let job = queue.jobs.get_mut(&1).unwrap();
+                let stab = job.stab.take().unwrap();
+                job.video_created_at = Some(1_000_000);
+                queue.gyro_files = (0..3).map(|i| GyroFileInfo {
+                    id: i as u64,
+                    path: format!("file:///gyro_{i}_mix.bin"),
+                    filename: format!("gyro_{i}_mix.bin"),
+                    parsed: true,
+                    created_at_ms: (i == valid_index).then_some(1_000_000),
+                    duration_ms: (i == valid_index).then_some(60_000.0),
+                    error: (i != valid_index).then(|| "Empty file".into()),
+                    ..Default::default()
+                }).collect();
+                if manual {
+                    queue.manual_pairs.push(core::gyro_match::ManualCalibrationPair {
+                        job_id: 1, video_index: 0, gyro_index: valid_index,
+                    });
+                } else {
+                    queue.deep_match_results.insert(1, DeepMatchResult {
+                        gyro_index: valid_index,
+                        offset_ms: 0.0,
+                        probe_lens_index: None,
+                    });
+                }
+
+                queue.batch_match_gyro();
+
+                let batch = queue.match_results.as_ref().unwrap();
+                assert!(batch.error.is_none(), "{:?}", batch.error);
+                assert_eq!(batch.results[0].gyro_index, Some(valid_index));
+                assert_eq!(queue.get_gyro_index_for_job(1), valid_index as i32);
+                queue.deep_match_results.clear();
+                let display: serde_json::Value = serde_json::from_str(
+                    &queue.get_match_status_json(1).to_string(),
+                ).unwrap();
+                assert_eq!(display["gyro_index"], valid_index);
+                assert_eq!(display["gyro_filename"], format!("gyro_{valid_index}_mix.bin"));
+                queue.jobs.get_mut(&1).unwrap().stab = Some(stab);
+                // A changed clock offset exercises recutting instead of the baseline fast path.
+                queue.batch_clock.register_initial(
+                    gyroflow_core::synchronization::batch_clock::ConfirmedOffsetSource::Anchor,
+                    0, 1_000_000.0, 100.0,
+                );
+                let assignment = queue.batch_sync_dynamic_assignment_input(1).unwrap();
+                assert_eq!(assignment.gyro_path, format!("file:///gyro_{valid_index}_mix.bin"));
+                assert_eq!(assignment.gyro.duration_ms, 60_000.0);
+            }
+        }
+    }
+
+    #[test]
+    fn gyro_pool_deep_search_excludes_known_parse_failures() {
+        let mut queue = RenderQueue::default();
+        queue.gyro_files.push(GyroFileInfo {
+            parsed: true,
+            error: Some("Empty file".into()),
+            ..Default::default()
+        });
+        assert_eq!(queue.start_deep_gyro_match_all(1, -1).to_string(), "gyro_missing");
     }
 
     #[test]
