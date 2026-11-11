@@ -969,7 +969,7 @@ impl TempOutput {
     /// Once it's on disk, it gets the output's name, which replaces the file there at once. A program that opened that file
     /// since is told apart. Kept where only that rename fails
     pub fn publish(mut self) -> std::result::Result<(), OutputError> {
-        self.file.sync_all().map_err(|e| OutputError::Write(display_url(&self.url), e))?;
+        sync_all(&self.file).map_err(|e| OutputError::Write(display_url(&self.url), e))?;
         self.done = true;
         publish(&self.path, &self.target, &self.url).map_err(|e| OutputError::Kept(Box::new(e), self.path.clone()))
     }
@@ -981,6 +981,28 @@ impl Drop for TempOutput {
             log::error!("Failed to remove the partial output {}: {e:?}", self.path.display());
         }
     }
+}
+
+/// Flush a file, falling back to fsync on Apple volumes without F_FULLFSYNC support.
+pub fn sync_all(file: &File) -> std::io::Result<()> {
+    full_sync_unsupported(file, file.sync_all())
+}
+
+#[cfg_attr(not(target_vendor = "apple"), allow(unused_variables))]
+fn full_sync_unsupported(file: &File, ret: std::io::Result<()>) -> std::io::Result<()> {
+    #[cfg(target_vendor = "apple")]
+    if let Err(e) = &ret && matches!(e.raw_os_error(), Some(libc::ENOTSUP | libc::EOPNOTSUPP | libc::ENOTTY)) {
+        use std::os::fd::AsRawFd;
+        // Network volumes can flush to the server, but not the drive's own cache.
+        log::debug!("F_FULLFSYNC isn't supported there ({e}), syncing with fsync");
+        loop {
+            // SAFETY: the descriptor belongs to the open file.
+            if unsafe { libc::fsync(file.as_raw_fd()) } == 0 { return Ok(()); }
+            let e = std::io::Error::last_os_error();
+            if e.kind() != std::io::ErrorKind::Interrupted { return Err(e); }
+        }
+    }
+    ret
 }
 
 

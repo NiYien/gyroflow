@@ -148,6 +148,13 @@ private:
     ReadyForProcessingCb m_readyForProcessing;
 
     std::unique_ptr<mdk::Player> m_player;
+    // MDK may call event/status listeners after removal. Keep them registered and
+    // invalidate their shared guard before the wrapper or player is replaced.
+    struct ListenerGuard {
+        std::recursive_mutex mutex; // MDK can report statuses on the calling thread.
+        bool alive{true};
+    };
+    std::shared_ptr<ListenerGuard> m_listenerGuard;
     struct SourceVideoInfo {
         std::atomic<bool> ready{false};
         std::mutex mutex;

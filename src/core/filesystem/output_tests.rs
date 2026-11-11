@@ -87,6 +87,27 @@ fn rename_failure_reports_where_the_complete_file_is_kept() {
 }
 
 #[test]
+fn output_sync_preserves_write_errors() {
+    let dir = directory();
+    let file = File::create(dir.join("sync.bin")).unwrap();
+    for code in [libc::EACCES, libc::EIO] {
+        let error = full_sync_unsupported(&file, Err(std::io::Error::from_raw_os_error(code))).unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(code));
+    }
+}
+
+#[cfg(target_vendor = "apple")]
+#[test]
+fn output_sync_falls_back_only_for_unsupported_full_sync() {
+    let dir = directory();
+    let mut file = File::create(dir.join("sync.bin")).unwrap();
+    file.write_all(b"completed output").unwrap();
+    for code in [libc::ENOTSUP, libc::EOPNOTSUPP, libc::ENOTTY] {
+        full_sync_unsupported(&file, Err(std::io::Error::from_raw_os_error(code))).unwrap();
+    }
+}
+
+#[test]
 fn invalid_output_names_and_frame_patterns_are_rejected() {
     let dir = directory();
     assert!(matches!(output_target(&url(&dir), Overwrite::Rename), Err(OutputError::IsAFolder(_))));

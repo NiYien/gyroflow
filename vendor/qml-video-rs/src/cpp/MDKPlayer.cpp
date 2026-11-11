@@ -160,10 +160,13 @@ void MDKPlayer::destroyPlayer() {
 
     if (m_player) {
         stop();
+        if (m_listenerGuard) {
+            const std::lock_guard<std::recursive_mutex> lock(m_listenerGuard->mutex);
+            m_listenerGuard->alive = false;
+        }
+        m_listenerGuard.reset();
         m_player->setRenderCallback([](void *) {});
-        m_player->onMediaStatusChanged([](mdk::MediaStatus) -> bool { return false; });
         m_player->onStateChanged([](mdk::State) {});
-        m_player->onEvent([](const mdk::MediaEvent &) -> bool { return false; });
         m_player->onFrame<mdk::VideoFrame>([](mdk::VideoFrame&, int) -> int { return 0; });
         auto ptr = m_player.release();
         const bool deleteInBackground = m_isR3dFormat;
@@ -178,6 +181,7 @@ void MDKPlayer::destroyPlayer() {
 }
 
 MDKPlayer::~MDKPlayer() {
+    destroyPlayer();
     m_shuttingDown = true;
     m_videoLoaded = false;
     m_firstFrameLoaded = false;
@@ -190,7 +194,6 @@ MDKPlayer::~MDKPlayer() {
     if (m_userDataDestructor && m_userData) { m_userDataDestructor(m_userData); m_userData = nullptr; }
     if (m_userData2Destructor && m_userData2) { m_userData2Destructor(m_userData2); m_userData2 = nullptr; }
 
-    destroyPlayer();
 }
 
 void MDKPlayer::setProperty(const QString &key, const QString &value) {
@@ -428,7 +431,11 @@ void MDKPlayer::setupPlayer() {
     for (auto it = m_defaultProperties.constBegin(); it != m_defaultProperties.constEnd(); ++it) {
         setProperty(it.key(), it.value());
     }
-    m_player->onEvent([this, player, sourceInfo](const mdk::MediaEvent &evt) -> bool {
+    m_listenerGuard = std::make_shared<ListenerGuard>();
+    const auto guard = m_listenerGuard;
+    m_player->onEvent([this, player, sourceInfo, guard](const mdk::MediaEvent &evt) -> bool {
+        const std::lock_guard<std::recursive_mutex> lock(guard->mutex);
+        if (!guard->alive) return false;
         if (m_player.get() != player) return false;
         if (evt.category == "metadata") {
             auto md = player->mediaInfo();
@@ -594,7 +601,9 @@ void MDKPlayer::setupPlayer() {
         QMetaObject::invokeMethod(m_item, "stateChanged", Q_ARG(int, int(state)));
     });
 
-    m_player->onMediaStatusChanged([this, player, sourceInfo](mdk::MediaStatus status) -> bool {
+    m_player->onMediaStatusChanged([this, player, sourceInfo, guard](mdk::MediaStatus status) -> bool {
+        const std::lock_guard<std::recursive_mutex> lock(guard->mutex);
+        if (!guard->alive) return false;
         if (m_player.get() != player) return false;
 #if (_WIN32+0)
         if ((status & mdk::MediaStatus::Loaded) && !sourceInfo->ready.load(std::memory_order_acquire))

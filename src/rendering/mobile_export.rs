@@ -79,7 +79,7 @@ impl Delivery {
                     let mut source = filesystem::open_file(&file.url, false, false)?;
                     let mut target = filesystem::open_file(&url, true, true)?;
                     std::io::copy(source.get_file(), target.get_file()).map_err(filesystem::FilesystemError::from)?;
-                    target.get_file().sync_all().map_err(filesystem::FilesystemError::from)
+                    filesystem::sync_all(target.get_file()).map_err(filesystem::FilesystemError::from)
                 })();
                 if let Err(error) = copied {
                     let _ = filesystem::remove_file(&url);
