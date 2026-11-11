@@ -120,8 +120,8 @@ install-deps: assert-linux-x86-64
     if [ "$IN_DOCKER" == "1" ]; then
         echo "Installing AppImage builder"
 
+        # Debian archive keys come from the packages; a keyserver refresh is unnecessary.
         sudo apt-get install -y debian-keyring debian-archive-keyring
-        sudo apt-key adv --refresh-keys --keyserver keyserver.ubuntu.com
         sudo apt-get install -y python3-setuptools patchelf desktop-file-utils libgdk-pixbuf2.0-dev fakeroot strace fuse gtk-update-icon-cache zsync
         export HOST_ARCH=`lscpu | grep Architecture | awk {'print $2'}`
         sudo curl -L https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${HOST_ARCH}.AppImage -o /usr/local/bin/appimagetool
