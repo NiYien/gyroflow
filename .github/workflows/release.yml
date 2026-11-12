@@ -43,7 +43,7 @@ jobs:
 
   build:
     needs: [validate-tag]
-    if: ${{ always() && (needs.validate-tag.result == 'success' || needs.validate-tag.result == 'skipped') }}
+    if: ${{ !cancelled() && (needs.validate-tag.result == 'success' || needs.validate-tag.result == 'skipped') }}
     strategy:
       fail-fast: false
       matrix:
