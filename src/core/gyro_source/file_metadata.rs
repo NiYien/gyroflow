@@ -208,6 +208,20 @@ pub struct FileMetadata {
     pub duration_ms: f64,
 }
 impl FileMetadata {
+    pub fn restore_lumix_readout_metadata(&mut self, source: &serde_json::Value) {
+        let key = telemetry_parser::lumix_readout::CONTEXT_KEY;
+        let Some(context) = source.get(key) else { return; };
+        if !self.additional_data.is_object() {
+            self.additional_data = serde_json::json!({});
+        }
+        self.additional_data[key] = context.clone();
+        if let Some(estimated) = source.get("readout_estimated") {
+            self.additional_data["readout_estimated"] = estimated.clone();
+        } else {
+            self.additional_data.as_object_mut().unwrap().remove("readout_estimated");
+        }
+    }
+
     pub fn thin(&self) -> Self {
         Self {
             imu_orientation: self.imu_orientation.clone(),
@@ -361,6 +375,29 @@ pub fn per_frame_entry<T>(table: &[T], frame: usize) -> Option<&T> {
 #[cfg(test)]
 mod per_frame_tail_tests {
     use super::*;
+
+    #[test]
+    fn lumix_readout_source_and_confidence_survive_external_imu_and_serialization() {
+        let source = serde_json::json!({
+            "lumix_readout":{"pipeline":"braw","output_size":[3536,2656],
+                "capture_size":[3536,2656],"crop_mode":null,"fps":50.0},
+            "readout_estimated":true,"brand":"Panasonic"
+        });
+        let mut md = FileMetadata { additional_data:serde_json::json!({"brand":"SenseFlow","log_freq":1000}),
+            ..Default::default() };
+        md.restore_lumix_readout_metadata(&source);
+        assert_eq!(md.additional_data["brand"],"SenseFlow");
+        assert_eq!(md.additional_data["log_freq"],1000);
+        assert_eq!(md.additional_data["lumix_readout"],source["lumix_readout"]);
+        let encoded=serde_json::to_value(md.thin()).unwrap();
+        let restored:FileMetadata=serde_json::from_value(encoded).unwrap();
+        assert_eq!(restored.additional_data["readout_estimated"],true);
+        assert_eq!(restored.additional_data["lumix_readout"]["pipeline"],"braw");
+        let mut unknown = source.clone();
+        unknown.as_object_mut().unwrap().remove("readout_estimated");
+        md.restore_lumix_readout_metadata(&unknown);
+        assert!(md.additional_data.get("readout_estimated").is_none());
+    }
 
     #[test]
     fn tail_readers_continue_the_last_metadata_frame() {

@@ -78,7 +78,7 @@ pub struct ManualCameraResolution {
     pub camera_identifier: CameraIdentifier,
     pub crop_factor: f64,
     pub unit_pixel_focal_length: f64,
-    pub frame_readout_time: f64,
+    pub frame_readout_time: Option<f64>,
     pub frame_readout_direction: ReadoutDirection,
     pub readout_estimated: bool,
 }
@@ -319,6 +319,11 @@ impl ManualCameraCatalog {
         };
         let readout = if let Some(geometry) = &kinefinity_geometry {
             geometry.readout.clone()
+        } else if brand.id == "LUMIX" {
+            use telemetry_parser::lumix_readout::{self as readout, ReadoutContext};
+            input.additional_data.get(readout::CONTEXT_KEY)
+                .and_then(|v| serde_json::from_value::<ReadoutContext>(v.clone()).ok())
+                .and_then(|ctx| readout::resolve_readout(&self.database, model_name, &ctx, &tags))
         } else {
             self.database.lookup_readout(
                 &brand.id,
@@ -333,19 +338,20 @@ impl ManualCameraCatalog {
             )
         };
         let (frame_readout_time, readout_estimated) = match readout {
-            Some(result) => (result.readout_time_ms, result.is_estimated),
+            Some(result) => (Some(result.readout_time_ms), result.is_estimated),
+            None if brand.id == "LUMIX" => (None, false),
             None => (
-                half_frame_readout_time(if kinefinity_geometry.is_some() {
+                Some(half_frame_readout_time(if kinefinity_geometry.is_some() {
                     numeric_hint(&input.additional_data, &["sensor_fps"])
                         .filter(|fps| fps.is_finite() && *fps > 0.0)
                         .unwrap_or(input.fps)
                 } else {
                     input.fps
-                })?,
+                })?),
                 true,
             ),
         };
-        if !frame_readout_time.is_finite() || frame_readout_time < 0.0 {
+        if frame_readout_time.is_some_and(|ms| !ms.is_finite() || ms < 0.0) {
             return None;
         }
 
@@ -820,6 +826,41 @@ mod tests {
     }
 
     #[test]
+    fn lumix_readout_manual_camera_keeps_raw_scan_separate_from_output_size() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data = serde_json::json!({
+            "models":{"S1H":{"sw":35.6,"readout_scans":{
+                "references":[{"id":"s35","pipeline":"camera_video","output_size":[4096,2160],
+                    "crop_mode":2,"scan_size":[4096,2160],"measured_fps":[24,60],"ms":13.9}],
+                "modes":[{"pipeline":"braw","output_size":[3536,2656],"scan_size":[3536,2656],"crop_mode":2,
+                    "fps":[24,25,30,50],"reference":"s35"}]
+            }}},"readout":{"columns":["4K60"],"data":{"S1H":[14.3]}}
+        });
+        std::fs::write(tmp.path().join("lumix.json"),serde_json::to_vec(&data).unwrap()).unwrap();
+        let catalog=ManualCameraCatalog::load(tmp.path().to_str().unwrap()).unwrap();
+        let selection=ManualCameraSelection::new("LUMIX","S1H");
+        let mut source=input((3536,2656),50.0);
+        source.additional_data=serde_json::json!({"scale_35mm":1.8,
+            "lumix_readout":{"pipeline":"braw","output_size":[3536,2656],"capture_size":[3536,2656],
+                "crop_mode":null,"fps":50.0}});
+        let raw=catalog.resolve(&selection,&source).unwrap();
+        assert!((raw.frame_readout_time.unwrap() - 17.091851851851853).abs()<1e-12);
+        assert!(raw.readout_estimated);
+        assert!((raw.unit_pixel_focal_length-176.8).abs()<1e-9);
+        source.size=(1920,1080);
+        let proxy=catalog.resolve(&selection,&source).unwrap();
+        assert_eq!(proxy.frame_readout_time,raw.frame_readout_time);
+        source.additional_data["lumix_readout"]["pipeline"]="native".into();
+        let native=catalog.resolve(&selection,&source).unwrap();
+        assert_eq!(native.frame_readout_time,None);
+        assert!(!native.readout_estimated);
+        source.additional_data["lumix_readout"]["recorded_ms"] = 7.25.into();
+        let recorded = catalog.resolve(&selection, &source).unwrap();
+        assert_eq!(recorded.frame_readout_time, Some(7.25));
+        assert!(!recorded.readout_estimated);
+    }
+
+    #[test]
     fn manual_camera_geometry_matches_red_native_sensor_width_rule() {
         let tmp = tempfile::tempdir().unwrap();
         write_catalog_fixture(tmp.path());
@@ -851,7 +892,7 @@ mod tests {
                 .unwrap();
             assert!((resolved.crop_factor - 1.5).abs() < 1e-9, "{model}");
             assert!((resolved.unit_pixel_focal_length - 6144.0 / 27.0).abs() < 1e-9);
-            assert_eq!(resolved.frame_readout_time, 0.0);
+            assert_eq!(resolved.frame_readout_time, Some(0.0));
         }
     }
 
@@ -871,7 +912,7 @@ mod tests {
         assert_eq!(resolved.camera_identifier.camera_setting, "FULL");
         assert!((resolved.crop_factor - 1.2).abs() < 1e-9);
         assert!((resolved.unit_pixel_focal_length - (3840.0 * 1.2 / 35.9)).abs() < 1e-4);
-        assert_eq!(resolved.frame_readout_time, 7.6);
+        assert_eq!(resolved.frame_readout_time, Some(7.6));
     }
 
     #[test]
@@ -900,7 +941,7 @@ mod tests {
         assert!((resolved.unit_pixel_focal_length - expected_scale / 35.9 * 1920.0).abs() < 1e-4);
         // 2322/3040 is an oversampled (not integer-binned) N-RAW scan, so the
         // database keeps the 4K60 value and applies Nikon's DX scale adjustment.
-        assert!((resolved.frame_readout_time - 14.5 / expected_scale).abs() < 1e-9);
+        assert!((resolved.frame_readout_time.unwrap() - 14.5 / expected_scale).abs() < 1e-9);
         assert!(!resolved.readout_estimated);
 
         let (readout_w, readout_h, ratio) =
@@ -948,7 +989,7 @@ mod tests {
         assert_eq!(full.camera_identifier.camera_setting, "FULL");
         assert!((full.crop_factor - 6016.0 / 5888.0).abs() < 1e-9);
         assert!((full.unit_pixel_focal_length - 6016.0 / 72.0).abs() < 1e-9);
-        assert!((full.frame_readout_time - 17.0 * 3984.0 / 3172.0).abs() < 1e-9);
+        assert!((full.frame_readout_time.unwrap() - 17.0 * 3984.0 / 3172.0).abs() < 1e-9);
         assert!(full.readout_estimated);
         let metadata = crate::gyro_source::FileMetadata {
             unit_pixel_focal_length: Some(full.unit_pixel_focal_length),
@@ -989,13 +1030,13 @@ mod tests {
             serde_json::json!({"image_format":"FF", "oversampling":true, "sensor_fps":60.0});
         let full = catalog.resolve(&selection, &manual_input).unwrap();
         assert!((full.unit_pixel_focal_length - 3840.0 / 34.5).abs() < 1e-9);
-        assert!((full.frame_readout_time - 18.0 * 3240.0 / 3984.0).abs() < 1e-9);
+        assert!((full.frame_readout_time.unwrap() - 18.0 * 3240.0 / 3984.0).abs() < 1e-9);
         assert!(full.readout_estimated);
         manual_input.additional_data =
             serde_json::json!({"image_format":"S35", "oversampling":false, "sensor_fps":60.0});
         let crop = catalog.resolve(&selection, &manual_input).unwrap();
         assert!((crop.unit_pixel_focal_length - 3840.0 / 23.0).abs() < 1e-9);
-        assert!((crop.frame_readout_time * 1.5 - full.frame_readout_time).abs() < 1e-9);
+        assert!((crop.frame_readout_time.unwrap() * 1.5 - full.frame_readout_time.unwrap()).abs() < 1e-9);
         let config = crate::niyien_lens_presets::LensGroupConfig {
             focal_length_mm: Some(50.0),
             ..Default::default()
@@ -1096,7 +1137,7 @@ mod tests {
                 &input((3840, 2160), 59.94),
             )
             .unwrap();
-        assert_eq!(measured.frame_readout_time, 12.5);
+        assert_eq!(measured.frame_readout_time, Some(12.5));
         assert!(!measured.readout_estimated);
 
         let global = catalog
@@ -1105,7 +1146,7 @@ mod tests {
                 &input((3840, 2160), 59.94),
             )
             .unwrap();
-        assert_eq!(global.frame_readout_time, 0.0);
+        assert_eq!(global.frame_readout_time, Some(0.0));
         assert!(!global.readout_estimated);
     }
 
@@ -1121,7 +1162,7 @@ mod tests {
                 &input((1280, 720), 59.94),
             )
             .unwrap();
-        assert!((near_sixty.frame_readout_time - 500.0 / 60.0).abs() < 1e-9);
+        assert!((near_sixty.frame_readout_time.unwrap() - 500.0 / 60.0).abs() < 1e-9);
         assert!(near_sixty.readout_estimated);
 
         let tied = catalog
@@ -1130,7 +1171,7 @@ mod tests {
                 &input((1280, 720), 55.0),
             )
             .unwrap();
-        assert_eq!(tied.frame_readout_time, 10.0);
+        assert_eq!(tied.frame_readout_time, Some(10.0));
         assert!(tied.readout_estimated);
     }
 

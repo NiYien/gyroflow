@@ -600,9 +600,12 @@ impl JobLensMetadataBackup {
             .frame_readout_time
             .map(|value| !value.is_finite())
             .unwrap_or(true);
-        if should_restore_readout_time {
+        let source_has_lumix_readout = self.source_camera_additional_data
+            .get(core::telemetry_parser::lumix_readout::CONTEXT_KEY).is_some();
+        if should_restore_readout_time || source_has_lumix_readout {
             md.frame_readout_time = self.frame_readout_time.filter(|value| value.is_finite());
             md.frame_readout_direction = self.frame_readout_direction;
+            md.restore_lumix_readout_metadata(&self.source_camera_additional_data);
         }
     }
 
@@ -615,6 +618,7 @@ impl JobLensMetadataBackup {
         md.detected_source = self.detected_source.clone();
         md.frame_readout_time = self.frame_readout_time;
         md.frame_readout_direction = self.frame_readout_direction;
+        md.restore_lumix_readout_metadata(&self.source_camera_additional_data);
     }
 
     fn to_metadata(&self) -> core::gyro_source::FileMetadata {
@@ -640,9 +644,18 @@ fn apply_manual_camera_resolution(
     effective_identifier.video_height = resolution.camera_identifier.video_height;
     metadata.camera_identifier = Some(effective_identifier);
     metadata.unit_pixel_focal_length = Some(resolution.unit_pixel_focal_length);
-    metadata.frame_readout_time = Some(resolution.frame_readout_time);
+    metadata.frame_readout_time = resolution.frame_readout_time;
     metadata.frame_readout_direction = resolution.frame_readout_direction;
     if let Some(additional_data) = metadata.additional_data.as_object_mut() {
+        if resolution.camera_identifier.brand.eq_ignore_ascii_case("lumix")
+            || additional_data.contains_key(core::telemetry_parser::lumix_readout::CONTEXT_KEY)
+        {
+            if resolution.readout_estimated {
+                additional_data.insert("readout_estimated".into(), true.into());
+            } else {
+                additional_data.remove("readout_estimated");
+            }
+        }
         additional_data.insert(
             "crop_factor".to_owned(),
             serde_json::Value::from(resolution.crop_factor),
@@ -680,6 +693,14 @@ fn apply_manual_camera_resolution_with_source(
     );
 }
 
+fn apply_manual_camera_readout(stab: &StabilizationManager, resolution: &core::manual_camera::ManualCameraResolution) {
+    apply_manual_camera_resolution_to_lens_profile(&mut stab.lens.write(), resolution);
+    if resolution.frame_readout_time.is_none() {
+        // The renderer represents disabled correction with zero; metadata keeps None.
+        stab.params.write().frame_readout_time = 0.0;
+    }
+}
+
 fn apply_manual_camera_resolution_to_lens_profile(
     lens: &mut core::lens_profile::LensProfile,
     resolution: &core::manual_camera::ManualCameraResolution,
@@ -688,9 +709,9 @@ fn apply_manual_camera_resolution_to_lens_profile(
     lens.camera_model = resolution.camera_identifier.model.clone();
     lens.camera_setting = resolution.camera_identifier.camera_setting.clone();
     lens.crop_factor = Some(resolution.crop_factor);
-    lens.frame_readout_time = Some(resolution.frame_readout_time);
+    lens.frame_readout_time = resolution.frame_readout_time;
     lens.frame_readout_direction = Some(resolution.frame_readout_direction);
-    lens.global_shutter = resolution.frame_readout_time == 0.0;
+    lens.global_shutter = resolution.frame_readout_time == Some(0.0);
 }
 
 fn restore_source_camera_additional_data(
@@ -701,7 +722,7 @@ fn restore_source_camera_additional_data(
         return;
     };
     let source_object = source.source_camera_additional_data().as_object();
-    for key in ["crop_factor", "queue_manual_camera"] {
+    for key in ["crop_factor", "queue_manual_camera", "readout_estimated"] {
         if let Some(value) = source_object.and_then(|object| object.get(key)) {
             effective.insert(key.to_owned(), value.clone());
         } else {
@@ -13566,7 +13587,7 @@ impl RenderQueue {
                                 *stab.camera_id.write() = base_metadata.camera_identifier.clone();
                                 ::log::info!(
                                     target: "lens.camera",
-                                    "Applied manual camera to queue job {}: {} {} {}x{} {:.3}fps crop={:.6} upfl={:.6} readout_ms={:.6} estimated={}",
+                                    "Applied manual camera to queue job {}: {} {} {}x{} {:.3}fps crop={:.6} upfl={:.6} readout_ms={:?} estimated={}",
                                     job_id,
                                     resolution.camera_identifier.brand,
                                     resolution.camera_identifier.model,
@@ -13661,8 +13682,8 @@ impl RenderQueue {
                             }
 
                             if let Some(resolution) = manual_camera_resolution.as_ref() {
-                                apply_manual_camera_resolution_to_lens_profile(
-                                    &mut stab.lens.write(),
+                                apply_manual_camera_readout(
+                                    stab.as_ref(),
                                     resolution,
                                 );
                             }
@@ -14948,8 +14969,8 @@ impl RenderQueue {
                         }
 
                         if let Some(resolution) = manual_camera_resolution.as_ref() {
-                            apply_manual_camera_resolution_to_lens_profile(
-                                &mut item.stab.lens.write(),
+                            apply_manual_camera_readout(
+                                item.stab.as_ref(),
                                 resolution,
                             );
                             sync_readout_params_from_lens(item.stab.as_ref());
@@ -19810,6 +19831,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn lumix_readout_queue_unknown_clears_previous_correction() {
+        let mut video = FileMetadata::default();
+        video.additional_data = serde_json::json!({"lumix_readout":{"pipeline":"unknown"}});
+        let backup = JobLensMetadataBackup::from_metadata(&video);
+        let mut imu = FileMetadata::default();
+        imu.frame_readout_time = Some(10.0);
+        imu.additional_data = serde_json::json!({"readout_estimated":true});
+        backup.apply_missing_to_metadata(&mut imu);
+        assert_eq!(imu.frame_readout_time, None);
+        assert_eq!(imu.additional_data, video.additional_data);
+
+        let resolution = core::manual_camera::ManualCameraResolution {
+            camera_identifier: CameraIdentifier { brand: "Lumix".into(), ..Default::default() },
+            crop_factor: 1.0,
+            unit_pixel_focal_length: 100.0,
+            frame_readout_time: None,
+            frame_readout_direction: ReadoutDirection::TopToBottom,
+            readout_estimated: false,
+        };
+        apply_manual_camera_resolution_with_source(&mut imu, &resolution, &backup);
+        let restored: FileMetadata = serde_json::from_value(serde_json::to_value(imu.thin()).unwrap()).unwrap();
+        assert_eq!(restored.frame_readout_time, None);
+        assert!(restored.additional_data.get("readout_estimated").is_none());
+        assert_eq!(restored.unit_pixel_focal_length, Some(100.0));
+        let stab = StabilizationManager::default();
+        stab.params.write().frame_readout_time = 10.0;
+        stab.lens.write().global_shutter = true;
+        apply_manual_camera_readout(&stab, &resolution);
+        sync_readout_params_from_lens(&stab);
+        assert_eq!(stab.params.read().frame_readout_time, 0.0);
+        assert_eq!(stab.lens.read().frame_readout_time, None);
+        assert!(!stab.lens.read().global_shutter);
+    }
+
+    #[test]
     fn manual_camera_metadata_overlay_does_not_mutate_source_identity() {
         let source_identifier = CameraIdentifier {
             brand: String::new(),
@@ -19835,7 +19891,7 @@ mod tests {
             },
             crop_factor: 1.5,
             unit_pixel_focal_length: 160.0,
-            frame_readout_time: 8.333333333333334,
+            frame_readout_time: Some(8.333333333333334),
             frame_readout_direction: ReadoutDirection::TopToBottom,
             readout_estimated: true,
         };
@@ -21671,7 +21727,7 @@ mod tests {
         assert!(!stale_profile.global_shutter);
 
         let mut global_shutter_resolution = full.clone();
-        global_shutter_resolution.frame_readout_time = 0.0;
+        global_shutter_resolution.frame_readout_time = Some(0.0);
         apply_manual_camera_resolution_to_lens_profile(
             &mut stale_profile,
             &global_shutter_resolution,

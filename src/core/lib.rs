@@ -1490,6 +1490,14 @@ impl StabilizationManager {
                 fm.lens_params.clone(),
                 fm.lens_positions.clone(),
                 fm.lens_profile.clone(),
+                fm.additional_data.get(telemetry_parser::lumix_readout::CONTEXT_KEY)
+                    .map(|context| {
+                        let mut snapshot = serde_json::json!({"lumix_readout":context});
+                        if let Some(estimated) = fm.additional_data.get("readout_estimated") {
+                            snapshot["readout_estimated"] = estimated.clone();
+                        }
+                        (snapshot, fm.frame_readout_time, fm.frame_readout_direction)
+                    }),
             ))
         } else {
             None
@@ -1559,9 +1567,14 @@ impl StabilizationManager {
             md.per_frame_time_offsets.clear();
         }
         // Restore lens data from main video if external gyro file doesn't provide its own
-        if let Some((backup_params, backup_positions, backup_profile)) = backup_lens_data {
+        if let Some((backup_params, backup_positions, backup_profile, backup_readout)) = backup_lens_data {
             if md.lens_params.is_empty() {
                 md.lens_params = backup_params;
+            }
+            if let Some((source, time, direction)) = backup_readout {
+                md.frame_readout_time = time;
+                md.frame_readout_direction = direction;
+                md.restore_lumix_readout_metadata(&source);
             }
             if md.lens_positions.is_empty() {
                 md.lens_positions = backup_positions;
