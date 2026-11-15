@@ -6,7 +6,9 @@
   non-retryable so the upsert fails fast instead of burning the backoff window.
 """
 
+import json
 import unittest
+from unittest.mock import Mock, patch
 
 import requests
 
@@ -76,6 +78,41 @@ class IsRetryableHttpErrorTests(unittest.TestCase):
         # Connection reset / timeout — no HTTP response attached.
         self.assertTrue(Api._is_retryable_http_error(requests.ConnectionError("reset")))
         self.assertTrue(Api._is_retryable_http_error(Exception("generic")))
+
+
+class PolicyEnvSizeTests(unittest.TestCase):
+    def test_compacts_policy_at_http_boundary_without_changing_content(self):
+        policy = {
+            "auto_version": "1.7.0-ni.173",
+            "versions": [
+                {
+                    "version": f"1.7.0-ni.{number}",
+                    "changelogs": {"zh": "第一行\n  保留缩进", "en": "Keep  both spaces"},
+                    "packages": {f"asset-{i}": {"size": i, "sha256": "a" * 64} for i in range(50)},
+                }
+                for number in range(173, 163, -1)
+            ],
+            "hidden_plugins": [{"kind": "artifact", "run_id": 123}],
+        }
+        formatted = json.dumps(policy, ensure_ascii=False, indent=2)
+        other_env = "  preserve this value\n"
+        mapping = {"NIYIEN_RELEASE_POLICY_JSON": formatted, "OTHER_ENV": other_env}
+        client = vercel.VercelClient("test-token", "test-project")
+        response = Mock(status_code=200)
+        response.json.return_value = {"created": []}
+        with patch.object(vercel.requests, "post", return_value=response) as post:
+            self.assertEqual(client.upsert_envs(mapping), {"created": []})
+
+        post.assert_called_once()
+        body = post.call_args.kwargs["json"]
+        sent_policy, sent_other = body
+        self.assertGreater(len(formatted.encode("utf-8")), 65536)
+        self.assertLess(len(sent_policy["value"].encode("utf-8")), 65536)
+        self.assertEqual(json.loads(sent_policy["value"]), policy)
+        self.assertEqual(sent_policy["target"], ["production", "preview", "development"])
+        self.assertEqual(sent_policy["type"], "encrypted")
+        self.assertEqual(sent_other["value"], other_env)
+        self.assertEqual(mapping["NIYIEN_RELEASE_POLICY_JSON"], formatted)
 
 
 if __name__ == "__main__":

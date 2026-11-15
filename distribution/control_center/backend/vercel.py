@@ -152,15 +152,17 @@ class VercelClient:
     def upsert_envs(self, mapping: dict) -> dict:
         self._ensure_ready()
         url = f"https://api.vercel.com/v10/projects/{self.project}/env"
-        body = [
-            {
+        body = []
+        for key, value in mapping.items():
+            if key == "NIYIEN_RELEASE_POLICY_JSON":
+                # Formatting whitespace consumes the shared 64 KB env budget.
+                value = json.dumps(json.loads(value), ensure_ascii=False, separators=(",", ":"))
+            body.append({
                 "key": key,
                 "value": value,
                 "type": "encrypted",
                 "target": ["production", "preview", "development"],
-            }
-            for key, value in mapping.items()
-        ]
+            })
         response = requests.post(
             url,
             headers=self._headers(),
