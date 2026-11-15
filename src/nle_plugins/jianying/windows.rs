@@ -13,7 +13,12 @@ use qttypes::QString;
 
 cpp! {{
     #include <QSettings>
+    #include <QDirIterator>
+    #include <QFileInfo>
+    #include <QStandardPaths>
 }}
+
+const HOST_PATH_SETTING: &str = "nleJianyingHostPath";
 
 fn registry_string(hive: HKEY, key: &str, name: &str, view: REG_ROUTINE_FLAGS) -> Option<String> {
     let key = HSTRING::from(key);
@@ -21,11 +26,13 @@ fn registry_string(hive: HKEY, key: &str, name: &str, view: REG_ROUTINE_FLAGS) -
     let flags = RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | view;
     let mut bytes = 0;
     unsafe {
-        RegGetValueW(hive, &key, &name, flags, None, None, Some(&mut bytes))
-            .ok()
-            .ok()?;
+        let status = RegGetValueW(hive, &key, &name, flags, None, None, Some(&mut bytes));
+        if status.0 != 0 {
+            log::debug!(target: "plugin", "[nle jianying] registry query failed hive={hive:?} view={view:?} key={key} value={name}: {}", io::Error::from_raw_os_error(status.0 as i32));
+            return None;
+        }
         let mut value = vec![0u16; bytes as usize / 2];
-        RegGetValueW(
+        let status = RegGetValueW(
             hive,
             &key,
             &name,
@@ -33,11 +40,22 @@ fn registry_string(hive: HKEY, key: &str, name: &str, view: REG_ROUTINE_FLAGS) -
             None,
             Some(value.as_mut_ptr().cast()),
             Some(&mut bytes),
-        )
-        .ok()
-        .ok()?;
+        );
+        if status.0 != 0 {
+            log::debug!(target: "plugin", "[nle jianying] registry read failed hive={hive:?} view={view:?} key={key} value={name}: {}", io::Error::from_raw_os_error(status.0 as i32));
+            return None;
+        }
         let length = value.iter().position(|&ch| ch == 0).unwrap_or(value.len());
-        String::from_utf16(&value[..length]).ok()
+        match String::from_utf16(&value[..length]) {
+            Ok(value) => {
+                log::debug!(target: "plugin", "[nle jianying] registry value hive={hive:?} view={view:?} key={key} name={name} path={value:?}");
+                Some(value)
+            }
+            Err(error) => {
+                log::debug!(target: "plugin", "[nle jianying] registry invalid UTF-16 key={key} value={name}: {error}");
+                None
+            }
+        }
     }
 }
 
@@ -63,11 +81,11 @@ fn registered_directories() -> Vec<PathBuf> {
                     "DisplayIcon",
                 ),
             ] {
-                if let Some(directory) = registry_string(hive, key, name, view)
-                    .and_then(|value| registered_directory(&value))
-                {
-                    if !directories.contains(&directory) {
-                        directories.push(directory);
+                if let Some(value) = registry_string(hive, key, name, view) {
+                    match registered_directory(&value) {
+                        Some(directory) if !directories.contains(&directory) => directories.push(directory),
+                        Some(_) => {},
+                        None => log::debug!(target: "plugin", "[nle jianying] registry path rejected key={key} value={name} path={value:?}"),
                     }
                 }
             }
@@ -100,29 +118,125 @@ fn registered_directory(value: &str) -> Option<PathBuf> {
     Some(directory.to_owned())
 }
 
-fn find_registered_host(directories: &[PathBuf], user_root: &Path) -> io::Result<Host> {
-    // Registrations may point to the install root, Apps, or a versioned executable.
-    let roots = directories
-        .iter()
-        .flat_map(|directory| directory.ancestors().take(3));
-    for root in roots.chain(std::iter::once(user_root)) {
-        if let Ok(mut host) = find_host(root) {
-            // Jianying's user data stays under GenericDataLocation, independently of its binaries.
-            host.root = user_root.to_owned();
-            return Ok(host);
+fn find_candidates(directories: &[PathBuf], user_root: &Path, source: &str, checked: &mut Vec<PathBuf>) -> Option<Host> {
+    for directory in directories {
+        // The registration or shortcut can name the executable, its directory, or the install root.
+        for root in directory.ancestors().take(3).filter(|root| root.parent().is_some()) {
+            if checked.iter().any(|path| path == root) { continue; }
+            checked.push(root.to_owned());
+            match find_host(root) {
+                Ok(mut host) => {
+                    log::info!(target: "plugin", "[nle jianying] host selected source={source} candidate={root:?} version={:?} user_root={user_root:?}", host.version);
+                    // User data stays under GenericDataLocation, independently of the binaries.
+                    host.root = user_root.to_owned();
+                    return Some(host);
+                }
+                Err(error) => log::debug!(target: "plugin", "[nle jianying] candidate rejected source={source} path={root:?} kind={:?}: {error}", error.kind()),
+            }
         }
     }
-    Err(io::Error::new(
-        io::ErrorKind::NotFound,
-        "Jianying installation was not found",
-    ))
+    None
+}
+
+fn running_directories() -> Vec<PathBuf> {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    let mut system = System::new();
+    system.refresh_processes_specifics(ProcessesToUpdate::All, true,
+        ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet));
+    let mut directories = Vec::new();
+    for (pid, process) in system.processes() {
+        if process.name().eq_ignore_ascii_case("JianyingPro.exe") {
+            match process.exe() {
+                Some(path) => {
+                    log::debug!(target: "plugin", "[nle jianying] running host pid={pid} path={path:?}");
+                    directories.push(path.to_owned());
+                }
+                None => log::debug!(target: "plugin", "[nle jianying] running host path unavailable pid={pid}"),
+            }
+        }
+    }
+    log::debug!(target: "plugin", "[nle jianying] running host candidates={}", directories.len());
+    directories
+}
+
+fn shortcut_directories(roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut directories = Vec::new();
+    for root in roots {
+        let folder = QString::from(root.to_string_lossy().as_ref());
+        let recursive = root.ends_with("Programs");
+        let shortcuts = cpp!(unsafe [folder as "QString", recursive as "bool"] -> QString as "QString" {
+            QStringList paths;
+            QDirIterator it(folder, {QStringLiteral("*剪映*.lnk"), QStringLiteral("*Jianying*.lnk")}, QDir::Files,
+                recursive ? QDirIterator::Subdirectories : QDirIterator::NoIteratorFlags);
+            while (it.hasNext()) {
+                const QFileInfo link(it.next());
+                paths.append(link.absoluteFilePath() + QLatin1Char('\t') + link.symLinkTarget());
+            }
+            return paths.join(QLatin1Char('\n'));
+        }).to_string();
+        log::debug!(target: "plugin", "[nle jianying] shortcuts inspected directory={root:?}");
+        for line in shortcuts.lines() {
+            if let Some((shortcut, target)) = line.split_once('\t') {
+                let target = PathBuf::from(target);
+                if target.is_absolute() && target.file_name().is_some_and(|name| name.eq_ignore_ascii_case("JianyingPro.exe")) {
+                    log::debug!(target: "plugin", "[nle jianying] shortcut path={shortcut:?} target={target:?}");
+                    directories.push(target);
+                } else {
+                    log::debug!(target: "plugin", "[nle jianying] shortcut target rejected path={shortcut:?} target={target:?}");
+                }
+            }
+        }
+    }
+    directories
+}
+
+pub(super) fn set_host_location(path: &str) -> io::Result<String> {
+    let selected = Path::new(path);
+    if !selected.is_absolute() {
+        log::warn!(target: "plugin", "[nle jianying] manual location rejected path={selected:?}: path is not absolute");
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Jianying installation path must be absolute"));
+    }
+    match find_host(selected) {
+        Ok(_) => {
+            gyroflow_core::settings::set(HOST_PATH_SETTING, path.into());
+            log::info!(target: "plugin", "[nle jianying] manual location saved path={selected:?}");
+            Ok(String::new())
+        }
+        Err(error) => {
+            log::warn!(target: "plugin", "[nle jianying] manual location rejected path={selected:?}: {error}");
+            Err(error)
+        }
+    }
 }
 
 pub(super) fn host() -> io::Result<Host> {
-    find_registered_host(
-        &registered_directories(),
-        &local_root()?.join("JianyingPro"),
-    )
+    let user_root = local_root()?.join("JianyingPro");
+    let mut checked = Vec::new();
+    let saved = gyroflow_core::settings::get_str(HOST_PATH_SETTING, "");
+    if !saved.is_empty() {
+        let saved = PathBuf::from(saved);
+        if saved.is_absolute() {
+            if let Some(host) = find_candidates(&[saved], &user_root, "manual", &mut checked) { return Ok(host); }
+        } else {
+            log::debug!(target: "plugin", "[nle jianying] saved location rejected: path is not absolute path={saved:?}");
+        }
+    }
+    if let Some(host) = find_candidates(&registered_directories(), &user_root, "registry", &mut checked) { return Ok(host); }
+    if let Some(host) = find_candidates(&running_directories(), &user_root, "process", &mut checked) { return Ok(host); }
+    let locations = cpp!(unsafe [] -> QString as "QString" {
+        QStringList paths = QStandardPaths::standardLocations(QStandardPaths::ApplicationsLocation);
+        paths.append(QStandardPaths::standardLocations(QStandardPaths::DesktopLocation));
+        return paths.join(QLatin1Char('\n'));
+    }).to_string();
+    let shortcuts: Vec<PathBuf> = locations.lines().map(PathBuf::from).collect();
+    if let Some(host) = find_candidates(&shortcut_directories(&shortcuts), &user_root, "shortcut", &mut checked) { return Ok(host); }
+    let mut defaults = vec![user_root.clone()];
+    for variable in ["ProgramFiles", "ProgramFiles(x86)"] {
+        if let Some(path) = std::env::var_os(variable) { defaults.push(PathBuf::from(path).join("JianyingPro")); }
+    }
+    if let Some(host) = find_candidates(&defaults, &user_root, "default", &mut checked) { return Ok(host); }
+    log::warn!(target: "plugin", "[nle jianying] host detection failed checked={} user_root={user_root:?}; no usable manual, registry, process, shortcut or default path", checked.len());
+    Err(io::Error::new(io::ErrorKind::NotFound, "Jianying installation was not found; select its installation folder"))
 }
 
 pub(super) fn plugin_cache(root: &Path) -> io::Result<PathBuf> {
@@ -204,7 +318,7 @@ mod tests {
     fn actual_installation_registration_resolves_host() {
         let directories = registered_directories();
         let empty = tempfile::tempdir().unwrap();
-        let registered = find_registered_host(&directories, empty.path()).unwrap();
+        let registered = find_candidates(&directories, empty.path(), "registry", &mut Vec::new()).unwrap();
         let detected = host().unwrap();
         assert_eq!(registered.version, detected.version);
         let cache = plugin_cache(&detected.root).unwrap();
@@ -225,7 +339,7 @@ mod tests {
         assert!(find_host(&user).is_err());
         for directory in [&custom, &custom.join("Apps"), &app] {
             let host =
-                find_registered_host(&[temp.path().join("removed"), directory.to_owned()], &user)
+                find_candidates(&[temp.path().join("removed"), directory.to_owned()], &user, "registry", &mut Vec::new())
                     .unwrap();
             assert_eq!(host.version, "11.8.0.14711");
             assert_eq!(host.root, user);
@@ -243,7 +357,7 @@ mod tests {
         std::fs::create_dir_all(&app).unwrap();
         std::fs::write(app.join("JianyingPro.exe"), []).unwrap();
         assert_eq!(
-            find_registered_host(&[], temp.path()).unwrap().version,
+            find_candidates(&[temp.path().to_owned()], temp.path(), "default", &mut Vec::new()).unwrap().version,
             "11.8.0.14711"
         );
     }
@@ -280,5 +394,31 @@ mod tests {
         )
         .unwrap();
         assert!(plugin_cache(temp.path()).is_err());
+    }
+
+    #[test]
+    fn shortcut_discovery_resolves_real_windows_links_without_scanning_desktop_subdirectories() {
+        let temp = tempfile::tempdir().unwrap();
+        let installation = temp.path().join("D drive/剪映 安装/11.8.0.14711");
+        std::fs::create_dir_all(&installation).unwrap();
+        let executable = installation.join("JianyingPro.exe");
+        std::fs::write(&executable, []).unwrap();
+        let programs = temp.path().join("Programs");
+        let desktop = temp.path().join("Desktop");
+        for link in [programs.join("剪映/剪映专业版.lnk"), desktop.join("project/Jianying.lnk")] {
+            std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+            let output = Command::new("powershell.exe")
+                .args(["-NoProfile", "-NonInteractive", "-Command",
+                    "$link = (New-Object -ComObject WScript.Shell).CreateShortcut($env:GYROFLOW_TEST_SHORTCUT); $link.TargetPath = $env:GYROFLOW_TEST_EXECUTABLE; $link.Save()"])
+                .env("GYROFLOW_TEST_SHORTCUT", &link).env("GYROFLOW_TEST_EXECUTABLE", &executable)
+                .output().unwrap();
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        }
+        let paths = shortcut_directories(&[programs, desktop]);
+        assert_eq!(paths, vec![executable]);
+        let user = temp.path().join("user");
+        let detected = find_candidates(&paths, &user, "shortcut", &mut Vec::new()).unwrap();
+        assert_eq!(detected.version, "11.8.0.14711");
+        assert_eq!(detected.root, user);
     }
 }

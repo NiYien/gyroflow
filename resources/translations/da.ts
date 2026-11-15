@@ -3577,6 +3577,18 @@ Reopen CapCut before using the effect.</source>
         <source>This CapCut version is not supported</source>
         <translation type="unfinished"></translation>
     </message>
+    <message>
+        <source>Select installation folder</source>
+        <translation>Vælg installationsmappe</translation>
+    </message>
+    <message>
+        <source>CapCut was not found in the selected folder.</source>
+        <translation>CapCut blev ikke fundet i den valgte mappe.</translation>
+    </message>
+    <message>
+        <source>CapCut installation was not found</source>
+        <translation>CapCut-installationen blev ikke fundet</translation>
+    </message>
 </context>
 <context>
     <name>NumberField</name>

@@ -5989,6 +5989,7 @@ impl Controller {
                     });
                     Ok(String::new())
                 }
+                "set_jianying_location" => crate::nle_plugins::set_jianying_location(&typ),
                 "detect" => crate::nle_plugins::detect(&typ),
                 "is_nle_installed" => Ok(format!("{}", crate::nle_plugins::is_nle_installed(&typ))),
                 _ => Err(std::io::Error::new(

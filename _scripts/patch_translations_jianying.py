@@ -35,8 +35,38 @@ TRANSLATIONS = {
     "zh_TW": ("剪映外掛已安裝。\n重新開啟剪映後即可使用。", "安裝外掛前，請先儲存工作並完全結束剪映。", "尚未安裝剪映", "此發行版本尚未提供剪映外掛"),
 }
 
+HOST_SOURCES = (
+    "Select installation folder",
+    "CapCut was not found in the selected folder.",
+    "CapCut installation was not found",
+)
+HOST_TRANSLATIONS = {
+    "cs": ("Vybrat instalační složku", "CapCut nebyl ve vybrané složce nalezen.", "Instalace CapCut nebyla nalezena"),
+    "da": ("Vælg installationsmappe", "CapCut blev ikke fundet i den valgte mappe.", "CapCut-installationen blev ikke fundet"),
+    "de": ("Installationsordner auswählen", "CapCut wurde im ausgewählten Ordner nicht gefunden.", "CapCut-Installation wurde nicht gefunden"),
+    "el": ("Επιλογή φακέλου εγκατάστασης", "Το CapCut δεν βρέθηκε στον επιλεγμένο φάκελο.", "Δεν βρέθηκε εγκατάσταση του CapCut"),
+    "es": ("Seleccionar carpeta de instalación", "No se encontró CapCut en la carpeta seleccionada.", "No se encontró la instalación de CapCut"),
+    "fi": ("Valitse asennuskansio", "CapCutia ei löytynyt valitusta kansiosta.", "CapCut-asennusta ei löytynyt"),
+    "fr": ("Sélectionner le dossier d’installation", "CapCut est introuvable dans le dossier sélectionné.", "Installation de CapCut introuvable"),
+    "gl": ("Seleccionar o cartafol de instalación", "Non se atopou CapCut no cartafol seleccionado.", "Non se atopou a instalación de CapCut"),
+    "id": ("Pilih folder instalasi", "CapCut tidak ditemukan di folder yang dipilih.", "Instalasi CapCut tidak ditemukan"),
+    "it": ("Seleziona cartella di installazione", "CapCut non è stato trovato nella cartella selezionata.", "Installazione di CapCut non trovata"),
+    "ja": ("インストールフォルダーを選択", "選択したフォルダーにCapCutが見つかりません。", "CapCutのインストール先が見つかりません"),
+    "ko": ("설치 폴더 선택", "선택한 폴더에서 CapCut을 찾을 수 없습니다.", "CapCut 설치 위치를 찾을 수 없습니다"),
+    "no": ("Velg installasjonsmappe", "CapCut ble ikke funnet i den valgte mappen.", "CapCut-installasjonen ble ikke funnet"),
+    "pl": ("Wybierz folder instalacji", "Nie znaleziono CapCut w wybranym folderze.", "Nie znaleziono instalacji CapCut"),
+    "pt": ("Selecionar pasta de instalação", "O CapCut não foi encontrado na pasta selecionada.", "A instalação do CapCut não foi encontrada"),
+    "pt_BR": ("Selecionar pasta de instalação", "O CapCut não foi encontrado na pasta selecionada.", "A instalação do CapCut não foi encontrada"),
+    "ru": ("Выбрать папку установки", "CapCut не найден в выбранной папке.", "Установка CapCut не найдена"),
+    "sk": ("Vybrať inštalačný priečinok", "CapCut sa vo vybranom priečinku nenašiel.", "Inštalácia CapCut sa nenašla"),
+    "tr": ("Kurulum klasörünü seç", "Seçilen klasörde CapCut bulunamadı.", "CapCut kurulumu bulunamadı"),
+    "uk": ("Вибрати папку встановлення", "CapCut не знайдено у вибраній папці.", "Встановлення CapCut не знайдено"),
+    "zh_CN": ("选择安装位置", "所选文件夹中未找到剪映。", "未找到剪映安装位置"),
+    "zh_TW": ("選擇安裝位置", "所選資料夾中未找到剪映。", "找不到剪映安裝位置"),
+}
 
-def main():
+
+def main(sources=SOURCES, translations=TRANSLATIONS):
     root = Path(__file__).resolve().parents[1] / "resources/translations"
     for path in sorted(root.glob("*.ts")):
         content = path.read_bytes().decode("utf-8")
@@ -45,10 +75,10 @@ def main():
         if context is None:
             raise ValueError(f"Missing NlePlugins context: {path}")
         messages = []
-        for index, source in enumerate(SOURCES):
+        for index, source in enumerate(sources):
             if f"<source>{escape(source)}</source>" in context.group():
                 continue
-            translated = '<translation type="unfinished"></translation>' if path.stem == "gyroflow" else f"<translation>{escape(TRANSLATIONS[path.stem][index])}</translation>"
+            translated = '<translation type="unfinished"></translation>' if path.stem == "gyroflow" else f"<translation>{escape(translations[path.stem][index])}</translation>"
             messages.append(f"    <message>\n        <source>{escape(source)}</source>\n        {translated}\n    </message>\n")
         position = context.end() - len("</context>")
         content = content[:position] + "".join(messages).replace("\n", newline) + content[position:]
@@ -56,4 +86,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--host-discovery", action="store_true")
+    args = parser.parse_args()
+    main(HOST_SOURCES, HOST_TRANSLATIONS) if args.host_discovery else main()

@@ -3576,6 +3576,18 @@ Rouvrez CapCut avant d’utiliser l’effet.</translation>
         <source>This CapCut version is not supported</source>
         <translation type="unfinished"></translation>
     </message>
+    <message>
+        <source>Select installation folder</source>
+        <translation>Sélectionner le dossier d’installation</translation>
+    </message>
+    <message>
+        <source>CapCut was not found in the selected folder.</source>
+        <translation>CapCut est introuvable dans le dossier sélectionné.</translation>
+    </message>
+    <message>
+        <source>CapCut installation was not found</source>
+        <translation>Installation de CapCut introuvable</translation>
+    </message>
 </context>
 <context>
     <name>NumberField</name>

@@ -3576,6 +3576,18 @@ Avaa CapCut uudelleen ennen tehosteen käyttöä.</translation>
         <source>This CapCut version is not supported</source>
         <translation type="unfinished"></translation>
     </message>
+    <message>
+        <source>Select installation folder</source>
+        <translation>Valitse asennuskansio</translation>
+    </message>
+    <message>
+        <source>CapCut was not found in the selected folder.</source>
+        <translation>CapCutia ei löytynyt valitusta kansiosta.</translation>
+    </message>
+    <message>
+        <source>CapCut installation was not found</source>
+        <translation>CapCut-asennusta ei löytynyt</translation>
+    </message>
 </context>
 <context>
     <name>NumberField</name>

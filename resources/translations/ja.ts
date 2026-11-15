@@ -3578,6 +3578,18 @@ Reopen CapCut before using the effect.</source>
         <source>This CapCut version is not supported</source>
         <translation type="unfinished"></translation>
     </message>
+    <message>
+        <source>Select installation folder</source>
+        <translation>インストールフォルダーを選択</translation>
+    </message>
+    <message>
+        <source>CapCut was not found in the selected folder.</source>
+        <translation>選択したフォルダーにCapCutが見つかりません。</translation>
+    </message>
+    <message>
+        <source>CapCut installation was not found</source>
+        <translation>CapCutのインストール先が見つかりません</translation>
+    </message>
 </context>
 <context>
     <name>NumberField</name>

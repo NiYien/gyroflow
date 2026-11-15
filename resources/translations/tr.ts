@@ -3572,6 +3572,18 @@ Efekti kullanmadan önce CapCut uygulamasını yeniden açın.</translation>
         <source>This CapCut version is not supported</source>
         <translation type="unfinished"></translation>
     </message>
+    <message>
+        <source>Select installation folder</source>
+        <translation>Kurulum klasörünü seç</translation>
+    </message>
+    <message>
+        <source>CapCut was not found in the selected folder.</source>
+        <translation>Seçilen klasörde CapCut bulunamadı.</translation>
+    </message>
+    <message>
+        <source>CapCut installation was not found</source>
+        <translation>CapCut kurulumu bulunamadı</translation>
+    </message>
 </context>
 <context>
     <name>NumberField</name>

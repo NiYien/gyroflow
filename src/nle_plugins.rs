@@ -2353,6 +2353,13 @@ pub fn latest_version() -> Option<String> {
     (!info.version.is_empty()).then_some(info.version)
 }
 
+pub fn set_jianying_location(path: &str) -> io::Result<String> {
+    #[cfg(target_os = "windows")]
+    { jianying::set_host_location(path) }
+    #[cfg(not(target_os = "windows"))]
+    { let _ = path; Err(io::Error::new(io::ErrorKind::Unsupported, "Manual Jianying location is only available on Windows")) }
+}
+
 pub fn status_json(typ: &str) -> io::Result<String> {
     let latest = latest_plugin_info();
     if typ == "jianying" {
@@ -2377,6 +2384,7 @@ pub fn status_json(typ: &str) -> io::Result<String> {
             else if installed_version.is_empty() { "not_installed" }
             else if update_available { "update_available" }
             else { "installed" };
+        log::info!(target: "plugin", "[nle jianying] status state={state} detail={detail:?} installed_version={installed_version:?} package_available={available}");
         return serde_json::to_string(&PluginStatus {
             typ: typ.to_owned(), installed_version: installed_version.clone(),
             installed_source_ref: installed.source_ref, installed_source_base: installed.source_base,

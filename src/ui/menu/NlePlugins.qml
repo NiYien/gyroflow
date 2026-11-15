@@ -125,6 +125,22 @@ MenuItem {
         });
         dialog.open();
     }
+    function selectJianyingFolder() {
+        const dialog = Qt.createQmlObject("import QtQuick.Dialogs; FolderDialog {}", root, "selectJianyingFolder");
+        dialog.objectName = "jianyingInstallationFolderDialog";
+        dialog.title = qsTr("Select installation folder");
+        dialog.accepted.connect(function() {
+            const result = controller.nle_plugins("set_jianying_location", filesystem.url_to_path(dialog.selectedFolder));
+            if (result.startsWith("An error occured")) {
+                messageBox(Modal.Error, qsTr("CapCut was not found in the selected folder."), [ { text: qsTr("Ok"), accent: true } ]);
+            } else {
+                controller.nle_plugins("status", "jianying");
+            }
+            dialog.destroy();
+        });
+        dialog.rejected.connect(function() { dialog.destroy(); });
+        dialog.open();
+    }
 
     Connections {
         target: controller;
@@ -234,7 +250,15 @@ MenuItem {
         width: parent.width;
         wrapMode: Text.Wrap;
         opacity: 0.7;
-        text: jianying_status.state === "unavailable"? qsTr("Not available in this release") : qsTr("CapCut is not installed");
+        text: jianying_status.state === "unavailable"? qsTr("Not available in this release") : qsTr("CapCut installation was not found");
+    }
+
+    LinkButton {
+        objectName: "jianyingPluginSelectLocationButton";
+        visible: Qt.platform.os === "windows" && jianying_status.state === "host_missing";
+        enabled: !root.loader;
+        text: qsTr("Select installation folder");
+        onClicked: root.selectJianyingFolder();
     }
 
     Row {

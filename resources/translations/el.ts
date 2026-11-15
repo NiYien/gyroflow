@@ -3577,6 +3577,18 @@ Reopen CapCut before using the effect.</source>
         <source>This CapCut version is not supported</source>
         <translation type="unfinished"></translation>
     </message>
+    <message>
+        <source>Select installation folder</source>
+        <translation>Επιλογή φακέλου εγκατάστασης</translation>
+    </message>
+    <message>
+        <source>CapCut was not found in the selected folder.</source>
+        <translation>Το CapCut δεν βρέθηκε στον επιλεγμένο φάκελο.</translation>
+    </message>
+    <message>
+        <source>CapCut installation was not found</source>
+        <translation>Δεν βρέθηκε εγκατάσταση του CapCut</translation>
+    </message>
 </context>
 <context>
     <name>NumberField</name>

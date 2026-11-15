@@ -55,29 +55,71 @@ pub(super) fn host() -> io::Result<Host> {
 }
 
 fn find_host(root: &Path) -> io::Result<Host> {
-    let mut versions = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(root.join("Apps")) {
-        for entry in entries {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if let Some(version) = parse_numeric_dotted_version(&name) {
-                if entry.path().join("JianyingPro.exe").is_file() {
-                    versions.push((version, name));
+    let root = if root.is_file() {
+        if !root.file_name().is_some_and(|name| name.eq_ignore_ascii_case("JianyingPro.exe")) {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "Expected JianyingPro.exe"));
+        }
+        root.parent().unwrap()
+    } else { root };
+    let mut directories = vec![root.to_owned(), root.join("Apps")];
+    // Inspect only the candidate and its immediate children, never the whole drive.
+    let mut last_error = None;
+    for directory in directories.clone() {
+        match std::fs::read_dir(&directory) {
+            Ok(entries) => for entry in entries {
+                match entry {
+                    Ok(entry) if entry.path().is_dir() => directories.push(entry.path()),
+                    Ok(_) => {},
+                    Err(error) => {
+                        log::debug!(target: "plugin", "[nle jianying] directory entry error path={directory:?}: {error}");
+                        last_error = Some(error);
+                    }
                 }
+            },
+            Err(error) => {
+                log::debug!(target: "plugin", "[nle jianying] directory unreadable path={directory:?}: {error}");
+                if error.kind() != io::ErrorKind::NotFound { last_error = Some(error); }
+            }
+        }
+    }
+    let mut versions = Vec::new();
+    for directory in directories {
+        let executable = directory.join("JianyingPro.exe");
+        match std::fs::metadata(&executable) {
+            Ok(metadata) if metadata.is_file() => {
+                #[cfg(target_os = "windows")]
+                let version = query_file_version(executable.to_string_lossy().as_ref());
+                #[cfg(not(target_os = "windows"))]
+                let version: Option<String> = None;
+                let version = version.or_else(|| directory.file_name()
+                    .and_then(|name| name.to_str())
+                    .filter(|name| parse_numeric_dotted_version(name).is_some())
+                    .map(str::to_owned)).unwrap_or_default();
+                versions.push((parse_numeric_dotted_version(&version).unwrap_or_default(), version, executable));
+            }
+            Ok(_) => {},
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {},
+            Err(error) => {
+                log::debug!(target: "plugin", "[nle jianying] executable unreadable path={executable:?}: {error}");
+                last_error = Some(error);
             }
         }
     }
     versions.sort_by(|a, b| b.0.cmp(&a.0));
-    let (_, version) = versions.into_iter().next().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            "Jianying is not installed in LOCALAPPDATA/JianyingPro/Apps",
-        )
+    let (_, version, executable) = versions.into_iter().next().ok_or_else(|| {
+        last_error.unwrap_or_else(|| io::Error::new(io::ErrorKind::NotFound,
+            format!("No JianyingPro.exe in {}, Apps, or their immediate subdirectories", root.display())))
     })?;
+    log::info!(target: "plugin", "[nle jianying] executable found path={executable:?} version={version:?}");
     Ok(Host {
         version,
         root: root.to_owned(),
     })
+}
+
+#[cfg(target_os = "windows")]
+pub(super) fn set_host_location(path: &str) -> io::Result<String> {
+    windows::set_host_location(path)
 }
 
 fn plugin_cache(root: &Path) -> io::Result<PathBuf> {
@@ -357,7 +399,7 @@ mod tests {
     }
 
     #[test]
-    fn detects_numeric_host_versions_in_install_root_only() {
+    fn selects_highest_numeric_host_version() {
         let root = tempfile::tempdir().unwrap();
         for version in ["11.8.0.14711", "11.10.0.1", "other"] {
             let app = root.path().join("Apps").join(version);
@@ -365,6 +407,32 @@ mod tests {
             std::fs::write(app.join("JianyingPro.exe"), []).unwrap();
         }
         assert_eq!(find_host(root.path()).unwrap().version, "11.10.0.1");
+    }
+
+    #[test]
+    fn detects_host_without_apps_or_numeric_directory_requirements() {
+        for layout in ["", "11.8.0.14711", "current", "Apps", "Apps/current"] {
+            let root = tempfile::tempdir().unwrap();
+            let directory = root.path().join(layout);
+            std::fs::create_dir_all(&directory).unwrap();
+            let executable = directory.join("JianyingPro.exe");
+            std::fs::write(&executable, []).unwrap();
+            assert!(find_host(root.path()).is_ok(), "layout={layout}");
+            assert!(find_host(&directory).is_ok(), "layout={layout}");
+            assert!(find_host(&executable).is_ok(), "layout={layout}");
+        }
+    }
+
+    #[test]
+    fn host_discovery_rejects_unrelated_files_and_does_not_scan_deep_directories() {
+        let root = tempfile::tempdir().unwrap();
+        let unrelated = root.path().join("another.exe");
+        std::fs::write(&unrelated, []).unwrap();
+        assert_eq!(find_host(&unrelated).err().unwrap().kind(), io::ErrorKind::InvalidInput);
+        let deep = root.path().join("unrelated/nested");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join("JianyingPro.exe"), []).unwrap();
+        assert_eq!(find_host(root.path()).err().unwrap().kind(), io::ErrorKind::NotFound);
     }
 
     #[cfg(target_os = "windows")]

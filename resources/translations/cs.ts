@@ -3577,6 +3577,18 @@ Před použitím efektu znovu otevřete CapCut.</translation>
         <source>This CapCut version is not supported</source>
         <translation type="unfinished"></translation>
     </message>
+    <message>
+        <source>Select installation folder</source>
+        <translation>Vybrat instalační složku</translation>
+    </message>
+    <message>
+        <source>CapCut was not found in the selected folder.</source>
+        <translation>CapCut nebyl ve vybrané složce nalezen.</translation>
+    </message>
+    <message>
+        <source>CapCut installation was not found</source>
+        <translation>Instalace CapCut nebyla nalezena</translation>
+    </message>
 </context>
 <context>
     <name>NumberField</name>

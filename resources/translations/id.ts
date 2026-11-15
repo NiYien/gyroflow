@@ -3574,6 +3574,18 @@ Buka kembali CapCut sebelum menggunakan efek.</translation>
         <source>This CapCut version is not supported</source>
         <translation type="unfinished"></translation>
     </message>
+    <message>
+        <source>Select installation folder</source>
+        <translation>Pilih folder instalasi</translation>
+    </message>
+    <message>
+        <source>CapCut was not found in the selected folder.</source>
+        <translation>CapCut tidak ditemukan di folder yang dipilih.</translation>
+    </message>
+    <message>
+        <source>CapCut installation was not found</source>
+        <translation>Instalasi CapCut tidak ditemukan</translation>
+    </message>
 </context>
 <context>
     <name>NumberField</name>

@@ -3535,6 +3535,18 @@ Reopen CapCut before using the effect.</source>
         <source>This CapCut version is not supported</source>
         <translation>不支援此剪映版本</translation>
     </message>
+    <message>
+        <source>Select installation folder</source>
+        <translation>選擇安裝位置</translation>
+    </message>
+    <message>
+        <source>CapCut was not found in the selected folder.</source>
+        <translation>所選資料夾中未找到剪映。</translation>
+    </message>
+    <message>
+        <source>CapCut installation was not found</source>
+        <translation>找不到剪映安裝位置</translation>
+    </message>
 </context>
 <context>
     <name>NumberField</name>
