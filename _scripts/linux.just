@@ -268,7 +268,7 @@ deploy *param: assert-linux-x86-64
             export VULKAN_SDK=$VULKAN_SDK
             export CARGO_TARGET=$CARGO_TARGET
             export IN_DOCKER=1
-            curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal
+            curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain 1.99.1
             source \$HOME/.cargo/env
             cargo install --force just
             export FORCE_ARCH=x86_64

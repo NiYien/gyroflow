@@ -121,7 +121,8 @@ jobs:
         run: python3 _scripts/ios_ci.py prepare-signing
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        # Runtime staging relies on the Cargo layout used by the last successful release.
+        uses: dtolnay/rust-toolchain@1.99.1
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.targets.type }}-gyroflow-niyien-${{ matrix.targets.type == 'ios' && hashFiles('_scripts/ios.just', '_scripts/common.just', '_scripts/ios_native_deps.py') || matrix.targets.type == 'macos' && hashFiles('_scripts/macos.just') || matrix.targets.type == 'windows' && hashFiles('_scripts/windows.just', '_scripts/common.just', '_scripts/install_windows_ffmpeg.ps1') || hashFiles('_scripts/common.just', '_scripts/android.just', '_scripts/linux.just', '_scripts/mdk_sdk_manifest.json', '_scripts/install_mdk_sdk.py') }}
