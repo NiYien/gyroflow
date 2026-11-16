@@ -71,6 +71,10 @@ class WindowsPackageGuardTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.recipe = (ROOT / '_scripts/windows.just').read_text(encoding='utf-8')
+        start = cls.recipe.index('    xcopy /Y "$OpenCVDir\\opencv_vide*.dll"')
+        start = cls.recipe.index('\n', start) + 1
+        end = cls.recipe.index('    del "$TargetDir\\opencv_*videoio*"', start)
+        cls.zlib_copy = cls.recipe[start:end]
 
     def run_script(self, body, work):
         script = work / 'verify.ps1'
@@ -98,6 +102,41 @@ class WindowsPackageGuardTests(unittest.TestCase):
             (work / 'staging/Gyroflow.exe').write_bytes(b'stale build')
             result = self.run_script('$CargoTarget = "missing-build"\n$TargetDir = "staging"\n' + copy +
                                      '\nSet-Content reached-packaging unexpected\n', work)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse((work / 'reached-packaging').exists())
+
+    def test_zlib_runtime_names_are_copied_from_opencv(self):
+        for name in ('libz.dll', 'z.dll', 'zlib1.dll'):
+            with self.subTest(name=name), tempfile.TemporaryDirectory(prefix='zlib packaging ') as directory:
+                work = Path(directory)
+                (work / 'opencv bin').mkdir()
+                (work / 'staging').mkdir()
+                contents = b'zlib runtime from the selected OpenCV installation'
+                (work / 'opencv bin' / name).write_bytes(contents)
+                result = self.run_script('$OpenCVDir = "opencv bin"\n$TargetDir = "staging"\n' +
+                                         self.zlib_copy, work)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue((work / 'staging' / name).is_file(), result.stdout + result.stderr)
+                self.assertEqual((work / 'staging' / name).read_bytes(), contents)
+
+    def test_missing_zlib_cannot_reuse_stale_staged_runtime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            (work / 'opencv').mkdir()
+            (work / 'staging').mkdir()
+            (work / 'staging/z.dll').write_bytes(b'stale runtime')
+            result = self.run_script('$OpenCVDir = "opencv"\n$TargetDir = "staging"\n' + self.zlib_copy +
+                                     '\nSet-Content reached-packaging unexpected\n', work)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse((work / 'reached-packaging').exists())
+
+    def test_zlib_copy_failure_stops_before_packaging(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            (work / 'opencv').mkdir()
+            (work / 'opencv/z.dll').write_bytes(b'zlib runtime')
+            result = self.run_script('$OpenCVDir = "opencv"\n$TargetDir = "missing-parent\\staging\\"\n' +
+                                     self.zlib_copy + '\nSet-Content reached-packaging unexpected\n', work)
             self.assertNotEqual(result.returncode, 0)
             self.assertFalse((work / 'reached-packaging').exists())
 

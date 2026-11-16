@@ -441,7 +441,12 @@ deploy:
     xcopy /Y "$OpenCVDir\opencv_flan*.dll"       "$TargetDir\"
     xcopy /Y "$OpenCVDir\opencv_imgpro*.dll"     "$TargetDir\"
     xcopy /Y "$OpenCVDir\opencv_vide*.dll"       "$TargetDir\"
-    xcopy /Y "$OpenCVDir\z.dll"                  "$TargetDir\"
+    $ZlibFiles = @(Get-ChildItem -LiteralPath $OpenCVDir -File -ErrorAction Stop |
+        Where-Object { $_.Name -in @("libz.dll", "z.dll", "zlib1.dll") })
+    if ($ZlibFiles.Count -eq 0) {
+        throw "Cannot package Windows application: zlib runtime is missing from $OpenCVDir"
+    }
+    Copy-Item -LiteralPath $ZlibFiles.FullName -Destination "$TargetDir\" -Force -ErrorAction Stop
     del "$TargetDir\opencv_*videoio*"
 
     # Copy Gyroflow
