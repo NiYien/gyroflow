@@ -1,0 +1,26 @@
+[
+  {
+    "smoothness_id": 569,
+    "render_id": 584,
+    "smoothness_start": "2026-11-16T23:57:50.543Z",
+    "smoothness_end": "2026-11-16T23:57:51.151Z",
+    "render_start": "2026-11-16T23:57:51.139Z",
+    "render_end": "2026-11-16T23:57:51.731Z",
+    "ui_tid": "0x31fe8",
+    "render_tid": "0x2ea70",
+    "effect": "0x21e77969bf0",
+    "instance": "0x21e93ce0c00"
+  },
+  {
+    "smoothness_id": 587,
+    "render_id": 584,
+    "smoothness_start": "2026-11-16T23:57:51.251Z",
+    "smoothness_end": "2026-11-16T23:57:51.674Z",
+    "render_start": "2026-11-16T23:57:51.139Z",
+    "render_end": "2026-11-16T23:57:51.731Z",
+    "ui_tid": "0x31fe8",
+    "render_tid": "0x2ea70",
+    "effect": "0x21e77969bf0",
+    "instance": "0x21e93ce0c00"
+  }
+]

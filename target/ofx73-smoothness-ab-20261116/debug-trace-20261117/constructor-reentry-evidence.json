@@ -1,0 +1,30 @@
+[
+  {
+    "action_id": 6,
+    "action": "OfxActionInstanceChanged",
+    "effect": "0x21e77969fb0",
+    "instance": "0x0",
+    "parameter": "InstanceId",
+    "reason": "OfxChangePluginEdited",
+    "depth": 2,
+    "parent_action_id": 4,
+    "kind": "InstanceData",
+    "sequence": 27,
+    "utc": "2026-11-16T23:36:55.953Z",
+    "tid": "0x31fe8"
+  },
+  {
+    "action_id": 10,
+    "action": "OfxActionInstanceChanged",
+    "effect": "0x21e77969bf0",
+    "instance": "0x0",
+    "parameter": "InstanceId",
+    "reason": "OfxChangePluginEdited",
+    "depth": 2,
+    "parent_action_id": 8,
+    "kind": "InstanceData",
+    "sequence": 41,
+    "utc": "2026-11-16T23:36:56.793Z",
+    "tid": "0x31fe8"
+  }
+]

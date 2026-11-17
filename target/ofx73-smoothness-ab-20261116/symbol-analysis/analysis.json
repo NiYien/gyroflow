@@ -1,0 +1,216 @@
+{
+  "status": "analysis_completed_with_original_pdb_unavailable",
+  "summary_zh": "已定位全部17条插件 WaitOnAddress 栈：1条WGL窗口关闭通知接收，16条Rayon空闲工作线程条件变量等待；没有证据将它们归为CUDA参数槽或manager锁死。官方.73匹配PDB未在现有可访问位置找到。源码核查确认Render内宿主参数读写、Rc跨线程引用计数、同一实例可变别名/重入和擦除类型析构问题；尚未证实其中哪项导致本次宿主空指针异常。",
+  "boundaries": {
+    "product_code_changed": false,
+    "dependency_code_changed": false,
+    "formal_plugin_changed": false,
+    "new_build": false,
+    "new_host_test": false,
+    "analysis_location": "C:/Users/Jhe/Desktop/github/gyroflow/target/ofx73-smoothness-ab-20261116/symbol-analysis",
+    "source_revisions": {
+      "plugin73": "3aa6612f7f7e2b94a9e83aee78b0f90ae05d6347",
+      "core73": "640e38f299bb4cadc0a43af93c4fed420ea6f5fd",
+      "plugin60": "78b1b4a8538caa2e09f86f7255800e1080c48dc5",
+      "ofx_binding": "0b152196fb47b0dd09c110881786d6a9e5e0d953"
+    }
+  },
+  "symbols": {
+    "official_rsds_guid": "ACE8B53E-A251-48A0-BD7D-C8D24B5BCA30",
+    "age": 1,
+    "name": "gyroflow_ofx.pdb",
+    "local_candidates_checked": 37,
+    "local_matches": 0,
+    "official_run": 42535217130,
+    "windows_job": 128897915081,
+    "windows_artifact": 13639469182,
+    "artifact_pdb_entries": 0,
+    "original_cache_key": "Windows-X64-gyroflow-plugins-1-2026101358cf-7ffbb6418c3148aa9f5efa54f40b753b80911f8b59a7f643d64634a35cf5b30d",
+    "original_cache_query_matches": 0,
+    "scope": "No matching PDB found in the two repository target trees, published artifact or original CI cache. This does not prove no archival copy exists elsewhere.",
+    "reference_pdb_policy": "A separate local release DLL was opened with its own matching PDB for independent comparison. Its PDB was not loaded or forced into the official .73 dump.",
+    "evidence": [
+      "pe-codeview.json",
+      "local-pdb-identities.json",
+      "cdb-wait-callers.txt:55",
+      "source73/.github/workflows/release.yml:56"
+    ]
+  },
+  "wait_on_address": [
+    {
+      "threads": [
+        250
+      ],
+      "os_tids": [
+        "0x33c20"
+      ],
+      "dump_name": "wgpu-hal WGL Instance Thread",
+      "official_return_rva": "0x11FFED2",
+      "caller": "wgpu-hal 29.0.3 gles::wgl hidden-window owner thread -> std sync mpsc receiver -> WaitOnAddress",
+      "purpose_zh": "等待drop_rx关闭通知以释放隐藏窗口和设备上下文",
+      "source": "C:/Users/Jhe/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-hal-29.0.3/src/gles/wgl.rs",
+      "line": 432,
+      "confidence": "identified from exact dependency version, dump thread name and unique blocking receive in that thread",
+      "not_evidence_of": "CUDA kernel/event completion wait or native fallback"
+    },
+    {
+      "threads": [
+        276,
+        277,
+        278,
+        279,
+        280,
+        281,
+        282,
+        283,
+        284,
+        285,
+        286,
+        287,
+        288,
+        289,
+        290,
+        291
+      ],
+      "official_function_rva": "0x13416C0",
+      "official_return_rva": "0x1341893",
+      "caller": "rayon_core::registry::WorkerThread::wait_until_cold -> rayon_core::sleep::Sleep::sleep -> Condvar::wait -> WaitOnAddress",
+      "exact_source_location": "rayon-core-1.13.0/src/sleep/mod.rs:187:67",
+      "source_operation": "is_blocked = sleep_state.condvar.wait(is_blocked).unwrap();",
+      "proof": "Official .73 disassembly passes a Rust panic Location for this unwrap; decoded from PE at RVA0x15AEAE8, it contains the exact crate path and line187. All16 stacks share the same wait and worker-loop chain.",
+      "meaning_zh": "线程池等待新任务/唤醒；不能把这些栈解释成stabilization写锁或CUDA参数槽等待",
+      "caveat": "An idle-wait classification of these stacks does not prove the entire process could never deadlock at another time.",
+      "evidence": "wait-source-proof.json"
+    }
+  ],
+  "call_chain": {
+    "observed_gui": [
+      "BMDDavUI::UiDoubleSlider::mousePressEvent",
+      "UiAbstractDoubleSlider::setSliderPosition",
+      "UiDoubleSliderBase::valueChanged",
+      "Resolve internal signal/slot frames",
+      "Resolve.exe+0xE6BEF0"
+    ],
+    "static_ofx": [
+      "ofx::registry::main_entry_for_plugin -> global Registry::dispatch",
+      "PluginDescriptor::dispatch -> Suites::clone -> GyroflowPlugin::execute",
+      "InstanceChanged -> process_parameter_change(Smoothness, UserEdited)",
+      "SmoothnessManuallyEdited.set_value(true)",
+      "common::param_changed -> Status=calculating",
+      "cache_keyframes: reads host values then swaps owned cached keyframe map under RwLock",
+      "invalidate_blocking_smoothing/zooming/undistortion: only atomic flags/counters",
+      "Status=ok; translation UI update",
+      "next Render -> stab_manager -> update_synchronization_status -> process_pixels",
+      "process_pixels recomputes invalidated smoothness/zoom/undistortion then enters native CUDA"
+    ],
+    "dynamic_gap": "The exception GUI stack has no active Gyroflow/ofx plugin frame. The last cache_keyframes log is16:09:12UTC; crash is16:09:31UTC. It is not established whether the fatal mousePress event entered the OFX parameter callback before the exception.",
+    "locking": "Normal repeated Smoothness edits do not synchronously run smoothing or wait for CUDA in the callback. cache_keyframes holds no kparams write guard during host queries; the replacement is protected by its own RwLock. Core invalidation methods do not acquire the native stabilization write lock despite their names.",
+    "cache_lifetime": "clear_stab is gated by !ever_changed for ordinary parameter edits. A Render-local Arc<StabilizationManager> retains the old manager. The custom keyframe provider owns Arc<RwLock<KeyframableParams>>, not raw OFX ParamHandles. These paths do not establish direct UAF from simply clearing the manager cache."
+  },
+  "findings": [
+    {
+      "priority": 1,
+      "title_zh": "Render回调内调用宿主当前值读写API，和UI状态写入可交错",
+      "confirmed_code": true,
+      "confirmed_crash_cause": false,
+      "detail_zh": "平滑度回调写Status=calculating和Status=ok。Render在update_synchronization_status -> set_status中调用get_string(Status)，必要时set_string(Status)、set_hint，并调用update_loaded_state。update_loaded_state遍历控件enabled属性并再次写Status和OpenGyroflow标签。Resolve的set_string最终使用paramSetValue，get_string使用paramGetValue。OFX参数suite要求paramGetValue不用于Render、Render读取用AtTime；paramSetValue限于InstanceChanged或interact。",
+      "specific_interleaving": [
+        "UI回调刚写入calculating",
+        "Render读到该状态并认为需要恢复ok",
+        "Render调用宿主paramSetValue/属性更新，同时UI处理valueChanged或参数状态变化"
+      ],
+      "guard_caveat": "enabled setter会跳过同值；不能声称每次拖动都实际写入OutputHeight.enabled。Status/hint/label写入是另外的调用。",
+      "regression": "The equivalent Render status update exists inline in .60; .73 extracts a helper. This is an existing contract issue, not proved to be newly introduced by native CUDA.",
+      "sources": [
+        "source73/openfx/src/gyroflow.rs:274",
+        "source73/openfx/src/gyroflow.rs:2838",
+        "source73/common/src/lib.rs:2015",
+        "source73/common/src/lib.rs:1243",
+        "source73/openfx/src/gyroflow.rs:1053"
+      ],
+      "spec": "https://openfx.readthedocs.io/en/main/Reference/suites/ofxParametersSuiteReference.html"
+    },
+    {
+      "priority": 2,
+      "title_zh": "OFX绑定没有线程安全与递归回调边界",
+      "confirmed_code": true,
+      "confirmed_crash_cause": false,
+      "detail_zh": "全局Registry经static mut取得&mut；每次action dispatch克隆Suites，其中多张suite表由std::rc::Rc管理。跨线程clone/drop同一Rc产生非原子引用计数竞态，独立的UI/render实例也不能隔离这个插件全局共享状态。get_instance_data又从同一裸指针直接生成&mut InstanceData；普通LRU/managers和缓存字段没有实例级同步，而描述符宣称FullySafe。平滑度处理期间仍持有这些可变借用并调用宿主paramSetValue，宿主若同步递归InstanceChanged会再次取得同一实例的可变引用。",
+      "not_infinite_recursion": "手动标记与Status的PluginEdited分支不会重新执行Smoothness UserEdited业务；未发现单纯由此形成无限逻辑递归。问题是递归期间的可变别名和宿主并发访问。",
+      "fix_constraint": "不能只给整个action入口套普通不可重入Mutex；OFX明确允许这些递归回调，会带来新的自等待。这里只记录约束，没有修改代码。",
+      "regression": "The pinned ofx-rs revision, FullySafe declaration and manual-edit setter are already present in .60. Native-CUDA scheduling exposure is a hypothesis with unknown frequency, not a confirmed regression mechanism.",
+      "sources": [
+        "C:/Users/Jhe/.cargo/git/checkouts/ofx-rs-1b17b267b7b57c2c/0b15219/ofx/src/registry.rs:85",
+        "C:/Users/Jhe/.cargo/git/checkouts/ofx-rs-1b17b267b7b57c2c/0b15219/ofx/src/plugin.rs:277",
+        "C:/Users/Jhe/.cargo/git/checkouts/ofx-rs-1b17b267b7b57c2c/0b15219/ofx/src/suites.rs:6",
+        "C:/Users/Jhe/.cargo/git/checkouts/ofx-rs-1b17b267b7b57c2c/0b15219/ofx/src/handle.rs:706",
+        "source73/openfx/src/gyroflow.rs:2172",
+        "source73/openfx/src/gyroflow.rs:2398",
+        "source73/openfx/src/gyroflow.rs:3853"
+      ],
+      "spec": "https://openfx.readthedocs.io/en/latest/Reference/ofxThreadSafety.html"
+    },
+    {
+      "priority": 3,
+      "title_zh": "实例销毁擦除了真实析构类型",
+      "confirmed_code": true,
+      "confirmed_crash_cause": false,
+      "detail_zh": "set_instance_data以Box<T>保存原始指针；drop_instance_data从VoidPtrMut取回后直接Box::from_raw(ptr)，此处类型是Box<c_void>，没有调用InstanceData的真实析构器，也未清空宿主数据指针。成员释放与分配布局不满足原有Box<T>所有权契约。",
+      "scope_zh": "这是同一旧版绑定的生命周期缺陷；现有转储没有将DestroyInstance或销毁后访问连接到本次valueChanged崩溃，不能把它当作已确认触发点。",
+      "sources": [
+        "C:/Users/Jhe/.cargo/git/checkouts/ofx-rs-1b17b267b7b57c2c/0b15219/ofx/src/handle.rs:680",
+        "C:/Users/Jhe/.cargo/git/checkouts/ofx-rs-1b17b267b7b57c2c/0b15219/ofx/src/handle.rs:717",
+        "C:/Users/Jhe/.cargo/git/checkouts/ofx-rs-1b17b267b7b57c2c/0b15219/ofx/src/types.rs:17",
+        "source73/openfx/src/gyroflow.rs:3532"
+      ]
+    }
+  ],
+  "fault_lifetime_evidence": {
+    "facts": [
+      "Fault instruction reads RCX=0 inside Resolve.exe+0xE6BEF0.",
+      "Preceding instruction loads RCX from [RBX+0x38].",
+      "The surrounding routine decrements a reference count, conditionally releases values, and traverses child pointers. It resembles container/value cleanup; exact C++ type and function name are unknown.",
+      "The captured heap bytes near RBX contain ASCII OutputHeight. This is a clue tying the state to a parameter name, not proof that update_loaded_state or OutputHeight.enabled wrote it.",
+      "The field visible in the later captured heap is nonzero; exception registers and dump memory alone cannot determine which earlier writer, cleanup or corruption caused the null seen by the faulting instruction."
+    ],
+    "inference_zh": "应优先查宿主参数状态清理/回调重入与跨线程参数写入的交界；现有证据不足以区分提前释放、对象重入清理、先前内存破坏或宿主自身缺陷。",
+    "evidence": [
+      "cdb-slider-fault.txt:72",
+      "cdb-wait-source-locations.txt:75"
+    ]
+  },
+  "baseline": {
+    "same_ofx_rev": true,
+    "same_fully_safe": true,
+    "same_smoothness_manual_flag_write": true,
+    "render_status_update_exists_in_both": true,
+    "render_status_update_change": ".60 inline versus .73 helper; not new behavior",
+    "cache_keyframes_source_identical": true,
+    "keyframe_provider_source_identical": true,
+    "evidence": [
+      "baseline-comparison.json",
+      "source60/openfx/src/gyroflow.rs:2304",
+      "source60/openfx/src/gyroflow.rs:2979"
+    ]
+  },
+  "next_actions_ranked": [
+    {
+      "rank": 1,
+      "action_zh": "在独立.73实例用兼容x64调试器记录action、线程ID、实例地址和回调嵌套，并在宿主paramSetValue入口区分Render与InstanceChanged调用，重点核实Status交错。无需先改产品代码。"
+    },
+    {
+      "rank": 2,
+      "action_zh": "若要做诊断构建，先做单变量对照：仅停止Render中的宿主状态/标签写入，保持CUDA开关与算法不变。该项涉及代码，当前没有实施。"
+    },
+    {
+      "rank": 3,
+      "action_zh": "依据回调记录设计绑定层线程/重入/析构修复；不要仅凭这些旧缺陷将原生CUDA同步策略改成全局等待或全局action锁。"
+    }
+  ],
+  "remaining_unknowns": [
+    "Original .73 PDB not recovered; Resolve private symbols unavailable.",
+    "Exact host function/class owning the cleanup node and the first state-corrupting operation are unknown.",
+    "No runtime record yet proves simultaneous access to the same InstanceData in Resolve, nor the fatal event's precise OFX callback nesting.",
+    "No new reproduction, first-chance capture or diagnostic-build comparison was run in this analysis-only turn."
+  ]
+}

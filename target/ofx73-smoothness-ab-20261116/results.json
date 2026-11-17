@@ -1,0 +1,203 @@
+{
+  "status": "completed",
+  "completed_utc": "2026-11-16T17:18:57.846Z",
+  "summary_zh": "官方 .73 原生 CUDA 开启首轮在播放中第二次拖动平滑度时崩溃一次；关闭组24次拖动及开启复验12次播放中拖动均完成。崩溃转储直接指向 Resolve 滑块事件处理链的空指针读异常，尚未确认 CUDA 参数槽等待、失败回退或 CUDA 本身为根因。",
+  "scope": {
+    "product_code_modified": false,
+    "formal_plugin_replaced": false,
+    "build_performed": false,
+    "crash_report_submitted": false,
+    "source_repository": "C:/Users/Jhe/Desktop/github/gyroflow",
+    "branch": "niyien",
+    "plugin_repository": "C:/Users/Jhe/Desktop/github/gyroflow-plugins",
+    "plugin_branch": "main",
+    "artifacts_location": "C:/Users/Jhe/Desktop/github/gyroflow/target/ofx73-smoothness-ab-20261116"
+  },
+  "provenance": {
+    "artifact_id": 13639469182,
+    "actions_run": 42535217130,
+    "file_version": "3.0.0.73",
+    "plugin_commit": "3aa6612f7f7e2b94a9e83aee78b0f90ae05d6347",
+    "core_commit": "640e38f299bb4cadc0a43af93c4fed420ea6f5fd",
+    "archive_sha256": "b98cd0a71c6f33afdaf45f11840fe7a1c5ef65ab30555fa85cdc9e9ea789b19b",
+    "candidate_sha256": "a658f4bc8da89c16828edcd7e9b033a3f680f0f4e6ac27725fad48bf21158b63",
+    "loaded_binary_verified_by": [
+      "candidate descriptor after rescan",
+      "current_ref=actions-run-42535217130",
+      "crash dump full image path and 3.0.0.73 resource version"
+    ]
+  },
+  "environment": {
+    "host": "DaVinci Resolve Studio 21.0.0.47",
+    "os": "Windows 11 Enterprise 22631",
+    "gpu": "NVIDIA GeForce RTX 4060 Ti 16 GB",
+    "driver": "610.88",
+    "timezones": {
+      "plugin_log": "UTC",
+      "resolve_log": "Asia/Shanghai UTC+08:00",
+      "action_journal": "UTC"
+    },
+    "sample": {
+      "source": "D:/视频素材/R50V_0829/A_0001C015H510306_220540EU_CANON.MP4",
+      "sidecar": "D:/视频素材/R50V_0829/A_0001C015H510306_220540EU_CANON.gyroflow",
+      "codec": "HEVC Main10",
+      "source_resolution": [
+        3840,
+        2160
+      ],
+      "source_fps": 59.94,
+      "clip_frames": 938,
+      "algorithm": "Default",
+      "initial_smoothness": 0.15,
+      "max_zoom": 180,
+      "max_zoom_iterations": 12,
+      "tested_clip": "first clip, Color page node 1, loop playback",
+      "notes": "The imported project has three clips; the test loops the selected first clip. This is a local Canon sample, not the feedback source."
+    }
+  },
+  "isolation": {
+    "config": "C:/Users/Jhe/Desktop/github/gyroflow/target/ofx73-smoothness-ab-20261116/resolve-config",
+    "support_and_project_library": "C:/Users/Jhe/Desktop/github/gyroflow/target/ofx73-smoothness-ab-20261116/resolve-support",
+    "candidate_search_path": "C:/Users/Jhe/Desktop/github/gyroflow/target/ofx73-smoothness-ab-20261116/plugins",
+    "log_and_plugin_data": "separate on, off, on-repeat directories",
+    "system_plugin_excluded": "Only through Video Plugins preferences in the isolated test profile; installed binary untouched.",
+    "environment_scope": "Child Resolve process only; native CUDA 1/0/1",
+    "setup_excluded_from_results": "Early missing-plugin/scanning sessions and normal close were setup, not valid .73 crash measurements."
+  },
+  "tests": [
+    {
+      "mode": "on",
+      "pid": 194124,
+      "project": "Codex OFX73 Native ON 20261116",
+      "backend": "cuda",
+      "paused_drag_attempts": 12,
+      "paused_updates_confirmed": 12,
+      "playback_drag_attempts": 2,
+      "playback_updates_confirmed_before_crash": 1,
+      "result": "crashed during second playback drag attempt; numeric field did not confirm the second new value",
+      "playback_started_local": "2026-11-17 00:08:49.268+08:00",
+      "crash_time_local": "2026-11-17 00:09:31+08:00",
+      "dump": "on/resolve-logs/950fbbcd-7b30-440e-b7c1-16241cfd1061.dmp"
+    },
+    {
+      "mode": "off",
+      "pid": 2528,
+      "project": "Codex OFX73 Native OFF 20261116",
+      "backend": "wgpu",
+      "paused_drag_attempts": 12,
+      "playback_drag_attempts": 12,
+      "updates_confirmed": 24,
+      "result": "completed; playback stopped, project saved, normal shutdown",
+      "playback_started_local": "2026-11-17 00:31:10.346+08:00",
+      "playback_stopped_local": "2026-11-17 00:39:06.839+08:00"
+    },
+    {
+      "mode": "on-repeat",
+      "pid": 202196,
+      "project": "Codex OFX73 Native ON Repeat 20261117",
+      "backend": "cuda",
+      "preparation_drags": 1,
+      "playback_drag_attempts": 12,
+      "playback_updates_confirmed": 12,
+      "result": "completed; playback stopped, project saved, normal shutdown",
+      "playback_started_local": "2026-11-17 00:47:07.053+08:00",
+      "playback_stopped_local": "2026-11-17 01:08:43.913+08:00",
+      "difference": "Focused followup used one paused preparation drag from 15 to 1, not the first run full 12-drag paused sequence."
+    }
+  ],
+  "crash_analysis": {
+    "exception_code": "0xc0000005",
+    "operation": "read from address 0",
+    "fault_module": "Resolve.exe",
+    "module_base": "0x00007ff6f94a0000",
+    "rip": "0x00007ff6fa30bef0",
+    "rva": "0xE6BEF0",
+    "fault_thread": "main GUI thread 0, OS id 0x3425c",
+    "register": "RCX=0",
+    "instruction": "mov eax,dword ptr [rcx]",
+    "observed_call_chain": [
+      "BMDDavUI!BmdDavUI::UiDoubleSlider::mousePressEvent",
+      "BMDDavUI!BmdDavUI::UiAbstractDoubleSlider::setSliderPosition",
+      "BMDDavUI!BmdDavUI::UiDoubleSliderBase::valueChanged",
+      "Resolve internal frames",
+      "Resolve.exe+0xE6BEF0"
+    ],
+    "secondary_context": "Qt mouse dispatch is nested above a timer/processEvents path. This is evidence of event handling context, not proof of an object lifetime/reentry bug.",
+    "slot_wait": "Not confirmed. No named cuEventSynchronize, cuStreamSynchronize, or cuCtxSynchronize frames in the captured ~* k 24 stacks. No stack contains both the plugin and nvcuda modules. A crash-time snapshot cannot exclude an earlier transient wait.",
+    "plugin_waits": "17 plugin-containing thread stacks include WaitOnAddress. Without exact private symbols and a lock ownership graph, these waits do not establish deadlock or identify Slot::prepare.",
+    "fallback": "No native CUDA failure/fallback/error log before the crash; backend remained cuda through 16:09:30 UTC. OFF backend=wgpu was explicitly selected, not evidence of failure fallback.",
+    "post_crash_warning": "Timeout waiting for interop lookahead first appears at local 00:09:32.499, after the fatal dump timestamp. It is not evidence of the initial trigger.",
+    "symbol_limits": "No matching private PDB. Large-offset nearest export names such as boost codecvt, license client, plugin capabilities and cuProfilerStop must not be interpreted as exact private functions."
+  },
+  "related_modules": [
+    {
+      "file": "C:/Users/Jhe/Desktop/github/gyroflow/src/core/lib.rs",
+      "line": 2697,
+      "role": "smoothness recompute before native rendering; stabilization write lock at 2712; native fallback wait at 2720"
+    },
+    {
+      "file": "C:/Users/Jhe/Desktop/github/gyroflow/src/core/gpu/cuda_native.rs",
+      "line": 347,
+      "role": "Slot::prepare reuse wait; uninstrumented in the official .73 binary"
+    },
+    {
+      "file": "C:/Users/Jhe/Desktop/github/gyroflow/src/core/gpu/cuda_native.rs",
+      "line": 374,
+      "role": "Slot::free and stream/cache resource cleanup waits; remain static risks, not observed crash location"
+    }
+  ],
+  "evidence": {
+    "native_log": "on/plugin-data/gyroflow-openfx.log:923 backend=cuda through 16:09:30 UTC",
+    "host_fatal": "on/resolve-logs/ResolveDebug.txt:358-365",
+    "exception_context": "on/cdb-native-images.txt:4065-4077",
+    "slider_callback": "on/cdb-native-images.txt:4093-4096",
+    "all_threads": "on/cdb-native-images.txt",
+    "stats": "evidence-stats.json",
+    "gestures": "ui-actions.json"
+  },
+  "shared_warning": {
+    "text": "fuscript query exceeded 5000ms and was killed",
+    "counts": {
+      "on": 2,
+      "off": 10,
+      "on-repeat": 24
+    },
+    "interpretation": "Occurs in both healthy comparison runs too. It is a scripting-helper timeout, not a parameter-slot completion/fallback log; not established as this crash root cause."
+  },
+  "limitations": [
+    "Only one crash; ON followup did not reproduce. No causal proof or reproducibility rate can be assigned to native CUDA from these three runs.",
+    "Different host version, Windows version, GPU/driver and media from the feedback environment (feedback: Resolve 21.1, Win10, RTX5060Ti).",
+    "Same source DRP imported into separate fresh projects; drag positions and values approximately matched, but one-pixel UI quantization and playback timing differ.",
+    "Drags were performed one at a time with UI readback and variable gaps. This is not a uniform high-frequency stress test or a performance benchmark.",
+    "Input injection drag_ms and CPU-side gpu_ms log values do not measure GPU completion latency.",
+    "No hang-time dump before the fatal exception, no per-slot entry/exit timing or lock ownership tracing, and no exact .73 private symbols; a CUDA wait or fallback cannot be conclusively classified from this evidence."
+  ],
+  "preservation": {
+    "formal_plugin_sha256_after": "163f1453845723fdaddd538eab16138d20ef9043d0c45639ee6bbb882bf564b2",
+    "formal_plugin_unchanged": true,
+    "candidate_bytes_unchanged": true,
+    "source_and_test_drp_sha256": "7d9f933a9c3c8b4562450143b90902e7d282b2dd7959402c746dc5da8d2e6fb6",
+    "source_drp_unchanged": true,
+    "source_sidecar_sha256_after": "d1b97182c39e8e0f8a6422d1861ba372225bc33a3671587819d85353eecfc041",
+    "source_sidecar_unchanged": true,
+    "resolve_processes_after": [],
+    "test_projects_preserved": true
+  },
+  "next_actions_ranked": [
+    {
+      "rank": 1,
+      "action": "Use matching .73 private symbols and a compatible x64 debugger to resolve plugin WaitOnAddress callers and trace the parameter callback around the observed Resolve slider crash; capture first-chance exception context.",
+      "purpose": "Turn the confirmed crash into exact callback/lifetime evidence without product source changes."
+    },
+    {
+      "rank": 2,
+      "action": "Run a bounded matched rapid-drag sequence in ON/OFF with identical frame/parameter timing; if an actual hang appears, capture all-thread dumps during the hang before process exit.",
+      "purpose": "Distinguish an intermittent UI callback crash from persistent GPU/lock waits."
+    },
+    {
+      "rank": 3,
+      "action": "If binary debugging is insufficient, propose a separate diagnostic build with slot/stream/fallback entry-exit tracing and thread/context identity; do not change wait or cleanup policy until evidence identifies the blocking path.",
+      "purpose": "Resolve missing slot/fallback observability; requires a later explicitly scoped code change."
+    }
+  ]
+}

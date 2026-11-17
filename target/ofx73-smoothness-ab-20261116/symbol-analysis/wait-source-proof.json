@@ -1,0 +1,12 @@
+{
+  "binary": "official 3.0.0.73",
+  "function_rva": "0x13416C0",
+  "wait_return_rva": "0x1341893",
+  "wait_call_rva": "0x134188D",
+  "panic_location_rva": "0x15aeae8",
+  "source": "C:\\Users\\runneradmin\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\rayon-core-1.13.0\\src\\sleep\\mod.rs",
+  "line": 187,
+  "column": 67,
+  "mechanism": "Sleep::sleep condvar.wait(is_blocked).unwrap(); used to park idle Rayon workers",
+  "corroboration": "16 stacks share this wait and worker-loop call chain; independent local release reference with its own matching PDB also identifies Sleep::sleep. Nonmatching reference PDB was never loaded into official dump."
+}

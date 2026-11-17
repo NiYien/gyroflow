@@ -1,0 +1,213 @@
+{
+  "status": "completed",
+  "summary_zh": "已完成官方.73独立实例的x64调试跟踪。确认同一effect及InstanceData上的Render与Smoothness UI回调在不同线程重叠，且UI Status写入同步递归触发同实例的Status PluginEdited回调。有效播放采样没有捕获Render Status写入与Smoothness回调交错，也没有宿主崩溃，不能将此前闪退归因于该具体写入竞态。",
+  "scope": {
+    "product_code_modified": false,
+    "dependency_code_modified": false,
+    "formal_plugin_replaced": false,
+    "build_performed": false,
+    "system_debugger_install_performed": false,
+    "debugger_breakpoints_cleared": true,
+    "debugger_detached": true,
+    "test_host_saved_and_exited": true
+  },
+  "environment": {
+    "resolve": "Studio21.0.0.47",
+    "os": "Windows11 Enterprise22631",
+    "gpu": "RTX4060Ti16GB",
+    "driver": "610.88",
+    "plugin_file_version": "3.0.0.73",
+    "actions_run": 42535217130,
+    "native_cuda": 1,
+    "pid": 199452,
+    "project": "Codex OFX73 Action Trace 20261117",
+    "isolation_root": "C:/Users/Jhe/Desktop/github/gyroflow/target/ofx73-smoothness-ab-20261116",
+    "logs_root": "debug-trace-20261117",
+    "source_sample": "Canon HEVC Main10,3840x2160,59.94fps,first938-frame clip,Default smoothing"
+  },
+  "debugger": {
+    "architecture": "AMD64 / PE machine0x8664",
+    "version": "CDB10.0.22621.5040",
+    "source": "Microsoft Windows SDK10.0.22621.5040 signed package, extracted into workspace",
+    "provenance": "debugger-provenance.json",
+    "official_msi_sha1": "388FA8A76FB1CC34AA2472577642AFE44958B145",
+    "method": "Debugger software breakpoints on official OFX export/mainEntry and host suite calls; disk binaries untouched. Function returns matched by return address, OS thread and x64 RSP+8.",
+    "symbol_policy": "No matching .73 PDB was available; dynamic entry and suite addresses were obtained from OfxGetPlugin/setHost/fetchSuite, without loading mismatched PDBs.",
+    "final_console_state": "bc*; bl showed no breakpoints; .detach returned Detached/NoTarget. CDB q after detach exited1 with no-current-target warning; Resolve remained alive, saved and quit normally."
+  },
+  "acquisition": {
+    "valid_log": "cdb-trace-v3.log",
+    "events": "trace-events.jsonl",
+    "parser": "analyze_trace.py",
+    "valid_playback_local_start": "2026-11-17 07:57:32.709+08:00",
+    "valid_playback_local_stop": "2026-11-17 07:58:29.025+08:00",
+    "gestures": 2,
+    "confirmed_smoothness_readouts": [
+      35.8,
+      244.4
+    ],
+    "smoothness_user_callbacks": 3,
+    "note": "The first drag generated two Smoothness valueChanged callbacks and the second generated one.",
+    "event_count": 3755,
+    "event_sequence_contiguous": true,
+    "tracer_errors": 0,
+    "complete_matched_actions": 1680,
+    "render_actions": 327,
+    "excluded_unpaired_actions": [
+      {
+        "id": 258,
+        "type": "GetFramesNeeded"
+      },
+      {
+        "id": 955,
+        "type": "GetFramesNeeded"
+      },
+      {
+        "id": 1224,
+        "type": "GetClipPreferences"
+      }
+    ],
+    "exclusion_rule": "Unpaired actions were excluded from overlap/nesting conclusions; all cited UI/Render/Status examples have matched normal returns and x64 RSP+8."
+  },
+  "confirmed": [
+    {
+      "finding": "same_instance_render_and_smoothness_concurrency",
+      "effect": "0x21e77969bf0",
+      "instance_data": "0x21e93ce0c00",
+      "ui_thread": "0x31fe8",
+      "render_thread": "0x2ea70",
+      "overlap_pairs": 2,
+      "example_local_timeline": [
+        {
+          "time": "07:57:51.139",
+          "event": "Render enter",
+          "action_id": 584,
+          "thread": "0x2ea70",
+          "sequence": 1295
+        },
+        {
+          "time": "07:57:51.251",
+          "event": "Smoothness UserEdited enter",
+          "action_id": 587,
+          "thread": "0x31fe8",
+          "sequence": 1302
+        },
+        {
+          "time": "07:57:51.674",
+          "event": "Smoothness UserEdited return",
+          "action_id": 587,
+          "thread": "0x31fe8",
+          "sequence": 1339
+        },
+        {
+          "time": "07:57:51.731",
+          "event": "Render return",
+          "action_id": 584,
+          "thread": "0x2ea70",
+          "sequence": 1344
+        }
+      ],
+      "meaning_zh": "Resolve在本例没有通过完全分离的UI/render实例隔离这些回调。并发访问同一实例的触发前提已实测；具体哪个共享字段被同时访问或损坏仍需单独定位。",
+      "evidence": [
+        "render-ui-overlap.json",
+        "callback-evidence.json",
+        "trace-events.jsonl:1295"
+      ]
+    },
+    {
+      "finding": "synchronous_status_reentry",
+      "status_writes": 6,
+      "status_plugin_edited_callbacks": 6,
+      "parent_parameter": "Smoothness",
+      "parent_reason": "OfxChangeUserEdited",
+      "child_parameter": "Status",
+      "child_reason": "OfxChangePluginEdited",
+      "same_instance": true,
+      "same_thread": true,
+      "observed_depth": 2,
+      "example": {
+        "parent_action": 569,
+        "child_action": 576,
+        "parent_entry_sequence": 1254,
+        "write_entry_sequence": 1269,
+        "child_entry_sequence": 1272,
+        "child_return_sequence": 1276,
+        "parent_return_sequence": 1296
+      },
+      "meaning_zh": "Status写入返回前，宿主已同步递归调用同一实例。OFX允许这种递归，递归本身不是宿主错误；风险在绑定层在外层调用尚未返回时再次产生独占可变引用。未观察到无限递归。",
+      "evidence": [
+        "trace-analysis.json",
+        "callback-evidence.json",
+        "trace-events.jsonl:1269"
+      ]
+    },
+    {
+      "finding": "render_status_write_exists_outside_valid_playback_window",
+      "phase": "initial load",
+      "thread": "0x2ea70",
+      "effect": "0x21e77969bf0",
+      "instance_data": "0x21e93ce0c00",
+      "parameter_handle": "0x21e77253130",
+      "value": "正常",
+      "utc": "2026-11-16T23:36:57.719Z",
+      "v1_event_sequence": 67,
+      "confidence_note": "Direct host paramSetValue entry plus an enclosing initial Render callback. V1's later nesting failure does not establish interleaving for this standalone earlier write; the V1 playback nesting data is excluded from final overlap conclusions."
+    }
+  ],
+  "not_confirmed": {
+    "render_status_write_during_smoothness_callback": false,
+    "observation": "In the valid playback window, all6 Status writes came from UI thread0x31fe8; Render Status write count was0.",
+    "implication_zh": "不能把同实例Render/UI重叠直接写成Render抢写Status已复现。有限样本未命中不代表该交错不可能发生。",
+    "memory_corruption_or_uaf": false,
+    "deadlock": false,
+    "host_crash": false,
+    "native_cuda_failure_or_fallback": false,
+    "prior_crash_cause": "Still unconfirmed. This run establishes concurrency/reentry preconditions, not causality for Resolve.exe+0xE6BEF0."
+  },
+  "additional_lifecycle_observation": {
+    "constructor_callbacks_with_null_instance_data": 2,
+    "parameter": "InstanceId",
+    "reason": "OfxChangePluginEdited",
+    "detail_zh": "在初始采样中，CreateInstance里的参数写入同步触发InstanceId回调，而OfxPropInstanceData仍为0。源代码在CreateInstance末尾才发布InstanceData。该线索发生在V1返回配对故障之前，单独保存；未与本轮崩溃关联，本轮没有崩溃。",
+    "evidence": "constructor-reentry-evidence.json"
+  },
+  "setup_and_recorder_issues": [
+    "Restricted-token launch attempts stopped at a host runtime prompt before main-window/project load. They were stopped with PID/path/start-time guards; the valid isolated host was launched with normal desktop permissions.",
+    "V1 recorder used strict LIFO matching and paused the debugger on an action-return mismatch. The host resumed with59.94fps after breakpoints were cleared; this was not a host crash.",
+    "An intermediate script reload retained the earlier script because the unload path was not canonical. That interval is excluded. The valid log begins after both earlier scripts were unloaded and the marker showed empty action state.",
+    "V2 recorder implementation in cdb-trace-v3.log adds physical stack addresses and explicitly excludes unobserved returns. It completed with no recorder exceptions;3 optional-action returns remained unpaired and were excluded."
+  ],
+  "limitations": [
+    "Software breakpoints and debugger-output processing changed timing substantially; UI readouts during the valid sample were roughly5-7fps. This is not a normal-speed stress or performance result.",
+    "Two confirmed drags produced3 UI callbacks. The sample cannot estimate crash frequency or prove absence of a Status write race.",
+    "No matching private .73/Resolve symbols. Observations are based on actual OFX ABI arguments and matched runtime callbacks rather than guessed nearest-export function names.",
+    "Same-instance callback overlap does not identify the first memory-corrupting operation. Native CUDA on/off causality was not tested in this turn.",
+    "Host,OS,GPU and media differ from the original feedback environment."
+  ],
+  "preservation": {
+    "formal_sha256_after": "163f1453845723fdaddd538eab16138d20ef9043d0c45639ee6bbb882bf564b2",
+    "formal_unchanged": true,
+    "candidate_sha256_after": "a658f4bc8da89c16828edcd7e9b033a3f680f0f4e6ac27725fad48bf21158b63",
+    "candidate_unchanged": true,
+    "remaining_resolve_or_cdb_processes": [],
+    "test_project_saved": true,
+    "test_project_preserved": true,
+    "normal_host_shutdown_log": "resolve-logs/LogArchive/ResolveDebug_1.txt:442",
+    "normal_host_shutdown_local": "2026-11-17 08:00:48.709+08:00",
+    "temporary_short_bootstrap": "C:/Users/Jhe/Desktop/github/gyroflow/target/t73"
+  },
+  "next_actions_ranked": [
+    {
+      "rank": 1,
+      "action_zh": "围绕已实测的同实例并发和同步重入，核对Registry/Suites的共享所有权与InstanceData普通字段的访问边界；不能依赖宿主分离实例，也不能直接用不可重入全局锁包住整个action。"
+    },
+    {
+      "rank": 2,
+      "action_zh": "若后续授权诊断构建，以停止Render中的宿主状态/标签写入做单变量对照，保留算法和CUDA路径，验证该写入是否影响原有崩溃。当前没有实施。"
+    },
+    {
+      "rank": 3,
+      "action_zh": "单独修正或验证CreateInstance先发布实例数据、后触发宿主参数回调的初始化顺序；当前证据不足以把该初始化问题当作播放中闪退根因。"
+    }
+  ]
+}
