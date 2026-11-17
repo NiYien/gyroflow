@@ -2570,7 +2570,7 @@ Rectangle {
                 return;
             }
             // Queue jobs with embedded gyro (no separate files): direct batch sync.
-            if (!hasGyroFiles || render_queue.batch_uses_only_pure_optical()) {
+            if (!hasGyroFiles) {
                 if (!render_queue.batch_motion_ready()) { window.explainDispatchBlocked("sync"); return; }
                 window.runSimpleBatchSync();
                 return;
@@ -2629,7 +2629,7 @@ Rectangle {
             // Match-first (D4): with separate gyro files that have changed / never
             // matched, run Auto match first; export dispatches on match success
             // (zero-match reuses matchWarning and does not start rendering).
-            if (hasGyroFiles && videoArea.queue.matchDirty && !render_queue.batch_uses_only_pure_optical()) {
+            if (hasGyroFiles && videoArea.queue.matchDirty) {
                 videoArea.queue.beginMatchThenSync("export");
                 return;
             }

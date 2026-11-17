@@ -138,12 +138,31 @@ TestCase {
         compare(calls.join(","), "match,export");
         compare(notices.length, 0);
     }
-    function test_visual_reconstruction_skips_external_matching() {
+    function test_visual_reconstruction_matches_lens_before_stabilize() {
         backend.pureOptical = true;
         root.onAdded(enqueue("file:///next.MP4"));
         flows.runPluginStabilizeFlow();
+        compare(calls.join(","), "match", "pure optical still needs the external lens assignment");
+        root.onMatch_apply_finished();
+        compare(calls.join(","), "match,sync");
+        compare(notices.length, 0);
+    }
+    function test_visual_reconstruction_matches_lens_before_export() {
+        backend.pureOptical = true;
+        root.onAdded(enqueue("file:///next.MP4"));
         flows.runStabilizedBatchExport();
-        compare(calls.join(","), "sync,export", "both batch actions dispatch directly to the optical worker");
+        compare(calls.join(","), "match");
+        root.onMatch_apply_finished();
+        compare(calls.join(","), "match,export");
+        compare(notices.length, 0);
+    }
+    function test_visual_reconstruction_without_external_files_processes_directly() {
+        backend.pureOptical = true;
+        root.hasGyroFiles = false;
+        root.onAdded(enqueue("file:///next.MP4"));
+        flows.runPluginStabilizeFlow();
+        flows.runStabilizedBatchExport();
+        compare(calls.join(","), "sync,export");
         compare(notices.length, 0);
     }
     function test_single_visual_clip_needs_no_gyro_prompt() {

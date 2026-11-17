@@ -12940,7 +12940,6 @@ impl RenderQueue {
             let mut skipped_ids = Vec::new();
             let mut stabilization_blocked_ids = Vec::new();
             for item in q.iter() {
-                if self.jobs.get(&item.job_id).is_some_and(job_uses_pure_optical) { continue; }
                 if item.status == JobStatus::Skipped {
                     if item.skip_reason.to_string() == "image_stabilization" {
                         stabilization_blocked_ids.push(item.job_id);
@@ -13809,6 +13808,12 @@ impl RenderQueue {
                     continue;
                 }
             }
+            if let Some(job) = self.jobs.get_mut(&job_id) {
+                if job.optical.is_none() {
+                    // Matching replaces motion metadata; retain the saved visual mode first.
+                    job.optical = job.stab.as_ref().and_then(|stab| QueueOpticalSettings::from_pure_project(stab));
+                }
+            }
             let raw_requested_range = result.gyro_start_ms.zip(result.gyro_end_ms);
             let requested_range = normalize_time_range_ms(raw_requested_range);
             let (
@@ -14075,6 +14080,10 @@ impl RenderQueue {
                             .job_id
                             .or_else(|| job_ids_now.get(result.video_index).copied());
                         if let Some(job_id) = job_id {
+                            // External matching supplies the lens even when its motion is unused.
+                            if this.jobs.get(&job_id).is_some_and(job_uses_pure_optical) {
+                                continue;
+                            }
                             match result.status {
                                 core::gyro_match::MatchStatus::Unmatched
                                 | core::gyro_match::MatchStatus::NoCreationTime => {
@@ -27611,6 +27620,182 @@ mod tests {
     }
 
     #[test]
+    fn pure_optical_lens_matching_preserves_anamorphic_geometry_and_sync_exemption() {
+        use niyien_lens_presets::{LensGroupConfig, SqueezeDirection};
+
+        // Qt owns one application per process; settings must use a fresh directory too.
+        const CHILD: &str = "GYROFLOW_TEST_PURE_OPTICAL_LENS_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let data = tempfile::tempdir().unwrap();
+            let result = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "rendering::render_queue::tests::pure_optical_lens_matching_preserves_anamorphic_geometry_and_sync_exemption", "--nocapture", "--test-threads=1"])
+                .env(CHILD, "1")
+                .env("GYROFLOW_DATA_DIR", data.path())
+                .env("QT_QPA_PLATFORM", "offscreen")
+                .output().unwrap();
+            assert!(result.status.success(), "{}\n{}", String::from_utf8_lossy(&result.stdout), String::from_utf8_lossy(&result.stderr));
+            return;
+        }
+        // Exercise the real match/apply worker and its Qt completion callback.
+        // Camera metadata enters at the parsed-data boundary; this test does not decode video.
+        let cases = [
+            ("proxy.MP4", "Canon C50", false, 270.0, Some(1), (1920, 1920)),
+            ("raw.CRM", "Canon C50", true, 0.0, Some(1), (1920, 1920)),
+            ("sony.MP4", "Sony FX3", true, 0.0, Some(2), (2880, 1280)),
+            ("red.R3D", "RED Komodo", true, 90.0, Some(2), (1280, 2880)),
+            ("bmd.BRAW", "Blackmagic Pocket", true, 270.0, Some(1), (1920, 1920)),
+            ("nikon.NEV", "Nikon ZR", false, 180.0, Some(1), (1920, 1920)),
+            ("no-group.MOV", "Panasonic S1H", false, 0.0, None, (1920, 1280)),
+            ("override.MP4", "Canon C50", false, 0.0, Some(1), (2880, 1280)),
+            ("saved.MP4", "Canon C50", false, 90.0, Some(1), (1920, 1920)),
+            ("unmatched.MP4", "Canon C50", false, 270.0, None, (1280, 1920)),
+            ("gyro-control.MOV", "Nikon ZR", false, 0.0, Some(2), (2880, 1280)),
+        ];
+        let rows: Vec<_> = (1..=cases.len() as u32)
+            .map(|id| (id, JobStatus::Queued, "", "", false)).collect();
+        let mut queue = recovery_queue(&rows);
+        let original_manual_edit = core::settings::get_bool("lens_group_manual_edit", false);
+        core::settings::set("lens_group_manual_edit", true.into());
+        let mut configs = niyien_lens_presets::default_lens_group_configs();
+        for (index, direction) in [(1, SqueezeDirection::Vertical), (2, SqueezeDirection::Horizontal)] {
+            configs[index] = LensGroupConfig {
+                lens_index: index,
+                focal_length_mm: Some(if index == 1 { 50.0 } else { 75.0 }),
+                anamorphic_enabled: true,
+                squeeze_direction: Some(direction),
+                squeeze_ratio: Some(1.5),
+                lens_correction_amount: Some(0.0),
+                ..Default::default()
+            };
+        }
+        *queue.stabilizer.lens_group_config.write() = configs;
+        let optical = QueueOpticalSettings { correction: true, ignore_file_motion: true, ..Default::default() };
+
+        for (index, &(filename, source, keep_video_gyro, rotation, group, _)) in cases.iter().enumerate() {
+            let id = index as u32 + 1;
+            let created_at = (filename != "unmatched.MP4").then_some(1_000_000 + index as i64 * 20_000);
+            let job = queue.jobs.get_mut(&id).unwrap();
+            let stab = job.stab.as_ref().unwrap();
+            stab.init_from_video_data(6000.0, 30.0, 180, (1920, 1280));
+            stab.set_video_rotation(rotation);
+            stab.input_file.write().url = format!("file:///{filename}");
+            stab.params.write().video_created_at = created_at;
+            let mut metadata = FileMetadata {
+                detected_source: Some(source.into()),
+                keep_video_gyro,
+                is_komodo: source.starts_with("RED"),
+                unit_pixel_focal_length: Some(53.48189187724539),
+                frame_readout_time: Some(7.1),
+                ..Default::default()
+            };
+            metadata.quaternions = [(0, core::gyro_source::Quat64::identity()),
+                (6_000_000, core::gyro_source::Quat64::identity())].into();
+            if source.starts_with("Canon") {
+                let mut profile = core::lens_profile::LensProfile::default();
+                profile.distortion_model = Some("opencv_standard".into());
+                profile.fisheye_params.camera_matrix = vec![[2000.0, 0.0, 960.0], [0.0, 2000.0, 640.0], [0.0, 0.0, 1.0]];
+                metadata.canon_auto_lens_profile = Some(serde_json::to_value(profile).unwrap());
+            }
+            job.base_lens_metadata = Some(JobLensMetadataBackup::from_metadata(&metadata));
+            stab.gyro.write().load_from_telemetry(metadata);
+            job.original_video_rotation = rotation;
+            job.original_output_size = (1920, 1280);
+            let output = core::rotated_output_dim((1920, 1280), rotation);
+            job.base_render_output_size = Some(output);
+            job.render_options.output_width = output.0;
+            job.render_options.output_height = output.1;
+            job.render_options.input_url = format!("file:///{filename}");
+            job.render_options.input_filename = filename.into();
+            stab.set_output_size(output.0, output.1);
+            job.additional_data = "{}".into();
+            job.optical = (filename != "gyro-control.MOV").then(|| optical.clone());
+            if filename == "saved.MP4" {
+                select_visual_reconstruction(stab);
+                job.optical = None;
+            }
+            if filename == "override.MP4" { job.lens_index_override = Some(2); }
+            let external = FileMetadata {
+                detected_source: Some("SenseFlow".into()),
+                duration_ms: 8000.0,
+                additional_data: group.map(|g| serde_json::json!({"lens_index": g})).unwrap_or_default(),
+                quaternions: [(0, core::gyro_source::Quat64::identity()),
+                    (8_000_000, core::gyro_source::Quat64::identity())].into(),
+                ..Default::default()
+            };
+            queue.gyro_files.push(GyroFileInfo {
+                path: format!("file:///matching-{id}.bin"),
+                filename: format!("matching-{id}.bin"),
+                created_at_ms: Some(created_at.unwrap_or(2_000_000)),
+                duration_ms: Some(8000.0),
+                parsed: true,
+                cached_metadata_ranges: vec![CachedGyroMetadataRange {
+                    range_ms: None,
+                    metadata: Arc::new(external),
+                }],
+                ..Default::default()
+            });
+            if created_at.is_some() {
+                queue.manual_pairs.push(core::gyro_match::ManualCalibrationPair {
+                    job_id: id, video_index: index, gyro_index: index,
+                });
+            }
+        }
+        assert_eq!(queue.prepare_batch_match_job_ids(), (1..=cases.len() as u32).collect::<Vec<_>>());
+        let mut engine = qmetaobject::QmlEngine::new();
+        let queue = qmetaobject::QObjectBox::new(queue);
+        engine.set_object_property("queue".into(), queue.pinned());
+        engine.load_data(br#"import QtQml
+            QtObject {
+                id: root
+                property bool completed: false
+                property Connections connection: Connections {
+                    target: queue
+                    function onMatch_apply_finished() { root.completed = true; Qt.quit(); }
+                }
+                property Timer timeout: Timer { interval: 10000; running: true; onTriggered: Qt.quit() }
+                function didComplete() { return completed; }
+            }"#.as_slice().into());
+        queue.pinned().borrow_mut().batch_match_gyro();
+        engine.exec();
+        assert!(engine.invoke_method("didComplete".into(), &[]).to_bool(), "match/apply timed out");
+        let q = queue.pinned();
+        let mut q = q.borrow_mut();
+        assert!(q.match_results.as_ref().unwrap().error.is_none());
+        assert!(q.jobs[&9].optical.as_ref().unwrap().ignore_file_motion,
+            "matching must retain the mode recovered from a saved pure optical project");
+        assert!(!q.match_all_no_gyro());
+        for (index, &(filename, _, _, rotation, group, expected)) in cases.iter().enumerate() {
+            let id = index as u32 + 1;
+            let job = &q.jobs[&id];
+            let pure = filename != "gyro-control.MOV";
+            assert_eq!(job_uses_pure_optical(job), pure, "{filename}");
+            assert_eq!(row_status(&q, id), if pure { (JobStatus::Queued, String::new()) }
+                else { (JobStatus::Skipped, "calibration".into()) }, "{filename}");
+            let expected_group = if filename == "override.MP4" { Some(2) } else { group };
+            assert_eq!(job.lens_group_index, expected_group, "{filename}");
+            assert_eq!((job.render_options.output_width, job.render_options.output_height), expected, "{filename}");
+            let stab = job.stab.as_ref().unwrap();
+            assert_eq!(stab.params.read().output_size, expected, "{filename}");
+            if pure { assert_eq!(RenderQueue::estimated_sync_frames_for_job(job), 0, "{filename}"); }
+            if filename == "unmatched.MP4" { continue; }
+            let expected_stretch = match expected_group {
+                Some(1) => (1.0, 1.5), Some(2) => (1.5, 1.0), _ => (1.0, 1.0),
+            };
+            let data = job.project_data.as_ref().expect("the real match worker exports the project");
+            let imported = StabilizationManager::default();
+            imported.import_gyroflow_data(data.as_bytes(), true, None, |_| {}, Default::default(), &mut false, true).unwrap();
+            assert_eq!(imported.params.read().video_rotation, rotation, "{filename}");
+            assert_eq!(imported.params.read().output_size, expected, "{filename}");
+            assert_eq!((imported.lens.read().horizontal_stretch_normalized(), imported.lens.read().vertical_stretch_normalized()), expected_stretch, "{filename}");
+        }
+        // Park start() after sync admission so this test never decodes synthetic URLs.
+        q.pause_flag.store(true, SeqCst);
+        q.start_batch_autosync();
+        assert!(q.expected_batch_sync_job_ids.is_empty(), "pure optical jobs must stay out of gyro sync");
+        core::settings::set("lens_group_manual_edit", original_manual_edit.into());
+    }
+
+    #[test]
     fn job_lacks_sync_motion_is_the_shared_no_gyro_verdict() {
         // Empty gyro, keep_video_gyro = false -> genuinely no motion.
         let mut queue = queue_with_eta_job(JobStatus::Queued);
@@ -34225,13 +34410,13 @@ mod tests {
             q.add_internal(1, reconstructed_queue_manager(), RenderOptions::default(), "{}".into(), QString::default(), None);
             assert_eq!(row_status(&q, 1), (JobStatus::Skipped, "image_stabilization".into()), "{settings:?}");
         }
-        // Ticked: it waits, joins the batch matching and sync, and the render worker decides
+        // Ticked: it waits for analysis and still participates in external lens matching.
         let mut q = recovery_queue(&[]);
         q.set_jobs_optical_settings(serde_json::json!({ "reconstruction": true }).to_string());
         q.add_internal(1, reconstructed_queue_manager(), RenderOptions::default(), "{}".into(), QString::default(), None);
         assert_eq!(row_status(&q, 1), (JobStatus::Queued, String::new()));
         assert!(!q.job_is_stabilization_blocked(1));
-        assert!(q.prepare_batch_match_job_ids().is_empty(), "pure optical skips gyro matching");
+        assert_eq!(q.prepare_batch_match_job_ids(), vec![1], "pure optical still matches external lens metadata");
         q.reset_job(1);
         assert_eq!(row_status(&q, 1), (JobStatus::Queued, String::new()));
         // render_job's entry lets it through (the pending reset parks it instead of starting a worker)
