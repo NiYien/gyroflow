@@ -167,6 +167,7 @@ fn emit_max_zoom_load_snapshot(
     scaling_factor: f64,
     max_zoom_iters: usize,
 ) {
+    if !zooming::zoom_diag::is_enabled() { return; }
     let seq = MAX_ZOOM_INVOKE_SEQ.fetch_add(1, SeqCst) + 1;
     let h_stretch = params.lens.horizontal_stretch_normalized();
     let zoom_limit = max_zoom_param / 100.0;
@@ -2015,7 +2016,7 @@ impl StabilizationManager {
                 params.keyframes.get_keyframes(&KeyframeType::MaxZoom),
                 scaling_factor,
             );
-            if !do_max_zoom_loop {
+            if !do_max_zoom_loop && zooming::zoom_diag::is_enabled() {
                 log::debug!(
                     target: "stab",
                     "Max Zoom pre-skip: no frame exceeds per-frame fov_limit (zoom_param={max_zoom_param} scaling_factor={scaling_factor}), skipping loop"
@@ -2215,11 +2216,12 @@ impl StabilizationManager {
         let run_smoothing = self.smoothing_invalidated.load(SeqCst)
             || self.smoothing.read().get_state_checksum(gyro_checksum, &compute_params)
                 != self.smoothing_checksum.load(SeqCst);
+        let timing = stabilization::timing_enabled();
         let mut smoothing_ms = 0.0f64;
         if run_smoothing {
-            let t = std::time::Instant::now();
+            let t = timing.then(std::time::Instant::now);
             self.recompute_smoothness();
-            smoothing_ms = t.elapsed().as_secs_f64() * 1000.0;
+            smoothing_ms = t.map_or(0.0, |t| t.elapsed().as_secs_f64() * 1000.0);
             self.smoothing_invalidated.store(false, SeqCst);
         }
         // Publish the ledger only if gyro didn't change under us mid-run;
@@ -2241,9 +2243,9 @@ impl StabilizationManager {
             || zoom_checksum != self.zooming_checksum.load(SeqCst);
         let mut zoom_ms = 0.0f64;
         if run_zoom {
-            let t = std::time::Instant::now();
+            let t = timing.then(std::time::Instant::now);
             self.recompute_adaptive_zoom();
-            zoom_ms = t.elapsed().as_secs_f64() * 1000.0;
+            zoom_ms = t.map_or(0.0, |t| t.elapsed().as_secs_f64() * 1000.0);
             self.zooming_invalidated.store(false, SeqCst);
             // Max Zoom can change the retained path and rebuild translation again.
             compute_params.optical_translation_checksum = self.gyro.read().optical_translation.as_ref().map_or(0, |t| t.checksum());
@@ -2255,7 +2257,7 @@ impl StabilizationManager {
         self.recompute_undistortion();
         self.undistortion_invalidated.store(false, SeqCst);
 
-        ::log::info!(
+        if timing { ::log::info!(
             target: "stab.timing",
             "recompute_blocking smoothing_ms={:.1} zoom_ms={:.1} quats={} frames={} gated_smoothing={} gated_zoom={}",
             smoothing_ms,
@@ -2264,7 +2266,7 @@ impl StabilizationManager {
             self.params.read().frame_count,
             if run_smoothing { "run" } else { "skip" },
             if run_zoom { "run" } else { "skip" },
-        );
+        ); }
         crate::smooth_diag::flush_and_close();
     }
 
@@ -2319,8 +2321,9 @@ impl StabilizationManager {
                 true
             };
 
+            let timing = stabilization::timing_enabled();
             let mut smoothing_ms = 0.0f64;
-            let t_smoothing = std::time::Instant::now();
+            let t_smoothing = timing.then(std::time::Instant::now);
             let mut smoothing_recomputed = false;
             if smoothing.read().get_state_checksum(gyro_checksum, &params) != smoothing_checksum.load(SeqCst) {
                 let (mut smoothing, horizon_lock) = {
@@ -2341,7 +2344,7 @@ impl StabilizationManager {
                     gyro_checksum = lib_gyro.get_checksum();
                 }
                 smoothing_recomputed = true;
-                smoothing_ms = t_smoothing.elapsed().as_secs_f64() * 1000.0;
+                smoothing_ms = t_smoothing.map_or(0.0, |t| t.elapsed().as_secs_f64() * 1000.0);
             }
             let smoothing_state = smoothing.read().get_state_checksum(gyro_checksum, &params);
             if smoothing_recomputed && !commit(&*smoothing_checksum, smoothing_state) { return cb((compute_id, true)); }
@@ -2361,7 +2364,7 @@ impl StabilizationManager {
             // them inside the zoom pass, so a smoothing recompute needs the zoom pass again even when the zoom key still
             // matches the last commit: a run killed inside the max-zoom iterations leaves that key committed next to
             // quaternions that no longer carry the limit
-            let t_zoom = std::time::Instant::now();
+            let t_zoom = timing.then(std::time::Instant::now);
             let zoom_ran = smoothing_recomputed || zoom_key != zooming_checksum.load(SeqCst);
             if zoom_ran {
                 let (fovs, minimal_fovs, debug_points) = Self::recompute_adaptive_zoom_static(&params, &stabilization_params);
@@ -2404,7 +2407,7 @@ impl StabilizationManager {
                         params.keyframes.get_keyframes(&KeyframeType::MaxZoom),
                         scaling_factor,
                     );
-                    if !do_max_zoom_loop {
+                    if !do_max_zoom_loop && zooming::zoom_diag::is_enabled() {
                         log::debug!(
                             target: "stab",
                             "Max Zoom pre-skip (async): no frame exceeds per-frame fov_limit (zoom_param={max_zoom_param} scaling_factor={scaling_factor}), skipping loop"
@@ -2481,16 +2484,16 @@ impl StabilizationManager {
                 }
                 if !commit(&*zooming_checksum, zooming::get_checksum(&params, smoothing_state)) { return cb((compute_id, true)); }
             }
-            ::log::info!(
+            if timing { ::log::info!(
                 target: "stab.timing",
                 "recompute_threaded smoothing_ms={:.1} zoom_ms={:.1} quats={} frames={} gated_smoothing={} gated_zoom={}",
                 smoothing_ms,
-                if zoom_ran { t_zoom.elapsed().as_secs_f64() * 1000.0 } else { 0.0 },
+                if zoom_ran { t_zoom.map_or(0.0, |t| t.elapsed().as_secs_f64() * 1000.0) } else { 0.0 },
                 gyro.read().quaternions.len(),
                 params.frame_count,
                 if smoothing_recomputed { "run" } else { "skip" },
                 if zoom_ran { "run" } else { "skip" },
-            );
+            ); }
 
             if current_compute_id.load(SeqCst) != compute_id { return cb((compute_id, true)); }
 
@@ -11206,21 +11209,17 @@ mod tests {
         assert!(lens_profile_emit_guard_passes(true, &lens));
     }
 
-    // §9.6: two consecutive Max-Zoom snapshots get consecutive seq numbers.
-    // Log-content correctness (format string, min_fov field) is verified at
-    // §8.4 / §12.2 by reading a fresh gyroflow.log; the unit test scope is the
-    // process-global counter invariant that gyroflow-core can test cleanly
-    // without standing up a tests-only log sink.
+    // Disabled diagnostics must not advance the process-global snapshot sequence.
     #[test]
     #[serial]
-    fn max_zoom_load_snapshot_seq_advances_by_two() {
+    fn max_zoom_load_snapshot_seq_respects_opt_in() {
         let mut params = stabilization::ComputeParams::default();
         params.fovs = vec![0.9, 0.85, 0.8, 0.75, 0.7];
         let before = MAX_ZOOM_INVOKE_SEQ.load(SeqCst);
         emit_max_zoom_load_snapshot(&params, (1920, 1080), (1920, 1080), 180.0, 1.0, 5);
         emit_max_zoom_load_snapshot(&params, (1920, 1080), (1920, 1080), 180.0, 1.0, 5);
         let after = MAX_ZOOM_INVOKE_SEQ.load(SeqCst);
-        assert_eq!(after, before + 2);
+        assert_eq!(after, before + if zooming::zoom_diag::is_enabled() { 2 } else { 0 });
     }
 
     // mounting-rotation-propagation: importing a project whose gyro_source

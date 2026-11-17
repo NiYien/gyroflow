@@ -296,8 +296,8 @@ impl BackendType {
     }
 }
 
-// Per-backend accumulator of render timings flushed at most once per
-// `GYROFLOW_STAB_TIMING_MS` (default 1 s) by `add_and_maybe_emit`. The
+// A positive GYROFLOW_STAB_TIMING_MS explicitly enables render diagnostics.
+// Unset or zero disables collection, including its clocks and mutexes. The
 // `stab_data_ms` / `gpu_ms` / `backend_init_ms` axes mirror the three cost
 // centers identified in the optimize-stab-load-pipeline change. All adds use
 // saturating arithmetic so a long-running session can't overflow `u64`.
@@ -314,6 +314,10 @@ fn timing_accumulators() -> &'static parking_lot::Mutex<std::collections::HashMa
     MAP.get_or_init(|| parking_lot::Mutex::new(std::collections::HashMap::new()))
 }
 
+pub(crate) fn timing_enabled() -> bool {
+    crate::log_throttle::min_interval_ms_from_env(0) > 0
+}
+
 /// Add the timings to the per-backend accumulator and emit one `stab.timing`
 /// line if the throttle allows. Caller is responsible for measuring each
 /// component; pass `0` for any axis that does not apply on this call.
@@ -323,6 +327,8 @@ pub(crate) fn add_and_maybe_emit(
     gpu_ms: u64,
     backend_init_ms: u64,
 ) {
+    let interval_ms = crate::log_throttle::min_interval_ms_from_env(0);
+    if interval_ms == 0 { return; }
     let snapshot = {
         let mut map = timing_accumulators().lock();
         let entry = map.entry(backend).or_default();
@@ -330,7 +336,6 @@ pub(crate) fn add_and_maybe_emit(
         entry.stab_data_ms = entry.stab_data_ms.saturating_add(stab_data_ms);
         entry.gpu_ms = entry.gpu_ms.saturating_add(gpu_ms);
         entry.backend_init_ms = entry.backend_init_ms.saturating_add(backend_init_ms);
-        let interval_ms = crate::log_throttle::min_interval_ms_from_env(1000);
         if crate::log_throttle::try_emit(("stab.timing", backend), interval_ms) {
             let out = *entry;
             *entry = StabTimingAccumulator::default();
@@ -821,6 +826,7 @@ impl Stabilization {
     /// this backend (re-)init, then store the new snapshot. Only called from the
     /// rebuild path so it costs nothing on the steady-state per-frame path.
     fn log_backend_rebuild_diff(&mut self, buffers: &Buffers) {
+        if !timing_enabled() { return; }
         let new_segs = self.backend_key_diag_segments(buffers);
         match self.last_backend_key_diag.as_ref() {
             None => {
@@ -998,7 +1004,7 @@ impl Stabilization {
             // §3.3: measure wall time of the (re-)init path and emit it under
             // the chosen backend's bucket. Lazy `add_and_maybe_emit` at the
             // end of this function so we know which backend won the init.
-            let init_t0 = std::time::Instant::now();
+            let init_t0 = timing_enabled().then(std::time::Instant::now);
             self.initialized_backend = BackendType::None;
             let canvas_len = self.drawing.get_buffer_len();
             #[allow(unused_mut)]
@@ -1132,10 +1138,10 @@ impl Stabilization {
                     }
                 }
             }
-            // §3.3: backend init wall time, attributed to whichever backend
-            // we ended up settling on. Throttled to ≤1 emit/sec/backend.
-            let init_ms = init_t0.elapsed().as_millis() as u64;
-            add_and_maybe_emit(self.initialized_backend.name(), 0, 0, init_ms);
+            // Record initialization cost only when render diagnostics are requested.
+            if let Some(started) = init_t0 {
+                add_and_maybe_emit(self.initialized_backend.name(), 0, 0, started.elapsed().as_millis() as u64);
+            }
         }
     }
 
@@ -1151,7 +1157,7 @@ impl Stabilization {
         if let Some(dev) = self.pending_device_change.take() { self.update_device(dev, buffers); }
         if matches!(self.initialized_backend, BackendType::Cpu(_)) { return None; }
 
-        let started = std::time::Instant::now();
+        let started = timing_enabled().then(std::time::Instant::now);
         let uncached;
         let transform = if self.cache_frame_transform {
             self.ensure_stab_data_at_timestamp::<T>(timestamp_us, frame, buffers, false);
@@ -1164,7 +1170,9 @@ impl Stabilization {
             self.compute_params.digital_lens.as_ref(), self.drawing.get_buffer());
         match result {
             Ok(()) => {
-                add_and_maybe_emit("cuda", 0, started.elapsed().as_millis() as u64, 0);
+                if let Some(started) = started {
+                    add_and_maybe_emit("cuda", 0, started.elapsed().as_millis() as u64, 0);
+                }
                 Some(ProcessedInfo { fov: transform.fov, minimal_fov: transform.minimal_fov,
                     focal_length: transform.focal_length, backend: "CUDA" })
             }
@@ -1243,23 +1251,21 @@ impl Stabilization {
         buffers: &mut Buffers,
         frame_transform: Option<&FrameTransform>,
     ) -> Result<ProcessedInfo, GyroflowCoreError> {
-        // §3.2 / §3.4: per-call render timing. The Drop guard fires on every
-        // exit (Ok, Err, panic) and accumulates `gpu_ms` against the chosen
-        // backend's `stab.timing` bucket. Throttle in `add_and_maybe_emit`
-        // collapses 60×/sec calls to ≤1 emit/sec/backend.
+        // Explicitly enabled render diagnostics cover early returns too.
         struct TimingGuard {
             backend: &'static str,
-            start: std::time::Instant,
+            start: Option<std::time::Instant>,
         }
         impl Drop for TimingGuard {
             fn drop(&mut self) {
-                let gpu_ms = self.start.elapsed().as_millis() as u64;
-                add_and_maybe_emit(self.backend, 0, gpu_ms, 0);
+                if let Some(started) = self.start {
+                    add_and_maybe_emit(self.backend, 0, started.elapsed().as_millis() as u64, 0);
+                }
             }
         }
         let _timing_guard = TimingGuard {
             backend: self.initialized_backend.name(),
-            start: std::time::Instant::now(),
+            start: timing_enabled().then(std::time::Instant::now),
         };
 
         if buffers.input.size.1 < 4 || buffers.output.size.1 < 4 {
@@ -1492,3 +1498,47 @@ impl Stabilization {
 
 unsafe impl Send for Stabilization {}
 unsafe impl Sync for Stabilization {}
+
+#[cfg(test)]
+mod timing_probe_tests {
+    use super::*;
+
+    #[test]
+    fn render_timing_requires_opt_in() {
+        if let Ok(mode) = std::env::var("GYROFLOW_TIMING_PROBE_TEST_MODE") {
+            assert_eq!(timing_enabled(), mode == "on");
+            if mode == "off" {
+                let held = timing_accumulators().lock();
+                let (done, received) = std::sync::mpsc::channel();
+                let worker = std::thread::spawn(move || {
+                    add_and_maybe_emit("cuda", 1, 2, 3);
+                    done.send(()).unwrap();
+                });
+                let completed = received.recv_timeout(std::time::Duration::from_secs(2));
+                drop(held);
+                worker.join().unwrap();
+                assert!(completed.is_ok(), "disabled timing waited on the accumulator mutex");
+                assert!(timing_accumulators().lock().is_empty());
+            } else {
+                add_and_maybe_emit("cuda", 10, 20, 30);
+                add_and_maybe_emit("cuda", 1, 2, 3);
+                let map = timing_accumulators().lock();
+                let sample = map.get("cuda").unwrap();
+                assert_eq!((sample.frames, sample.stab_data_ms, sample.gpu_ms, sample.backend_init_ms), (1, 1, 2, 3));
+            }
+            return;
+        }
+        let test = format!("{}::render_timing_requires_opt_in", module_path!().split_once("::").unwrap().1);
+        for mode in ["off", "on"] {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command.args(["--exact", &test]).env("GYROFLOW_TIMING_PROBE_TEST_MODE", mode);
+            if mode == "on" {
+                command.env("GYROFLOW_STAB_TIMING_MS", u64::MAX.to_string());
+            } else {
+                command.env_remove("GYROFLOW_STAB_TIMING_MS");
+            }
+            let output = command.output().unwrap();
+            assert!(output.status.success(), "{mode}: {}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+        }
+    }
+}

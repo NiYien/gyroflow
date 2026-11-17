@@ -4,9 +4,9 @@
 //! Adaptive zoom diagnostics: per-run snapshots of every intermediate stage
 //! that contributes to the final per-frame fov vector.
 //!
-//! Always emits a compact summary log (~10 lines, `target = "stab.zoom"`)
-//! whenever `calculate_fovs` runs. When `GYROFLOW_ZOOM_DIAG=1`, also dumps a
-//! full per-frame CSV to `<cwd>/zoom_diag_output/<session_ts>/run_NNN.csv`.
+//! Disabled by default. `GYROFLOW_ZOOM_DIAG=1` enables stage snapshots,
+//! summary logs and per-frame CSV files in
+//! `<cwd>/zoom_diag_output/<session_ts>/run_NNN.csv`.
 //!
 //! Pipeline stages tracked:
 //!   1. `raw_fov`             — fov_iterative output before any range fix
@@ -67,15 +67,14 @@ struct RunData {
     pad_right: usize,
 }
 
-/// Start a new diag run. Always called from `calculate_fovs` (even when env
-/// var is off) so the summary log is always emitted. Replaces any previous
-/// in-flight run (shouldn't happen unless calculate_fovs is reentrant).
+/// Start an explicitly enabled diagnostic run, replacing the previous snapshot.
 pub fn start_run(
     timestamps: &[(usize, f64)],
     trim_ranges: &[(f64, f64)],
     adaptive_zoom_window: f64,
     method: MethodKind,
 ) {
+    if !is_enabled() { return; }
     let run_id = RUN_COUNTER.fetch_add(1, Ordering::Relaxed);
     *CURRENT.lock() = Some(RunData {
         run_id,
@@ -99,6 +98,7 @@ pub fn start_run(
 
 #[inline]
 pub fn record_raw_fov(v: &[f64]) {
+    if !is_enabled() { return; }
     if let Some(r) = CURRENT.lock().as_mut() {
         r.raw_fov = v.to_vec();
     }
@@ -106,6 +106,7 @@ pub fn record_raw_fov(v: &[f64]) {
 
 #[inline]
 pub fn record_post_range_fix(v: &[f64], max_fov: f64, replaced: usize) {
+    if !is_enabled() { return; }
     if let Some(r) = CURRENT.lock().as_mut() {
         r.post_range_fix = v.to_vec();
         r.range_fix_max_fov = Some(max_fov);
@@ -115,6 +116,7 @@ pub fn record_post_range_fix(v: &[f64], max_fov: f64, replaced: usize) {
 
 #[inline]
 pub fn record_after_min_rolling(v: &[f64]) {
+    if !is_enabled() { return; }
     if let Some(r) = CURRENT.lock().as_mut() {
         r.after_min_rolling = v.to_vec();
     }
@@ -122,6 +124,7 @@ pub fn record_after_min_rolling(v: &[f64]) {
 
 #[inline]
 pub fn record_after_gaussian(v: &[f64]) {
+    if !is_enabled() { return; }
     if let Some(r) = CURRENT.lock().as_mut() {
         r.after_gaussian = v.to_vec();
     }
@@ -129,6 +132,7 @@ pub fn record_after_gaussian(v: &[f64]) {
 
 #[inline]
 pub fn record_pad(first: f64, last: f64, left: usize, right: usize) {
+    if !is_enabled() { return; }
     if let Some(r) = CURRENT.lock().as_mut() {
         r.pad_first = Some(first);
         r.pad_last = Some(last);
@@ -139,6 +143,7 @@ pub fn record_pad(first: f64, last: f64, left: usize, right: usize) {
 
 #[inline]
 pub fn record_final(v: &[f64]) {
+    if !is_enabled() { return; }
     if let Some(r) = CURRENT.lock().as_mut() {
         r.final_fov = v.to_vec();
     }
@@ -146,6 +151,7 @@ pub fn record_final(v: &[f64]) {
 
 /// End the current run: emit summary log, and write CSV if enabled.
 pub fn finish_and_dump() {
+    if !is_enabled() { return; }
     let Some(run) = CURRENT.lock().take() else { return };
     emit_summary_log(&run);
     if is_enabled() {
@@ -153,6 +159,63 @@ pub fn finish_and_dump() {
             if let Err(e) = write_run_csv(&dir, &run) {
                 log::warn!(target: "stab.zoom", "zoom_diag csv write failed: {}", e);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn collect() {
+        start_run(&[(0, 0.0), (1, 10.0)], &[], 4.0, MethodKind::GaussianFilter);
+        record_raw_fov(&[1.0, 0.9]);
+        record_post_range_fix(&[1.0, 0.9], 1.0, 0);
+        record_after_min_rolling(&[0.9, 0.9]);
+        record_after_gaussian(&[0.9, 0.9]);
+        record_pad(1.0, 0.9, 2, 2);
+        record_final(&[0.9, 0.9]);
+    }
+
+    #[test]
+    fn diagnostic_collection_requires_opt_in() {
+        if let Ok(mode) = std::env::var("GYROFLOW_ZOOM_DIAG_TEST_MODE") {
+            assert_eq!(is_enabled(), mode == "on");
+            if mode == "off" {
+                let held = CURRENT.lock();
+                let (done, received) = std::sync::mpsc::channel();
+                let worker = std::thread::spawn(move || {
+                    collect();
+                    finish_and_dump();
+                    done.send(()).unwrap();
+                });
+                let completed = received.recv_timeout(std::time::Duration::from_secs(2));
+                drop(held);
+                worker.join().unwrap();
+                assert!(completed.is_ok(), "disabled diagnostics waited on the snapshot mutex");
+                assert!(CURRENT.lock().is_none());
+                assert_eq!(RUN_COUNTER.load(Ordering::Relaxed), 0);
+                assert!(SESSION_DIR.get().is_none());
+            } else {
+                collect();
+                let run = CURRENT.lock().take().unwrap();
+                assert_eq!(run.timestamps, [(0, 0.0), (1, 10.0)]);
+                assert_eq!(run.raw_fov, [1.0, 0.9]);
+                assert_eq!(run.after_min_rolling, [0.9, 0.9]);
+                assert_eq!(run.after_gaussian, [0.9, 0.9]);
+                assert_eq!(run.final_fov, [0.9, 0.9]);
+                assert_eq!((run.pad_left, run.pad_right), (2, 2));
+            }
+            return;
+        }
+        let test = format!("{}::diagnostic_collection_requires_opt_in", module_path!().split_once("::").unwrap().1);
+        for mode in ["off", "on"] {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", &test])
+                .env("GYROFLOW_ZOOM_DIAG_TEST_MODE", mode)
+                .env("GYROFLOW_ZOOM_DIAG", if mode == "on" { "1" } else { "0" })
+                .output().unwrap();
+            assert!(output.status.success(), "{mode}: {}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
         }
     }
 }
