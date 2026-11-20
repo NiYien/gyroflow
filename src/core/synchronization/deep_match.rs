@@ -1509,6 +1509,102 @@ pub fn forward_floor_decision(
 
 pub(crate) const MIN_VERIFY_SPACING_MS: f64 = 60_000.0;
 
+const MIN_SHORT_VERIFY_PAIRS: f64 = 20.0;
+
+/// Plan an independent local check when the regular hotspot spacing cannot fit.
+/// Use the original requested centers, including decoded windows not in the
+/// posterior, so the verification never reuses their images.
+pub fn short_verify_plan(
+    curves: &[DeepMatchWindowCurve],
+    duration_ms: f64,
+    fps: f64,
+    original_centers_ms: &[f64],
+    window_ms: f64,
+) -> Option<(f64, Vec<f64>)> {
+    if duration_ms > MIN_VERIFY_SPACING_MS || curves.len() < 2 || original_centers_ms.is_empty() {
+        return None;
+    }
+    let half = window_ms / 2.0;
+    let frame_ms = 1000.0 / fps;
+    let mut centers = original_centers_ms.to_vec();
+    centers.sort_by(f64::total_cmp);
+    let mut gaps = Vec::new();
+    let mut end = 0.0_f64;
+    for center in centers {
+        let start = (center - half - frame_ms).max(0.0);
+        if start > end {
+            gaps.push((end, start));
+        }
+        end = end.max((center + half + frame_ms).min(duration_ms));
+    }
+    if end < duration_ms {
+        gaps.push((end, duration_ms));
+    }
+
+    let mut windows: Vec<_> = gaps.into_iter().filter_map(|(start, end)| {
+        // Only image boundaries can clip a centered autosync window.
+        let lo = if start == 0.0 { start } else { start + half };
+        let hi = if end == duration_ms { end } else { end - half };
+        if lo > hi { return None; }
+        let center = (lo + hi) / 2.0;
+        let length = (center + half).min(duration_ms) - (center - half).max(0.0);
+        (length >= (MIN_SHORT_VERIFY_PAIRS + 1.0) * frame_ms).then_some((center, length))
+    }).collect();
+    windows.sort_by(|a, b| b.1.total_cmp(&a.1));
+    windows.truncate(verify_windows());
+    let mut centers: Vec<_> = windows.into_iter().map(|(center, _)| center).collect();
+    centers.sort_by(f64::total_cmp);
+    if centers.len() < verify_min_aligned().max(2) {
+        return None;
+    }
+
+    use crate::synchronization::posterior::{posterior_decide, Prior};
+    let drift = drift_tolerance_ms(duration_ms, drift_rate_ms_per_min(), drift_floor_ms());
+    let (grid, logl) = build_joint_grid(curves, drift)?;
+    let peak = posterior_decide(&grid, &logl, &Prior::Uniform)?;
+    let radius = verify_local_ms() + drift;
+    (peak.conf_posterior >= verify_conf_min()
+        && peak.ci95.0 >= peak.argmax_ms - radius
+        && peak.ci95.1 <= peak.argmax_ms + radius)
+        .then_some((peak.argmax_ms, centers))
+}
+
+/// New windows must independently support the original peak. When they agree
+/// but their interval is too wide, the disjoint original windows may sharpen it.
+pub fn short_verify_offset(
+    mut original_curves: Vec<DeepMatchWindowCurve>,
+    curves: &[DeepMatchWindowCurve],
+    duration_ms: f64,
+    peak_ms: f64,
+) -> Option<f64> {
+    use crate::synchronization::posterior::{posterior_decide, Prior};
+    let drift = drift_tolerance_ms(duration_ms, drift_rate_ms_per_min(), drift_floor_ms());
+    let align_tolerance = verify_align_tol_ms() + drift;
+    if curves.len() < verify_min_aligned().max(2) || curves.iter().any(|c| {
+        c.n_eff < MIN_SHORT_VERIFY_PAIRS || (c.argmin_ms - peak_ms).abs() > align_tolerance
+    }) {
+        return None;
+    }
+    let min_confidence = verify_conf_min();
+    let (grid, logl) = build_joint_grid(curves, drift)?;
+    let post = posterior_decide(&grid, &logl, &Prior::Uniform)?;
+    if post.conf_posterior < min_confidence || (post.argmax_ms - peak_ms).abs() > drift {
+        return None;
+    }
+    if post.ci95.1 - post.ci95.0 <= post_ci95_base_ms() + drift {
+        return Some(post.argmax_ms);
+    }
+
+    original_curves.extend_from_slice(curves);
+    match decide_posterior(
+        &original_curves, original_curves.len(), 0, duration_ms, min_confidence, post_ci95_base_ms(),
+        drift_rate_ms_per_min(), drift_floor_ms(),
+    ) {
+        DeepMatchVerdict::Accepted { offset_ms } if (offset_ms - peak_ms).abs() <= drift => Some(offset_ms),
+        _ => None,
+    }
+}
+
 /// Pick verification-window positions (video timestamps, ms) by scanning the
 /// loaded chunk gyro's angular-rate series for motion hotspots under the
 /// hypothesis `video_ts = gyro_ts + delta_ms` (same offset convention as
@@ -2662,6 +2758,43 @@ mod tests {
             n_eff: 100.0,
             curve,
         }
+    }
+
+    #[test]
+    fn short_verify_plan_uses_disjoint_clipped_ends() {
+        let curves = [
+            synth_curve(0, -100.0, -600.0, 400.0, 5.0, 2.0, 1.0, 60.0),
+            synth_curve(1, -100.0, -600.0, 400.0, 5.0, 2.0, 1.0, 60.0),
+        ];
+        let (peak, centers) = short_verify_plan(&curves, 8880.0, 50.0, &[2960.0, 5920.0], 2500.0)
+            .expect("the clipped ends fit two verification windows");
+        // The 10 ms drift dilation leaves a tied grid point 5 ms earlier.
+        assert_eq!(peak, -105.0);
+        assert_eq!(centers, vec![220.0, 8660.0]);
+        assert!(short_verify_plan(&curves, 8880.0, 50.0, &[1250.0, 5920.0], 2500.0).is_none());
+        assert!(short_verify_plan(&curves, 61_000.0, 50.0, &[2960.0, 5920.0], 2500.0).is_none());
+    }
+
+    #[test]
+    fn short_verify_requires_new_evidence_near_the_original_peak() {
+        let c0 = synth_curve(0, -100.0, -600.0, 400.0, 5.0, 2.0, 1.0, 60.0);
+        let c1 = synth_curve(1, -100.0, -600.0, 400.0, 5.0, 2.0, 1.0, 60.0);
+        assert_eq!(short_verify_offset(Vec::new(), &[c0.clone(), c1.clone()], 8880.0, -100.0), Some(-105.0));
+        assert_eq!(short_verify_offset(Vec::new(), &[c0.clone(), c1.clone()], 8880.0, -180.0), None);
+        assert_eq!(short_verify_offset(Vec::new(), &[c0.clone()], 8880.0, -100.0), None);
+        let sparse = DeepMatchWindowCurve { n_eff: 19.0, ..c1 };
+        assert_eq!(short_verify_offset(Vec::new(), &[c0, sparse], 8880.0, -100.0), None);
+    }
+
+    #[test]
+    fn short_verify_merges_agreeing_windows_when_both_intervals_are_wide() {
+        let curve = |i, peak| synth_curve(i, peak, -1100.0, 900.0, 5.0, 2.0, 1.0, 800.0);
+        let original = vec![curve(0, -100.0), curve(1, -100.0)];
+        let verification = vec![curve(2, -100.0), curve(3, -100.0)];
+        assert_eq!(short_verify_offset(Vec::new(), &verification, 8880.0, -100.0), None);
+        assert_eq!(short_verify_offset(original.clone(), &verification, 8880.0, -100.0), Some(-105.0));
+        let competing = vec![curve(2, -180.0), curve(3, -180.0)];
+        assert_eq!(short_verify_offset(original, &competing, 8880.0, -100.0), None);
     }
 
     #[test]

@@ -1078,6 +1078,7 @@ struct DeepMatchState {
 // the ORIGINAL verdict drives the unchanged chunk orchestration.
 #[derive(Clone)]
 struct DeepMatchVerify {
+    short: bool,
     // Hypothesis queue (posterior peaks, descending quality) and cursor.
     peaks: Vec<f64>,
     peak_idx: usize,
@@ -16658,6 +16659,43 @@ impl RenderQueue {
             if long_model { deep_match::long_match_params().k_max_ms_per_min } else { deep_match::drift_rate_ms_per_min() },
             deep_match::drift_floor_ms(),
         );
+        let short_plan = if long_model {
+            None
+        } else {
+            let params = stab_arc.params.read();
+            let scale = params.fps_scale.unwrap_or(1.0);
+            let request = stab_arc.lens.read();
+            request.sync_settings.as_ref().and_then(|settings| {
+                let pattern = settings.get("custom_sync_pattern")?;
+                let window_ms = settings.get("time_per_syncpoint")?.as_f64()? * 1000.0;
+                let requested: Vec<_> =
+                    Self::resolve_syncpoint_pattern(pattern, params.duration_ms, params.fps)
+                        .into_iter().map(|center| center / scale).collect();
+                let duration_ms = params.get_scaled_duration_ms();
+                let (delta, centers) = deep_match::short_verify_plan(
+                    curves, duration_ms, params.get_scaled_fps(), &requested, window_ms,
+                )?;
+                Some((delta, centers.into_iter().map(|center| center * scale).collect::<Vec<_>>(), duration_ms))
+            })
+        };
+        if let Some((delta, windows, duration_ms)) = short_plan {
+            let Some(state) = self.deep_match_pending.get_mut(&job_id) else { return false };
+            state.verify = Some(DeepMatchVerify {
+                short: true,
+                peaks: vec![delta],
+                peak_idx: 0,
+                delta_ms: delta,
+                base_curves: curves.to_vec(),
+                original_verdict: verdict.clone(),
+                scanned_centers_ms: Vec::new(),
+            });
+            ::log::info!(target: "sync", "[deep-match] short verify start: job={job_id}");
+            let short_drift = deep_match::drift_tolerance_ms(
+                duration_ms, deep_match::drift_rate_ms_per_min(), deep_match::drift_floor_ms(),
+            );
+            self.launch_deep_match_verify_probe(job_id, stab_arc, delta, &windows, 0, 1, short_drift);
+            return true;
+        }
         let min_sep = 2.0 * (deep_match::verify_local_ms() + t_d);
         let peaks = if long_model {
             deep_match::long_match_hypotheses(curves, min_sep, &deep_match::long_match_params())
@@ -16680,6 +16718,7 @@ impl RenderQueue {
             if windows.len() >= deep_match::verify_min_aligned() {
                 if let Some(state) = self.deep_match_pending.get_mut(&job_id) {
                     state.verify = Some(DeepMatchVerify {
+                        short: false,
                         peaks: peaks.clone(),
                         peak_idx: idx,
                         delta_ms: delta,
@@ -16833,6 +16872,9 @@ impl RenderQueue {
         });
         // Scan every verification window (no top-K-by-motion truncation).
         deep_match::arm(scan_k);
+        if self.deep_match_pending.get(&job_id).and_then(|state| state.verify.as_ref()).is_some_and(|verify| verify.short) {
+            deep_match::arm_forward();
+        }
         self.export_project = 2;
         self.batch_sync_job_ids.insert(job_id);
         self.expected_batch_sync_job_ids = std::iter::once(job_id).collect();
@@ -16858,6 +16900,15 @@ impl RenderQueue {
         else {
             return;
         };
+        if vs.short {
+            let confirmed = stab.as_ref().and_then(|stab| deep_match::short_verify_offset(
+                vs.base_curves, &verify_curves, stab.params.read().get_scaled_duration_ms(), vs.delta_ms,
+            ));
+            ::log::info!(target: "sync", "[deep-match] short verify finish: job={job_id} windows={} confirmed={confirmed:?}", verify_curves.len());
+            let verdict = confirmed.map_or(vs.original_verdict, |offset_ms| deep_match::DeepMatchVerdict::Accepted { offset_ms });
+            self.consume_deep_match_verdict(job_id, stab, verdict);
+            return;
+        }
         // Verification curves live in their own range_idx namespace (>= 100)
         // so logs and merged decisions stay distinguishable from chunk windows.
         for c in verify_curves.iter_mut() {
@@ -22855,6 +22906,7 @@ mod tests {
         // -1500ms — the DSC_7734 shape (joint argmax on the true peak, ci95
         // blown wide by the false-valley window).
         state.verify = Some(DeepMatchVerify {
+            short: false,
             peaks: vec![-100.0],
             peak_idx: 0,
             delta_ms: -100.0,
@@ -22878,6 +22930,40 @@ mod tests {
         assert!(queue.deep_match_pending.is_empty(), "run must terminate");
         let res = queue.deep_match_results.get(&1).expect("upgrade must record the deep match");
         assert!((res.offset_ms + 100.0).abs() <= 15.0, "accepted offset near the hypothesis, got {}", res.offset_ms);
+    }
+
+    #[test]
+    fn short_verify_queue_requires_confirmation_from_the_new_windows() {
+        use gyroflow_core::synchronization::deep_match::DeepMatchVerdict;
+        for (new_peak, expected) in [(-100.0, true), (-180.0, false)] {
+            let (mut queue, stab) = verify_pending_queue(DeepMatchVerdict::Inconsistent { spread_ms: 55.0 });
+            stab.params.write().duration_ms = 8880.0;
+            queue.deep_match_pending.get_mut(&1).unwrap().verify.as_mut().unwrap().short = true;
+            let curves = vec![dm_curve(0, 735.0, new_peak), dm_curve(1, 8145.0, new_peak)];
+            queue.finish_deep_match_verify(1, Some(stab), curves);
+            assert_eq!(queue.deep_match_results.contains_key(&1), expected);
+        }
+    }
+
+    #[test]
+    fn short_verify_queue_combines_original_and_new_evidence() {
+        use gyroflow_core::synchronization::deep_match::DeepMatchVerdict;
+        let (mut queue, stab) = verify_pending_queue(DeepMatchVerdict::Inconsistent { spread_ms: 50.0 });
+        stab.params.write().duration_ms = 8880.0;
+        let curve = |idx, center| {
+            let mut curve = dm_curve(idx, center, -100.0);
+            curve.n_eff = 100.0;
+            curve.curve = (-220..=180).map(|i| {
+                let offset = f64::from(i) * 5.0;
+                (offset, 1.0 + ((offset + 100.0).abs() / 800.0).min(1.0))
+            }).collect();
+            curve
+        };
+        let state = queue.deep_match_pending.get_mut(&1).unwrap().verify.as_mut().unwrap();
+        state.short = true;
+        state.base_curves = vec![curve(0, 2960.0), curve(1, 5920.0)];
+        queue.finish_deep_match_verify(1, Some(stab), vec![curve(2, 735.0), curve(3, 8145.0)]);
+        assert!(queue.deep_match_results.contains_key(&1));
     }
 
     #[test]
@@ -25940,6 +26026,7 @@ mod tests {
             let base_curves = vec![drift_curve(0, 1320479.0, -129.376),
                 drift_curve(1, 2640958.0, 400.0), drift_curve(2, 5281917.0, -2.736)];
             queue.deep_match_pending.get_mut(&1).unwrap().verify = Some(DeepMatchVerify {
+                short: false,
                 peaks: vec![-110.0], peak_idx: 0, delta_ms: -110.0,
                 scanned_centers_ms: base_curves.iter().map(|c| c.t_center_ms).collect(),
                 base_curves,
