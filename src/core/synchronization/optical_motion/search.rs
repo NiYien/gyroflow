@@ -39,12 +39,12 @@ const FAR_CANDIDATES: usize = 3;
 /// Full evaluations of a far candidate, relative to its grid point, ms
 const FAR_PROBES_MS: [f64; 3] = [0.0, -5.0, 5.0];
 /// Half-widths of the Brent refinement around c1, a far candidate and a near low point, ms
-const C1_REFINE_MS: f64 = 10.0;
+pub(super) const C1_REFINE_MS: f64 = 10.0;
 const FAR_REFINE_MS: f64 = 10.0;
 const NEAR_REFINE_MS: f64 = 5.0;
 /// Brent tolerance, ms, and evaluation budget
-const REFINE_TOL_MS: f64 = 0.2;
-const REFINE_MAX_EVALS: usize = 10;
+pub(super) const REFINE_TOL_MS: f64 = 0.2;
+pub(super) const REFINE_MAX_EVALS: usize = 10;
 /// Near check: probes every NEAR_STEP_MS out to NEAR_PROBES steps on both sides of refined c1. A probe NEAR_LOW_STEPS
 /// steps away that costs less than both its neighbours in that sequence is a near low point.
 const NEAR_STEP_MS: f64 = 10.0;

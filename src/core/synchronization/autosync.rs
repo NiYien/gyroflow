@@ -75,6 +75,8 @@ pub struct AutosyncProcess {
     finished_cb: Option<Arc<Box<dyn Fn(AutosyncResult) + Send + Sync + 'static>>>,
 
     pub sync_params: SyncParams,
+    /// Ranks at the requested video timestamps, supplied by automatic batch sync.
+    pub batch_optical_window_ranks: Vec<f32>,
     /// `estimate_lens_delay`: log focal length per frame of the metadata without any delay applied (`NaN` where
     /// unknown), the curve the analyzed windows were picked on and the estimate is aligned against
     lens_delay_meta_ln: Vec<f64>,
@@ -487,6 +489,7 @@ impl AutosyncProcess {
 
         Ok(Self {
             frame_count,
+            batch_optical_window_ranks: Vec::new(),
             org_fps,
             scaled_fps,
             sync_params,
@@ -870,7 +873,17 @@ impl AutosyncProcess {
                     }
                 }
             }
-            let rows = optical::confirmed_rows(&windows, &outcomes, &ranges, self.sync_params.initial_offset);
+            let mut rows = optical::confirmed_rows(&windows, &outcomes, &ranges, self.sync_params.initial_offset);
+            if !self.batch_optical_window_ranks.is_empty() && verification_timings.is_none() {
+                self.thread_pool.install(|| optical::batch_review::review_weak_rows(
+                    &windows, &outcomes, &mut rows, &self.batch_optical_window_ranks,
+                    &quats, &self.sync_params, &self.cancel_flag,
+                ));
+                if self.cancel_flag.load(Relaxed) {
+                    self.emit_canceled_progress();
+                    return;
+                }
+            }
             let search_ms = previous_search_ms + t_search.elapsed().as_secs_f64() * 1000.0;
             let samples = self.thread_pool.install(|| optical::rates::interpolated_rate_samples(&windows, self.sync_params.every_nth_frame));
             for (i, &row) in rows.iter().enumerate() {

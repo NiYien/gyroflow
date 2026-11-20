@@ -10621,6 +10621,11 @@ impl RenderQueue {
                         "synchronize".into(),
                         cancel_flag.clone(),
                     ) {
+                        if collect_batch_points && sync.sync_params.offset_method == 3 && sync.sync_params.auto_sync_points {
+                            sync.batch_optical_window_ranks = attempted_timestamps_ms.iter().map(|&timestamp| {
+                                Self::batch_sync_rank_for_candidate_ms(&stab, timestamp, Some(timestamp), sync_initial_offset_ms)
+                            }).collect();
+                        }
                         let sync_frame_count = Arc::new(AtomicUsize::new(0));
                         let processing_cb2 = processing_cb.clone();
                         let sync_frame_count2 = sync_frame_count.clone();
@@ -34992,6 +34997,74 @@ mod tests {
         queue.finish_queue_optical(2, QueueOpticalOutcome::Skip { reason: "NotConverged".into() });
         assert_eq!(row_status(&queue, 2), (JobStatus::Skipped, "image_stabilization".into()));
         assert!(passes(&queue).is_empty());
+    }
+
+    #[test]
+    #[ignore = "requires BATCH_OPTICAL_REVIEW_CASES with real projects and video files"]
+    fn batch_optical_review_on_recordings() {
+        use gyroflow_core::synchronization::sync_repair;
+        #[derive(serde::Deserialize)]
+        struct Case {
+            project: String, video: String, initial_ms: f64, search_ms: f64,
+            reference_ms: Option<f64>, expected_promotions: usize, batch_shift_ms: Option<f64>,
+        }
+        let path = std::env::var("BATCH_OPTICAL_REVIEW_CASES").unwrap();
+        let cases: Vec<Case> = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let _ = simplelog::WriteLogger::init(simplelog::LevelFilter::Info, Default::default(), std::io::stderr());
+        qml_video_rs::video_item::MDKVideoItem::setGlobalOption("plugins", "mdk-braw:mdk-r3d");
+        let mut batch_ids = Vec::new();
+        let mut batch_points = Vec::new();
+        for (index, c) in cases.into_iter().enumerate() {
+            let run = |batch| {
+                println!("queue sync batch={batch} project={}", c.project);
+                let stab = Arc::new(StabilizationManager::default());
+                let cancel = Arc::new(AtomicBool::new(false));
+                stab.import_gyroflow_file(&filesystem::path_to_url(&c.project), true, |_| {}, cancel.clone(), false).unwrap();
+                stab.input_file.write().url = filesystem::path_to_url(&c.video);
+                stab.gyro.write().clear_offsets();
+                stab.lens.write().sync_settings = Some(serde_json::json!({
+                    "do_autosync": true, "auto_sync_points": true, "offset_method": 3,
+                    "initial_offset": c.initial_ms / 1000.0, "search_size": c.search_ms / 1000.0,
+                    "time_per_syncpoint": 2.5, "max_sync_points": 2, "calc_initial_fast": false,
+                    "of_method": 2, "pose_method": 0, "initial_offset_inv": false,
+                }));
+                let input = stab.input_file.read().clone();
+                RenderQueue::do_autosync(stab, |_| {}, None, &input, |err| panic!("{err:?}"), 1080, cancel, 1, batch, false)
+            };
+            let original = run(false);
+            let reviewed = run(true);
+            assert!(original.completed && reviewed.completed, "{}", c.video);
+            assert_eq!(original.attempted_timestamps_ms, reviewed.attempted_timestamps_ms);
+            assert_eq!(original.frames, reviewed.frames);
+            assert_eq!(original.points.len(), reviewed.points.len());
+            let mut promotions = 0;
+            for (a, b) in original.points.iter().zip(&reviewed.points) {
+                println!("{} frames={} offset={:.3} conf={:.4} -> {:.4} rank={:.1}", c.video, reviewed.frames, b.offset_ms, a.confidence, b.confidence, b.rank);
+                assert!((a.offset_ms - b.offset_ms).abs() < 0.01);
+                if b.confidence != a.confidence {
+                    assert!(a.confidence < sync_repair::MIN_BATCH_SYNC_POINT_CONFIDENCE);
+                    assert_eq!(b.confidence, sync_repair::MIN_BATCH_SYNC_POINT_CONFIDENCE);
+                    assert!((b.offset_ms - c.reference_ms.unwrap()).abs() <= 3.0);
+                    promotions += 1;
+                }
+            }
+            assert_eq!(promotions, c.expected_promotions, "{}", c.video);
+            if let Some(shift) = c.batch_shift_ms {
+                let id = index as u32 + 1;
+                batch_ids.push(id);
+                for mut point in reviewed.points {
+                    point.job_id = id;
+                    point.wall_clock_offset_ms = point.wall_clock_offset_ms.map(|residual|
+                        gyroflow_core::synchronization::batch_clock::wall_clock_offset_ms(residual, 0.0, shift));
+                    batch_points.push(point);
+                }
+            }
+        }
+        if !batch_ids.is_empty() {
+            let result = sync_repair::confirm_batch_sync_points_for_jobs(batch_points, batch_ids);
+            println!("batch status {:?} jobs={}", result.batch_status, result.videos.len());
+            assert_eq!(result.batch_status, sync_repair::BatchSyncBatchStatus::AllGreen);
+        }
     }
 
     #[test]
