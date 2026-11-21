@@ -188,7 +188,8 @@ impl AutosyncProcess {
         let duration_ms = params.get_scaled_duration_ms();
         let has_motion = stab.gyro.read().has_motion();
 
-        if sync_params.offset_method == 3 && mode == "synchronize" {
+        let optical_sync = sync_params.offset_method == 3 && mode == "synchronize";
+        if optical_sync {
             sync_params.every_nth_frame = super::optical_sampling::frame_step(scaled_fps);
             log::info!(target: "sync", "[optical] sampling: source_fps={scaled_fps:.6} every_nth={} analysis_fps={:.6}",
                 sync_params.every_nth_frame, scaled_fps / sync_params.every_nth_frame as f64);
@@ -284,19 +285,17 @@ impl AutosyncProcess {
             return Err(AutosyncError::InvalidParameters);
         }
 
-        let mut ranges_us: Vec<(i64, i64)> = timestamps_fract
-            .iter()
-            .map(|x| {
-                let range = (
-                    ((x * org_duration_ms) - (time_per_syncpoint / 2.0)).max(0.0),
-                    ((x * org_duration_ms) + (time_per_syncpoint / 2.0)).min(org_duration_ms),
-                );
-                (
-                    (range.0 * 1000.0).round() as i64,
-                    (range.1 * 1000.0).round() as i64,
-                )
-            })
-            .collect();
+        let decode_range_us = |fraction: f64| {
+            let center_ms = fraction * org_duration_ms;
+            if optical_sync {
+                return optical_window_us(center_ms, org_duration_ms, time_per_syncpoint);
+            }
+            let half_ms = time_per_syncpoint / 2.0;
+            let from = (center_ms - half_ms).max(0.0);
+            let to = (center_ms + half_ms).min(org_duration_ms);
+            ((from * 1000.0).round() as i64, (to * 1000.0).round() as i64)
+        };
+        let mut ranges_us: Vec<_> = timestamps_fract.iter().copied().map(decode_range_us).collect();
 
         let mut comp_params = ComputeParams::from_manager(stab);
         comp_params.keyframes.clear();
@@ -364,14 +363,7 @@ impl AutosyncProcess {
         // the same formulas as the main range map above.
         let (probe_candidate_us, probe_candidate_scaled_us) = match lazy_probe_fract {
             Some(x) => {
-                let range = (
-                    ((x * org_duration_ms) - (time_per_syncpoint / 2.0)).max(0.0),
-                    ((x * org_duration_ms) + (time_per_syncpoint / 2.0)).min(org_duration_ms),
-                );
-                let us = (
-                    (range.0 * 1000.0).round() as i64,
-                    (range.1 * 1000.0).round() as i64,
-                );
+                let us = decode_range_us(x);
                 let scaled = (
                     (us.0 as f64 / fps_scale.unwrap_or(1.0)) as i64,
                     (us.1 as f64 / fps_scale.unwrap_or(1.0)) as i64,
@@ -432,7 +424,7 @@ impl AutosyncProcess {
         let optical_progress_cb: Arc<RwLock<Option<OpticalProgressCb>>> = Arc::new(RwLock::new(None));
         // Optical motion method: its own tracking threads take the frames instead of the Sync pool (spec §5.1). A
         // tracked frame counts as detected; tracking is the first 0.6 of the progress
-        let optical = if sync_params.offset_method == 3 && mode == "synchronize" {
+        let optical = if optical_sync {
             estimator.sync_results.write().clear();
             estimator.recalculate_gyro_data(org_fps, true);
             let detected = total_detected_frames.clone();
@@ -1345,22 +1337,34 @@ impl AutosyncProcess {
     }
 }
 
+fn optical_window_us(center_ms: f64, duration_ms: f64, window_ms: f64) -> (i64, i64) {
+    let width = window_ms.min(duration_ms);
+    let start = (center_ms - width / 2.0).clamp(0.0, duration_ms - width);
+    ((start * 1000.0).round() as i64, ((start + width) * 1000.0).round() as i64)
+}
+
 fn pick_optical_verification_range(ranges: &[(i64, i64)], weak: usize, duration_ms: f64, window_ms: f64) -> Option<(i64, i64)> {
     let center = (ranges[weak].0 + ranges[weak].1) as f64 / 2000.0;
     let mut candidates = super::deep_match::window_positions_ms(duration_ms, super::deep_match::candidates_count());
     candidates.sort_by(|a, b| (b - center).abs().total_cmp(&(a - center).abs()));
     candidates.into_iter().find_map(|candidate| {
-        let from = candidate - window_ms / 2.0;
-        let to = candidate + window_ms / 2.0;
-        if from < 0.0 || to > duration_ms { return None; }
-        let range = ((from * 1000.0).round() as i64, (to * 1000.0).round() as i64);
+        let range = optical_window_us(candidate, duration_ms, window_ms);
         ranges.iter().all(|other| range.1 < other.0 || other.1 < range.0).then_some(range)
     })
 }
 
 #[cfg(test)]
 mod optical_verification_tests {
-    use super::pick_optical_verification_range;
+    use super::{optical_window_us, pick_optical_verification_range};
+
+    #[test]
+    fn optical_windows_keep_the_requested_duration_at_both_edges() {
+        assert_eq!(optical_window_us(14840.9542, 15000.0, 2500.0), (12_500_000, 15_000_000));
+        assert_eq!(optical_window_us(3896.7605, 4000.0, 2500.0), (1_500_000, 4_000_000));
+        assert_eq!(optical_window_us(50.0, 4000.0, 2500.0), (0, 2_500_000));
+        assert_eq!(optical_window_us(2000.0, 4000.0, 2500.0), (750_000, 3_250_000));
+        assert_eq!(optical_window_us(50.0, 1800.0, 2500.0), (0, 1_800_000));
+    }
 
     #[test]
     fn verification_uses_one_disjoint_existing_plan_window() {
@@ -1368,6 +1372,10 @@ mod optical_verification_tests {
         assert_eq!(pick_optical_verification_range(&ranges, 0, 28320.0, 2500.0), Some((4_414_000, 6_914_000)));
         let covered = [(0, 28_320_000)];
         assert_eq!(pick_optical_verification_range(&covered, 0, 28320.0, 2500.0), None);
+        let tail = [(3_500_000, 6_000_000)];
+        assert_eq!(pick_optical_verification_range(&tail, 0, 6000.0, 2500.0), Some((0, 2_500_000)));
+        let overlapping = [(1_500_000, 4_000_000)];
+        assert_eq!(pick_optical_verification_range(&overlapping, 0, 4000.0, 2500.0), None);
     }
 }
 
